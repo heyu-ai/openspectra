@@ -1,0 +1,38 @@
+{
+  "change_id": "add-token-economy-harness",
+  "created": null,
+  "last_commit": null,
+  "dimensions": [
+    {
+      "kind": "Time",
+      "status": "no created date",
+      "score": 0,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Structure",
+      "status": "0/16 anchors broken",
+      "score": 0,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Tasks",
+      "status": "0 blocked, 0 maybe-done",
+      "score": 0,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Environment",
+      "status": "0 commits",
+      "score": 0,
+      "contributes_to_total": false
+    }
+  ],
+  "broken_anchors": [],
+  "tasks_maybe_resolved": [],
+  "tasks_blocked_external": [],
+  "commits_since_created": 0,
+  "total_score": 0,
+  "severity": "light",
+  "primary_recommendation": "/spectra-apply add-token-economy-harness"
+}

@@ -1,0 +1,54 @@
+{
+  "change_id": "enhance-d5-behavior-harness",
+  "created": "2026-05-25",
+  "last_commit": null,
+  "dimensions": [
+    {
+      "kind": "Time",
+      "status": "stale (36d)",
+      "score": 2,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Structure",
+      "status": "3/40 anchors broken",
+      "score": 3,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Tasks",
+      "status": "0 blocked, 0 maybe-done",
+      "score": 0,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Environment",
+      "status": "92 commits",
+      "score": 0,
+      "contributes_to_total": false
+    }
+  ],
+  "broken_anchors": [
+    {
+      "anchor": "--deep-d5",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--dev",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--paths-to-mutate",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    }
+  ],
+  "tasks_maybe_resolved": [],
+  "tasks_blocked_external": [],
+  "commits_since_created": 92,
+  "total_score": 5,
+  "severity": "medium",
+  "primary_recommendation": "/spectra-ingest enhance-d5-behavior-harness"
+}

@@ -1,0 +1,99 @@
+{
+  "change_id": "pr-control-log",
+  "created": "2026-06-05",
+  "last_commit": null,
+  "dimensions": [
+    {
+      "kind": "Time",
+      "status": "stale (25d)",
+      "score": 2,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Structure",
+      "status": "12/25 anchors broken",
+      "score": 7,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Tasks",
+      "status": "0 blocked, 0 maybe-done",
+      "score": 0,
+      "contributes_to_total": true
+    },
+    {
+      "kind": "Environment",
+      "status": "24 commits",
+      "score": 0,
+      "contributes_to_total": false
+    }
+  ],
+  "broken_anchors": [
+    {
+      "anchor": "--by",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--category",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--evidence",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--files",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--handover-id",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--json",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--project",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--severity",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--since-days",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--summary",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--test-type",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    },
+    {
+      "anchor": "--user-requested",
+      "category": "CliFlag",
+      "reason": "not in --help"
+    }
+  ],
+  "tasks_maybe_resolved": [],
+  "tasks_blocked_external": [],
+  "commits_since_created": 24,
+  "total_score": 9,
+  "severity": "heavy",
+  "primary_recommendation": "spectra archive pr-control-log --skip-specs"
+}
