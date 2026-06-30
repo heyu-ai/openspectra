@@ -160,6 +160,26 @@ full regex set, which **over-counts Symbols on prose-dense designs**, inflating
 FilePath/Function/CliFlag — the categories that actually drive real drift
 signals — are exact.
 
+### Known limitations (resolution side, deferred)
+Two resolution behaviours are carried as-is pending a positive oracle decision
+(`spectra-core::git`, `anchors::Resolver`):
+
+1. **`git grep` self-matches the change's own `design.md`.** Symbol/Function
+   anchors are resolved with `git grep` over *all* tracked files, which includes
+   the very `design.md` they were extracted from — so a committed change's
+   Symbol/Function anchor always finds itself and is never reported broken; only
+   FilePath/CliFlag anchors drive Structure on a committed change. This is
+   consistent with the oracle's observed output (golden samples only ever showed
+   CliFlags broken) and with the calibration harness below, which deliberately
+   leaves `design.md` **untracked** precisely so anchors resolve to nothing. A
+   future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
+   it is deferred until an oracle run confirms the intended behaviour.
+2. **FilePath resolves while still in the git index.** A path is considered
+   present if it is tracked *or* on disk, so a working-tree `rm` without `git rm`
+   still reads as resolved until staged. `drift` describes "current codebase
+   state", so this can hide a just-deleted file; kept for now as the
+   lower-risk, likely-oracle-faithful behaviour.
+
 ## Reproducing the oracle (calibration harness)
 
 The probe technique that produced these tables, reusable to crack the remaining

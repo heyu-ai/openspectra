@@ -52,15 +52,6 @@ impl Change {
     pub fn proposal_md(&self) -> PathBuf {
         self.dir.join("proposal.md")
     }
-    /// Change directory path relative to the project root, forward-slashed.
-    /// Used as the `-- <path>` argument to git.
-    pub fn rel_dir(&self, cfg: &Config) -> String {
-        self.dir
-            .strip_prefix(&cfg.root)
-            .unwrap_or(&self.dir)
-            .to_string_lossy()
-            .replace('\\', "/")
-    }
 }
 
 fn read_started_sha(cfg: &Config, name: &str) -> Option<String> {
@@ -85,7 +76,13 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
     let meta_path = dir.join(".openspec.yaml");
     let metadata: ChangeMetadata = if meta_path.exists() {
         let text = std::fs::read_to_string(&meta_path)?;
-        serde_yaml::from_str(&text).unwrap_or_default()
+        // A malformed metadata file must not silently read as "no metadata"
+        // (that would erase `created` and make a stale change look undated):
+        // warn loudly, then fall back to defaults so drift still runs.
+        serde_yaml::from_str(&text).unwrap_or_else(|e| {
+            eprintln!("warning: ignoring unparseable {} ({e})", meta_path.display());
+            ChangeMetadata::default()
+        })
     } else {
         ChangeMetadata::default()
     };

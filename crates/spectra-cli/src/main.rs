@@ -12,7 +12,7 @@ use spectra_core::{change, config::Config, drift};
 #[derive(Parser)]
 #[command(name = "spectra", version, about = "Open-source Spectra spec-driven CLI")]
 struct Cli {
-    /// Disable colored output.
+    /// (not yet implemented) Disable colored output.
     #[arg(long, global = true)]
     no_color: bool,
     #[command(subcommand)]
@@ -29,18 +29,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List changes or specs.
+    /// List active changes.
     List {
+        /// (not yet implemented) Filter to changes only.
         #[arg(long)]
         changes: bool,
+        /// (not yet implemented) List specs instead of changes.
         #[arg(long)]
         specs: bool,
+        /// (not yet implemented) List parked changes.
         #[arg(long)]
         parked: bool,
         #[arg(long)]
         json: bool,
     },
-    /// Show change or spec content.
+    /// Show a change's proposal. (spec content: not yet implemented)
     Show {
         /// Change name to show.
         item: String,
@@ -224,8 +227,10 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {
+            // Distinct from drift severities (0 light / 1 medium / 2 heavy) so
+            // CI can tell a tool failure apart from a heavy-drift gate.
             eprintln!("Error: {e:#}");
-            ExitCode::from(2)
+            ExitCode::from(3)
         }
     }
 }

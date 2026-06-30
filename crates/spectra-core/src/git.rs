@@ -46,20 +46,22 @@ pub fn commits_since(root: &Path, since: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Commit subjects since `since` (a `YYYY-MM-DD` date), newest first.
-pub fn commit_subjects_since(root: &Path, since: &str) -> Vec<String> {
-    let arg = format!("--since={since}");
-    git(root, &["log", "--format=%s", &arg, "HEAD"])
-        .map(|s| s.lines().map(str::to_string).collect())
-        .unwrap_or_default()
-}
-
 /// True if `needle` appears in any tracked file (`git grep -F -l`),
 /// i.e. the symbol/function is referenced or defined somewhere in the repo.
 pub fn grep_exists(root: &Path, needle: &str) -> bool {
     // -F fixed string, -l names only, -I skip binary. Word boundaries are not
     // used so a definition like `fn foo(` or a struct `Foo` both match.
-    git(root, &["grep", "-F", "-I", "-l", "-e", needle])
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["grep", "-F", "-I", "-l", "-e", needle])
+        .output();
+    match out {
+        // `git grep` exits 0 on a match, 1 on a clean "no match", and >1 on a
+        // real error (not a repo, bad pathspec, ...). Only a clean no-match
+        // means the anchor is broken; on any error we cannot tell, so we do
+        // NOT over-report drift — treat it as resolved.
+        Ok(o) => o.status.code() != Some(1),
+        Err(_) => true,
+    }
 }

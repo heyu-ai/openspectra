@@ -35,12 +35,16 @@ and exits non-zero on medium/heavy drift so CI can gate on it.
 ## Usage
 
 ```sh
-spectra drift [CHANGE] [--json] [--no-color]   # auto-detects if one active change
-spectra list  [--changes] [--json]
-spectra show  <CHANGE> [--json]
+spectra drift [CHANGE] [--json]   # auto-detects if one active change
+spectra list  [--json]            # lists active changes
+spectra show  <CHANGE> [--json]   # prints the change's proposal
 ```
 
-Exit codes: `0` light · `1` medium · `2` heavy (or error).
+Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
+
+> Flags `--no-color`, `list --changes/--specs/--parked`, and spec content for
+> `show` are accepted by the CLI but **not yet implemented** (marked as such in
+> `--help`); they are placeholders for the wider command set still being ported.
 
 ### CI gate example
 
