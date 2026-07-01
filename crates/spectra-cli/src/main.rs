@@ -33,15 +33,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// List active changes (or specs with --specs).
+    /// List active changes (or specs with --specs, or parked changes with --parked).
     List {
         /// (not yet implemented) Filter to changes only.
         #[arg(long)]
         changes: bool,
         /// List specs instead of changes.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "parked")]
         specs: bool,
-        /// (not yet implemented) List parked changes.
+        /// List parked changes instead of active ones.
         #[arg(long)]
         parked: bool,
         #[arg(long)]
@@ -138,18 +138,8 @@ fn print_human(r: &drift::DriftReport) {
     }
 }
 
-fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) -> Result<i32> {
-    // Specs have no task/parked state of their own, so --specs takes priority
-    // over --parked rather than trying to combine the two filters.
-    if want_specs {
-        return cmd_list_specs(cfg, as_json);
-    }
-    // Minimal: active changes with task counts and a one-line summary.
-    let names = if want_parked {
-        Vec::new() // parked listing not yet implemented
-    } else {
-        change::list_active(cfg)
-    };
+fn list_change_items(cfg: &Config, want_parked: bool) -> Result<Vec<serde_json::Value>> {
+    let names = if want_parked { change::list_parked(cfg) } else { change::list_active(cfg) };
     let mut items = Vec::new();
     for name in &names {
         let ch = change::load(cfg, name)?;
@@ -168,13 +158,23 @@ fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) ->
             "summary": summary,
         }));
     }
+    Ok(items)
+}
+
+fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) -> Result<i32> {
+    // clap rejects --specs with --parked (they're `conflicts_with`), so at
+    // most one of the two is ever true here.
+    if want_specs {
+        return cmd_list_specs(cfg, as_json);
+    }
+    let items = list_change_items(cfg, want_parked)?;
     if as_json {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({ "changes": items }))?
         );
     } else if items.is_empty() {
-        println!("No active changes.");
+        println!("{}", if want_parked { "No parked changes." } else { "No active changes." });
     } else {
         for it in &items {
             println!(
@@ -379,5 +379,46 @@ mod tests {
 
         let items = list_specs_items(&cfg).unwrap();
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn list_change_items_parked_flag_selects_parked_changes() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.changes_dir().join("shipped")).unwrap();
+        std::fs::write(cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n")
+            .unwrap();
+        std::fs::create_dir_all(cfg.changes_dir().join("on-hold")).unwrap();
+        std::fs::write(cfg.changes_dir().join("on-hold").join("proposal.md"), "# On hold\n")
+            .unwrap();
+        std::fs::create_dir_all(tmp.join(".spectra").join("changes")).unwrap();
+        std::fs::write(tmp.join(".spectra").join("changes").join("on-hold.parked"), "").unwrap();
+
+        let active = list_change_items(&cfg, false).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0]["name"].as_str(), Some("shipped"));
+
+        let parked = list_change_items(&cfg, true).unwrap();
+        assert_eq!(parked.len(), 1);
+        assert_eq!(parked[0]["name"].as_str(), Some("on-hold"));
+    }
+
+    #[test]
+    fn list_change_items_parked_is_empty_when_none_parked() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.changes_dir().join("shipped")).unwrap();
+        std::fs::write(cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n")
+            .unwrap();
+
+        assert!(list_change_items(&cfg, true).unwrap().is_empty());
     }
 }
