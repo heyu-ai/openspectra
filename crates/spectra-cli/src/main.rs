@@ -1,4 +1,5 @@
-//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`.
+//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`,
+//! `task done`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -74,6 +75,11 @@ enum Command {
         #[command(subcommand)]
         target: NewTarget,
     },
+    /// Task operations (currently the only `task` target).
+    Task {
+        #[command(subcommand)]
+        target: TaskTarget,
+    },
 }
 
 #[derive(Subcommand)]
@@ -84,6 +90,20 @@ enum NewTarget {
     Change {
         /// Name for the new change (kebab-case, e.g. 'add-search-filter').
         name: String,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TaskTarget {
+    /// Mark a task as done and record touched files.
+    Done {
+        /// Task ID (1-based sequential index across all tasks.md checkboxes).
+        task_id: String,
+        /// Change name (auto-detects if only one active change exists).
+        #[arg(long)]
+        change: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -434,6 +454,49 @@ fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// `--json` shape for `task done`, reverse-engineered against
+/// `/Applications/Spectra.app` v2.3.1: `{"change","status","task_desc","task_id"}`,
+/// `task_id` rendered as a string (matching the reference CLI exactly).
+fn task_done_json(outcome: &change::TaskDoneOutcome) -> serde_json::Value {
+    json!({
+        "change": outcome.change,
+        "status": "done",
+        "task_desc": outcome.task_desc,
+        "task_id": outcome.task_id.to_string(),
+    })
+}
+
+/// Parses the raw `<TASK_ID>` CLI argument, producing the reference CLI's
+/// exact error wording on a non-numeric input. Pulled out so this check
+/// (which runs before any change lookup) is unit-testable without a `Config`.
+fn parse_task_id(raw: &str) -> Result<usize> {
+    raw.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid task ID '{raw}': must be a number"))
+}
+
+fn cmd_task_done(
+    cfg: &Config,
+    change_name: Option<&str>,
+    task_id_raw: &str,
+    as_json: bool,
+) -> Result<i32> {
+    let task_id = parse_task_id(task_id_raw)?;
+    let name = change::resolve(cfg, change_name)?;
+    let outcome = change::mark_task_done(cfg, &name, task_id)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&task_done_json(&outcome))?
+        );
+    } else {
+        println!(
+            "Task {} marked as done: {}",
+            outcome.task_id, outcome.task_desc
+        );
+    }
+    Ok(0)
+}
+
 fn task_counts(tasks_md: &Path) -> (usize, usize) {
     let Ok(text) = std::fs::read_to_string(tasks_md) else {
         return (0, 0);
@@ -493,6 +556,16 @@ fn run() -> Result<i32> {
             NewTarget::Change { name, json } => {
                 let cfg = require_initialized(&root)?;
                 cmd_new_change(&cfg, name, *json)
+            }
+        },
+        Command::Task { target } => match target {
+            TaskTarget::Done {
+                task_id,
+                change,
+                json,
+            } => {
+                let cfg = require_initialized(&root)?;
+                cmd_task_done(&cfg, change.as_deref(), task_id, *json)
             }
         },
     }
@@ -832,5 +905,55 @@ mod tests {
         // not panic, since new_change_json renders `dir` via to_string_lossy.
         let value = new_change_json(&ch);
         assert!(value["dir"].as_str().unwrap().contains("bad-"));
+    }
+
+    #[test]
+    fn task_done_json_shape_matches_the_documented_contract() {
+        let outcome = change::TaskDoneOutcome {
+            change: "my-change".to_string(),
+            task_id: 3,
+            task_desc: "do the thing".to_string(),
+        };
+        let value = task_done_json(&outcome);
+        assert_eq!(value["change"], "my-change");
+        assert_eq!(value["status"], "done");
+        assert_eq!(value["task_desc"], "do the thing");
+        // Matches the reference CLI: task_id is a string, not a number.
+        assert_eq!(value["task_id"], "3");
+    }
+
+    #[test]
+    fn task_done_json_serializes_keys_in_alphabetical_order() {
+        // Relies on serde_json's default Value::Map being a BTreeMap (the
+        // "preserve_order" feature isn't enabled) -- pinned here so enabling
+        // that feature later would fail this test instead of silently
+        // changing the --json key order documented as oracle-matching.
+        let outcome = change::TaskDoneOutcome {
+            change: "my-change".to_string(),
+            task_id: 3,
+            task_desc: "do the thing".to_string(),
+        };
+        let serialized = serde_json::to_string(&task_done_json(&outcome)).unwrap();
+        assert_eq!(
+            serialized,
+            r#"{"change":"my-change","status":"done","task_desc":"do the thing","task_id":"3"}"#
+        );
+    }
+
+    #[test]
+    fn parse_task_id_accepts_a_valid_number() {
+        assert_eq!(parse_task_id("3").unwrap(), 3);
+    }
+
+    #[test]
+    fn parse_task_id_rejects_non_numeric_input() {
+        let err = parse_task_id("abc").unwrap_err();
+        assert_eq!(err.to_string(), "Invalid task ID 'abc': must be a number");
+    }
+
+    #[test]
+    fn parse_task_id_rejects_negative_numbers() {
+        let err = parse_task_id("-1").unwrap_err();
+        assert_eq!(err.to_string(), "Invalid task ID '-1': must be a number");
     }
 }
