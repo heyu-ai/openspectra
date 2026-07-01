@@ -404,17 +404,24 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// `--json` shape for `new change`: pinned here (rather than inlined in
+/// `cmd_new_change`) so a rename/typo doesn't ship silently, matching
+/// `show_json`/`park_status_json`. Renders `dir` via `to_string_lossy`
+/// instead of serializing the `PathBuf` directly: `json!`'s `PathBuf`
+/// support requires valid UTF-8 and panics (not a recoverable error) on a
+/// path that isn't, which `to_string_lossy` avoids for that rare case.
+fn new_change_json(ch: &change::Change) -> serde_json::Value {
+    json!({
+        "name": ch.name,
+        "dir": ch.dir.to_string_lossy(),
+        "started_sha": ch.started_sha,
+    })
+}
+
 fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     let ch = change::create(cfg, name)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "name": ch.name,
-                "dir": ch.dir,
-                "started_sha": ch.started_sha,
-            }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&new_change_json(&ch))?);
     } else {
         println!("Created change '{}' in {}.", ch.name, ch.dir.display());
         if ch.started_sha.is_none() {
@@ -786,5 +793,44 @@ mod tests {
         assert_eq!(park_status_json("my-change", true)["parked"], true);
         assert_eq!(park_status_json("my-change", false)["parked"], false);
         assert_eq!(park_status_json("my-change", true)["name"], "my-change");
+    }
+
+    fn sample_change(dir: PathBuf, started_sha: Option<&str>) -> change::Change {
+        change::Change {
+            name: "my-change".to_string(),
+            dir,
+            metadata: Default::default(),
+            started_sha: started_sha.map(str::to_string),
+            parked: false,
+        }
+    }
+
+    #[test]
+    fn new_change_json_shape_matches_the_documented_contract() {
+        let ch = sample_change(PathBuf::from("/tmp/changes/my-change"), Some("abc123"));
+        let value = new_change_json(&ch);
+        assert_eq!(value["name"], "my-change");
+        assert_eq!(value["dir"], "/tmp/changes/my-change");
+        assert_eq!(value["started_sha"], "abc123");
+    }
+
+    #[test]
+    fn new_change_json_started_sha_is_null_when_absent() {
+        let ch = sample_change(PathBuf::from("/tmp/changes/my-change"), None);
+        assert!(new_change_json(&ch)["started_sha"].is_null());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_change_json_does_not_panic_on_a_non_utf8_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = PathBuf::from(OsStr::from_bytes(b"/tmp/bad-\xFF-path"));
+        let ch = sample_change(dir, None);
+        // `json!` panics serializing a non-UTF-8 PathBuf directly; this must
+        // not panic, since new_change_json renders `dir` via to_string_lossy.
+        let value = new_change_json(&ch);
+        assert!(value["dir"].as_str().unwrap().contains("bad-"));
     }
 }
