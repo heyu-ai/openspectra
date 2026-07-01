@@ -77,7 +77,9 @@ pub fn commits_since(root: &Path, since: &str) -> u64 {
 /// otherwise silently drop every path as "outside root".
 pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
     let repo_root = git(root, &["rev-parse", "--show-toplevel"])?;
-    let repo_root = Path::new(repo_root.trim()).to_path_buf();
+    // trim_end (not trim): a repo path could legally have leading spaces;
+    // only the trailing newline from command output needs stripping.
+    let repo_root = Path::new(repo_root.trim_end_matches('\n')).to_path_buf();
     // Canonicalize-failure is treated the same as any other git-command
     // failure (`None`) rather than silently falling back to the raw `root`:
     // a raw fallback that happens to be relative (or otherwise not
