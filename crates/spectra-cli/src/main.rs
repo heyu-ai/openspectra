@@ -229,33 +229,30 @@ enum ShowContent {
 }
 
 /// Resolve `item` to a change's proposal or a spec's content. A change name
-/// takes priority (existing, regression-safe behavior) purely by directory
-/// existence — not by whether `change::load` happens to succeed — so a real
-/// I/O error loading an existing change propagates instead of being misread
-/// as "not a change" and silently falling through to the spec branch.
+/// takes priority (existing, regression-safe behavior); `change::try_load`/
+/// `spec::try_load` distinguish "genuinely doesn't exist" from a real I/O
+/// error while checking, so neither is misread as "not found."
 fn resolve_show_content(cfg: &Config, item: &str) -> Result<ShowContent> {
-    if change::exists(cfg, item) {
-        let ch = change::load(cfg, item)?;
-        return Ok(ShowContent::Proposal(read_content(&ch.proposal_md())));
+    if let Some(ch) = change::try_load(cfg, item)? {
+        return Ok(ShowContent::Proposal(read_show_content(&ch.proposal_md())?));
     }
-    if spec::exists(cfg, item) {
-        let sp = spec::load(cfg, item)?;
-        return Ok(ShowContent::Spec(read_content(&sp.spec_md())));
+    if let Some(sp) = spec::try_load(cfg, item)? {
+        return Ok(ShowContent::Spec(read_show_content(&sp.spec_md())?));
     }
     anyhow::bail!("'{item}' is not a known change or spec")
 }
 
-/// Read `path`'s content, silent on `NotFound` (genuinely-empty change/spec
-/// bodies aren't errors) but warning loudly on any other I/O failure instead
-/// of masking it as empty content.
-fn read_content(path: &Path) -> String {
+/// Read `path`'s content for `show`. Unlike `first_line` (used for `list`'s
+/// secondary summary column, where a warn-and-degrade is defensible because
+/// other fields still carry useful data), the content read here *is* the
+/// entire requested output — so besides the benign `NotFound` case (a
+/// genuinely bodyless change/spec), any other I/O failure propagates instead
+/// of silently printing empty content with a success exit code.
+fn read_show_content(path: &Path) -> Result<String> {
     match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => {
-            eprintln!("warning: reading {}: {e}", path.display());
-            String::new()
-        }
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
     }
 }
 

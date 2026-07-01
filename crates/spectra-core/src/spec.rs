@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use crate::config::Config;
+use crate::names::is_valid_name;
 
 #[derive(Debug, Clone)]
 pub struct Spec {
@@ -71,16 +72,24 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn is_valid_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
-}
-
-/// Whether `name` names an existing, validly-named spec. Callers juggling
-/// multiple namespaces (e.g. `show`, which also checks `change::exists`)
-/// should use this instead of matching on `load`'s `Result`, so a real I/O
-/// error from `load` isn't misread as "not a spec."
-pub fn exists(cfg: &Config, name: &str) -> bool {
-    is_valid_name(name) && cfg.specs_dir().join(name).join("spec.md").is_file()
+/// Load a spec by name if it exists. Returns `Ok(None)` only when `spec.md`
+/// is genuinely absent (or `name` is invalid); any other I/O failure
+/// checking for it propagates as `Err`, so callers juggling multiple
+/// namespaces (e.g. `show`, which also tries `change::try_load`) can't
+/// misread a permission error as "not a spec" the way a boolean
+/// `Path::is_file()` check would.
+pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Spec>> {
+    if !is_valid_name(name) {
+        return Ok(None);
+    }
+    let spec_md = cfg.specs_dir().join(name).join("spec.md");
+    match std::fs::metadata(&spec_md) {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", spec_md.display())),
+    }
+    load(cfg, name).map(Some)
 }
 
 /// Load a single spec by capability name. Errors if `spec.md` is missing (or
