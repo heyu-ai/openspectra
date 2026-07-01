@@ -57,12 +57,22 @@ impl Change {
 }
 
 fn read_started_sha(cfg: &Config, name: &str) -> Option<String> {
-    let p = cfg.root.join(".spectra").join("changes").join(format!("{name}.started"));
-    std::fs::read_to_string(p).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    let p = cfg
+        .root
+        .join(".spectra")
+        .join("changes")
+        .join(format!("{name}.started"));
+    std::fs::read_to_string(p)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn parked_marker_path(cfg: &Config, name: &str) -> PathBuf {
-    cfg.root.join(".spectra").join("changes").join(format!("{name}.parked"))
+    cfg.root
+        .join(".spectra")
+        .join("changes")
+        .join(format!("{name}.parked"))
 }
 
 fn is_parked(cfg: &Config, name: &str) -> bool {
@@ -76,7 +86,10 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
 /// any listing.
 fn require_parkable(cfg: &Config, name: &str) -> Result<()> {
     if try_load(cfg, name)?.is_none() {
-        return Err(anyhow!("change '{name}' not found in {}", cfg.changes_dir().display()));
+        return Err(anyhow!(
+            "change '{name}' not found in {}",
+            cfg.changes_dir().display()
+        ));
     }
     if !walk_change_names(cfg).iter().any(|n| n == name) {
         return Err(anyhow!(
@@ -93,7 +106,9 @@ fn require_parkable(cfg: &Config, name: &str) -> Result<()> {
 pub fn park(cfg: &Config, name: &str) -> Result<()> {
     require_parkable(cfg, name)?;
     let marker = parked_marker_path(cfg, name);
-    let parent = marker.parent().expect("parked_marker_path always has a parent");
+    let parent = marker
+        .parent()
+        .expect("parked_marker_path always has a parent");
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     std::fs::write(&marker, "").with_context(|| format!("writing {}", marker.display()))?;
     Ok(())
@@ -140,7 +155,10 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
     }
     let dir = cfg.changes_dir().join(name);
     if !dir.is_dir() {
-        return Err(anyhow!("change '{name}' not found in {}", cfg.changes_dir().display()));
+        return Err(anyhow!(
+            "change '{name}' not found in {}",
+            cfg.changes_dir().display()
+        ));
     }
     let meta_path = dir.join(".openspec.yaml");
     let metadata: ChangeMetadata = if meta_path.exists() {
@@ -149,7 +167,10 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
         // (that would erase `created` and make a stale change look undated):
         // warn loudly, then fall back to defaults so drift still runs.
         serde_yaml::from_str(&text).unwrap_or_else(|e| {
-            eprintln!("warning: ignoring unparseable {} ({e})", meta_path.display());
+            eprintln!(
+                "warning: ignoring unparseable {} ({e})",
+                meta_path.display()
+            );
             ChangeMetadata::default()
         })
     } else {
@@ -166,19 +187,37 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
 
 /// Scaffold a new change directory: `.openspec.yaml`, `proposal.md`,
 /// `design.md`, `tasks.md`, and (best-effort) a `.spectra/changes/<name>.started`
-/// baseline SHA. Errors if `name` isn't kebab-case or the change already
-/// exists.
+/// baseline SHA. Errors if `name` isn't kebab-case, is archived-prefixed, or
+/// the change already exists.
+///
+/// Note: not safe against a concurrent `create` for the same name racing
+/// between the existence check and the writes below (same caveat as `park`).
+/// On any failure after the directory is created, the partial scaffold is
+/// removed so a retry doesn't get a misleading "already exists" error.
 pub fn create(cfg: &Config, name: &str) -> Result<Change> {
-    if !CHANGE_NAME_RE.is_match(name) {
+    if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) {
         return Err(anyhow!(
             "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
         ));
     }
     let dir = cfg.changes_dir().join(name);
     if dir.exists() {
-        return Err(anyhow!("change '{name}' already exists in {}", cfg.changes_dir().display()));
+        return Err(anyhow!(
+            "change '{name}' already exists in {}",
+            cfg.changes_dir().display()
+        ));
     }
-    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    match create_inner(cfg, name, &dir) {
+        Ok(()) => load(cfg, name),
+        Err(e) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(e)
+        }
+    }
+}
+
+fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
 
     let today = chrono::Local::now().date_naive();
     let files: [(&str, String); 4] = [
@@ -186,12 +225,18 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
             ".openspec.yaml",
             format!("schema: spec-driven\ncreated: {today}\ncreated_with: spectra-cli\n"),
         ),
-        ("proposal.md", format!("# {name}\n\ntodo: describe what this change does and why.\n")),
+        (
+            "proposal.md",
+            format!("# {name}\n\ntodo: describe what this change does and why.\n"),
+        ),
         // Lowercase-only: `drift`'s Symbol-anchor extraction (anchors.rs)
         // flags any capitalized word not found elsewhere in the repo as a
         // broken reference, so placeholder prose here must avoid it or a
         // freshly-created change scores as heavily drifted immediately.
-        ("design.md", "# design\n\ntodo: describe the technical design here.\n".to_string()),
+        (
+            "design.md",
+            "# design\n\ntodo: describe the technical design here.\n".to_string(),
+        ),
         ("tasks.md", "# tasks\n\n- [ ] todo\n".to_string()),
     ];
     for (filename, content) in files {
@@ -202,13 +247,18 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     // Best-effort: a non-git root (or a repo with no commits yet) just means
     // `drift`'s Time dimension has no baseline to diff against, not an error.
     if let Some(sha) = crate::git::head_sha(&cfg.root) {
-        let started = cfg.root.join(".spectra").join("changes").join(format!("{name}.started"));
+        let started = cfg
+            .root
+            .join(".spectra")
+            .join("changes")
+            .join(format!("{name}.started"));
         let parent = started.parent().expect("started path always has a parent");
-        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
         std::fs::write(&started, sha).with_context(|| format!("writing {}", started.display()))?;
     }
 
-    load(cfg, name)
+    Ok(())
 }
 
 /// Change directory names under `changes_dir()` that pass the archive/name
@@ -224,7 +274,10 @@ fn walk_change_names(cfg: &Config) -> Vec<String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "archive" || ARCHIVED_PREFIX_RE.is_match(&name) || !CHANGE_NAME_RE.is_match(&name) {
+        if name == "archive"
+            || ARCHIVED_PREFIX_RE.is_match(&name)
+            || !CHANGE_NAME_RE.is_match(&name)
+        {
             continue;
         }
         names.push(name);
@@ -234,8 +287,10 @@ fn walk_change_names(cfg: &Config) -> Vec<String> {
 
 /// List active (non-archived, non-parked) change names, sorted.
 pub fn list_active(cfg: &Config) -> Vec<String> {
-    let mut names: Vec<String> =
-        walk_change_names(cfg).into_iter().filter(|name| !is_parked(cfg, name)).collect();
+    let mut names: Vec<String> = walk_change_names(cfg)
+        .into_iter()
+        .filter(|name| !is_parked(cfg, name))
+        .collect();
     names.sort();
     names
 }
@@ -243,8 +298,10 @@ pub fn list_active(cfg: &Config) -> Vec<String> {
 /// List parked change names (those with a `.spectra/changes/<name>.parked`
 /// marker), sorted.
 pub fn list_parked(cfg: &Config) -> Vec<String> {
-    let mut names: Vec<String> =
-        walk_change_names(cfg).into_iter().filter(|name| is_parked(cfg, name)).collect();
+    let mut names: Vec<String> = walk_change_names(cfg)
+        .into_iter()
+        .filter(|name| is_parked(cfg, name))
+        .collect();
     names.sort();
     names
 }
@@ -258,7 +315,9 @@ pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
     let active = list_active(cfg);
     match active.len() {
         1 => Ok(active.into_iter().next().unwrap()),
-        0 => Err(anyhow!("No active changes. Create one with: spectra new change <name>")),
+        0 => Err(anyhow!(
+            "No active changes. Create one with: spectra new change <name>"
+        )),
         _ => Err(anyhow!(
             "Multiple changes found. Use a change name to specify one: {}",
             active.join(", ")
@@ -279,10 +338,23 @@ mod tests {
     #[test]
     fn list_parked_finds_only_marked_changes() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
-        write(&cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n");
-        write(&cfg.changes_dir().join("on-hold").join("proposal.md"), "# On hold\n");
-        write(&tmp.join(".spectra").join("changes").join("on-hold.parked"), "");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        write(
+            &cfg.changes_dir().join("shipped").join("proposal.md"),
+            "# Shipped\n",
+        );
+        write(
+            &cfg.changes_dir().join("on-hold").join("proposal.md"),
+            "# On hold\n",
+        );
+        write(
+            &tmp.join(".spectra").join("changes").join("on-hold.parked"),
+            "",
+        );
 
         assert_eq!(list_parked(&cfg), vec!["on-hold".to_string()]);
         assert_eq!(list_active(&cfg), vec!["shipped".to_string()]);
@@ -291,7 +363,11 @@ mod tests {
     #[test]
     fn list_parked_is_empty_when_changes_dir_missing() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
     }
@@ -299,25 +375,52 @@ mod tests {
     #[test]
     fn list_parked_sorts_multiple_entries() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
-        write(&cfg.changes_dir().join("zeta").join("proposal.md"), "# Zeta\n");
-        write(&cfg.changes_dir().join("alpha").join("proposal.md"), "# Alpha\n");
-        write(&tmp.join(".spectra").join("changes").join("zeta.parked"), "");
-        write(&tmp.join(".spectra").join("changes").join("alpha.parked"), "");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        write(
+            &cfg.changes_dir().join("zeta").join("proposal.md"),
+            "# Zeta\n",
+        );
+        write(
+            &cfg.changes_dir().join("alpha").join("proposal.md"),
+            "# Alpha\n",
+        );
+        write(
+            &tmp.join(".spectra").join("changes").join("zeta.parked"),
+            "",
+        );
+        write(
+            &tmp.join(".spectra").join("changes").join("alpha.parked"),
+            "",
+        );
 
-        assert_eq!(list_parked(&cfg), vec!["alpha".to_string(), "zeta".to_string()]);
+        assert_eq!(
+            list_parked(&cfg),
+            vec!["alpha".to_string(), "zeta".to_string()]
+        );
     }
 
     #[test]
     fn list_parked_excludes_archived_prefixed_names_even_when_marked() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
         write(
-            &cfg.changes_dir().join("2026-01-01-old-change").join("proposal.md"),
+            &cfg.changes_dir()
+                .join("2026-01-01-old-change")
+                .join("proposal.md"),
             "# Old\n",
         );
         write(
-            &tmp.join(".spectra").join("changes").join("2026-01-01-old-change.parked"),
+            &tmp.join(".spectra")
+                .join("changes")
+                .join("2026-01-01-old-change.parked"),
             "",
         );
 
@@ -327,7 +430,11 @@ mod tests {
     #[test]
     fn try_load_rejects_path_traversal_names() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
         // A change directory outside `changes_dir()` a traversal attempt could reach.
         write(&tmp.join("secret").join("proposal.md"), "outside\n");
 
@@ -341,8 +448,15 @@ mod tests {
     #[test]
     fn park_marks_an_existing_change_and_is_idempotent() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
-        write(&cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        write(
+            &cfg.changes_dir().join("shipped").join("proposal.md"),
+            "# Shipped\n",
+        );
 
         park(&cfg, "shipped").unwrap();
         assert_eq!(list_parked(&cfg), vec!["shipped".to_string()]);
@@ -355,7 +469,11 @@ mod tests {
     #[test]
     fn park_errors_when_change_does_not_exist() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         assert!(park(&cfg, "ghost").is_err());
     }
@@ -363,9 +481,19 @@ mod tests {
     #[test]
     fn unpark_clears_the_marker_and_is_idempotent() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
-        write(&cfg.changes_dir().join("on-hold").join("proposal.md"), "# On hold\n");
-        write(&tmp.join(".spectra").join("changes").join("on-hold.parked"), "");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        write(
+            &cfg.changes_dir().join("on-hold").join("proposal.md"),
+            "# On hold\n",
+        );
+        write(
+            &tmp.join(".spectra").join("changes").join("on-hold.parked"),
+            "",
+        );
 
         unpark(&cfg, "on-hold").unwrap();
         assert_eq!(list_active(&cfg), vec!["on-hold".to_string()]);
@@ -378,7 +506,11 @@ mod tests {
     #[test]
     fn unpark_errors_when_change_does_not_exist() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         assert!(unpark(&cfg, "ghost").is_err());
     }
@@ -386,8 +518,17 @@ mod tests {
     #[test]
     fn park_and_unpark_reject_archived_prefixed_names() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
-        write(&cfg.changes_dir().join("2026-01-01-old-change").join("proposal.md"), "# Old\n");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        write(
+            &cfg.changes_dir()
+                .join("2026-01-01-old-change")
+                .join("proposal.md"),
+            "# Old\n",
+        );
 
         assert!(park(&cfg, "2026-01-01-old-change").is_err());
         assert!(unpark(&cfg, "2026-01-01-old-change").is_err());
@@ -397,7 +538,11 @@ mod tests {
     #[test]
     fn create_scaffolds_all_expected_files() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         let ch = create(&cfg, "add-search-filter").unwrap();
 
@@ -414,25 +559,50 @@ mod tests {
     #[test]
     fn create_rejects_non_kebab_case_names() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         assert!(create(&cfg, "Not_Kebab_Case").is_err());
         assert!(create(&cfg, "").is_err());
     }
 
     #[test]
+    fn create_rejects_archived_prefixed_names() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        assert!(create(&cfg, "2026-01-01-old-change").is_err());
+    }
+
+    #[test]
     fn create_errors_when_change_already_exists() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         create(&cfg, "add-search-filter").unwrap();
         assert!(create(&cfg, "add-search-filter").is_err());
     }
 
     #[test]
-    fn create_writes_started_sha_when_root_is_a_git_repo() {
+    fn create_cleans_up_partial_directory_on_write_failure() {
         let tmp = TempDir::new();
-        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        let dir = cfg.changes_dir().join("add-search-filter");
         let run = |args: &[&str]| {
             assert!(std::process::Command::new("git")
                 .arg("-C")
@@ -449,9 +619,79 @@ mod tests {
         write(&tmp.join("README.md"), "hi\n");
         run(&["add", "README.md"]);
         run(&["commit", "-q", "-m", "init"]);
+        // `.spectra` as a plain file (not a directory) makes the `.started`
+        // baseline write fail after the 4 scaffold files already succeeded,
+        // forcing create() down the partial-failure cleanup path.
+        write(&tmp.join(".spectra"), "");
+
+        assert!(create(&cfg, "add-search-filter").is_err());
+        assert!(
+            !dir.exists(),
+            "failed create() must not leave a partial change directory behind"
+        );
+    }
+
+    #[test]
+    fn create_scaffolds_design_md_with_no_broken_symbol_anchors() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
 
         let ch = create(&cfg, "add-search-filter").unwrap();
-        assert!(ch.started_sha.is_some());
+
+        let design = std::fs::read_to_string(ch.design_md()).unwrap();
+        let symbol_count = crate::anchors::extract(&design)
+            .iter()
+            .filter(|a| a.kind == crate::anchors::AnchorKind::Symbol)
+            .count();
+        assert_eq!(
+            symbol_count, 0,
+            "scaffolded design.md must not contain capitalized Symbol anchors"
+        );
+    }
+
+    #[test]
+    fn create_writes_started_sha_when_root_is_a_git_repo() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        let run = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&*tmp)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@t.co"]);
+        run(&["config", "user.name", "t"]);
+        write(&tmp.join("README.md"), "hi\n");
+        run(&["add", "README.md"]);
+        run(&["commit", "-q", "-m", "init"]);
+        let expected_sha = String::from_utf8(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&*tmp)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        let ch = create(&cfg, "add-search-filter").unwrap();
+        assert_eq!(ch.started_sha.as_deref(), Some(expected_sha.as_str()));
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even

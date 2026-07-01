@@ -40,7 +40,9 @@ pub fn ls_files(root: &Path) -> HashSet<String> {
 /// The current `HEAD` commit SHA, via `git rev-parse HEAD`. `None` when
 /// `root` isn't a git repository or has no commits yet.
 pub fn head_sha(root: &Path) -> Option<String> {
-    git(root, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    git(root, &["rev-parse", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Count of commits authored on or after `since` (a `YYYY-MM-DD` date),
@@ -76,14 +78,66 @@ pub fn grep_exists(root: &Path, needle: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn init_repo_with_commit(dir: &Path) -> String {
-        std::fs::create_dir_all(dir).unwrap();
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "spectra-git-test-{label}-{}-{seq}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn init_repo(dir: &Path) {
         let run = |args: &[&str]| {
-            assert!(Command::new("git").arg("-C").arg(dir).args(args).output().unwrap().status.success());
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
         };
         run(&["init", "-q"]);
         run(&["config", "user.email", "t@t.co"]);
         run(&["config", "user.name", "t"]);
+    }
+
+    fn init_repo_with_commit(dir: &Path) -> String {
+        init_repo(dir);
+        let run = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
         std::fs::write(dir.join("f.txt"), "hi\n").unwrap();
         run(&["add", "f.txt"]);
         run(&["commit", "-q", "-m", "init"]);
@@ -92,23 +146,24 @@ mod tests {
 
     #[test]
     fn head_sha_returns_the_current_commit() {
-        let dir = std::env::temp_dir().join(format!("spectra-git-test-head-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = TempDir::new("head");
         let expected = init_repo_with_commit(&dir);
 
         assert_eq!(head_sha(&dir), Some(expected));
-
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn head_sha_is_none_outside_a_git_repo() {
-        let dir = std::env::temp_dir().join(format!("spectra-git-test-norepo-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("norepo");
 
         assert_eq!(head_sha(&dir), None);
+    }
 
-        std::fs::remove_dir_all(&dir).ok();
+    #[test]
+    fn head_sha_is_none_in_a_repo_with_no_commits() {
+        let dir = TempDir::new("nocommit");
+        init_repo(&dir);
+
+        assert_eq!(head_sha(&dir), None);
     }
 }
