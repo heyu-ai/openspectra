@@ -95,34 +95,10 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
     })
 }
 
-/// List active (non-archived, non-parked) change names, sorted.
-pub fn list_active(cfg: &Config) -> Vec<String> {
-    let mut names = Vec::new();
-    let Ok(entries) = std::fs::read_dir(cfg.changes_dir()) else {
-        return names;
-    };
-    for entry in entries.flatten() {
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name == "archive"
-            || ARCHIVED_PREFIX_RE.is_match(&name)
-            || !CHANGE_NAME_RE.is_match(&name)
-            || is_parked(cfg, &name)
-        {
-            continue;
-        }
-        names.push(name);
-    }
-    names.sort();
-    names
-}
-
-/// List parked change names (those with a `.spectra/changes/<name>.parked`
-/// marker), sorted. Mirrors `list_active`'s directory walk and name filters,
-/// inverting the parked check.
-pub fn list_parked(cfg: &Config) -> Vec<String> {
+/// Change directory names under `changes_dir()` that pass the archive/name
+/// filters (but aren't yet split by parked state), unsorted. Shared by
+/// `list_active`/`list_parked` so the filter set can't drift between them.
+fn walk_change_names(cfg: &Config) -> Vec<String> {
     let mut names = Vec::new();
     let Ok(entries) = std::fs::read_dir(cfg.changes_dir()) else {
         return names;
@@ -135,10 +111,24 @@ pub fn list_parked(cfg: &Config) -> Vec<String> {
         if name == "archive" || ARCHIVED_PREFIX_RE.is_match(&name) || !CHANGE_NAME_RE.is_match(&name) {
             continue;
         }
-        if is_parked(cfg, &name) {
-            names.push(name);
-        }
+        names.push(name);
     }
+    names
+}
+
+/// List active (non-archived, non-parked) change names, sorted.
+pub fn list_active(cfg: &Config) -> Vec<String> {
+    let mut names: Vec<String> =
+        walk_change_names(cfg).into_iter().filter(|name| !is_parked(cfg, name)).collect();
+    names.sort();
+    names
+}
+
+/// List parked change names (those with a `.spectra/changes/<name>.parked`
+/// marker), sorted.
+pub fn list_parked(cfg: &Config) -> Vec<String> {
+    let mut names: Vec<String> =
+        walk_change_names(cfg).into_iter().filter(|name| is_parked(cfg, name)).collect();
     names.sort();
     names
 }
@@ -186,6 +176,34 @@ mod tests {
     fn list_parked_is_empty_when_changes_dir_missing() {
         let tmp = TempDir::new();
         let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+
+        assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn list_parked_sorts_multiple_entries() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        write(&cfg.changes_dir().join("zeta").join("proposal.md"), "# Zeta\n");
+        write(&cfg.changes_dir().join("alpha").join("proposal.md"), "# Alpha\n");
+        write(&tmp.join(".spectra").join("changes").join("zeta.parked"), "");
+        write(&tmp.join(".spectra").join("changes").join("alpha.parked"), "");
+
+        assert_eq!(list_parked(&cfg), vec!["alpha".to_string(), "zeta".to_string()]);
+    }
+
+    #[test]
+    fn list_parked_excludes_archived_prefixed_names_even_when_marked() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        write(
+            &cfg.changes_dir().join("2026-01-01-old-change").join("proposal.md"),
+            "# Old\n",
+        );
+        write(
+            &tmp.join(".spectra").join("changes").join("2026-01-01-old-change.parked"),
+            "",
+        );
 
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
     }
