@@ -187,15 +187,17 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
 
 /// Scaffold a new change directory: `.openspec.yaml`, `proposal.md`,
 /// `design.md`, `tasks.md`, and (best-effort) a `.spectra/changes/<name>.started`
-/// baseline SHA. Errors if `name` isn't kebab-case, is archived-prefixed, or
-/// the change already exists.
+/// baseline SHA. Errors if `name` isn't kebab-case, is archived-prefixed, is
+/// the reserved `archive` name, or the change already exists.
 ///
 /// Note: not safe against a concurrent `create` for the same name racing
-/// between the existence check and the writes below (same caveat as `park`).
-/// On any failure after the directory is created, the partial scaffold is
-/// removed so a retry doesn't get a misleading "already exists" error.
+/// between the existence check and the writes below (the same TOCTOU class
+/// as `park`'s concurrent-deletion race, just triggered by concurrent
+/// creation instead). On any failure inside `create_inner`, the partial
+/// scaffold directory is removed so a retry doesn't get a misleading
+/// "already exists" error; cleanup failure itself is logged, not silenced.
 pub fn create(cfg: &Config, name: &str) -> Result<Change> {
-    if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) {
+    if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {
         return Err(anyhow!(
             "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
         ));
@@ -210,7 +212,14 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     match create_inner(cfg, name, &dir) {
         Ok(()) => load(cfg, name),
         Err(e) => {
-            let _ = std::fs::remove_dir_all(&dir);
+            if let Err(cleanup_err) = std::fs::remove_dir_all(&dir) {
+                if cleanup_err.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "warning: failed to remove partial change directory {} after create error: {cleanup_err}",
+                        dir.display()
+                    );
+                }
+            }
             Err(e)
         }
     }
@@ -245,7 +254,8 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     }
 
     // Best-effort: a non-git root (or a repo with no commits yet) just means
-    // `drift`'s Time dimension has no baseline to diff against, not an error.
+    // `drift`'s Tasks dimension has no baseline to diff blocked-task detection
+    // against (see tasks.rs), not an error.
     if let Some(sha) = crate::git::head_sha(&cfg.root) {
         let started = cfg
             .root
@@ -554,6 +564,19 @@ mod tests {
         assert_eq!(ch.metadata.schema.as_deref(), Some("spec-driven"));
         assert!(ch.metadata.created.is_some());
         assert_eq!(list_active(&cfg), vec!["add-search-filter".to_string()]);
+        assert_eq!(ch.started_sha, None);
+    }
+
+    #[test]
+    fn create_rejects_reserved_archive_name() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        assert!(create(&cfg, "archive").is_err());
     }
 
     #[test]

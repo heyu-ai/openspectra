@@ -419,8 +419,8 @@ fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
         println!("Created change '{}' in {}.", ch.name, ch.dir.display());
         if ch.started_sha.is_none() {
             eprintln!(
-                "note: no git baseline recorded (not in a git repo, or no commits yet); \
-                 task-blocked detection will be skipped for this change."
+                "note: couldn't determine a git baseline for this change; \
+                 task-blocked detection will be skipped for it."
             );
         }
     }
