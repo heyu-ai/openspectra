@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{change, config::Config, drift};
+use spectra_core::{change, config::Config, drift, spec};
 
 #[derive(Parser)]
 #[command(name = "spectra", version, about = "Open-source Spectra spec-driven CLI")]
@@ -34,7 +34,7 @@ enum Command {
         /// (not yet implemented) Filter to changes only.
         #[arg(long)]
         changes: bool,
-        /// (not yet implemented) List specs instead of changes.
+        /// List specs instead of changes.
         #[arg(long)]
         specs: bool,
         /// (not yet implemented) List parked changes.
@@ -131,7 +131,12 @@ fn print_human(r: &drift::DriftReport) {
     }
 }
 
-fn cmd_list(cfg: &Config, want_parked: bool, as_json: bool) -> Result<i32> {
+fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) -> Result<i32> {
+    // Specs have no task/parked state of their own, so --specs takes priority
+    // over --parked rather than trying to combine the two filters.
+    if want_specs {
+        return cmd_list_specs(cfg, as_json);
+    }
     // Minimal: active changes with task counts and a one-line summary.
     let names = if want_parked {
         Vec::new() // parked listing not yet implemented
@@ -165,6 +170,26 @@ fn cmd_list(cfg: &Config, want_parked: bool, as_json: bool) -> Result<i32> {
                 it["totalTasks"],
                 it["status"].as_str().unwrap_or("")
             );
+        }
+    }
+    Ok(0)
+}
+
+fn cmd_list_specs(cfg: &Config, as_json: bool) -> Result<i32> {
+    let names = spec::list(cfg);
+    let mut items = Vec::new();
+    for name in &names {
+        let sp = spec::load(cfg, name)?;
+        let summary = first_line(&sp.spec_md());
+        items.push(json!({ "name": name, "summary": summary }));
+    }
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&json!({ "specs": items }))?);
+    } else if items.is_empty() {
+        println!("No specs.");
+    } else {
+        for it in &items {
+            println!("{:<45} {}", it["name"].as_str().unwrap_or(""), it["summary"].as_str().unwrap_or(""));
         }
     }
     Ok(0)
@@ -212,9 +237,9 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json)
         }
-        Command::List { parked, json, .. } => {
+        Command::List { specs, parked, json, .. } => {
             let cfg = require_initialized(&root)?;
-            cmd_list(&cfg, *parked, *json)
+            cmd_list(&cfg, *specs, *parked, *json)
         }
         Command::Show { item, json } => {
             let cfg = require_initialized(&root)?;

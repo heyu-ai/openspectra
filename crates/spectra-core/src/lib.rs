@@ -7,6 +7,7 @@ pub mod change;
 pub mod config;
 pub mod drift;
 pub mod git;
+pub mod spec;
 pub mod tasks;
 
 pub use change::{Change, ChangeMetadata};
