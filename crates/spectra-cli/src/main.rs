@@ -1,4 +1,4 @@
-//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`.
+//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -66,6 +66,23 @@ enum Command {
     Unpark {
         /// Change name to unpark.
         change: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Scaffold a new change or other artifact.
+    New {
+        #[command(subcommand)]
+        target: NewTarget,
+    },
+}
+
+#[derive(Subcommand)]
+enum NewTarget {
+    /// Scaffold a new change directory (.openspec.yaml, proposal.md,
+    /// design.md, tasks.md, and a baseline git SHA).
+    Change {
+        /// Name for the new change (kebab-case, e.g. 'add-search-filter').
+        name: String,
         #[arg(long)]
         json: bool,
     },
@@ -357,6 +374,22 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
+    let ch = change::create(cfg, name)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "name": ch.name,
+                "dir": ch.dir.display().to_string(),
+            }))?
+        );
+    } else {
+        println!("Created change '{}' in {}.", ch.name, ch.dir.display());
+    }
+    Ok(0)
+}
+
 fn task_counts(tasks_md: &Path) -> (usize, usize) {
     let Ok(text) = std::fs::read_to_string(tasks_md) else {
         return (0, 0);
@@ -412,6 +445,12 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_unpark(&cfg, change, *json)
         }
+        Command::New { target } => match target {
+            NewTarget::Change { name, json } => {
+                let cfg = require_initialized(&root)?;
+                cmd_new_change(&cfg, name, *json)
+            }
+        },
     }
 }
 

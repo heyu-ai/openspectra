@@ -164,6 +164,53 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
     })
 }
 
+/// Scaffold a new change directory: `.openspec.yaml`, `proposal.md`,
+/// `design.md`, `tasks.md`, and (best-effort) a `.spectra/changes/<name>.started`
+/// baseline SHA. Errors if `name` isn't kebab-case or the change already
+/// exists.
+pub fn create(cfg: &Config, name: &str) -> Result<Change> {
+    if !CHANGE_NAME_RE.is_match(name) {
+        return Err(anyhow!(
+            "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
+        ));
+    }
+    let dir = cfg.changes_dir().join(name);
+    if dir.exists() {
+        return Err(anyhow!("change '{name}' already exists in {}", cfg.changes_dir().display()));
+    }
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+
+    let today = chrono::Local::now().date_naive();
+    let files: [(&str, String); 4] = [
+        (
+            ".openspec.yaml",
+            format!("schema: spec-driven\ncreated: {today}\ncreated_with: spectra-cli\n"),
+        ),
+        ("proposal.md", format!("# {name}\n\ntodo: describe what this change does and why.\n")),
+        // Lowercase-only: `drift`'s Symbol-anchor extraction (anchors.rs)
+        // flags any capitalized word not found elsewhere in the repo as a
+        // broken reference, so placeholder prose here must avoid it or a
+        // freshly-created change scores as heavily drifted immediately.
+        ("design.md", "# design\n\ntodo: describe the technical design here.\n".to_string()),
+        ("tasks.md", "# tasks\n\n- [ ] todo\n".to_string()),
+    ];
+    for (filename, content) in files {
+        let path = dir.join(filename);
+        std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+    }
+
+    // Best-effort: a non-git root (or a repo with no commits yet) just means
+    // `drift`'s Time dimension has no baseline to diff against, not an error.
+    if let Some(sha) = crate::git::head_sha(&cfg.root) {
+        let started = cfg.root.join(".spectra").join("changes").join(format!("{name}.started"));
+        let parent = started.parent().expect("started path always has a parent");
+        std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+        std::fs::write(&started, sha).with_context(|| format!("writing {}", started.display()))?;
+    }
+
+    load(cfg, name)
+}
+
 /// Change directory names under `changes_dir()` that pass the archive/name
 /// filters (but aren't yet split by parked state), unsorted. Shared by
 /// `list_active`/`list_parked` so the filter set can't drift between them.
@@ -345,6 +392,66 @@ mod tests {
         assert!(park(&cfg, "2026-01-01-old-change").is_err());
         assert!(unpark(&cfg, "2026-01-01-old-change").is_err());
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn create_scaffolds_all_expected_files() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+
+        let ch = create(&cfg, "add-search-filter").unwrap();
+
+        assert_eq!(ch.name, "add-search-filter");
+        assert!(ch.dir.join(".openspec.yaml").is_file());
+        assert!(ch.proposal_md().is_file());
+        assert!(ch.design_md().is_file());
+        assert!(ch.tasks_md().is_file());
+        assert_eq!(ch.metadata.schema.as_deref(), Some("spec-driven"));
+        assert!(ch.metadata.created.is_some());
+        assert_eq!(list_active(&cfg), vec!["add-search-filter".to_string()]);
+    }
+
+    #[test]
+    fn create_rejects_non_kebab_case_names() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+
+        assert!(create(&cfg, "Not_Kebab_Case").is_err());
+        assert!(create(&cfg, "").is_err());
+    }
+
+    #[test]
+    fn create_errors_when_change_already_exists() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+
+        create(&cfg, "add-search-filter").unwrap();
+        assert!(create(&cfg, "add-search-filter").is_err());
+    }
+
+    #[test]
+    fn create_writes_started_sha_when_root_is_a_git_repo() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        let run = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&*tmp)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@t.co"]);
+        run(&["config", "user.name", "t"]);
+        write(&tmp.join("README.md"), "hi\n");
+        run(&["add", "README.md"]);
+        run(&["commit", "-q", "-m", "init"]);
+
+        let ch = create(&cfg, "add-search-filter").unwrap();
+        assert!(ch.started_sha.is_some());
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even
