@@ -1,5 +1,6 @@
 //! OpenSpectra CLI: `drift`, `list`, `show`.
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -16,7 +17,7 @@ use spectra_core::{change, config::Config, drift, spec};
     about = "Open-source Spectra spec-driven CLI"
 )]
 struct Cli {
-    /// (not yet implemented) Disable colored output.
+    /// Disable colored output (also respects the NO_COLOR env var).
     #[arg(long, global = true)]
     no_color: bool,
     #[command(subcommand)]
@@ -76,7 +77,7 @@ fn require_initialized(root: &Path) -> Result<Config> {
     Config::load(root)
 }
 
-fn cmd_drift(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
+fn cmd_drift(cfg: &Config, change_name: Option<&str>, as_json: bool, use_color: bool) -> Result<i32> {
     let name = change::resolve(cfg, change_name)?;
     let change = change::load(cfg, &name)?;
     let report = drift::analyze(cfg, &change)?;
@@ -84,14 +85,41 @@ fn cmd_drift(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        print_human(&report);
+        print_human(&report, use_color);
     }
     Ok(report.exit_code())
 }
 
+/// Whether to emit ANSI color codes: the `--no-color` flag and the `NO_COLOR`
+/// env var (https://no-color.org) both disable it; otherwise color is only
+/// emitted when stdout is a terminal (never when piped/redirected).
+fn color_enabled(no_color: bool) -> bool {
+    !no_color && std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+}
+
+/// Wrap `text` in the given SGR color code (e.g. `"31"` for red) when
+/// `enabled`, otherwise return it unchanged.
+fn colorize(text: &str, sgr_code: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[{sgr_code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+/// SGR color code for a drift severity: green for light, yellow for medium,
+/// red for heavy (and any other/unknown value, treated as the worst case).
+fn severity_sgr_code(severity: &str) -> &'static str {
+    match severity {
+        "light" => "32",
+        "medium" => "33",
+        _ => "31",
+    }
+}
+
 /// Conclusion-first human report (mirrors the reference layout: plain-language
 /// next step, then a scorecard, then non-empty technical detail).
-fn print_human(r: &drift::DriftReport) {
+fn print_human(r: &drift::DriftReport, use_color: bool) {
     println!("## Drift Report: {}\n", r.change_id);
 
     let conclusion = match r.severity.as_str() {
@@ -99,7 +127,8 @@ fn print_human(r: &drift::DriftReport) {
         "medium" => "The change has drifted moderately; refresh the plan before implementing.",
         _ => "The change has drifted heavily; the old plan likely no longer fits — archive or restart.",
     };
-    println!("{conclusion}\n");
+    let code = severity_sgr_code(&r.severity);
+    println!("{}\n", colorize(conclusion, code, use_color));
 
     let dim = |k: &str| r.dimensions.iter().find(|d| format!("{:?}", d.kind) == k);
     let time = dim("Time").map(|d| d.status.as_str()).unwrap_or("-");
@@ -299,16 +328,14 @@ fn first_line(path: &Path) -> String {
 
 fn run() -> Result<i32> {
     let cli = Cli::parse();
-    if cli.no_color {
-        // Reserved: colored output is not yet emitted, so this is a no-op today.
-    }
+    let use_color = color_enabled(cli.no_color);
     let cwd = std::env::current_dir().context("getting current directory")?;
     let root = find_root(&cwd);
 
     match &cli.command {
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
-            cmd_drift(&cfg, change.as_deref(), *json)
+            cmd_drift(&cfg, change.as_deref(), *json, use_color)
         }
         Command::List {
             specs,
@@ -341,6 +368,26 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_enabled_is_false_when_no_color_flag_is_set() {
+        // Regardless of NO_COLOR env or TTY state, the explicit flag wins.
+        assert!(!color_enabled(true));
+    }
+
+    #[test]
+    fn colorize_wraps_text_in_sgr_codes_only_when_enabled() {
+        assert_eq!(colorize("hi", "31", true), "\x1b[31mhi\x1b[0m");
+        assert_eq!(colorize("hi", "31", false), "hi");
+    }
+
+    #[test]
+    fn severity_sgr_code_maps_known_and_unknown_severities() {
+        assert_eq!(severity_sgr_code("light"), "32");
+        assert_eq!(severity_sgr_code("medium"), "33");
+        assert_eq!(severity_sgr_code("heavy"), "31");
+        assert_eq!(severity_sgr_code("anything-else"), "31");
+    }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even
     /// when the test panics partway through (an assertion failure must not
