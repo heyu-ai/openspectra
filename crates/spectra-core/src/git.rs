@@ -357,4 +357,71 @@ mod tests {
         let files = dirty_files(&dir).unwrap();
         assert_eq!(files, vec!["café with space.txt".to_string()]);
     }
+
+    #[test]
+    fn user_identity_formats_local_repo_config_as_name_and_email() {
+        let dir = TempDir::new("identity-set");
+        init_repo(&dir); // sets local user.name/user.email
+
+        assert_eq!(user_identity(&dir), Some("t <t@t.co>".to_string()));
+    }
+
+    /// Temporarily points `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` at
+    /// `/dev/null`, isolating a git command from whatever global/system
+    /// identity happens to be configured on the machine running this test
+    /// (every developer/CI machine plausibly has one) -- otherwise the
+    /// "identity unset" branch below would be unreachable. Mutates
+    /// process-wide env vars, which is a known theoretical race under
+    /// `cargo test`'s parallel harness; accepted here since no other test in
+    /// this module reads either variable.
+    struct IsolatedGitConfig {
+        prev_global: Option<String>,
+        prev_system: Option<String>,
+    }
+
+    impl IsolatedGitConfig {
+        fn new() -> Self {
+            let prev_global = std::env::var("GIT_CONFIG_GLOBAL").ok();
+            let prev_system = std::env::var("GIT_CONFIG_SYSTEM").ok();
+            std::env::set_var("GIT_CONFIG_GLOBAL", "/dev/null");
+            std::env::set_var("GIT_CONFIG_SYSTEM", "/dev/null");
+            Self {
+                prev_global,
+                prev_system,
+            }
+        }
+    }
+
+    impl Drop for IsolatedGitConfig {
+        fn drop(&mut self) {
+            match &self.prev_global {
+                Some(v) => std::env::set_var("GIT_CONFIG_GLOBAL", v),
+                None => std::env::remove_var("GIT_CONFIG_GLOBAL"),
+            }
+            match &self.prev_system {
+                Some(v) => std::env::set_var("GIT_CONFIG_SYSTEM", v),
+                None => std::env::remove_var("GIT_CONFIG_SYSTEM"),
+            }
+        }
+    }
+
+    #[test]
+    fn user_identity_is_none_when_no_identity_is_configured_anywhere() {
+        let dir = TempDir::new("identity-unset");
+        init_repo_no_identity(&dir);
+        let _isolated = IsolatedGitConfig::new();
+
+        assert_eq!(user_identity(&dir), None);
+    }
+
+    fn init_repo_no_identity(dir: &Path) {
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["init", "-q"])
+            .output()
+            .unwrap()
+            .status
+            .success());
+    }
 }

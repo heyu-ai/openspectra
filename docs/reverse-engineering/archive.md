@@ -45,9 +45,7 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    left as-is, matching the project's established practice of not
    re-litigating pre-existing, already-shipped command wording for a
    different command's sake).
-2. If `--mark-tasks-complete`: flip every pending checkbox in `tasks.md` to
-   done (`tasks::mark_all_done`), regardless of group headers.
-3. Move `<spec_dir>/changes/<name>/` to
+2. Move `<spec_dir>/changes/<name>/` to
    `<spec_dir>/changes/archive/<YYYY-MM-DD>-<name>/` (confirmed via golden
    run — **not** a top-level `archived/` directory, and **not** a flat
    `changes/<date>-<name>/` either; it's nested one level deeper, under a
@@ -55,16 +53,35 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    `change.rs::walk_change_names`'s pre-existing `name == "archive"`
    exclusion (added before this PR, inferred from this very layout) and its
    `ARCHIVED_PREFIX_RE` filter.
-4. Stamp `.openspec.yaml` (at the new location) with two appended fields:
-   `archived_by: "<git config user.name> <git config user.email>"` and
-   `archived_at: <YYYY-MM-DD>` (both confirmed via golden run; matches the
-   already-existing `created_by`/`created`-style fields on `ChangeMetadata`).
+3. If `--mark-tasks-complete`: flip every pending checkbox in the
+   *now-archived* `tasks.md` to done (`tasks::mark_all_done`), regardless of
+   group headers. This runs **after** the move (not before, as an earlier
+   draft had it) so that a rename failure — e.g. a same-day archive-name
+   collision from re-archiving a same-named change twice — never leaves the
+   still-active change with prematurely-flipped checkboxes.
+4. Stamp `.openspec.yaml` (at the new location) with `archived_at: <YYYY-MM-DD>`
+   and, when `git config user.name`/`user.email` are both set,
+   `archived_by: "<name> <email>"` (both confirmed via golden run; matches
+   the already-existing `created_by`/`created`-style fields on
+   `ChangeMetadata`). If git identity isn't configured, only `archived_at`
+   is written — OpenSpectra warns on stderr when this happens rather than
+   silently omitting the field with no signal.
 5. Unless `--skip-specs`: for each `specs/<capability>/spec.md` under the
    (now-moved) change, merge its delta into
    `<spec_dir>/specs/<capability>/spec.md`, then print
    `Specs applied: <capability> (added: N, modified: 0, removed: 0, renamed: 0)`
-   per capability. The oracle also prints "Snapshot created for unarchive
-   support." — **not implemented**; see "Known limitations" below.
+   per capability — `modified`/`removed`/`renamed` are always `0` since
+   those delta kinds are rejected before archiving reaches this point (see
+   validation below), not a claim they're supported. The oracle also prints
+   "Snapshot created for unarchive support." — **not implemented**; see
+   "Known limitations" below.
+6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
+   markers, if any (best-effort; a failure here only warns, since archiving
+   itself already succeeded by this point). Not oracle-confirmed, but a
+   correctness fix: without it, a re-created change of the same name could
+   silently inherit a stale `.parked` marker from before it was archived —
+   the same class of bug already fixed for `change::create` (see
+   `change.rs`'s `clear_stale_sidecar_state`).
 
 ## Spec delta format (and OpenSpectra's narrowed scope)
 
@@ -143,9 +160,11 @@ never actually fully archived, with no easy way back short of manually
 moving the directory back). Validating first means the change is left
 exactly as it was on any spec-format error.
 
-## Known limitations (deferred, matching the project's existing
-"conservative implementation, document the gap" pattern used elsewhere —
-e.g. `drift`'s uncalibrated Tasks-collision detection)
+## Known limitations
+
+Deferred, matching the project's existing "conservative implementation,
+document the gap" pattern used elsewhere — e.g. `drift`'s uncalibrated
+Tasks-collision detection.
 
 - **No snapshot/unarchive support.** The oracle prints "Snapshot created for
   unarchive support." and (presumably) a `spectra unarchive` command exists

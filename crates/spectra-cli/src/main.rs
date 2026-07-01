@@ -522,8 +522,13 @@ fn cmd_archive(
         outcome.name, outcome.archived_name
     );
     for applied in &outcome.specs_applied {
+        // modified/removed/renamed are always 0: MODIFIED/REMOVED/RENAMED
+        // deltas are rejected before archiving reaches this point (see
+        // archive::validate_spec_deltas), so printing them isn't a claim
+        // those delta kinds are supported -- it matches the reference CLI's
+        // fuller summary line format for the delta kinds this does apply.
         println!(
-            "Specs applied: {} (added: {})",
+            "Specs applied: {} (added: {}, modified: 0, removed: 0, renamed: 0)",
             applied.capability, applied.added
         );
     }

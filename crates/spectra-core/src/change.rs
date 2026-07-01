@@ -81,11 +81,14 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
     parked_marker_path(cfg, name).exists()
 }
 
-/// Remove any `.parked`/`.started` sidecar files left behind by a change
-/// directory of the same `name` that was deleted by hand (rather than via
-/// `spectra archive`), so a freshly `create`d change never silently inherits
-/// stale parked/baseline state. A missing file is not an error.
-fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
+/// Remove any `.parked`/`.started` sidecar files for `name`. Used by
+/// `create` (a change directory of the same name deleted by hand, rather
+/// than via `spectra archive`, may have left these behind — clearing them
+/// stops a freshly created change from silently inheriting stale
+/// parked/baseline state) and by `archive::archive` itself (an archived
+/// change is no longer active, so its `.parked`/`.started` markers are
+/// cruft once the move succeeds). A missing file is not an error.
+pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
     for path in [parked_marker_path(cfg, name), started_sha_path(cfg, name)] {
         match std::fs::remove_file(&path) {
             Ok(()) => {}

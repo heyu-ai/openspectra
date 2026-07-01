@@ -268,4 +268,10 @@ mod tests {
         let md = "# tasks\n\nsome prose\n\n- [ ] a\n";
         assert_eq!(mark_all_done(md), "# tasks\n\nsome prose\n\n- [x] a\n");
     }
+
+    #[test]
+    fn mark_all_done_does_not_add_a_trailing_newline_when_the_input_has_none() {
+        let md = "- [ ] a";
+        assert_eq!(mark_all_done(md), "- [x] a");
+    }
 }

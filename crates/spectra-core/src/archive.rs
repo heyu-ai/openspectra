@@ -14,6 +14,7 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::config::Config;
@@ -42,10 +43,46 @@ pub struct ArchiveOutcome {
     pub specs_applied: Vec<SpecApplyResult>,
 }
 
+/// Read `path` as UTF-8 text: `Ok(None)` when it's genuinely absent, `Err`
+/// for any other I/O failure (permission denied, invalid UTF-8, etc.) —
+/// callers must not fold a real read failure into "doesn't exist yet",
+/// since doing so before a subsequent write (as this module's several
+/// create-if-absent spots do) would silently clobber unreadable content.
+fn read_optional(path: &Path) -> Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Ok(Some(s)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+/// `Ok(None)` when `path` is genuinely absent; `Err` for any other failure
+/// (mirrors [`read_optional`]'s NotFound-only collapse).
+fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+/// Whether `path` is a directory, via `fs::metadata` (not the boolean
+/// `Path::is_dir()`, which returns `false` on *any* stat error including
+/// permission-denied — indistinguishable from "genuinely absent").
+fn is_dir(path: &Path) -> Result<bool> {
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(m.is_dir()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
 /// Archive `name`: move its directory to
-/// `<spec_dir>/changes/archive/<today>-<name>/`, stamp `.openspec.yaml` with
-/// `archived_by`/`archived_at`, optionally mark all pending tasks done
-/// first, and (unless `skip_specs`) apply each capability's spec delta.
+/// `<spec_dir>/changes/archive/<today>-<name>/`, then (in order) optionally
+/// mark all pending tasks done, stamp `.openspec.yaml` with
+/// `archived_by`/`archived_at`, and (unless `skip_specs`) apply each
+/// capability's spec delta. Clears the change's `.spectra/` sidecar
+/// (parked/baseline) markers on success.
 ///
 /// Errors with "Change '<name>' not found." when `name` doesn't name an
 /// existing active change — matching the reference CLI, which reports the
@@ -56,9 +93,15 @@ pub struct ArchiveOutcome {
 /// Unless `skip_specs`, every capability's spec delta is validated (checked
 /// for an unsupported `MODIFIED`/`REMOVED`/`RENAMED Requirements` section)
 /// *before* the change directory is moved or anything else is written, so a
-/// validation failure leaves the change exactly as it was -- still active,
+/// validation failure leaves the change exactly as it was — still active,
 /// not stuck half-archived with the directory already moved but its specs
-/// never applied.
+/// never applied. `--mark-tasks-complete` similarly runs *after* the
+/// directory move (operating on the now-archived `tasks.md`), not before —
+/// if the move itself fails (e.g. a same-day archive-name collision), the
+/// still-active change is left completely untouched rather than carrying
+/// prematurely-flipped checkboxes. Any failure *after* the move still
+/// leaves the change moved but incomplete; the resulting error names the
+/// new location so it isn't a mystery where the change went.
 pub fn archive(
     cfg: &Config,
     name: &str,
@@ -71,14 +114,6 @@ pub fn archive(
         validate_spec_deltas(&ch.dir)?;
     }
 
-    if mark_tasks_complete {
-        let tasks_path = ch.tasks_md();
-        if let Ok(md) = std::fs::read_to_string(&tasks_path) {
-            std::fs::write(&tasks_path, crate::tasks::mark_all_done(&md))
-                .with_context(|| format!("writing {}", tasks_path.display()))?;
-        }
-    }
-
     let today = chrono::Local::now().date_naive();
     let archived_name = format!("{today}-{name}");
     let archive_dir = cfg.changes_dir().join("archive");
@@ -88,13 +123,29 @@ pub fn archive(
     std::fs::rename(&ch.dir, &dest)
         .with_context(|| format!("moving {} to {}", ch.dir.display(), dest.display()))?;
 
-    stamp_archived_metadata(cfg, &dest)?;
+    let specs_applied = (|| -> Result<Vec<SpecApplyResult>> {
+        if mark_tasks_complete {
+            mark_tasks_complete_at(&dest, name)?;
+        }
+        stamp_archived_metadata(cfg, &dest, today)?;
+        if skip_specs {
+            Ok(Vec::new())
+        } else {
+            apply_spec_deltas(cfg, &dest, name, today)
+        }
+    })()
+    .map_err(|e| {
+        anyhow!(
+            "change '{name}' was moved to {} but archiving could not be completed: {e}. \
+             The change is at that location -- fix the issue, then either finish archiving by \
+             hand or move it back to keep working on it.",
+            dest.display()
+        )
+    })?;
 
-    let specs_applied = if skip_specs {
-        Vec::new()
-    } else {
-        apply_spec_deltas(cfg, &dest, name, today)?
-    };
+    if let Err(e) = change::clear_stale_sidecar_state(cfg, name) {
+        eprintln!("warning: failed to clear sidecar state for '{name}': {e}");
+    }
 
     Ok(ArchiveOutcome {
         name: name.to_string(),
@@ -104,24 +155,28 @@ pub fn archive(
 }
 
 /// Errors if any capability's `specs/<cap>/spec.md` under `change_dir`
-/// contains a `MODIFIED`/`REMOVED`/`RENAMED Requirements` section, before
-/// anything about the change has been touched.
+/// contains a `MODIFIED`/`REMOVED`/`RENAMED Requirements` section, or has a
+/// non-UTF-8 capability directory name, before anything about the change
+/// has been touched.
 fn validate_spec_deltas(change_dir: &Path) -> Result<()> {
     let specs_dir = change_dir.join("specs");
-    let Ok(entries) = std::fs::read_dir(&specs_dir) else {
+    let Some(entries) = read_dir_optional(&specs_dir)? else {
         return Ok(());
     };
     for entry in entries {
         let entry = entry.with_context(|| format!("reading {}", specs_dir.display()))?;
         let path = entry.path();
-        if !path.is_dir() {
+        if !is_dir(&path)? {
             continue;
         }
-        let Ok(delta) = std::fs::read_to_string(path.join("spec.md")) else {
+        let Some(delta) = read_optional(&path.join("spec.md"))? else {
             continue;
         };
+        let capability = entry
+            .file_name()
+            .into_string()
+            .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
         if let Some(caps) = UNSUPPORTED_HEADER_RE.captures(&delta) {
-            let capability = entry.file_name().to_string_lossy().into_owned();
             let kind = &caps[1];
             return Err(anyhow!(
                 "capability '{capability}': {kind} requirement deltas aren't supported yet -- \
@@ -132,16 +187,32 @@ fn validate_spec_deltas(change_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn stamp_archived_metadata(cfg: &Config, dest: &Path) -> Result<()> {
+/// Flip every pending checkbox in the archived change's `tasks.md`. A
+/// missing `tasks.md` is not an error (nothing to mark), but is worth a
+/// warning since `--mark-tasks-complete` was explicitly requested and would
+/// otherwise silently have no effect.
+fn mark_tasks_complete_at(dest: &Path, name: &str) -> Result<()> {
+    let tasks_path = dest.join("tasks.md");
+    let Some(md) = read_optional(&tasks_path)? else {
+        eprintln!("warning: --mark-tasks-complete requested but no tasks.md found for '{name}'");
+        return Ok(());
+    };
+    std::fs::write(&tasks_path, crate::tasks::mark_all_done(&md))
+        .with_context(|| format!("writing {}", tasks_path.display()))
+}
+
+fn stamp_archived_metadata(cfg: &Config, dest: &Path, today: chrono::NaiveDate) -> Result<()> {
     let meta_path = dest.join(".openspec.yaml");
-    let mut content = std::fs::read_to_string(&meta_path).unwrap_or_default();
+    let mut content = read_optional(&meta_path)?.unwrap_or_default();
     if !content.is_empty() && !content.ends_with('\n') {
         content.push('\n');
     }
-    if let Some(identity) = crate::git::user_identity(&cfg.root) {
-        content.push_str(&format!("archived_by: {identity}\n"));
+    match crate::git::user_identity(&cfg.root) {
+        Some(identity) => content.push_str(&format!("archived_by: {identity}\n")),
+        None => eprintln!(
+            "note: git user.name/user.email not configured; archived_by will be omitted from .openspec.yaml"
+        ),
     }
-    let today = chrono::Local::now().date_naive();
     content.push_str(&format!("archived_at: {today}\n"));
     std::fs::write(&meta_path, content).with_context(|| format!("writing {}", meta_path.display()))
 }
@@ -154,21 +225,22 @@ fn apply_spec_deltas(
 ) -> Result<Vec<SpecApplyResult>> {
     let specs_dir = archived_dir.join("specs");
     let mut results = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&specs_dir) else {
+    let Some(entries) = read_dir_optional(&specs_dir)? else {
         return Ok(results);
     };
     for entry in entries {
         let entry = entry.with_context(|| format!("reading {}", specs_dir.display()))?;
         let path = entry.path();
-        if !path.is_dir() {
+        if !is_dir(&path)? {
             continue;
         }
-        let Ok(delta) = std::fs::read_to_string(path.join("spec.md")) else {
+        let Some(delta) = read_optional(&path.join("spec.md"))? else {
             continue;
         };
-        let Some(capability) = entry.file_name().to_str().map(str::to_string) else {
-            continue;
-        };
+        let capability = entry
+            .file_name()
+            .into_string()
+            .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
         let added = apply_added_requirements(cfg, &capability, &delta, source, today)?;
         results.push(SpecApplyResult { capability, added });
     }
@@ -182,8 +254,9 @@ fn apply_spec_deltas(
 /// Purpose if it doesn't exist yet), followed by a `<!-- @trace ... -->`
 /// footer recording `source`/`updated`/`code` (the latter from this change's
 /// `.spectra/touched/<name>.json`, if any). Returns the number of
-/// requirements appended (0 if the delta has no `## ADDED Requirements`
-/// section at all).
+/// requirements appended — 0 both when the delta has no `## ADDED
+/// Requirements` section at all, and when that section is present but
+/// empty (no `### Requirement:` blocks).
 ///
 /// Assumes `delta` already passed [`validate_spec_deltas`] (called by
 /// `archive` before the change directory is moved) and so has no
@@ -221,7 +294,7 @@ fn apply_added_requirements(
         .collect();
 
     let spec_path = cfg.specs_dir().join(capability).join("spec.md");
-    let mut content = std::fs::read_to_string(&spec_path).unwrap_or_else(|_| {
+    let mut content = read_optional(&spec_path)?.unwrap_or_else(|| {
         format!(
             "# {capability} Specification\n\n\
              ## Purpose\n\n\
@@ -316,6 +389,23 @@ mod tests {
         }
     }
 
+    fn git_repo_cfg(tmp: &TempDir) -> Config {
+        let run = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&**tmp)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "Ada Lovelace"]);
+        run(&["config", "user.email", "ada@example.com"]);
+        cfg(tmp)
+    }
+
     const DELTA_TEMPLATE: &str = "## ADDED Requirements\n\n\
         ### Requirement: <!-- requirement name -->\n\n\
         <!-- requirement text -->\n\n\
@@ -365,7 +455,7 @@ mod tests {
     #[test]
     fn archive_stamps_archived_by_and_archived_at() {
         let tmp = TempDir::new();
-        let c = cfg(&tmp);
+        let c = git_repo_cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
 
         let outcome = archive(&c, "my-feature", true, false).unwrap();
@@ -378,6 +468,7 @@ mod tests {
         )
         .unwrap();
         assert!(meta.contains("archived_at: "));
+        assert!(meta.contains("archived_by: Ada Lovelace <ada@example.com>"));
     }
 
     #[test]
@@ -479,6 +570,61 @@ mod tests {
     }
 
     #[test]
+    fn archive_handles_multiple_requirements_in_one_added_section() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let delta = "## ADDED Requirements\n\n\
+            ### Requirement: First\n\ntext one\n\n\
+            ### Requirement: Second\n\ntext two\n";
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            delta,
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied[0].added, 2);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        // Each requirement's own text stays with its own block, not bled into the other.
+        let first_idx = spec.find("### Requirement: First").unwrap();
+        let second_idx = spec.find("### Requirement: Second").unwrap();
+        assert!(first_idx < second_idx);
+        let between = &spec[first_idx..second_idx];
+        assert!(between.contains("text one"));
+        assert!(!between.contains("text two"));
+        assert!(spec.contains("---\n### Requirement: Second"));
+    }
+
+    #[test]
+    fn archive_stops_at_a_section_header_following_added_requirements() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let delta = "## ADDED Requirements\n\n\
+            ### Requirement: First\n\ntext one\n\n\
+            ## Some Other Section\n\nunrelated trailing content\n";
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            delta,
+        );
+
+        archive(&c, "my-feature", false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("text one"));
+        assert!(!spec.contains("unrelated trailing content"));
+    }
+
+    #[test]
     fn archive_skips_specs_when_skip_specs_is_true() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
@@ -564,5 +710,22 @@ mod tests {
         assert_eq!(outcome.specs_applied.len(), 1);
         assert_eq!(outcome.specs_applied[0].added, 0);
         assert!(!c.specs_dir().join("my-cap").join("spec.md").exists());
+    }
+
+    #[test]
+    fn archive_clears_sidecar_state_on_success() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        change::park(&c, "my-feature").unwrap();
+
+        archive(&c, "my-feature", true, false).unwrap();
+
+        assert!(!c
+            .root
+            .join(".spectra")
+            .join("changes")
+            .join("my-feature.parked")
+            .exists());
     }
 }
