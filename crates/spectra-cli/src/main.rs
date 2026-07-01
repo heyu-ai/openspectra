@@ -306,24 +306,49 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
-    fn tempfile_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "spectra-cli-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// RAII guard for a per-test scratch directory: removes it on drop even
+    /// when the test panics partway through (an assertion failure must not
+    /// leak the directory).
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            // Nanosecond timestamps alone can collide between threads running
+            // concurrently (observed in practice under `cargo test`'s default
+            // parallel harness); an atomic counter guarantees uniqueness.
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "spectra-cli-test-{}-{}-{seq}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
     fn list_specs_items_shape_matches_specs_key_contract() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new();
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
@@ -343,22 +368,18 @@ mod tests {
         let round_tripped: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&wrapped).unwrap()).unwrap();
         assert_eq!(round_tripped["specs"][0]["name"], "auth");
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn list_specs_items_is_empty_when_no_specs_exist() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new();
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
 
         let items = list_specs_items(&cfg).unwrap();
         assert!(items.is_empty());
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 }

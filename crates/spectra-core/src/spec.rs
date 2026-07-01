@@ -37,13 +37,27 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
     };
     for entry in entries {
         let entry = entry.with_context(|| format!("reading {}", cfg.specs_dir().display()))?;
-        let path = entry.path();
-        if !path.is_dir() || !path.join("spec.md").is_file() {
+        // `Path::is_dir`/`is_file` return `false` on *any* stat error (including
+        // PermissionDenied), which would silently drop an inaccessible spec
+        // from the listing instead of reporting it; check via `metadata`/
+        // `file_type` so only a genuine NotFound is treated as "not a spec".
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        if !file_type.is_dir() {
             continue;
+        }
+        let spec_md = entry.path().join("spec.md");
+        match std::fs::metadata(&spec_md) {
+            Ok(m) if m.is_file() => {}
+            Ok(_) => continue,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).with_context(|| format!("reading {}", spec_md.display())),
         }
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             eprintln!(
-                "warning: skipping non-UTF-8 spec directory name in {}",
+                "warning: skipping non-UTF-8 spec directory name {:?} in {}",
+                entry.file_name().to_string_lossy(),
                 cfg.specs_dir().display()
             );
             continue;
@@ -87,9 +101,9 @@ mod tests {
 
     #[test]
     fn lists_capability_dirs_containing_spec_md() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new("spec");
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
@@ -103,44 +117,38 @@ mod tests {
 
         let names = list(&cfg).unwrap();
         assert_eq!(names, vec!["auth".to_string(), "billing".to_string()]);
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn list_is_empty_when_specs_dir_missing_entirely() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new("spec");
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
 
         assert_eq!(list(&cfg).unwrap(), Vec::<String>::new());
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn list_is_empty_when_specs_dir_present_but_has_no_spec_md() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new("spec");
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
         fs::create_dir_all(cfg.specs_dir().join("empty-dir")).unwrap();
 
         assert_eq!(list(&cfg).unwrap(), Vec::<String>::new());
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn load_errors_when_spec_md_missing() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new("spec");
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
@@ -148,15 +156,13 @@ mod tests {
 
         assert!(load(&cfg, "ghost").is_err());
         assert!(load(&cfg, "does-not-exist").is_err());
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn load_succeeds_for_valid_spec() {
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new("spec");
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
@@ -165,8 +171,6 @@ mod tests {
         let sp = load(&cfg, "auth").unwrap();
         assert_eq!(sp.name, "auth");
         assert_eq!(sp.spec_md(), cfg.specs_dir().join("auth").join("spec.md"));
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
     // macOS (APFS/HFS+) rejects non-UTF-8 filenames at the syscall level, so
@@ -176,9 +180,9 @@ mod tests {
     fn list_skips_non_utf8_directory_names() {
         use std::os::unix::ffi::OsStrExt;
 
-        let tmp = tempfile_dir();
+        let tmp = TempDir::new("spec");
         let cfg = Config {
-            root: tmp.clone(),
+            root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
         };
@@ -189,20 +193,43 @@ mod tests {
         // The non-UTF-8 entry is skipped (with a stderr warning), not returned
         // and not a hard failure for the whole listing.
         assert_eq!(list(&cfg).unwrap(), vec!["auth".to_string()]);
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
 
-    fn tempfile_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "spectra-spec-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// RAII guard for a per-test scratch directory: removes it on drop even
+    /// when the test panics partway through (an assertion failure must not
+    /// leak the directory).
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            // Nanosecond timestamps alone can collide between threads running
+            // concurrently (observed in practice under `cargo test`'s default
+            // parallel harness); an atomic counter guarantees uniqueness.
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "spectra-{label}-test-{}-{}-{seq}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }

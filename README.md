@@ -74,7 +74,7 @@ binary is used as a golden oracle to calibrate constants
 ## Layout
 
 ```
-crates/spectra-core/   # change discovery, anchors, git, drift scoring (library)
+crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
 crates/spectra-cli/    # clap CLI: drift / list / show
 docs/reverse-engineering/drift.md   # how the original works, and what's still open
 scripts/               # oracle calibration probes
