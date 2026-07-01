@@ -44,9 +44,13 @@ spectra show  <CHANGE|SPEC> [--json]   # prints the change's proposal, or a spec
 
 Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
 
-> Flags `--no-color` and `list --changes` are accepted by the CLI but
-> **not yet implemented** (marked as such in `--help`); they are placeholders
-> for the wider command set still being ported.
+`spectra drift`'s human-readable conclusion line is colored by severity
+(green/yellow/red) when stdout is a terminal; `--no-color` or the
+[`NO_COLOR`](https://no-color.org) env var disables it.
+
+> Flag `list --changes` is accepted by the CLI but **not yet implemented**
+> (marked as such in `--help`); it's a placeholder for the wider command set
+> still being ported.
 
 ### CI gate example
 
