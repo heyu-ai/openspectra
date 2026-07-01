@@ -193,8 +193,9 @@ fn list_specs_items(cfg: &Config) -> Result<Vec<serde_json::Value>> {
     let names = spec::list(cfg)?;
     let mut items = Vec::new();
     for name in &names {
-        let sp = spec::load(cfg, name)?;
-        let summary = first_line(&sp.spec_md());
+        // `spec::list` already confirmed `spec.md` exists for each name; skip
+        // the redundant re-stat that `spec::load` would perform.
+        let summary = first_line(&cfg.specs_dir().join(name).join("spec.md"));
         items.push(json!({ "name": name, "summary": summary }));
     }
     Ok(items)
@@ -364,10 +365,7 @@ mod tests {
         // The exact wrapper key ("specs") is the documented --json contract;
         // pin it here so a typo doesn't ship silently.
         let wrapped = json!({ "specs": items });
-        assert!(wrapped.get("specs").is_some());
-        let round_tripped: serde_json::Value =
-            serde_json::from_str(&serde_json::to_string(&wrapped).unwrap()).unwrap();
-        assert_eq!(round_tripped["specs"][0]["name"], "auth");
+        assert_eq!(wrapped["specs"][0]["name"], "auth");
     }
 
     #[test]

@@ -37,17 +37,20 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
     };
     for entry in entries {
         let entry = entry.with_context(|| format!("reading {}", cfg.specs_dir().display()))?;
+        let path = entry.path();
         // `Path::is_dir`/`is_file` return `false` on *any* stat error (including
         // PermissionDenied), which would silently drop an inaccessible spec
-        // from the listing instead of reporting it; check via `metadata`/
-        // `file_type` so only a genuine NotFound is treated as "not a spec".
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("reading {}", entry.path().display()))?;
-        if !file_type.is_dir() {
-            continue;
+        // from the listing instead of reporting it; use `fs::metadata` (which,
+        // unlike `DirEntry::file_type`, follows symlinks — matching
+        // `change::list_active`'s `Path::is_dir()` behavior) so only a genuine
+        // NotFound is treated as "not a spec".
+        match std::fs::metadata(&path) {
+            Ok(m) if m.is_dir() => {}
+            Ok(_) => continue,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         }
-        let spec_md = entry.path().join("spec.md");
+        let spec_md = path.join("spec.md");
         match std::fs::metadata(&spec_md) {
             Ok(m) if m.is_file() => {}
             Ok(_) => continue,
@@ -171,6 +174,25 @@ mod tests {
         let sp = load(&cfg, "auth").unwrap();
         assert_eq!(sp.name, "auth");
         assert_eq!(sp.spec_md(), cfg.specs_dir().join("auth").join("spec.md"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_follows_symlinked_spec_directory() {
+        let tmp = TempDir::new("spec");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        let real_dir = tmp.join("real-auth");
+        write(&real_dir.join("spec.md"), "# Auth\n");
+        std::fs::create_dir_all(cfg.specs_dir()).unwrap();
+        std::os::unix::fs::symlink(&real_dir, cfg.specs_dir().join("auth")).unwrap();
+
+        // A capability dir that's a symlink to a real directory must still be
+        // found (DirEntry::file_type() does not follow symlinks; fs::metadata does).
+        assert_eq!(list(&cfg).unwrap(), vec!["auth".to_string()]);
     }
 
     // macOS (APFS/HFS+) rejects non-UTF-8 filenames at the syscall level, so
