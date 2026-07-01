@@ -35,7 +35,7 @@ pub struct TouchedTracking {
     pub touched: Vec<TouchedEntry>,
 }
 
-fn touched_path(cfg: &Config, name: &str) -> PathBuf {
+pub(crate) fn touched_path(cfg: &Config, name: &str) -> PathBuf {
     cfg.root
         .join(".spectra")
         .join("touched")

@@ -24,6 +24,8 @@ static ADDED_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## ADDED Requirements\s*$").unwrap());
 static UNSUPPORTED_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## (MODIFIED|REMOVED|RENAMED) Requirements\s*$").unwrap());
+static REQUIREMENTS_HEADER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^## Requirements\s*$").unwrap());
 static REQUIREMENT_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^### Requirement:").unwrap());
 static SECTION_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## \S").unwrap());
@@ -134,11 +136,11 @@ pub fn archive(
             apply_spec_deltas(cfg, &dest, name, today)
         }
     })()
-    .map_err(|e| {
-        anyhow!(
-            "change '{name}' was moved to {} but archiving could not be completed: {e}. \
+    .with_context(|| {
+        format!(
+            "change '{name}' was moved to {} but archiving could not be completed. \
              The change is at that location -- fix the issue, then either finish archiving by \
-             hand or move it back to keep working on it.",
+             hand or move it back to keep working on it",
             dest.display()
         )
     })?;
@@ -201,20 +203,35 @@ fn mark_tasks_complete_at(dest: &Path, name: &str) -> Result<()> {
         .with_context(|| format!("writing {}", tasks_path.display()))
 }
 
+/// Sets `archived_by`/`archived_at` on `.openspec.yaml` by deserializing it
+/// into `ChangeMetadata`, updating those two fields, and reserializing --
+/// rather than appending raw `key: value` text lines, which (a) could
+/// produce a YAML value needing quoting/escaping that a raw string literal
+/// wouldn't get (e.g. a git user.name containing `:` or `#`), and (b) would
+/// produce a duplicate key if the file somehow already had `archived_by`/
+/// `archived_at` (this shouldn't happen in the normal flow, but a raw
+/// string append has no way to notice or correct it either way).
 fn stamp_archived_metadata(cfg: &Config, dest: &Path, today: chrono::NaiveDate) -> Result<()> {
     let meta_path = dest.join(".openspec.yaml");
-    let mut content = read_optional(&meta_path)?.unwrap_or_default();
-    if !content.is_empty() && !content.ends_with('\n') {
-        content.push('\n');
-    }
-    match crate::git::user_identity(&cfg.root) {
-        Some(identity) => content.push_str(&format!("archived_by: {identity}\n")),
-        None => eprintln!(
+    let mut metadata: change::ChangeMetadata = match read_optional(&meta_path)? {
+        None => change::ChangeMetadata::default(),
+        Some(text) => serde_yaml::from_str(&text).unwrap_or_else(|e| {
+            eprintln!(
+                "warning: ignoring unparseable {} ({e})",
+                meta_path.display()
+            );
+            change::ChangeMetadata::default()
+        }),
+    };
+    metadata.archived_by = crate::git::user_identity(&cfg.root);
+    if metadata.archived_by.is_none() {
+        eprintln!(
             "note: git user.name/user.email not configured; archived_by will be omitted from .openspec.yaml"
-        ),
+        );
     }
-    content.push_str(&format!("archived_at: {today}\n"));
-    std::fs::write(&meta_path, content).with_context(|| format!("writing {}", meta_path.display()))
+    metadata.archived_at = Some(today.to_string());
+    let yaml = serde_yaml::to_string(&metadata)?;
+    std::fs::write(&meta_path, yaml).with_context(|| format!("writing {}", meta_path.display()))
 }
 
 fn apply_spec_deltas(
@@ -248,15 +265,32 @@ fn apply_spec_deltas(
     Ok(results)
 }
 
+/// Where new requirement blocks belong in the canonical spec's existing
+/// content: right after the `## Requirements` header, before whatever `##`
+/// section (if any) follows it -- never blindly at the very end of the
+/// file, which would incorrectly nest new requirements under an unrelated
+/// trailing section (e.g. a human-added `## Notes`/`## Appendix`).
+fn requirements_insertion_point(content: &str) -> usize {
+    let Some(req_match) = REQUIREMENTS_HEADER_RE.find(content) else {
+        return content.len();
+    };
+    let after = &content[req_match.end()..];
+    SECTION_HEADER_RE
+        .find(after)
+        .map_or(content.len(), |m| req_match.end() + m.start())
+}
+
 /// Extract every `### Requirement:` block from `delta`'s `## ADDED
-/// Requirements` section (if present) and append each, verbatim, to
-/// `<spec_dir>/specs/<capability>/spec.md` (creating it with a placeholder
-/// Purpose if it doesn't exist yet), followed by a `<!-- @trace ... -->`
-/// footer recording `source`/`updated`/`code` (the latter from this change's
-/// `.spectra/touched/<name>.json`, if any). Returns the number of
-/// requirements appended — 0 both when the delta has no `## ADDED
-/// Requirements` section at all, and when that section is present but
-/// empty (no `### Requirement:` blocks).
+/// Requirements` section (if present) and insert each, verbatim, into
+/// `<spec_dir>/specs/<capability>/spec.md`'s own `## Requirements` section
+/// (creating the file with a placeholder Purpose if it doesn't exist yet),
+/// followed by a `<!-- @trace ... -->` footer recording
+/// `source`/`updated`/`code` (the latter from this change's
+/// `.spectra/touched/<name>.json`, if any). New blocks are inserted via
+/// [`requirements_insertion_point`], not blindly appended to the end of the
+/// file. Returns the number of requirements appended — 0 both when the delta
+/// has no `## ADDED Requirements` section at all, and when that section is
+/// present but empty (no `### Requirement:` blocks).
 ///
 /// Assumes `delta` already passed [`validate_spec_deltas`] (called by
 /// `archive` before the change directory is moved) and so has no
@@ -316,20 +350,25 @@ fn apply_added_requirements(
     };
 
     let mut has_existing_requirement = content.contains("### Requirement:");
+    let mut insertion = String::new();
     for block in &blocks {
-        if !content.ends_with('\n') {
-            content.push('\n');
-        }
-        content.push_str(if has_existing_requirement {
+        insertion.push_str(if has_existing_requirement {
             "\n---\n"
         } else {
             "\n"
         });
-        content.push_str(&format!(
+        insertion.push_str(&format!(
             "{block}\n\n<!-- @trace\nsource: {source}\nupdated: {today}\n{code_yaml}\n-->\n"
         ));
         has_existing_requirement = true;
     }
+
+    let mut point = requirements_insertion_point(&content);
+    if point == content.len() && !content.ends_with('\n') {
+        content.push('\n');
+        point = content.len();
+    }
+    content.insert_str(point, &insertion);
 
     let parent = spec_path.parent().expect("spec path always has a parent");
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
@@ -390,6 +429,10 @@ mod tests {
     }
 
     fn git_repo_cfg(tmp: &TempDir) -> Config {
+        git_repo_cfg_with_identity(tmp, "Ada Lovelace", "ada@example.com")
+    }
+
+    fn git_repo_cfg_with_identity(tmp: &TempDir, name: &str, email: &str) -> Config {
         let run = |args: &[&str]| {
             assert!(std::process::Command::new("git")
                 .arg("-C")
@@ -401,8 +444,8 @@ mod tests {
                 .success());
         };
         run(&["init", "-q"]);
-        run(&["config", "user.name", "Ada Lovelace"]);
-        run(&["config", "user.email", "ada@example.com"]);
+        run(&["config", "user.name", name]);
+        run(&["config", "user.email", email]);
         cfg(tmp)
     }
 
@@ -472,6 +515,31 @@ mod tests {
     }
 
     #[test]
+    fn archive_stamps_archived_by_containing_yaml_special_characters_round_trips() {
+        // A git user.name containing ':' or '#' would corrupt a raw
+        // string-append into .openspec.yaml (unquoted ':' starts a new
+        // mapping key, '#' starts a comment); stamp_archived_metadata must
+        // go through serde_yaml so the value round-trips instead.
+        let tmp = TempDir::new();
+        let c = git_repo_cfg_with_identity(&tmp, "Weird: Name #1", "weird@example.com");
+        change::create(&c, "my-feature").unwrap();
+
+        let outcome = archive(&c, "my-feature", true, false).unwrap();
+
+        let meta_path = c
+            .changes_dir()
+            .join("archive")
+            .join(&outcome.archived_name)
+            .join(".openspec.yaml");
+        let meta = std::fs::read_to_string(&meta_path).unwrap();
+        let parsed: change::ChangeMetadata = serde_yaml::from_str(&meta).unwrap();
+        assert_eq!(
+            parsed.archived_by.as_deref(),
+            Some("Weird: Name #1 <weird@example.com>")
+        );
+    }
+
+    #[test]
     fn archive_with_mark_tasks_complete_flips_all_checkboxes() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
@@ -491,6 +559,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(tasks, "- [x] a\n- [x] b\n");
+    }
+
+    #[test]
+    fn archive_with_mark_tasks_complete_succeeds_even_when_tasks_md_is_missing() {
+        // --mark-tasks-complete was explicitly requested but has nothing to
+        // do; this must not fail the whole archive (only warn on stderr).
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        std::fs::remove_file(c.changes_dir().join("my-feature").join("tasks.md")).unwrap();
+
+        let outcome = archive(&c, "my-feature", true, true).unwrap();
+
+        assert!(!c
+            .changes_dir()
+            .join("archive")
+            .join(&outcome.archived_name)
+            .join("tasks.md")
+            .exists());
     }
 
     #[test]
@@ -625,6 +712,46 @@ mod tests {
     }
 
     #[test]
+    fn archive_inserts_new_requirements_before_a_trailing_section_in_the_canonical_spec() {
+        // The *canonical* spec (not the delta) has grown a human-added
+        // section after "## Requirements" (e.g. "## Notes"). A newly
+        // archived requirement must land inside "## Requirements", before
+        // that trailing section -- not appended after it at the file's end.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            "# my-cap Specification\n\n\
+             ## Purpose\n\nExisting.\n\n\
+             ## Requirements\n\n\
+             ### Requirement: First\n\ntext\n\n\
+             ## Notes\n\nSome human-added trailing notes.\n",
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            DELTA_TEMPLATE,
+        );
+
+        archive(&c, "my-feature", false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        let new_req_idx = spec
+            .find("### Requirement: <!-- requirement name -->")
+            .unwrap();
+        let notes_idx = spec.find("## Notes").unwrap();
+        assert!(
+            new_req_idx < notes_idx,
+            "new requirement must be inserted before the trailing '## Notes' section, got:\n{spec}"
+        );
+        assert!(spec.contains("Some human-added trailing notes."));
+    }
+
+    #[test]
     fn archive_skips_specs_when_skip_specs_is_true() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
@@ -727,5 +854,104 @@ mod tests {
             .join("changes")
             .join("my-feature.parked")
             .exists());
+    }
+
+    #[test]
+    fn archive_clears_touched_json_on_success() {
+        // A change recreated with the same name after archiving must not
+        // inherit stale touched-file history from before it was archived.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        touched::record(
+            &c,
+            "my-feature",
+            1,
+            "did something",
+            vec!["src/lib.rs".to_string()],
+        )
+        .unwrap();
+        assert!(touched::touched_path(&c, "my-feature").is_file());
+
+        archive(&c, "my-feature", true, false).unwrap();
+
+        assert!(!touched::touched_path(&c, "my-feature").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_fails_loudly_on_an_unreadable_spec_delta_instead_of_silently_dropping_it() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let spec_path = c
+            .changes_dir()
+            .join("my-feature")
+            .join("specs")
+            .join("my-cap")
+            .join("spec.md");
+        write(&spec_path, DELTA_TEMPLATE);
+        std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = archive(&c, "my-feature", false, false);
+
+        assert!(result.is_err());
+        // Validation (which hit the permission error) runs before the move.
+        assert!(
+            c.changes_dir().join("my-feature").is_dir(),
+            "change must still be active"
+        );
+    }
+
+    // macOS (APFS/HFS+) rejects non-UTF-8 filenames at the syscall level, so
+    // this is only constructible on Linux (ext4 et al. allow arbitrary bytes)
+    // -- matches the same platform-gating already used by spec.rs's
+    // equivalent non-UTF-8-name test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn archive_errors_on_a_non_utf8_capability_directory_name() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let specs_dir = c.changes_dir().join("my-feature").join("specs");
+        let cap_dir = specs_dir.join(OsStr::from_bytes(b"bad-\xFF-cap"));
+        std::fs::create_dir_all(&cap_dir).unwrap();
+        std::fs::write(cap_dir.join("spec.md"), DELTA_TEMPLATE).unwrap();
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+
+        assert!(err.to_string().contains("not valid UTF-8"));
+        assert!(
+            c.changes_dir().join("my-feature").is_dir(),
+            "change must still be active"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_preserves_the_underlying_error_cause_after_a_post_rename_failure() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let meta_path = c.changes_dir().join("my-feature").join(".openspec.yaml");
+        std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let err = archive(&c, "my-feature", true, false).unwrap_err();
+
+        // {:#} is what main.rs actually prints; the underlying io::Error's
+        // message must survive the "where did the change go" wrapper, not
+        // be flattened away by it.
+        let full_chain = format!("{err:#}");
+        assert!(
+            full_chain.to_lowercase().contains("permission denied"),
+            "expected the permission-denied cause in the error chain, got: {full_chain}"
+        );
     }
 }

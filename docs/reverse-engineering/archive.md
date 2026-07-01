@@ -61,8 +61,9 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    still-active change with prematurely-flipped checkboxes.
 4. Stamp `.openspec.yaml` (at the new location) with `archived_at: <YYYY-MM-DD>`
    and, when `git config user.name`/`user.email` are both set,
-   `archived_by: "<name> <email>"` (both confirmed via golden run; matches
-   the already-existing `created_by`/`created`-style fields on
+   `archived_by: <name> <email>` (unquoted, e.g. `archived_by: Ada Lovelace
+   <ada@example.com>` — both fields confirmed via golden run; matches the
+   already-existing `created_by`/`created`-style fields on
    `ChangeMetadata`). If git identity isn't configured, only `archived_at`
    is written — OpenSpectra warns on stderr when this happens rather than
    silently omitting the field with no signal.
@@ -76,12 +77,17 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    "Snapshot created for unarchive support." — **not implemented**; see
    "Known limitations" below.
 6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
-   markers, if any (best-effort; a failure here only warns, since archiving
-   itself already succeeded by this point). Not oracle-confirmed, but a
-   correctness fix: without it, a re-created change of the same name could
-   silently inherit a stale `.parked` marker from before it was archived —
-   the same class of bug already fixed for `change::create` (see
-   `change.rs`'s `clear_stale_sidecar_state`).
+   markers **and** its `.spectra/touched/<name>.json` tracking file, if any
+   (best-effort; a failure here only warns, since archiving itself already
+   succeeded by this point). Not oracle-confirmed, but a correctness fix:
+   without it, a re-created change of the same name could silently inherit a
+   stale `.parked` marker or stale touched-file history from before it was
+   archived — the same class of bug already fixed for `change::create` (see
+   `change.rs`'s `clear_stale_sidecar_state`). Clearing `touched.json` matters
+   specifically because `apply_spec_deltas`'s `code:` trace list (below) is
+   sourced from it — without clearing it, a recreated change would attribute
+   its trace footer to files touched by the *previous*, already-archived
+   change of the same name.
 
 ## Spec delta format (and OpenSpectra's narrowed scope)
 
@@ -97,9 +103,17 @@ A change's own `specs/<cap>/spec.md` is a *delta* against the canonical
 
 each followed by one or more `### Requirement: <name>` blocks.
 
-**Confirmed via golden run: `## ADDED Requirements` just means "append these
-requirement blocks to the canonical spec's `## Requirements` section,
-verbatim, each followed by its own trace footer"** — not a smart merge.
+**Confirmed via golden run: `## ADDED Requirements` just means "insert these
+requirement blocks into the canonical spec's `## Requirements` section,
+verbatim, each followed by its own trace footer"** — not a smart merge. New
+blocks are inserted right after the `## Requirements` header, before whatever
+`##` section (if any) follows it — **not** blindly appended to the end of
+the file. This matters once a canonical spec has grown a trailing section of
+its own (e.g. a human-added `## Notes`/`## Appendix`): appending at the
+file's end would incorrectly nest the new requirement under that unrelated
+section instead of inside `## Requirements` (OpenSpectra-only fix, not
+independently oracle-confirmed for this specific edge case — the golden
+samples observed only had a bare `## Requirements` with nothing after it).
 The very first requirement appended to a fresh spec has no separator; every
 subsequent one (including the first appended to an *already-populated*
 spec) is preceded by a `\n---\n` line. If the canonical spec doesn't exist
