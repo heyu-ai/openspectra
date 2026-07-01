@@ -45,6 +45,19 @@ pub fn head_sha(root: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// The configured committer identity in git's own "Name <email>" format, via
+/// `git config user.name`/`user.email`. `None` if either is unset (or not a
+/// git repo) — best-effort, matching every other identity/state lookup in
+/// this module.
+pub fn user_identity(root: &Path) -> Option<String> {
+    let name = git(root, &["config", "user.name"])?.trim().to_string();
+    let email = git(root, &["config", "user.email"])?.trim().to_string();
+    if name.is_empty() || email.is_empty() {
+        return None;
+    }
+    Some(format!("{name} <{email}>"))
+}
+
 /// Count of commits authored on or after `since` (a `YYYY-MM-DD` date),
 /// via `git rev-list --count --since=<date> HEAD`.
 pub fn commits_since(root: &Path, since: &str) -> u64 {

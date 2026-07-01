@@ -1,5 +1,5 @@
 //! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`,
-//! `task done`.
+//! `task done`, `archive`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -79,6 +79,18 @@ enum Command {
     Task {
         #[command(subcommand)]
         target: TaskTarget,
+    },
+    /// Archive a completed change (move it to `changes/archive/<date>-<name>`
+    /// and apply its added spec requirements, unless --skip-specs).
+    Archive {
+        /// Change to archive (auto-detects if only one active change exists).
+        change: Option<String>,
+        /// Skip applying the change's spec deltas to the canonical specs.
+        #[arg(long)]
+        skip_specs: bool,
+        /// Mark all incomplete tasks as complete before archiving.
+        #[arg(long)]
+        mark_tasks_complete: bool,
     },
 }
 
@@ -497,6 +509,27 @@ fn cmd_task_done(
     Ok(0)
 }
 
+fn cmd_archive(
+    cfg: &Config,
+    change_name: Option<&str>,
+    skip_specs: bool,
+    mark_tasks_complete: bool,
+) -> Result<i32> {
+    let name = change::resolve(cfg, change_name)?;
+    let outcome = spectra_core::archive::archive(cfg, &name, skip_specs, mark_tasks_complete)?;
+    println!(
+        "Archived '{}' as '{}'.",
+        outcome.name, outcome.archived_name
+    );
+    for applied in &outcome.specs_applied {
+        println!(
+            "Specs applied: {} (added: {})",
+            applied.capability, applied.added
+        );
+    }
+    Ok(0)
+}
+
 fn task_counts(tasks_md: &Path) -> (usize, usize) {
     let Ok(text) = std::fs::read_to_string(tasks_md) else {
         return (0, 0);
@@ -568,6 +601,14 @@ fn run() -> Result<i32> {
                 cmd_task_done(&cfg, change.as_deref(), task_id, *json)
             }
         },
+        Command::Archive {
+            change,
+            skip_specs,
+            mark_tasks_complete,
+        } => {
+            let cfg = require_initialized(&root)?;
+            cmd_archive(&cfg, change.as_deref(), *skip_specs, *mark_tasks_complete)
+        }
     }
 }
 

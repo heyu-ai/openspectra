@@ -2,6 +2,7 @@
 //! detection, reverse-engineered from the closed-source `spectra` CLI (v2.3.1).
 
 pub mod anchors;
+pub mod archive;
 pub mod calibration;
 pub mod change;
 pub mod config;

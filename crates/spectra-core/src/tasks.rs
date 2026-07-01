@@ -112,6 +112,31 @@ pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     Ok((new_md, description))
 }
 
+/// Flip every pending (`[ ]`) checkbox in `md` to done (`[x]`), leaving
+/// already-done checkboxes and every other line untouched. Used by
+/// `spectra archive --mark-tasks-complete`.
+pub fn mark_all_done(md: &str) -> String {
+    let mut new_md: String = md
+        .lines()
+        .map(|line| match CHECKBOX_RE.captures(line) {
+            Some(caps) if &caps[1] == " " => {
+                let state = caps
+                    .get(1)
+                    .expect("group 1 always captures on a CHECKBOX_RE match");
+                let mut new_line = line.to_string();
+                new_line.replace_range(state.range(), "x");
+                new_line
+            }
+            _ => line.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if md.ends_with('\n') {
+        new_md.push('\n');
+    }
+    new_md
+}
+
 #[derive(Debug, Default)]
 pub struct TaskAnalysis {
     pub blocked_external: Vec<TaskCollision>,
@@ -221,5 +246,26 @@ mod tests {
     fn mark_done_rejects_already_done() {
         let err = mark_done("- [x] a\n", 1).unwrap_err();
         assert_eq!(err.to_string(), "Task 1 is already done");
+    }
+
+    #[test]
+    fn mark_all_done_flips_every_pending_checkbox() {
+        let md = "## 1. Group\n\n- [ ] a\n- [x] b\n- [ ] c\n";
+        assert_eq!(
+            mark_all_done(md),
+            "## 1. Group\n\n- [x] a\n- [x] b\n- [x] c\n"
+        );
+    }
+
+    #[test]
+    fn mark_all_done_is_a_noop_when_nothing_is_pending() {
+        let md = "- [x] a\n- [x] b\n";
+        assert_eq!(mark_all_done(md), md);
+    }
+
+    #[test]
+    fn mark_all_done_preserves_non_checkbox_lines() {
+        let md = "# tasks\n\nsome prose\n\n- [ ] a\n";
+        assert_eq!(mark_all_done(md), "# tasks\n\nsome prose\n\n- [x] a\n");
     }
 }
