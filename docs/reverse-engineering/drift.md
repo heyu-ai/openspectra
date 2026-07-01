@@ -180,9 +180,13 @@ Two resolution behaviours are carried as-is pending a positive oracle decision
    Symbol/Function anchor always finds itself and is never reported broken; only
    FilePath/CliFlag anchors drive Structure on a committed change. This is
    consistent with the oracle's observed output (golden samples only ever showed
-   CliFlags broken) and with the calibration harness below, which deliberately
-   leaves `design.md` **untracked** precisely so anchors resolve to nothing. A
-   future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
+   CliFlags broken). The scripted harness (`scripts/calibrate-structure.py`)
+   works *with* this behaviour: it commits `design.md` but writes it in
+   all-lowercase prose so the Symbol/Function regexes extract nothing, leaving
+   `total` = resolved + broken FilePaths + broken CliFlags. (The separate manual
+   probe below instead leaves `design.md` **untracked** to force *every* anchor
+   broken and reveal the full set — a different technique for a different goal.)
+   A future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
    it is deferred until an oracle run confirms the intended behaviour.
 2. **FilePath resolves while still in the git index.** A path is considered
    present if it is tracked *or* on disk, so a working-tree `rm` without `git rm`

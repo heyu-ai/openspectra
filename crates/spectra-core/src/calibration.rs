@@ -66,15 +66,24 @@ pub fn structure_score(broken: usize, broken_cliflags: usize, total: usize) -> i
         return 0;
     }
     let decay = broken as f64 / total as f64;
-    let d: i64 = if decay < 0.10 {
+    let d: i64 = if decay < STRUCTURE_DECAY_LOW {
         0
-    } else if decay < HEAVY_DECAY_THRESHOLD {
+    } else if decay < STRUCTURE_DECAY_HIGH {
         1
     } else {
         2
     };
     (2 * d + 3).min(2 * d + broken_cliflags as i64)
 }
+
+/// Decay-band boundaries for the Structure score (recovered exactly: `10.0%` is
+/// D1, `9.1%` is D0; `30.0%` is D2). `STRUCTURE_DECAY_HIGH` empirically equals
+/// [`HEAVY_DECAY_THRESHOLD`], but they are kept as separate constants on purpose:
+/// one is the score-band edge, the other the severity short-circuit, and the
+/// oracle treats exactly 30% differently for each (D2 for the score, but *not*
+/// forced `heavy` — verified by probe). Tuning one must not silently move the other.
+pub const STRUCTURE_DECAY_LOW: f64 = 0.10;
+pub const STRUCTURE_DECAY_HIGH: f64 = 0.30;
 
 /// The "heavy" severity short-circuit: anchor decay over this fraction forces
 /// `heavy` regardless of total score (recovered: "anchor decay >30%").

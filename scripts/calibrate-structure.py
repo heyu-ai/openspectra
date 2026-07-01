@@ -40,13 +40,29 @@ import tempfile
 from pathlib import Path
 
 
+ANCHOR_CAP = 50  # keep in sync with calibration::ANCHOR_CAP
+
+
 def sh(args, cwd):
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    """Run a command, failing loudly (returncode + stderr) instead of letting a
+    silent failure surface later as an opaque JSON error."""
+    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"command {args!r} failed (exit {r.returncode}): {r.stderr.strip()}")
+    return r
 
 
 def oracle_structure_score(oracle, repo, resolved_fp, broken_fp, broken_cf):
     """Build a one-change repo with the given broken composition, return
-    (broken, total, score) from the oracle's Structure dimension."""
+    (broken, total, score, broken_cf_observed) from the oracle's Structure
+    dimension. `broken_cf_observed` is derived from the oracle's own
+    broken_anchors categories, not the intended input, so verify-model checks
+    against what the oracle actually saw."""
+    if resolved_fp < 0:
+        raise ValueError(f"negative resolved count ({resolved_fp}); check case construction")
+    intended_total = resolved_fp + broken_fp + broken_cf
+    if intended_total > ANCHOR_CAP:
+        raise ValueError(f"intended total {intended_total} exceeds ANCHOR_CAP={ANCHOR_CAP}")
     if repo.exists():
         shutil.rmtree(repo)
     (repo / "src").mkdir(parents=True)
@@ -78,18 +94,31 @@ def oracle_structure_score(oracle, repo, resolved_fp, broken_fp, broken_cf):
         ["git", "commit", "-q", "-m", "x"],
     ):
         sh(c, repo)
-    out = sh([oracle, "drift", "c", "--json"], repo)
-    rep = json.loads(out.stdout)
+    # `spectra drift` exits non-zero on medium/heavy drift, so don't use sh()'s
+    # returncode guard here; instead fail loudly only if stdout isn't JSON.
+    out = subprocess.run([oracle, "drift", "c", "--json"], cwd=repo,
+                         capture_output=True, text=True)
+    try:
+        rep = json.loads(out.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            f"oracle produced no JSON (exit {out.returncode}): {out.stderr.strip() or out.stdout.strip()!r}"
+        ) from e
+    cf_observed = sum(1 for a in rep.get("broken_anchors", []) if a["category"] == "CliFlag")
     for d in rep["dimensions"]:
         if d["kind"] == "Structure":
             m = re.match(r"(\d+)/(\d+)", d["status"])
             b, t = (int(m.group(1)), int(m.group(2))) if m else (-1, -1)
-            return b, t, d["score"]
+            return b, t, d["score"], cf_observed
     raise RuntimeError("no Structure dimension in oracle output")
 
 
 def model(broken, broken_cf, total):
-    """The recovered formula — must match the oracle."""
+    """The recovered formula — must match the oracle AND the shipped Rust
+    `calibration::structure_score`. This is a deliberate re-implementation for
+    black-box verification: verify-model checks THIS copy against the oracle. The
+    Rust copy is pinned separately by its own unit tests (see calibration.rs);
+    if you change the formula, update both and re-run `--mode verify-model`."""
     if total == 0 or broken == 0:
         return 0
     decay = broken / total
@@ -106,7 +135,7 @@ def mode_grid(oracle, repo):
             if fp + cf == 0 or fp + cf > 6:
                 row.append("   -")
                 continue
-            _, _, sc = oracle_structure_score(oracle, repo, 8 - (fp + cf), fp, cf)
+            _, _, sc, _ = oracle_structure_score(oracle, repo, 8 - (fp + cf), fp, cf)
             row.append(f"{sc:>4}")
         print(f"{fp:>4} " + "".join(row))
 
@@ -120,25 +149,35 @@ def mode_iso(oracle, repo):
             for count in [1, 2, 3, 4, 6]:
                 total = count * frac
                 fp, cf = (count, 0) if cat == "FilePath" else (0, count)
-                _, t, sc = oracle_structure_score(oracle, repo, total - count, fp, cf)
+                _, t, sc, _ = oracle_structure_score(oracle, repo, total - count, fp, cf)
                 cells.append(f"{count}/{t}->{sc}")
             print(f"    {cat:<9} " + "  ".join(cells))
 
 
 def mode_verify_model(oracle, repo):
-    """Cross-check the recovered formula against a spread of oracle runs."""
+    """Cross-check the recovered formula against a spread of oracle runs.
+    Each case is (broken_fp, broken_cf, resolved_fp) — resolved is passed
+    directly (never re-subtracted), and the model is fed the oracle's *observed*
+    broken-CliFlag count, so the check exercises the intended totals and does not
+    assume its own conclusion."""
     print("== model vs oracle ==")
     bad = 0
+    # total=8 mixed grid: resolved = 8 - broken
     cases = [(fp, cf, 8 - fp - cf) for fp in range(6) for cf in range(6)
              if 0 < fp + cf <= 6]
-    cases += [(c, 0, c * f) for c in (1, 2, 3, 4, 6) for f in (2, 4, 8)]
-    cases += [(0, c, c * f) for c in (1, 2, 3, 4, 6) for f in (2, 4, 8)]
-    for fp, cf, total in cases:
-        b, t, sc = oracle_structure_score(oracle, repo, total - fp - cf, fp, cf)
-        pred = model(b, cf, t)
+    # iso-decay count sweeps: total = count*frac, so resolved = total - broken
+    cases += [(c, 0, c * f - c) for c in (1, 2, 3, 4, 6) for f in (2, 4, 8)]
+    cases += [(0, c, c * f - c) for c in (1, 2, 3, 4, 6) for f in (2, 4, 8)]
+    for fp, cf, resolved in cases:
+        b, t, sc, cf_obs = oracle_structure_score(oracle, repo, resolved, fp, cf)
+        if t != resolved + fp + cf:
+            bad += 1
+            print(f"  COMPOSITION fp={fp} cf={cf} resolved={resolved}: oracle total {t} != intended {resolved + fp + cf}")
+            continue
+        pred = model(b, cf_obs, t)
         if pred != sc:
             bad += 1
-            print(f"  MISMATCH fp={fp} cf={cf} {b}/{t}: oracle={sc} model={pred}")
+            print(f"  MISMATCH fp={fp} cf={cf} {b}/{t} cf_obs={cf_obs}: oracle={sc} model={pred}")
     print(f"  {len(cases)} cases, {bad} mismatches")
     return bad
 
@@ -150,6 +189,7 @@ def main():
     ap.add_argument("--scratch", default=None, help="scratch dir (default: temp)")
     args = ap.parse_args()
 
+    auto_scratch = args.scratch is None
     scratch = Path(args.scratch) if args.scratch else Path(tempfile.mkdtemp(prefix="calib-"))
     repo = scratch / "calib-repo"
     try:
@@ -160,8 +200,11 @@ def main():
         else:
             raise SystemExit(1 if mode_verify_model(args.oracle, repo) else 0)
     finally:
-        if repo.exists():
-            shutil.rmtree(repo)
+        # Remove the whole auto-created temp dir (not just the nested repo), but
+        # leave a user-supplied --scratch dir in place.
+        cleanup = scratch if auto_scratch else repo
+        if cleanup.exists():
+            shutil.rmtree(cleanup)
 
 
 if __name__ == "__main__":
