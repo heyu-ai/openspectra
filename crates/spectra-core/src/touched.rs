@@ -16,6 +16,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use crate::config::Config;
@@ -42,28 +43,42 @@ fn touched_path(cfg: &Config, name: &str) -> PathBuf {
 }
 
 /// Load the existing tracking file for `name`, or an empty one if it's
-/// absent — a missing file is the expected first-run state. A *present but
-/// unparseable* file (corruption, a partial write, a future schema) is a
-/// different situation: silently treating it as empty and then having
-/// `record` overwrite it would permanently discard prior task→file history
-/// with no trace, so that case is loud instead.
+/// absent — a missing file is the expected first-run state. Two other cases
+/// are loud instead of silent, since resetting either one in place and then
+/// having a later write overwrite it would permanently discard prior
+/// task→file history with no trace or recovery path:
+/// - present but unreadable for a reason other than absence (permission
+///   denied, etc.) — warns and starts empty rather than silently masking a
+///   real I/O problem as "no history yet";
+/// - present but unparseable (corruption, a partial write, a future schema)
+///   — renamed aside to `<name>.json.corrupt` (so the original bytes survive
+///   for inspection/recovery) before being treated as empty.
 fn load(cfg: &Config, name: &str) -> TouchedTracking {
     let path = touched_path(cfg, name);
+    let empty = || TouchedTracking {
+        change: name.to_string(),
+        touched: Vec::new(),
+    };
     match std::fs::read_to_string(&path) {
-        Err(_) => TouchedTracking {
-            change: name.to_string(),
-            touched: Vec::new(),
-        },
-        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+        Err(e) if e.kind() == ErrorKind::NotFound => empty(),
+        Err(e) => {
             eprintln!(
-                "warning: {} is corrupt ({e}); resetting touched-file tracking for '{name}' \
-                 -- prior touched-file history for this change may be lost",
+                "warning: couldn't read {} ({e}); starting fresh touched-file tracking for '{name}'",
                 path.display()
             );
-            TouchedTracking {
-                change: name.to_string(),
-                touched: Vec::new(),
-            }
+            empty()
+        }
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+            let backup = path.with_extension("json.corrupt");
+            let recovery_hint = match std::fs::rename(&path, &backup) {
+                Ok(()) => format!("the original file was preserved at {}", backup.display()),
+                Err(rename_err) => format!("failed to preserve the original file too ({rename_err})"),
+            };
+            eprintln!(
+                "warning: {} is corrupt ({e}); resetting touched-file tracking for '{name}' -- {recovery_hint}",
+                path.display()
+            );
+            empty()
         }),
     }
 }
@@ -76,6 +91,15 @@ pub fn already_recorded(cfg: &Config, name: &str) -> HashSet<String> {
         .into_iter()
         .flat_map(|e| e.files)
         .collect()
+}
+
+fn persist(cfg: &Config, name: &str, tracking: &TouchedTracking) -> Result<()> {
+    let path = touched_path(cfg, name);
+    let parent = path.parent().expect("touched path always has a parent");
+    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    let json = serde_json::to_string_pretty(tracking)?;
+    std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
 }
 
 /// Append a new entry for `task_id`/`task_desc`/`files`, creating the
@@ -98,13 +122,42 @@ pub fn record(
         task_desc: task_desc.to_string(),
         files,
     });
+    persist(cfg, name, &tracking)
+}
 
-    let path = touched_path(cfg, name);
-    let parent = path.parent().expect("touched path always has a parent");
-    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    let json = serde_json::to_string_pretty(&tracking)?;
-    std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
+/// Combines [`already_recorded`] and [`record`] into a single load: given
+/// `candidate_files`, filters out anything already recorded against an
+/// earlier task and persists the rest as a new entry (a no-op if nothing's
+/// left). Loading the tracking file only once here (instead of the two
+/// independent loads the split functions would require) means a corrupt
+/// tracking file only warns once per `task done` call, not twice.
+pub fn record_new(
+    cfg: &Config,
+    name: &str,
+    task_id: usize,
+    task_desc: &str,
+    candidate_files: Vec<String>,
+) -> Result<()> {
+    let mut tracking = load(cfg, name);
+    let already: HashSet<&str> = tracking
+        .touched
+        .iter()
+        .flat_map(|e| e.files.iter().map(String::as_str))
+        .collect();
+    let new_files: Vec<String> = candidate_files
+        .into_iter()
+        .filter(|f| !already.contains(f.as_str()))
+        .collect();
+    if new_files.is_empty() {
+        return Ok(());
+    }
+    tracking.change = name.to_string();
+    tracking.touched.push(TouchedEntry {
+        task_id: task_id.to_string(),
+        task_desc: task_desc.to_string(),
+        files: new_files,
+    });
+    persist(cfg, name, &tracking)
 }
 
 #[cfg(test)]
@@ -201,5 +254,81 @@ mod tests {
     fn already_recorded_is_empty_when_no_tracking_file_exists() {
         let tmp = TempDir::new();
         assert!(already_recorded(&cfg(&tmp), "no-such-change").is_empty());
+    }
+
+    #[test]
+    fn record_new_filters_out_already_recorded_files_with_a_single_load() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        record(&c, "my-change", 1, "t1", vec!["a.rs".to_string()]).unwrap();
+
+        record_new(
+            &c,
+            "my-change",
+            2,
+            "t2",
+            vec!["a.rs".to_string(), "b.rs".to_string()],
+        )
+        .unwrap();
+
+        let tracking = load(&c, "my-change");
+        assert_eq!(tracking.touched.len(), 2);
+        // Only the genuinely-new file (b.rs) is attributed to task 2; a.rs
+        // stays attributed to task 1, not duplicated or reattributed.
+        assert_eq!(tracking.touched[1].task_id, "2");
+        assert_eq!(tracking.touched[1].files, vec!["b.rs".to_string()]);
+    }
+
+    #[test]
+    fn record_new_is_a_noop_when_every_candidate_is_already_recorded() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        record(&c, "my-change", 1, "t1", vec!["a.rs".to_string()]).unwrap();
+
+        record_new(&c, "my-change", 2, "t2", vec!["a.rs".to_string()]).unwrap();
+
+        assert_eq!(load(&c, "my-change").touched.len(), 1);
+    }
+
+    #[test]
+    fn load_backs_up_a_corrupt_tracking_file_instead_of_discarding_it() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let path = touched_path(&c, "my-change");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "not valid json").unwrap();
+
+        let tracking = load(&c, "my-change");
+
+        assert!(tracking.touched.is_empty());
+        let backup = path.with_extension("json.corrupt");
+        assert!(
+            backup.is_file(),
+            "corrupt file should be preserved at {}",
+            backup.display()
+        );
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "not valid json");
+        assert!(
+            !path.exists(),
+            "the corrupt path itself should have been renamed away"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_warns_but_does_not_panic_on_a_permission_denied_read() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let path = touched_path(&c, "my-change");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{}").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let tracking = load(&c, "my-change");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(tracking.touched.is_empty());
     }
 }

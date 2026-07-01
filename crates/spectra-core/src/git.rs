@@ -71,14 +71,36 @@ pub fn commits_since(root: &Path, since: &str) -> u64 {
 pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
     let repo_root = git(root, &["rev-parse", "--show-toplevel"])?;
     let repo_root = Path::new(repo_root.trim()).to_path_buf();
-    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let out = git(root, &["status", "--porcelain"])?;
+    // Canonicalize-failure is treated the same as any other git-command
+    // failure (`None`) rather than silently falling back to the raw `root`:
+    // a raw fallback that happens to be relative (or otherwise not
+    // byte-identical to git's always-canonical, always-absolute output)
+    // would make every `strip_prefix` below fail, silently producing
+    // `Some(vec![])` -- indistinguishable from "genuinely clean" -- instead
+    // of the "couldn't determine" signal this function exists to give.
+    let canonical_root = std::fs::canonicalize(root).ok()?;
+    // --untracked-files=all: without it, a new untracked *directory* collapses
+    // to a single "newdir/" porcelain entry instead of listing the files
+    // inside it, which would make touched-file tracking record a directory
+    // path rather than the actual files a task touched.
+    let out = git(root, &["status", "--porcelain", "--untracked-files=all"])?;
     Some(
         out.lines()
             .filter(|line| line.len() > 3)
             .filter_map(|line| {
+                // Only R(ename)/C(opy) status codes carry a " -> " separator
+                // in the path; splitting on it unconditionally would mangle
+                // an ordinary modified/untracked file whose real name happens
+                // to contain the literal substring " -> ".
+                let is_rename_or_copy =
+                    line.as_bytes()[..2].contains(&b'R') || line.as_bytes()[..2].contains(&b'C');
                 let rest = &line[3..];
-                let repo_rel = rest.rsplit_once(" -> ").map_or(rest, |(_, new)| new).trim();
+                let repo_rel = if is_rename_or_copy {
+                    rest.rsplit_once(" -> ").map_or(rest, |(_, new)| new)
+                } else {
+                    rest
+                }
+                .trim();
                 let repo_rel = unquote_git_path(repo_rel);
                 let abs = repo_root.join(repo_rel);
                 let rel = abs.strip_prefix(&canonical_root).ok()?;
@@ -115,12 +137,32 @@ fn unquote_git_path(s: &str) -> String {
             }
         }
         match bytes.get(i + 1) {
+            Some(b'a') => {
+                out.push(0x07); // BEL
+                i += 2;
+            }
+            Some(b'b') => {
+                out.push(0x08); // backspace
+                i += 2;
+            }
+            Some(b'f') => {
+                out.push(0x0c); // form feed
+                i += 2;
+            }
             Some(b'n') => {
                 out.push(b'\n');
                 i += 2;
             }
+            Some(b'r') => {
+                out.push(b'\r');
+                i += 2;
+            }
             Some(b't') => {
                 out.push(b'\t');
+                i += 2;
+            }
+            Some(b'v') => {
+                out.push(0x0b); // vertical tab
                 i += 2;
             }
             Some(b'\\') => {
@@ -288,6 +330,25 @@ mod tests {
     }
 
     #[test]
+    fn dirty_files_expands_an_untracked_directory_into_its_files() {
+        // Without --untracked-files=all, git collapses a wholly-untracked
+        // directory to a single "newdir/" porcelain entry instead of listing
+        // the files inside it.
+        let dir = TempDir::new("dirty-untracked-dir");
+        init_repo_with_commit(&dir);
+        std::fs::create_dir_all(dir.join("newdir")).unwrap();
+        std::fs::write(dir.join("newdir").join("a.rs"), "a\n").unwrap();
+        std::fs::write(dir.join("newdir").join("b.rs"), "b\n").unwrap();
+
+        let mut files = dirty_files(&dir).unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            vec!["newdir/a.rs".to_string(), "newdir/b.rs".to_string()]
+        );
+    }
+
+    #[test]
     fn dirty_files_reports_the_new_path_for_a_rename() {
         let dir = TempDir::new("dirty-rename");
         init_repo_with_commit(&dir);
@@ -302,6 +363,18 @@ mod tests {
 
         let files = dirty_files(&dir).unwrap();
         assert_eq!(files, vec!["renamed.txt".to_string()]);
+    }
+
+    #[test]
+    fn dirty_files_does_not_mangle_an_untracked_file_literally_named_with_arrow() {
+        // A non-rename status line must not have its filename split on
+        // " -> " just because the literal substring happens to appear in it.
+        let dir = TempDir::new("dirty-arrow-name");
+        init_repo_with_commit(&dir);
+        std::fs::write(dir.join("a -> b.txt"), "new\n").unwrap();
+
+        let files = dirty_files(&dir).unwrap();
+        assert_eq!(files, vec!["a -> b.txt".to_string()]);
     }
 
     #[test]
@@ -320,5 +393,14 @@ mod tests {
     fn unquote_git_path_decodes_backslash_escapes() {
         assert_eq!(unquote_git_path("\"a\\\\b\""), "a\\b");
         assert_eq!(unquote_git_path("\"a\\\"b\""), "a\"b");
+    }
+
+    #[test]
+    fn unquote_git_path_decodes_the_full_c_style_escape_set() {
+        assert_eq!(unquote_git_path("\"a\\ab\""), "a\u{07}b");
+        assert_eq!(unquote_git_path("\"a\\bb\""), "a\u{08}b");
+        assert_eq!(unquote_git_path("\"a\\fb\""), "a\u{0c}b");
+        assert_eq!(unquote_git_path("\"a\\rb\""), "a\rb");
+        assert_eq!(unquote_git_path("\"a\\vb\""), "a\u{0b}b");
     }
 }

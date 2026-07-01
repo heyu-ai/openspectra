@@ -404,13 +404,18 @@ pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDo
     // commit tooling; a failure here must not undo the task-done marking
     // that already succeeded above.
     match crate::git::dirty_files(&cfg.root) {
+        // Not a git repo at all is an expected, common case (this tool has
+        // no `init` yet, so plenty of projects aren't git-tracked) -- only
+        // warn when git itself failed on a project that IS a repo, so the
+        // warning stays a meaningful signal instead of firing on every
+        // `task done` call for a non-git project.
+        None if !crate::git::is_repo(&cfg.root) => {}
         None => eprintln!(
             "warning: couldn't determine dirty files for '{name}'; this task's touched files were not recorded"
         ),
         Some(dirty) => {
-            let already_recorded = crate::touched::already_recorded(cfg, name);
             let change_rel_dir = ch.dir.strip_prefix(&cfg.root).ok();
-            let new_files: Vec<String> = dirty
+            let candidate_files: Vec<String> = dirty
                 .into_iter()
                 .filter(|f| {
                     let path = std::path::Path::new(f);
@@ -420,10 +425,10 @@ pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDo
                     // "touched" implementation file, whether or not the project
                     // happens to gitignore it.
                     let under_spectra_state_dir = path.starts_with(".spectra");
-                    !under_change_dir && !under_spectra_state_dir && !already_recorded.contains(f)
+                    !under_change_dir && !under_spectra_state_dir
                 })
                 .collect();
-            if let Err(e) = crate::touched::record(cfg, name, task_id, &task_desc, new_files) {
+            if let Err(e) = crate::touched::record_new(cfg, name, task_id, &task_desc, candidate_files) {
                 eprintln!("warning: failed to record touched files for '{name}': {e}");
             }
         }
