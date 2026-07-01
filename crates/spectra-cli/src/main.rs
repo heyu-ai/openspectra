@@ -91,10 +91,18 @@ fn cmd_drift(cfg: &Config, change_name: Option<&str>, as_json: bool, use_color: 
 }
 
 /// Whether to emit ANSI color codes: the `--no-color` flag and the `NO_COLOR`
-/// env var (https://no-color.org) both disable it; otherwise color is only
-/// emitted when stdout is a terminal (never when piped/redirected).
+/// env var (https://no-color.org — "when present, **regardless of its
+/// value**") both disable it; otherwise color is only emitted when stdout is
+/// a terminal (never when piped/redirected).
 fn color_enabled(no_color: bool) -> bool {
-    !no_color && std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal()
+    color_enabled_from(no_color, std::env::var_os("NO_COLOR").is_some(), std::io::stdout().is_terminal())
+}
+
+/// Pure precedence logic behind [`color_enabled`], split out so all
+/// flag/env/TTY combinations are unit-testable without mutating real process
+/// env vars or stdout (both of which would be flaky under parallel tests).
+fn color_enabled_from(no_color: bool, no_color_env_set: bool, stdout_is_tty: bool) -> bool {
+    !no_color && !no_color_env_set && stdout_is_tty
 }
 
 /// Wrap `text` in the given SGR color code (e.g. `"31"` for red) when
@@ -117,18 +125,23 @@ fn severity_sgr_code(severity: &str) -> &'static str {
     }
 }
 
-/// Conclusion-first human report (mirrors the reference layout: plain-language
-/// next step, then a scorecard, then non-empty technical detail).
-fn print_human(r: &drift::DriftReport, use_color: bool) {
-    println!("## Drift Report: {}\n", r.change_id);
-
-    let conclusion = match r.severity.as_str() {
+/// The severity-colored conclusion sentence, composed here (rather than
+/// inline in `print_human`) so the `colorize`/`severity_sgr_code` wiring
+/// itself — not just each function in isolation — is unit-testable.
+fn conclusion_line(severity: &str, use_color: bool) -> String {
+    let conclusion = match severity {
         "light" => "Drift is minor — you can start work directly.",
         "medium" => "The change has drifted moderately; refresh the plan before implementing.",
         _ => "The change has drifted heavily; the old plan likely no longer fits — archive or restart.",
     };
-    let code = severity_sgr_code(&r.severity);
-    println!("{}\n", colorize(conclusion, code, use_color));
+    colorize(conclusion, severity_sgr_code(severity), use_color)
+}
+
+/// Conclusion-first human report (mirrors the reference layout: plain-language
+/// next step, then a scorecard, then non-empty technical detail).
+fn print_human(r: &drift::DriftReport, use_color: bool) {
+    println!("## Drift Report: {}\n", r.change_id);
+    println!("{}\n", conclusion_line(&r.severity, use_color));
 
     let dim = |k: &str| r.dimensions.iter().find(|d| format!("{:?}", d.kind) == k);
     let time = dim("Time").map(|d| d.status.as_str()).unwrap_or("-");
@@ -370,9 +383,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn color_enabled_is_false_when_no_color_flag_is_set() {
-        // Regardless of NO_COLOR env or TTY state, the explicit flag wins.
-        assert!(!color_enabled(true));
+    fn color_enabled_from_only_true_when_nothing_disables_it() {
+        assert!(color_enabled_from(false, false, true));
+    }
+
+    #[test]
+    fn color_enabled_from_no_color_flag_wins_even_with_tty_and_no_env() {
+        assert!(!color_enabled_from(true, false, true));
+    }
+
+    #[test]
+    fn color_enabled_from_no_color_env_wins_even_without_flag() {
+        assert!(!color_enabled_from(false, true, true));
+    }
+
+    #[test]
+    fn color_enabled_from_false_when_not_a_tty_even_with_nothing_else_set() {
+        assert!(!color_enabled_from(false, false, false));
     }
 
     #[test]
@@ -387,6 +414,16 @@ mod tests {
         assert_eq!(severity_sgr_code("medium"), "33");
         assert_eq!(severity_sgr_code("heavy"), "31");
         assert_eq!(severity_sgr_code("anything-else"), "31");
+    }
+
+    #[test]
+    fn conclusion_line_colors_by_severity_when_enabled() {
+        assert_eq!(
+            conclusion_line("light", true),
+            "\x1b[32mDrift is minor — you can start work directly.\x1b[0m"
+        );
+        assert!(conclusion_line("light", false).starts_with("Drift is minor"));
+        assert!(!conclusion_line("light", false).contains('\x1b'));
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even
