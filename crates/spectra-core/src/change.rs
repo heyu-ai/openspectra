@@ -6,13 +6,15 @@
 //! `.spectra/`: `.spectra/changes/<name>.started` records the baseline git SHA
 //! and `.spectra/changes/<name>.parked` marks a parked change.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use crate::config::Config;
+use crate::names::is_valid_name;
 
 /// Active change names are kebab-case; the `YYYY-MM-DD-` prefix is reserved for
 /// archived changes (recovered from the binary).
@@ -67,8 +69,32 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
         .exists()
 }
 
-/// Load a single change by name. Errors if the change directory is missing.
+/// Load a change by name if it exists. Returns `Ok(None)` only when the
+/// directory is genuinely absent (or `name` is invalid); any other I/O
+/// failure checking for it propagates as `Err`, so callers juggling multiple
+/// namespaces (e.g. `show`, which also tries `spec::try_load`) can't misread
+/// a permission error as "not a change" the way a boolean `Path::is_dir()`
+/// check would.
+pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Change>> {
+    if !is_valid_name(name) {
+        return Ok(None);
+    }
+    let dir = cfg.changes_dir().join(name);
+    match std::fs::metadata(&dir) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
+    }
+    load(cfg, name).map(Some)
+}
+
+/// Load a single change by name. Errors if the change directory is missing
+/// or `name` isn't a single path component.
 pub fn load(cfg: &Config, name: &str) -> Result<Change> {
+    if !is_valid_name(name) {
+        return Err(anyhow!("invalid change name '{name}'"));
+    }
     let dir = cfg.changes_dir().join(name);
     if !dir.is_dir() {
         return Err(anyhow!("change '{name}' not found in {}", cfg.changes_dir().display()));
@@ -206,6 +232,20 @@ mod tests {
         );
 
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn try_load_rejects_path_traversal_names() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        // A change directory outside `changes_dir()` a traversal attempt could reach.
+        write(&tmp.join("secret").join("proposal.md"), "outside\n");
+
+        assert!(try_load(&cfg, "../secret").unwrap().is_none());
+        assert!(try_load(&cfg, "..").unwrap().is_none());
+        assert!(try_load(&cfg, "sub/dir").unwrap().is_none());
+        assert!(try_load(&cfg, "").unwrap().is_none());
+        assert!(load(&cfg, "../secret").is_err());
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even

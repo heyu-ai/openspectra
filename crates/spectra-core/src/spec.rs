@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 use crate::config::Config;
+use crate::names::is_valid_name;
 
 #[derive(Debug, Clone)]
 pub struct Spec {
@@ -71,13 +72,33 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
     Ok(names)
 }
 
+/// Load a spec by name if it exists. Returns `Ok(None)` only when `spec.md`
+/// is genuinely absent (or `name` is invalid); any other I/O failure
+/// checking for it propagates as `Err`, so callers juggling multiple
+/// namespaces (e.g. `show`, which also tries `change::try_load`) can't
+/// misread a permission error as "not a spec" the way a boolean
+/// `Path::is_file()` check would.
+pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Spec>> {
+    if !is_valid_name(name) {
+        return Ok(None);
+    }
+    let spec_md = cfg.specs_dir().join(name).join("spec.md");
+    match std::fs::metadata(&spec_md) {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => return Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", spec_md.display())),
+    }
+    load(cfg, name).map(Some)
+}
+
 /// Load a single spec by capability name. Errors if `spec.md` is missing (or
 /// unreadable for any other reason). `name` must be a single path component
-/// (no separators or `..`) — this function isn't yet called with untrusted
-/// input, but a future `show <spec>` command will pass a raw CLI argument
-/// straight through, so the traversal guard belongs here, not at each caller.
+/// (no separators or `..`) — `spectra show <spec>` (spectra-cli) passes the
+/// raw CLI argument straight through, so this traversal guard is
+/// load-bearing, not defensive-for-a-hypothetical-future-caller.
 pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+    if !is_valid_name(name) {
         return Err(anyhow::anyhow!("invalid spec name '{name}'"));
     }
     let dir = cfg.specs_dir().join(name);

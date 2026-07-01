@@ -47,9 +47,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show a change's proposal. (spec content: not yet implemented)
+    /// Show a change's proposal, or a spec's content if the name isn't a change.
     Show {
-        /// Change name to show.
+        /// Change or spec name to show.
         item: String,
         #[arg(long)]
         json: bool,
@@ -222,19 +222,54 @@ fn cmd_list_specs(cfg: &Config, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+#[derive(Debug)]
+enum ShowContent {
+    Proposal(String),
+    Spec(String),
+}
+
+/// Resolve `item` to a change's proposal or a spec's content. A change name
+/// takes priority (existing, regression-safe behavior); `change::try_load`/
+/// `spec::try_load` distinguish "genuinely doesn't exist" from a real I/O
+/// error while checking, so neither is misread as "not found."
+fn resolve_show_content(cfg: &Config, item: &str) -> Result<ShowContent> {
+    if let Some(ch) = change::try_load(cfg, item)? {
+        return Ok(ShowContent::Proposal(read_show_content(&ch.proposal_md())?));
+    }
+    if let Some(sp) = spec::try_load(cfg, item)? {
+        return Ok(ShowContent::Spec(read_show_content(&sp.spec_md())?));
+    }
+    anyhow::bail!("'{item}' is not a known change or spec")
+}
+
+/// Read `path`'s content for `show`. Unlike `first_line` (used for `list`'s
+/// secondary summary column, where a warn-and-degrade is defensible because
+/// other fields still carry useful data), the content read here *is* the
+/// entire requested output — so besides the benign `NotFound` case (a
+/// genuinely bodyless change/spec), any other I/O failure propagates instead
+/// of silently printing empty content with a success exit code.
+fn read_show_content(path: &Path) -> Result<String> {
+    match std::fs::read_to_string(path) {
+        Ok(s) => Ok(s),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn show_json(item: &str, content: &ShowContent) -> serde_json::Value {
+    match content {
+        ShowContent::Proposal(text) => json!({ "name": item, "proposal": text }),
+        ShowContent::Spec(text) => json!({ "name": item, "spec": text }),
+    }
+}
+
 fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
-    let ch = change::load(cfg, item)?;
-    let proposal = std::fs::read_to_string(ch.proposal_md()).unwrap_or_default();
+    let content = resolve_show_content(cfg, item)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "name": item,
-                "proposal": proposal,
-            }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&show_json(item, &content))?);
     } else {
-        print!("{proposal}");
+        let (ShowContent::Proposal(text) | ShowContent::Spec(text)) = &content;
+        print!("{text}");
     }
     Ok(0)
 }
@@ -420,5 +455,94 @@ mod tests {
             .unwrap();
 
         assert!(list_change_items(&cfg, true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn resolve_show_content_prefers_change_over_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.changes_dir().join("auth")).unwrap();
+        std::fs::write(cfg.changes_dir().join("auth").join("proposal.md"), "# Auth change\n")
+            .unwrap();
+        std::fs::create_dir_all(cfg.specs_dir().join("auth")).unwrap();
+        std::fs::write(cfg.specs_dir().join("auth").join("spec.md"), "# Auth spec\n").unwrap();
+
+        match resolve_show_content(&cfg, "auth").unwrap() {
+            ShowContent::Proposal(text) => assert_eq!(text, "# Auth change\n"),
+            ShowContent::Spec(_) => panic!("expected the change to take priority over the spec"),
+        }
+    }
+
+    #[test]
+    fn resolve_show_content_falls_back_to_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.specs_dir().join("billing")).unwrap();
+        std::fs::write(cfg.specs_dir().join("billing").join("spec.md"), "# Billing spec\n")
+            .unwrap();
+
+        match resolve_show_content(&cfg, "billing").unwrap() {
+            ShowContent::Spec(text) => assert_eq!(text, "# Billing spec\n"),
+            ShowContent::Proposal(_) => panic!("expected a spec, not a change"),
+        }
+    }
+
+    #[test]
+    fn resolve_show_content_errors_when_neither_change_nor_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        assert!(resolve_show_content(&cfg, "ghost").is_err());
+    }
+
+    #[test]
+    fn resolve_show_content_propagates_real_errors_instead_of_falling_back_to_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.changes_dir().join("broken")).unwrap();
+        // A directory named `.openspec.yaml` makes `read_to_string` fail with
+        // a real I/O error (cross-platform), unlike the benign
+        // "no metadata file present" case `change::load` otherwise handles.
+        std::fs::create_dir_all(cfg.changes_dir().join("broken").join(".openspec.yaml")).unwrap();
+        // A same-named spec exists too, to prove the real error isn't
+        // silently swallowed into a fallback.
+        std::fs::create_dir_all(cfg.specs_dir().join("broken")).unwrap();
+        std::fs::write(cfg.specs_dir().join("broken").join("spec.md"), "# Should not be used\n")
+            .unwrap();
+
+        let err = resolve_show_content(&cfg, "broken").unwrap_err();
+        assert!(!err.to_string().contains("is not a known change or spec"));
+    }
+
+    #[test]
+    fn show_json_uses_proposal_key_for_change_content() {
+        let value = show_json("my-change", &ShowContent::Proposal("hello".to_string()));
+        assert_eq!(value["name"], "my-change");
+        assert_eq!(value["proposal"], "hello");
+        assert!(value.get("spec").is_none());
+    }
+
+    #[test]
+    fn show_json_uses_spec_key_for_spec_content() {
+        let value = show_json("auth", &ShowContent::Spec("# Auth\n".to_string()));
+        assert_eq!(value["name"], "auth");
+        assert_eq!(value["spec"], "# Auth\n");
+        assert!(value.get("proposal").is_none());
     }
 }

@@ -7,6 +7,7 @@ pub mod change;
 pub mod config;
 pub mod drift;
 pub mod git;
+mod names;
 pub mod spec;
 pub mod tasks;
 
