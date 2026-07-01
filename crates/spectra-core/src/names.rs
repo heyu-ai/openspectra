@@ -1,10 +1,16 @@
 //! Shared name-validation guard for `change`/`spec` lookups.
 
-/// `name` must be a single path component (no separators or `..`) — CLI
-/// commands (e.g. `spectra show`) pass raw user input straight through, so
-/// this guard is load-bearing, not defensive-for-a-hypothetical-caller.
+/// `name` must be a single path component (no separators, `..`, or a
+/// Windows drive prefix like `C:`) — CLI commands (e.g. `spectra show`) pass
+/// raw user input straight through, so this guard is load-bearing, not
+/// defensive-for-a-hypothetical-caller.
 pub(crate) fn is_valid_name(name: &str) -> bool {
-    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+    !name.is_empty()
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains(':')
+        && name != "."
+        && name != ".."
 }
 
 #[cfg(test)]
@@ -19,6 +25,7 @@ mod tests {
         assert!(!is_valid_name("../secret"));
         assert!(!is_valid_name("sub/dir"));
         assert!(!is_valid_name("sub\\dir"));
+        assert!(!is_valid_name("C:secret"));
     }
 
     #[test]
