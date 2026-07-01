@@ -69,12 +69,29 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
     parked_marker_path(cfg, name).exists()
 }
 
-/// Mark a change as parked (idempotent: parking an already-parked change is
-/// not an error). Errors if `name` doesn't name an existing change.
-pub fn park(cfg: &Config, name: &str) -> Result<()> {
+/// Errors unless `name` is both an existing change directory *and* passes
+/// the same archive/name filters as `list_active`/`list_parked`
+/// (`walk_change_names`) — otherwise parking a non-canonical or
+/// archived-prefixed name would silently succeed with no visible effect in
+/// any listing.
+fn require_parkable(cfg: &Config, name: &str) -> Result<()> {
     if try_load(cfg, name)?.is_none() {
         return Err(anyhow!("change '{name}' not found in {}", cfg.changes_dir().display()));
     }
+    if !walk_change_names(cfg).iter().any(|n| n == name) {
+        return Err(anyhow!(
+            "'{name}' is an archived or non-canonical change name and can't be parked"
+        ));
+    }
+    Ok(())
+}
+
+/// Mark a change as parked (idempotent: parking an already-parked change is
+/// not an error). Errors if `name` doesn't name an existing, active-eligible
+/// change. Note: not safe against concurrent deletion of the change
+/// directory between the existence check and the marker write.
+pub fn park(cfg: &Config, name: &str) -> Result<()> {
+    require_parkable(cfg, name)?;
     let marker = parked_marker_path(cfg, name);
     let parent = marker.parent().expect("parked_marker_path always has a parent");
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
@@ -83,11 +100,10 @@ pub fn park(cfg: &Config, name: &str) -> Result<()> {
 }
 
 /// Clear a change's parked marker (idempotent: unparking a change that isn't
-/// parked is not an error). Errors if `name` doesn't name an existing change.
+/// parked is not an error). Errors if `name` doesn't name an existing,
+/// active-eligible change.
 pub fn unpark(cfg: &Config, name: &str) -> Result<()> {
-    if try_load(cfg, name)?.is_none() {
-        return Err(anyhow!("change '{name}' not found in {}", cfg.changes_dir().display()));
-    }
+    require_parkable(cfg, name)?;
     let marker = parked_marker_path(cfg, name);
     match std::fs::remove_file(&marker) {
         Ok(()) => Ok(()),
@@ -318,6 +334,17 @@ mod tests {
         let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
 
         assert!(unpark(&cfg, "ghost").is_err());
+    }
+
+    #[test]
+    fn park_and_unpark_reject_archived_prefixed_names() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        write(&cfg.changes_dir().join("2026-01-01-old-change").join("proposal.md"), "# Old\n");
+
+        assert!(park(&cfg, "2026-01-01-old-change").is_err());
+        assert!(unpark(&cfg, "2026-01-01-old-change").is_err());
+        assert_eq!(list_parked(&cfg), Vec::<String>::new());
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even

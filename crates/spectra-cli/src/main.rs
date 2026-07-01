@@ -1,4 +1,4 @@
-//! OpenSpectra CLI: `drift`, `list`, `show`.
+//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -58,14 +58,14 @@ enum Command {
     /// Park a change (mark it on hold, excluding it from the active listing).
     Park {
         /// Change name to park.
-        name: String,
+        change: String,
         #[arg(long)]
         json: bool,
     },
     /// Unpark a change (resume it from a parked state).
     Unpark {
         /// Change name to unpark.
-        name: String,
+        change: String,
         #[arg(long)]
         json: bool,
     },
@@ -330,13 +330,17 @@ fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// The exact wrapper shape is the documented `--json` contract for
+/// `park`/`unpark`; pin it here so a copy/paste between the two (forgetting
+/// to flip `parked`) doesn't ship silently.
+fn park_status_json(name: &str, parked: bool) -> serde_json::Value {
+    json!({ "name": name, "parked": parked })
+}
+
 fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     change::park(cfg, name)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({ "name": name, "parked": true }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&park_status_json(name, true))?);
     } else {
         println!("Parked '{name}'.");
     }
@@ -346,10 +350,7 @@ fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
 fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     change::unpark(cfg, name)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({ "name": name, "parked": false }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&park_status_json(name, false))?);
     } else {
         println!("Unparked '{name}'.");
     }
@@ -403,13 +404,13 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_show(&cfg, item, *json)
         }
-        Command::Park { name, json } => {
+        Command::Park { change, json } => {
             let cfg = require_initialized(&root)?;
-            cmd_park(&cfg, name, *json)
+            cmd_park(&cfg, change, *json)
         }
-        Command::Unpark { name, json } => {
+        Command::Unpark { change, json } => {
             let cfg = require_initialized(&root)?;
-            cmd_unpark(&cfg, name, *json)
+            cmd_unpark(&cfg, change, *json)
         }
     }
 }
@@ -676,5 +677,12 @@ mod tests {
         assert_eq!(value["name"], "auth");
         assert_eq!(value["spec"], "# Auth\n");
         assert!(value.get("proposal").is_none());
+    }
+
+    #[test]
+    fn park_status_json_reflects_parked_true_and_false() {
+        assert_eq!(park_status_json("my-change", true)["parked"], true);
+        assert_eq!(park_status_json("my-change", false)["parked"], false);
+        assert_eq!(park_status_json("my-change", true)["name"], "my-change");
     }
 }
