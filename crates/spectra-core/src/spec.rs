@@ -72,8 +72,14 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
 }
 
 /// Load a single spec by capability name. Errors if `spec.md` is missing (or
-/// unreadable for any other reason).
+/// unreadable for any other reason). `name` must be a single path component
+/// (no separators or `..`) — this function isn't yet called with untrusted
+/// input, but a future `show <spec>` command will pass a raw CLI argument
+/// straight through, so the traversal guard belongs here, not at each caller.
 pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(anyhow::anyhow!("invalid spec name '{name}'"));
+    }
     let dir = cfg.specs_dir().join(name);
     match std::fs::metadata(dir.join("spec.md")) {
         Ok(m) if m.is_file() => Ok(Spec {
@@ -159,6 +165,23 @@ mod tests {
 
         assert!(load(&cfg, "ghost").is_err());
         assert!(load(&cfg, "does-not-exist").is_err());
+    }
+
+    #[test]
+    fn load_rejects_path_traversal_names() {
+        let tmp = TempDir::new("spec");
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        // A spec.md outside specs_dir() that a traversal attempt could reach.
+        write(&tmp.join("secret.md"), "outside\n");
+
+        assert!(load(&cfg, "../secret").is_err());
+        assert!(load(&cfg, "..").is_err());
+        assert!(load(&cfg, "sub/dir").is_err());
+        assert!(load(&cfg, "").is_err());
     }
 
     #[test]
