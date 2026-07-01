@@ -41,7 +41,7 @@ enum Command {
         /// List specs instead of changes.
         #[arg(long)]
         specs: bool,
-        /// (not yet implemented) List parked changes.
+        /// List parked changes instead of active ones.
         #[arg(long)]
         parked: bool,
         #[arg(long)]
@@ -144,12 +144,8 @@ fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) ->
     if want_specs {
         return cmd_list_specs(cfg, as_json);
     }
-    // Minimal: active changes with task counts and a one-line summary.
-    let names = if want_parked {
-        Vec::new() // parked listing not yet implemented
-    } else {
-        change::list_active(cfg)
-    };
+    // Minimal: active/parked changes with task counts and a one-line summary.
+    let names = if want_parked { change::list_parked(cfg) } else { change::list_active(cfg) };
     let mut items = Vec::new();
     for name in &names {
         let ch = change::load(cfg, name)?;
@@ -174,7 +170,7 @@ fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) ->
             serde_json::to_string_pretty(&json!({ "changes": items }))?
         );
     } else if items.is_empty() {
-        println!("No active changes.");
+        println!("{}", if want_parked { "No parked changes." } else { "No active changes." });
     } else {
         for it in &items {
             println!(

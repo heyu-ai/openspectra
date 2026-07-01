@@ -119,6 +119,30 @@ pub fn list_active(cfg: &Config) -> Vec<String> {
     names
 }
 
+/// List parked change names (those with a `.spectra/changes/<name>.parked`
+/// marker), sorted. Mirrors `list_active`'s directory walk and name filters,
+/// inverting the parked check.
+pub fn list_parked(cfg: &Config) -> Vec<String> {
+    let mut names = Vec::new();
+    let Ok(entries) = std::fs::read_dir(cfg.changes_dir()) else {
+        return names;
+    };
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name == "archive" || ARCHIVED_PREFIX_RE.is_match(&name) || !CHANGE_NAME_RE.is_match(&name) {
+            continue;
+        }
+        if is_parked(cfg, &name) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names
+}
+
 /// Resolve a change name: use `explicit` if given, else auto-select when
 /// exactly one active change exists (mirrors `spectra drift`'s auto-detect).
 pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
@@ -133,5 +157,71 @@ pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
             "Multiple changes found. Use a change name to specify one: {}",
             active.join(", ")
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn write(path: &std::path::Path, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    #[test]
+    fn list_parked_finds_only_marked_changes() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+        write(&cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n");
+        write(&cfg.changes_dir().join("on-hold").join("proposal.md"), "# On hold\n");
+        write(&tmp.join(".spectra").join("changes").join("on-hold.parked"), "");
+
+        assert_eq!(list_parked(&cfg), vec!["on-hold".to_string()]);
+        assert_eq!(list_active(&cfg), vec!["shipped".to_string()]);
+    }
+
+    #[test]
+    fn list_parked_is_empty_when_changes_dir_missing() {
+        let tmp = TempDir::new();
+        let cfg = Config { root: tmp.to_path_buf(), spec_dir: "openspec".to_string(), locale: None };
+
+        assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    /// RAII guard for a per-test scratch directory: removes it on drop even
+    /// when the test panics partway through (an assertion failure must not
+    /// leak the directory).
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "spectra-change-test-{}-{}-{seq}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = std::path::Path;
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }
