@@ -69,7 +69,7 @@ fn load(cfg: &Config, name: &str) -> TouchedTracking {
             empty()
         }
         Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
-            let backup = path.with_extension("json.corrupt");
+            let backup = non_colliding_backup_path(&path);
             let recovery_hint = match std::fs::rename(&path, &backup) {
                 Ok(()) => format!("the original file was preserved at {}", backup.display()),
                 Err(rename_err) => format!("failed to preserve the original file too ({rename_err})"),
@@ -81,6 +81,21 @@ fn load(cfg: &Config, name: &str) -> TouchedTracking {
             empty()
         }),
     }
+}
+
+/// `<name>.json.corrupt`, or `<name>.json.corrupt.2`, `.3`, ... if that's
+/// already taken — so a second (or third...) corruption event doesn't
+/// silently clobber the backup of a previous one via `rename`'s
+/// overwrite-the-destination semantics.
+fn non_colliding_backup_path(path: &std::path::Path) -> PathBuf {
+    let base = path.with_extension("json.corrupt");
+    if !base.exists() {
+        return base;
+    }
+    (2..)
+        .map(|n| PathBuf::from(format!("{}.{n}", base.display())))
+        .find(|p| !p.exists())
+        .expect("infinite range")
 }
 
 /// File paths already recorded against any task for this change, across all
@@ -311,6 +326,31 @@ mod tests {
         assert!(
             !path.exists(),
             "the corrupt path itself should have been renamed away"
+        );
+    }
+
+    #[test]
+    fn load_does_not_clobber_a_prior_corrupt_backup_on_a_second_corruption() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let path = touched_path(&c, "my-change");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        std::fs::write(&path, "first corruption").unwrap();
+        load(&c, "my-change"); // creates <name>.json.corrupt
+
+        std::fs::write(&path, "second corruption").unwrap();
+        load(&c, "my-change"); // must not overwrite the first backup
+
+        let first_backup = path.with_extension("json.corrupt");
+        let second_backup = PathBuf::from(format!("{}.2", first_backup.display()));
+        assert_eq!(
+            std::fs::read_to_string(&first_backup).unwrap(),
+            "first corruption"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&second_backup).unwrap(),
+            "second corruption"
         );
     }
 

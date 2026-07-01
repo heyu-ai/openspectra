@@ -55,19 +55,26 @@ pub fn commits_since(root: &Path, since: &str) -> u64 {
 }
 
 /// Paths of all dirty files (modified, staged, or untracked), relative to
-/// `root`. A rename ("old -> new") reports the new path. `None` when `root`
-/// isn't a git repository or the underlying git commands fail — distinct
-/// from `Some(vec![])`, which means git ran successfully and found nothing
-/// dirty, so callers can tell "couldn't check" from "genuinely clean".
+/// `root`. A rename/copy reports the new path. `None` when `root` isn't a
+/// git repository or the underlying git commands fail — distinct from
+/// `Some(vec![])`, which means git ran successfully and found nothing dirty,
+/// so callers can tell "couldn't check" from "genuinely clean".
 ///
-/// `git status --porcelain` itself always reports paths relative to the
-/// **repository root**, not `-C <root>` (unlike `ls_files`), so a project
-/// nested in a git repo subdirectory needs its output re-anchored to
-/// `root` via `rev-parse --show-toplevel`; paths outside `root` (e.g. a
-/// monorepo sibling) are dropped as out of scope. `root` is canonicalized
-/// before that comparison, since git's own output is always canonical
-/// (e.g. macOS resolves `/var/...` to `/private/var/...`) and a symlinked
-/// `root` would otherwise silently drop every path as "outside root".
+/// Uses `-z` (NUL-delimited, `porcelain=v1`) rather than the human-readable
+/// porcelain format: with `-z`, git never quotes/escapes a path (not even
+/// ones with spaces, non-ASCII bytes, or a literal " -> "), and a rename's
+/// old path is a genuinely separate NUL-terminated field rather than text
+/// joined with " -> " — both of which make ad hoc trimming/splitting of the
+/// human-readable format lossy for legal-but-unusual filenames.
+///
+/// `git status` itself always reports paths relative to the **repository
+/// root**, not `-C <root>` (unlike `ls_files`), so a project nested in a git
+/// repo subdirectory needs its output re-anchored to `root` via
+/// `rev-parse --show-toplevel`; paths outside `root` (e.g. a monorepo
+/// sibling) are dropped as out of scope. `root` is canonicalized before that
+/// comparison, since git's own output is always canonical (e.g. macOS
+/// resolves `/var/...` to `/private/var/...`) and a symlinked `root` would
+/// otherwise silently drop every path as "outside root".
 pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
     let repo_root = git(root, &["rev-parse", "--show-toplevel"])?;
     let repo_root = Path::new(repo_root.trim()).to_path_buf();
@@ -83,103 +90,32 @@ pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
     // to a single "newdir/" porcelain entry instead of listing the files
     // inside it, which would make touched-file tracking record a directory
     // path rather than the actual files a task touched.
-    let out = git(root, &["status", "--porcelain", "--untracked-files=all"])?;
-    Some(
-        out.lines()
-            .filter(|line| line.len() > 3)
-            .filter_map(|line| {
-                // Only R(ename)/C(opy) status codes carry a " -> " separator
-                // in the path; splitting on it unconditionally would mangle
-                // an ordinary modified/untracked file whose real name happens
-                // to contain the literal substring " -> ".
-                let is_rename_or_copy =
-                    line.as_bytes()[..2].contains(&b'R') || line.as_bytes()[..2].contains(&b'C');
-                let rest = &line[3..];
-                let repo_rel = if is_rename_or_copy {
-                    rest.rsplit_once(" -> ").map_or(rest, |(_, new)| new)
-                } else {
-                    rest
-                }
-                .trim();
-                let repo_rel = unquote_git_path(repo_rel);
-                let abs = repo_root.join(repo_rel);
-                let rel = abs.strip_prefix(&canonical_root).ok()?;
-                Some(rel.to_string_lossy().replace('\\', "/"))
-            })
-            .collect(),
-    )
-}
-
-/// Undo git's porcelain path quoting (`core.quotePath`, on by default):
-/// a path containing non-ASCII bytes or control characters is wrapped in
-/// double quotes with C-style backslash/octal escapes. Paths without
-/// quoting needed are returned unchanged.
-fn unquote_git_path(s: &str) -> String {
-    let Some(inner) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
-        return s.to_string();
-    };
-    let bytes = inner.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] != b'\\' {
-            out.push(bytes[i]);
-            i += 1;
+    let out = git(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    let mut fields = out.split('\0').filter(|f| !f.is_empty());
+    let mut files = Vec::new();
+    while let Some(entry) = fields.next() {
+        if entry.len() <= 3 {
             continue;
         }
-        if i + 4 <= bytes.len() && bytes[i + 1].is_ascii_digit() {
-            if let Ok(v) =
-                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 4]).unwrap_or(""), 8)
-            {
-                out.push(v);
-                i += 4;
-                continue;
-            }
+        // A rename/copy status ("R "/"C " in either status column) emits the
+        // new path as this field, followed by a *separate* NUL-terminated
+        // field for the old path -- consume and discard that second field so
+        // it isn't misread as its own status entry.
+        let is_rename_or_copy =
+            entry.as_bytes()[..2].contains(&b'R') || entry.as_bytes()[..2].contains(&b'C');
+        let repo_rel = &entry[3..];
+        if is_rename_or_copy {
+            fields.next();
         }
-        match bytes.get(i + 1) {
-            Some(b'a') => {
-                out.push(0x07); // BEL
-                i += 2;
-            }
-            Some(b'b') => {
-                out.push(0x08); // backspace
-                i += 2;
-            }
-            Some(b'f') => {
-                out.push(0x0c); // form feed
-                i += 2;
-            }
-            Some(b'n') => {
-                out.push(b'\n');
-                i += 2;
-            }
-            Some(b'r') => {
-                out.push(b'\r');
-                i += 2;
-            }
-            Some(b't') => {
-                out.push(b'\t');
-                i += 2;
-            }
-            Some(b'v') => {
-                out.push(0x0b); // vertical tab
-                i += 2;
-            }
-            Some(b'\\') => {
-                out.push(b'\\');
-                i += 2;
-            }
-            Some(b'"') => {
-                out.push(b'"');
-                i += 2;
-            }
-            _ => {
-                out.push(bytes[i]);
-                i += 1;
-            }
+        let abs = repo_root.join(repo_rel);
+        if let Ok(rel) = abs.strip_prefix(&canonical_root) {
+            files.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
-    String::from_utf8_lossy(&out).into_owned()
+    Some(files)
 }
 
 /// True if `needle` appears in any tracked file (`git grep -F -l`),
@@ -367,8 +303,8 @@ mod tests {
 
     #[test]
     fn dirty_files_does_not_mangle_an_untracked_file_literally_named_with_arrow() {
-        // A non-rename status line must not have its filename split on
-        // " -> " just because the literal substring happens to appear in it.
+        // -z never quotes/splits on text, so a literal " -> " substring in an
+        // ordinary (non-rename) filename passes through untouched.
         let dir = TempDir::new("dirty-arrow-name");
         init_repo_with_commit(&dir);
         std::fs::write(dir.join("a -> b.txt"), "new\n").unwrap();
@@ -378,29 +314,32 @@ mod tests {
     }
 
     #[test]
-    fn unquote_git_path_leaves_unquoted_paths_unchanged() {
-        assert_eq!(unquote_git_path("src/foo.rs"), "src/foo.rs");
+    fn dirty_files_reports_a_rename_target_that_itself_contains_an_arrow() {
+        // The old human-readable "old -> new" porcelain format is genuinely
+        // ambiguous here (rsplit_once(" -> ") would misparse the target);
+        // -z's separate NUL-terminated fields resolve it unambiguously.
+        let dir = TempDir::new("dirty-rename-arrow-target");
+        init_repo_with_commit(&dir);
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&*dir)
+            .args(["mv", "f.txt", "a -> b.txt"])
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let files = dirty_files(&dir).unwrap();
+        assert_eq!(files, vec!["a -> b.txt".to_string()]);
     }
 
     #[test]
-    fn unquote_git_path_decodes_octal_escapes() {
-        // git quotes a path containing the UTF-8 bytes for "é" (0xc3 0xa9)
-        // as octal escapes when core.quotePath is on (the default).
-        assert_eq!(unquote_git_path("\"caf\\303\\251.txt\""), "café.txt");
-    }
+    fn dirty_files_preserves_spaces_and_non_ascii_bytes_without_quoting() {
+        let dir = TempDir::new("dirty-unicode-space");
+        init_repo_with_commit(&dir);
+        std::fs::write(dir.join("café with space.txt"), "new\n").unwrap();
 
-    #[test]
-    fn unquote_git_path_decodes_backslash_escapes() {
-        assert_eq!(unquote_git_path("\"a\\\\b\""), "a\\b");
-        assert_eq!(unquote_git_path("\"a\\\"b\""), "a\"b");
-    }
-
-    #[test]
-    fn unquote_git_path_decodes_the_full_c_style_escape_set() {
-        assert_eq!(unquote_git_path("\"a\\ab\""), "a\u{07}b");
-        assert_eq!(unquote_git_path("\"a\\bb\""), "a\u{08}b");
-        assert_eq!(unquote_git_path("\"a\\fb\""), "a\u{0c}b");
-        assert_eq!(unquote_git_path("\"a\\rb\""), "a\rb");
-        assert_eq!(unquote_git_path("\"a\\vb\""), "a\u{0b}b");
+        let files = dirty_files(&dir).unwrap();
+        assert_eq!(files, vec!["café with space.txt".to_string()]);
     }
 }
