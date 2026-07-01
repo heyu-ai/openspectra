@@ -42,16 +42,30 @@ fn touched_path(cfg: &Config, name: &str) -> PathBuf {
 }
 
 /// Load the existing tracking file for `name`, or an empty one if it's
-/// absent or unparseable — this file is convenience data for AI-agent commit
-/// tooling, not load-bearing for `task done`'s own success.
+/// absent — a missing file is the expected first-run state. A *present but
+/// unparseable* file (corruption, a partial write, a future schema) is a
+/// different situation: silently treating it as empty and then having
+/// `record` overwrite it would permanently discard prior task→file history
+/// with no trace, so that case is loud instead.
 fn load(cfg: &Config, name: &str) -> TouchedTracking {
-    std::fs::read_to_string(touched_path(cfg, name))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| TouchedTracking {
+    let path = touched_path(cfg, name);
+    match std::fs::read_to_string(&path) {
+        Err(_) => TouchedTracking {
             change: name.to_string(),
             touched: Vec::new(),
-        })
+        },
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+            eprintln!(
+                "warning: {} is corrupt ({e}); resetting touched-file tracking for '{name}' \
+                 -- prior touched-file history for this change may be lost",
+                path.display()
+            );
+            TouchedTracking {
+                change: name.to_string(),
+                touched: Vec::new(),
+            }
+        }),
+    }
 }
 
 /// File paths already recorded against any task for this change, across all

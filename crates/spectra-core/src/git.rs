@@ -54,23 +54,90 @@ pub fn commits_since(root: &Path, since: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Repo-relative paths of all dirty files (modified, staged, or untracked),
-/// via `git status --porcelain`. A rename ("old -> new") reports the new
-/// path. Empty when `root` isn't a git repository.
-pub fn dirty_files(root: &Path) -> Vec<String> {
-    let Some(out) = git(root, &["status", "--porcelain"]) else {
-        return Vec::new();
+/// Paths of all dirty files (modified, staged, or untracked), relative to
+/// `root`. A rename ("old -> new") reports the new path. `None` when `root`
+/// isn't a git repository or the underlying git commands fail — distinct
+/// from `Some(vec![])`, which means git ran successfully and found nothing
+/// dirty, so callers can tell "couldn't check" from "genuinely clean".
+///
+/// `git status --porcelain` itself always reports paths relative to the
+/// **repository root**, not `-C <root>` (unlike `ls_files`), so a project
+/// nested in a git repo subdirectory needs its output re-anchored to
+/// `root` via `rev-parse --show-toplevel`; paths outside `root` (e.g. a
+/// monorepo sibling) are dropped as out of scope. `root` is canonicalized
+/// before that comparison, since git's own output is always canonical
+/// (e.g. macOS resolves `/var/...` to `/private/var/...`) and a symlinked
+/// `root` would otherwise silently drop every path as "outside root".
+pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
+    let repo_root = git(root, &["rev-parse", "--show-toplevel"])?;
+    let repo_root = Path::new(repo_root.trim()).to_path_buf();
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let out = git(root, &["status", "--porcelain"])?;
+    Some(
+        out.lines()
+            .filter(|line| line.len() > 3)
+            .filter_map(|line| {
+                let rest = &line[3..];
+                let repo_rel = rest.rsplit_once(" -> ").map_or(rest, |(_, new)| new).trim();
+                let repo_rel = unquote_git_path(repo_rel);
+                let abs = repo_root.join(repo_rel);
+                let rel = abs.strip_prefix(&canonical_root).ok()?;
+                Some(rel.to_string_lossy().replace('\\', "/"))
+            })
+            .collect(),
+    )
+}
+
+/// Undo git's porcelain path quoting (`core.quotePath`, on by default):
+/// a path containing non-ASCII bytes or control characters is wrapped in
+/// double quotes with C-style backslash/octal escapes. Paths without
+/// quoting needed are returned unchanged.
+fn unquote_git_path(s: &str) -> String {
+    let Some(inner) = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')) else {
+        return s.to_string();
     };
-    out.lines()
-        .filter(|line| line.len() > 3)
-        .map(|line| {
-            let rest = &line[3..];
-            rest.rsplit_once(" -> ")
-                .map_or(rest, |(_, new)| new)
-                .trim()
-                .to_string()
-        })
-        .collect()
+    let bytes = inner.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\\' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        if i + 4 <= bytes.len() && bytes[i + 1].is_ascii_digit() {
+            if let Ok(v) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 4]).unwrap_or(""), 8)
+            {
+                out.push(v);
+                i += 4;
+                continue;
+            }
+        }
+        match bytes.get(i + 1) {
+            Some(b'n') => {
+                out.push(b'\n');
+                i += 2;
+            }
+            Some(b't') => {
+                out.push(b'\t');
+                i += 2;
+            }
+            Some(b'\\') => {
+                out.push(b'\\');
+                i += 2;
+            }
+            Some(b'"') => {
+                out.push(b'"');
+                i += 2;
+            }
+            _ => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// True if `needle` appears in any tracked file (`git grep -F -l`),
@@ -184,5 +251,74 @@ mod tests {
         init_repo(&dir);
 
         assert_eq!(head_sha(&dir), None);
+    }
+
+    #[test]
+    fn dirty_files_is_none_outside_a_git_repo() {
+        let dir = TempDir::new("dirty-norepo");
+        assert_eq!(dirty_files(&dir), None);
+    }
+
+    #[test]
+    fn dirty_files_reports_modified_staged_and_untracked_paths() {
+        let dir = TempDir::new("dirty-mixed");
+        init_repo_with_commit(&dir);
+        std::fs::write(dir.join("f.txt"), "changed\n").unwrap();
+        std::fs::write(dir.join("staged.txt"), "new\n").unwrap();
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&*dir)
+            .args(["add", "staged.txt"])
+            .output()
+            .unwrap()
+            .status
+            .success());
+        std::fs::write(dir.join("untracked.txt"), "new\n").unwrap();
+
+        let mut files = dirty_files(&dir).unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                "f.txt".to_string(),
+                "staged.txt".to_string(),
+                "untracked.txt".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn dirty_files_reports_the_new_path_for_a_rename() {
+        let dir = TempDir::new("dirty-rename");
+        init_repo_with_commit(&dir);
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&*dir)
+            .args(["mv", "f.txt", "renamed.txt"])
+            .output()
+            .unwrap()
+            .status
+            .success());
+
+        let files = dirty_files(&dir).unwrap();
+        assert_eq!(files, vec!["renamed.txt".to_string()]);
+    }
+
+    #[test]
+    fn unquote_git_path_leaves_unquoted_paths_unchanged() {
+        assert_eq!(unquote_git_path("src/foo.rs"), "src/foo.rs");
+    }
+
+    #[test]
+    fn unquote_git_path_decodes_octal_escapes() {
+        // git quotes a path containing the UTF-8 bytes for "é" (0xc3 0xa9)
+        // as octal escapes when core.quotePath is on (the default).
+        assert_eq!(unquote_git_path("\"caf\\303\\251.txt\""), "café.txt");
+    }
+
+    #[test]
+    fn unquote_git_path_decodes_backslash_escapes() {
+        assert_eq!(unquote_git_path("\"a\\\\b\""), "a\\b");
+        assert_eq!(unquote_git_path("\"a\\\"b\""), "a\"b");
     }
 }

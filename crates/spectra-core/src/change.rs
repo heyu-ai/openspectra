@@ -378,17 +378,23 @@ pub struct TaskDoneOutcome {
 /// Mark the `task_id`-th checkbox (1-based, across all checkboxes in
 /// `tasks.md`, file order) as done, and best-effort record any newly-dirty
 /// files (via `git status --porcelain`, excluding the change's own artifact
-/// directory and files already recorded for an earlier task) to
-/// `.spectra/touched/<name>.json`.
+/// directory, OpenSpectra's own `.spectra/` state directory, and files
+/// already recorded for an earlier task) to `.spectra/touched/<name>.json`.
 ///
 /// Errors when the change (or its `tasks.md`) doesn't exist use the same
 /// message for both cases — "tasks.md not found for change '<name>'" —
-/// matching the reference CLI, which doesn't distinguish them either.
+/// matching the reference CLI, which doesn't distinguish them either. Any
+/// other I/O error reading `tasks.md` (permission denied, etc.) propagates
+/// with its real cause instead of being folded into that message.
 pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDoneOutcome> {
     let not_found = || anyhow!("tasks.md not found for change '{name}'");
     let ch = try_load(cfg, name)?.ok_or_else(not_found)?;
     let tasks_path = ch.tasks_md();
-    let md = std::fs::read_to_string(&tasks_path).map_err(|_| not_found())?;
+    let md = match std::fs::read_to_string(&tasks_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Err(not_found()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", tasks_path.display())),
+    };
 
     let (new_md, task_desc) = crate::tasks::mark_done(&md, task_id)?;
     std::fs::write(&tasks_path, &new_md)
@@ -397,23 +403,30 @@ pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDo
     // Touched-file tracking is best-effort convenience data for AI-agent
     // commit tooling; a failure here must not undo the task-done marking
     // that already succeeded above.
-    let already_recorded = crate::touched::already_recorded(cfg, name);
-    let change_rel_dir = ch.dir.strip_prefix(&cfg.root).ok();
-    let new_files: Vec<String> = crate::git::dirty_files(&cfg.root)
-        .into_iter()
-        .filter(|f| {
-            let path = std::path::Path::new(f);
-            let under_change_dir = change_rel_dir.is_some_and(|rel| path.starts_with(rel));
-            // `.spectra/` is this tool's own state directory (the very
-            // tracking file being written here included) -- never a
-            // "touched" implementation file, whether or not the project
-            // happens to gitignore it.
-            let under_spectra_state_dir = path.starts_with(".spectra");
-            !under_change_dir && !under_spectra_state_dir && !already_recorded.contains(f)
-        })
-        .collect();
-    if let Err(e) = crate::touched::record(cfg, name, task_id, &task_desc, new_files) {
-        eprintln!("warning: failed to record touched files for '{name}': {e}");
+    match crate::git::dirty_files(&cfg.root) {
+        None => eprintln!(
+            "warning: couldn't determine dirty files for '{name}'; this task's touched files were not recorded"
+        ),
+        Some(dirty) => {
+            let already_recorded = crate::touched::already_recorded(cfg, name);
+            let change_rel_dir = ch.dir.strip_prefix(&cfg.root).ok();
+            let new_files: Vec<String> = dirty
+                .into_iter()
+                .filter(|f| {
+                    let path = std::path::Path::new(f);
+                    let under_change_dir = change_rel_dir.is_some_and(|rel| path.starts_with(rel));
+                    // `.spectra/` is this tool's own state directory (the very
+                    // tracking file being written here included) -- never a
+                    // "touched" implementation file, whether or not the project
+                    // happens to gitignore it.
+                    let under_spectra_state_dir = path.starts_with(".spectra");
+                    !under_change_dir && !under_spectra_state_dir && !already_recorded.contains(f)
+                })
+                .collect();
+            if let Err(e) = crate::touched::record(cfg, name, task_id, &task_desc, new_files) {
+                eprintln!("warning: failed to record touched files for '{name}': {e}");
+            }
+        }
     }
 
     Ok(TaskDoneOutcome {

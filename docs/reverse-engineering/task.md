@@ -30,23 +30,35 @@ spectra task done <TASK_ID> [--change <NAME>] [--json]
 
 ## Behavior
 
-1. Resolve the change (auto-detect or `--change`). If the change doesn't
-   exist, or exists but has no `tasks.md`, both report the **same** error:
+OpenSpectra's actual evaluation order (the oracle doesn't expose enough to
+confirm its own internal order, so this is OpenSpectra's own, documented
+here for accuracy rather than presented as oracle-verified):
+
+0. Parse `TASK_ID` as an unsigned integer *before* looking at the change at
+   all → `Invalid task ID '<input>': must be a number` on failure.
+1. Resolve the change (auto-detect or `--change`; `--change`'s own
+   auto-detect errors, e.g. "No active changes...", are reachable here same
+   as `drift`/`show`/`park`). If the change doesn't exist, or exists but has
+   no `tasks.md`, both report the **same** error:
    `tasks.md not found for change '<name>'` — the oracle doesn't distinguish
    the two cases.
-2. Validate `TASK_ID`:
-   * not a valid unsigned integer → `Invalid task ID '<input>': must be a number`
+2. Validate the remaining `TASK_ID` cases (inside `tasks::mark_done`, after
+   the change/`tasks.md` load above):
    * `0` → `Task ID must be >= 1`
    * greater than the total checkbox count → `Task <id> not found (total: <n>)`
    * already `[x]` → `Task <id> is already done`
 3. Flip that checkbox from `[ ]` to `[x]`, rewriting `tasks.md` with every
-   other line (including other checkboxes) preserved byte-for-byte.
+   other line's content preserved verbatim. (LF line endings; a CRLF
+   `tasks.md` is normalized to LF as a side effect of the line-based
+   rewrite — not literally byte-for-byte for that input.)
 4. Best-effort record newly-dirty files to `.spectra/touched/<name>.json`:
    * "touched files" = `git status --porcelain` output (modified, staged,
      and untracked paths; a rename reports the new path)…
    * … **minus** anything under the change's own artifact directory
      (`<spec_dir>/changes/<name>/` — `tasks.md` itself is always dirty right
      after step 3, and must never show up as a "touched" file) …
+   * … **minus** anything under OpenSpectra's own `.spectra/` state directory
+     (see the dedicated section below) …
    * … **minus** anything already recorded against an *earlier* task in this
      change's tracking file (confirmed empirically: a file that's still
      dirty after being recorded under task 1 is *not* re-attributed to
@@ -54,10 +66,18 @@ spectra task done <TASK_ID> [--change <NAME>] [--json]
    * If the resulting file list is empty, no tracking file is written at
      all (confirmed: marking a task done with zero unrelated dirty files
      never creates `.spectra/`).
-5. Print `✓ Task <id> marked as done: <task_desc>` (human) or
-   `{"change","status","task_desc","task_id"}` (`--json`, alphabetical
+5. Print `✓ Task <id> marked as done: <task_desc>` (human, oracle-verified)
+   or `{"change","status","task_desc","task_id"}` (`--json`, alphabetical
    key order, **`task_id` rendered as a string**, matching the oracle
-   exactly — not a JSON number).
+   exactly — not a JSON number). **OpenSpectra deliberately omits the `✓`**
+   in its own human-readable output — none of `park`/`unpark`/`new change`
+   use a checkmark either, and this is a conscious choice to stay
+   consistent with those already-shipped commands rather than an oversight.
+   The alphabetical `--json` key order is a byproduct of `serde_json`'s
+   default `Map` (a `BTreeMap`, since the `preserve_order` feature isn't
+   enabled) rather than something OpenSpectra sorts explicitly — pinned by
+   a dedicated test so enabling that feature later doesn't silently change
+   the shape without a failing test.
 
 ## JSON schemas
 
