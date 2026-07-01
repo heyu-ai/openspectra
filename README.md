@@ -37,13 +37,14 @@ and exits non-zero on medium/heavy drift so CI can gate on it.
 ```sh
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
 spectra list  [--json]            # lists active changes
+spectra list  --specs [--json]    # lists capability specs instead of changes
 spectra show  <CHANGE> [--json]   # prints the change's proposal
 ```
 
 Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
 
-> Flags `--no-color`, `list --changes/--specs/--parked`, and spec content for
-> `show` are accepted by the CLI but **not yet implemented** (marked as such in
+> Flags `--no-color`, `list --changes/--parked`, and spec content for `show`
+> are accepted by the CLI but **not yet implemented** (marked as such in
 > `--help`); they are placeholders for the wider command set still being ported.
 
 ### CI gate example
@@ -73,7 +74,7 @@ binary is used as a golden oracle to calibrate constants
 ## Layout
 
 ```
-crates/spectra-core/   # change discovery, anchors, git, drift scoring (library)
+crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
 crates/spectra-cli/    # clap CLI: drift / list / show
 docs/reverse-engineering/drift.md   # how the original works, and what's still open
 scripts/               # oracle calibration probes
