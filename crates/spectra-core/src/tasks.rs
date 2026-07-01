@@ -15,6 +15,7 @@
 //! the observed all-zero field behavior rather than emit false positives. See
 //! `docs/reverse-engineering/drift.md` for the open question.
 
+use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
@@ -54,9 +55,61 @@ pub fn parse(md: &str) -> Vec<Task> {
                 .map(|m| m[1].to_string())
                 .filter(|s| PATHLIKE_RE.is_match(s))
                 .collect();
-            Some(Task { done, description, files })
+            Some(Task {
+                done,
+                description,
+                files,
+            })
         })
         .collect()
+}
+
+/// Toggle the 1-based `task_id`-th checkbox (counted across ALL checkboxes
+/// in file order, ignoring any `## N.` group headers) from pending to done.
+/// Returns the rewritten markdown and the task's raw description text
+/// (everything after the checkbox marker, matching the reference CLI's
+/// `spectra task done` output). Error wording matches the reference CLI
+/// exactly (reverse-engineered against `/Applications/Spectra.app` v2.3.1):
+/// - `task_id == 0` → "Task ID must be >= 1"
+/// - `task_id` exceeds the total checkbox count → "Task {id} not found (total: {n})"
+/// - the task is already `[x]` → "Task {id} is already done"
+pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
+    if task_id == 0 {
+        return Err(anyhow!("Task ID must be >= 1"));
+    }
+    let lines: Vec<&str> = md.lines().collect();
+    let checkbox_line_indices: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| CHECKBOX_RE.is_match(line))
+        .map(|(i, _)| i)
+        .collect();
+    let total = checkbox_line_indices.len();
+    if task_id > total {
+        return Err(anyhow!("Task {task_id} not found (total: {total})"));
+    }
+    let line_idx = checkbox_line_indices[task_id - 1];
+    let line = lines[line_idx];
+    let caps = CHECKBOX_RE
+        .captures(line)
+        .expect("line matched CHECKBOX_RE above");
+    let state = caps
+        .get(1)
+        .expect("group 1 always captures on a CHECKBOX_RE match");
+    let description = caps[2].trim().to_string();
+    if state.as_str() != " " {
+        return Err(anyhow!("Task {task_id} is already done"));
+    }
+
+    let mut new_line = line.to_string();
+    new_line.replace_range(state.range(), "x");
+    let mut owned_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+    owned_lines[line_idx] = new_line;
+    let mut new_md = owned_lines.join("\n");
+    if md.ends_with('\n') {
+        new_md.push('\n');
+    }
+    Ok((new_md, description))
 }
 
 #[derive(Debug, Default)]
@@ -120,8 +173,53 @@ mod tests {
     fn analyze_is_conservative_zero_until_calibrated() {
         let md = "- [ ] 1.1 do `missing/file.rs`";
         let tasks = parse(md);
-        let a = analyze(std::path::Path::new("/nonexistent"), "chg", &tasks, None, Some("2026-01-01"));
+        let a = analyze(
+            std::path::Path::new("/nonexistent"),
+            "chg",
+            &tasks,
+            None,
+            Some("2026-01-01"),
+        );
         assert!(a.blocked_external.is_empty());
         assert!(a.maybe_resolved.is_empty());
+    }
+
+    #[test]
+    fn mark_done_toggles_the_nth_checkbox_across_group_headers() {
+        // Matches the reference CLI's real scaffold shape: task_id counts
+        // checkboxes 1-based across ALL groups, ignoring the "## N." headers.
+        let md =
+            "## 1. Group\n\n- [ ] 1.1 first\n- [ ] 1.2 second\n\n## 2. Group\n\n- [ ] 2.1 third\n";
+        let (new_md, desc) = mark_done(md, 3).unwrap();
+        assert_eq!(desc, "2.1 third");
+        assert!(new_md.contains("- [x] 2.1 third"));
+        // Untouched lines (including the other group's checkboxes) are preserved verbatim.
+        assert!(new_md.contains("- [ ] 1.1 first"));
+        assert!(new_md.contains("- [ ] 1.2 second"));
+    }
+
+    #[test]
+    fn mark_done_preserves_trailing_newline_and_indentation() {
+        let md = "  - [ ] indented task\n";
+        let (new_md, _) = mark_done(md, 1).unwrap();
+        assert_eq!(new_md, "  - [x] indented task\n");
+    }
+
+    #[test]
+    fn mark_done_rejects_zero() {
+        let err = mark_done("- [ ] a\n", 0).unwrap_err();
+        assert_eq!(err.to_string(), "Task ID must be >= 1");
+    }
+
+    #[test]
+    fn mark_done_rejects_out_of_range() {
+        let err = mark_done("- [ ] a\n- [ ] b\n", 5).unwrap_err();
+        assert_eq!(err.to_string(), "Task 5 not found (total: 2)");
+    }
+
+    #[test]
+    fn mark_done_rejects_already_done() {
+        let err = mark_done("- [x] a\n", 1).unwrap_err();
+        assert_eq!(err.to_string(), "Task 1 is already done");
     }
 }

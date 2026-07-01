@@ -10,10 +10,11 @@ pub mod git;
 mod names;
 pub mod spec;
 pub mod tasks;
+pub mod touched;
 
 pub use change::{Change, ChangeMetadata};
 pub use config::Config;
-pub use drift::{DriftReport, analyze};
+pub use drift::{analyze, DriftReport};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

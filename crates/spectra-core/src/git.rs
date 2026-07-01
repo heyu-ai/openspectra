@@ -54,6 +54,25 @@ pub fn commits_since(root: &Path, since: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// Repo-relative paths of all dirty files (modified, staged, or untracked),
+/// via `git status --porcelain`. A rename ("old -> new") reports the new
+/// path. Empty when `root` isn't a git repository.
+pub fn dirty_files(root: &Path) -> Vec<String> {
+    let Some(out) = git(root, &["status", "--porcelain"]) else {
+        return Vec::new();
+    };
+    out.lines()
+        .filter(|line| line.len() > 3)
+        .map(|line| {
+            let rest = &line[3..];
+            rest.rsplit_once(" -> ")
+                .map_or(rest, |(_, new)| new)
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
 /// True if `needle` appears in any tracked file (`git grep -F -l`),
 /// i.e. the symbol/function is referenced or defined somewhere in the repo.
 pub fn grep_exists(root: &Path, needle: &str) -> bool {

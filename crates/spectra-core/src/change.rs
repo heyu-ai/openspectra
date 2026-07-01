@@ -364,9 +364,69 @@ pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
     }
 }
 
+/// Outcome of [`mark_task_done`]: enough for the CLI to render both the
+/// human ("Task {task_id} marked as done: {task_desc}") and `--json`
+/// (`{"change","status","task_desc","task_id"}`) output shapes, matching
+/// the reference CLI exactly.
+#[derive(Debug)]
+pub struct TaskDoneOutcome {
+    pub change: String,
+    pub task_id: usize,
+    pub task_desc: String,
+}
+
+/// Mark the `task_id`-th checkbox (1-based, across all checkboxes in
+/// `tasks.md`, file order) as done, and best-effort record any newly-dirty
+/// files (via `git status --porcelain`, excluding the change's own artifact
+/// directory and files already recorded for an earlier task) to
+/// `.spectra/touched/<name>.json`.
+///
+/// Errors when the change (or its `tasks.md`) doesn't exist use the same
+/// message for both cases — "tasks.md not found for change '<name>'" —
+/// matching the reference CLI, which doesn't distinguish them either.
+pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDoneOutcome> {
+    let not_found = || anyhow!("tasks.md not found for change '{name}'");
+    let ch = try_load(cfg, name)?.ok_or_else(not_found)?;
+    let tasks_path = ch.tasks_md();
+    let md = std::fs::read_to_string(&tasks_path).map_err(|_| not_found())?;
+
+    let (new_md, task_desc) = crate::tasks::mark_done(&md, task_id)?;
+    std::fs::write(&tasks_path, &new_md)
+        .with_context(|| format!("writing {}", tasks_path.display()))?;
+
+    // Touched-file tracking is best-effort convenience data for AI-agent
+    // commit tooling; a failure here must not undo the task-done marking
+    // that already succeeded above.
+    let already_recorded = crate::touched::already_recorded(cfg, name);
+    let change_rel_dir = ch.dir.strip_prefix(&cfg.root).ok();
+    let new_files: Vec<String> = crate::git::dirty_files(&cfg.root)
+        .into_iter()
+        .filter(|f| {
+            let path = std::path::Path::new(f);
+            let under_change_dir = change_rel_dir.is_some_and(|rel| path.starts_with(rel));
+            // `.spectra/` is this tool's own state directory (the very
+            // tracking file being written here included) -- never a
+            // "touched" implementation file, whether or not the project
+            // happens to gitignore it.
+            let under_spectra_state_dir = path.starts_with(".spectra");
+            !under_change_dir && !under_spectra_state_dir && !already_recorded.contains(f)
+        })
+        .collect();
+    if let Err(e) = crate::touched::record(cfg, name, task_id, &task_desc, new_files) {
+        eprintln!("warning: failed to record touched files for '{name}': {e}");
+    }
+
+    Ok(TaskDoneOutcome {
+        change: name.to_string(),
+        task_id,
+        task_desc,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::touched;
     use std::fs;
 
     fn write(path: &std::path::Path, content: &str) {
@@ -770,6 +830,145 @@ mod tests {
 
         let ch = create(&cfg, "add-search-filter").unwrap();
         assert_eq!(ch.started_sha.as_deref(), Some(expected_sha.as_str()));
+    }
+
+    fn git_repo_cfg(tmp: &TempDir) -> Config {
+        let run = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&**tmp)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "t@t.co"]);
+        run(&["config", "user.name", "t"]);
+        write(&tmp.join("README.md"), "hi\n");
+        run(&["add", "README.md"]);
+        run(&["commit", "-q", "-m", "init"]);
+        Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        }
+    }
+
+    #[test]
+    fn mark_task_done_toggles_the_checkbox_and_returns_the_description() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n- [ ] second\n",
+        );
+
+        let outcome = mark_task_done(&cfg, "add-search-filter", 2).unwrap();
+
+        assert_eq!(outcome.change, "add-search-filter");
+        assert_eq!(outcome.task_id, 2);
+        assert_eq!(outcome.task_desc, "second");
+        let tasks_md =
+            std::fs::read_to_string(cfg.changes_dir().join("add-search-filter").join("tasks.md"))
+                .unwrap();
+        assert_eq!(tasks_md, "- [ ] first\n- [x] second\n");
+    }
+
+    #[test]
+    fn mark_task_done_errors_when_change_does_not_exist() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+
+        let err = mark_task_done(&cfg, "does-not-exist", 1).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "tasks.md not found for change 'does-not-exist'"
+        );
+    }
+
+    #[test]
+    fn mark_task_done_errors_when_tasks_md_is_missing() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        create(&cfg, "add-search-filter").unwrap();
+        std::fs::remove_file(cfg.changes_dir().join("add-search-filter").join("tasks.md")).unwrap();
+
+        let err = mark_task_done(&cfg, "add-search-filter", 1).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "tasks.md not found for change 'add-search-filter'"
+        );
+    }
+
+    #[test]
+    fn mark_task_done_records_dirty_files_outside_the_change_dir() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n",
+        );
+        write(&tmp.join("src.rs"), "fn main() {}\n");
+
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+
+        let recorded = touched::already_recorded(&cfg, "add-search-filter");
+        assert!(recorded.contains("src.rs"));
+        // The change's own artifact dir (tasks.md itself just got rewritten,
+        // and is git-dirty) must never show up as a "touched" file.
+        assert!(!recorded.iter().any(|f| f.contains("add-search-filter")));
+    }
+
+    #[test]
+    fn mark_task_done_never_records_its_own_state_directory() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n- [ ] second\n",
+        );
+        write(&tmp.join("src.rs"), "fn main() {}\n");
+
+        // task 1 creates .spectra/touched/add-search-filter.json, which is
+        // untracked (and un-gitignored in this test fixture) at the moment
+        // task 2 runs -- it must never be attributed to task 2 as a "touched" file.
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
+
+        let recorded = touched::already_recorded(&cfg, "add-search-filter");
+        assert!(!recorded.iter().any(|f| f.contains(".spectra")));
+    }
+
+    #[test]
+    fn mark_task_done_does_not_reattribute_a_file_already_recorded() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n- [ ] second\n",
+        );
+        write(&tmp.join("src.rs"), "fn main() {}\n");
+
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+        // src.rs is still dirty; a second task-done call must not attribute
+        // it again to task 2 since it's already recorded under task 1.
+        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
+
+        let tracking_json = std::fs::read_to_string(
+            tmp.join(".spectra")
+                .join("touched")
+                .join("add-search-filter.json"),
+        )
+        .unwrap();
+        let tracking: touched::TouchedTracking = serde_json::from_str(&tracking_json).unwrap();
+        assert_eq!(tracking.touched.len(), 1);
+        assert_eq!(tracking.touched[0].task_id, "1");
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even
