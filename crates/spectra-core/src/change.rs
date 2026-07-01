@@ -67,8 +67,27 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
         .exists()
 }
 
-/// Load a single change by name. Errors if the change directory is missing.
+/// `name` must be a single path component (no separators or `..`) — `spectra
+/// show` passes a raw CLI argument straight through, so this guard is
+/// load-bearing, not defensive-for-a-hypothetical-future-caller.
+fn is_valid_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+}
+
+/// Whether `name` names an existing, validly-named change directory. Callers
+/// juggling multiple namespaces (e.g. `show`, which also checks
+/// `spec::exists`) should use this instead of matching on `load`'s `Result`,
+/// so a real I/O error from `load` isn't misread as "not a change."
+pub fn exists(cfg: &Config, name: &str) -> bool {
+    is_valid_name(name) && cfg.changes_dir().join(name).is_dir()
+}
+
+/// Load a single change by name. Errors if the change directory is missing
+/// or `name` isn't a single path component.
 pub fn load(cfg: &Config, name: &str) -> Result<Change> {
+    if !is_valid_name(name) {
+        return Err(anyhow!("invalid change name '{name}'"));
+    }
     let dir = cfg.changes_dir().join(name);
     if !dir.is_dir() {
         return Err(anyhow!("change '{name}' not found in {}", cfg.changes_dir().display()));

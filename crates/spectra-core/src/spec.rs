@@ -71,13 +71,25 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
     Ok(names)
 }
 
+fn is_valid_name(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+}
+
+/// Whether `name` names an existing, validly-named spec. Callers juggling
+/// multiple namespaces (e.g. `show`, which also checks `change::exists`)
+/// should use this instead of matching on `load`'s `Result`, so a real I/O
+/// error from `load` isn't misread as "not a spec."
+pub fn exists(cfg: &Config, name: &str) -> bool {
+    is_valid_name(name) && cfg.specs_dir().join(name).join("spec.md").is_file()
+}
+
 /// Load a single spec by capability name. Errors if `spec.md` is missing (or
 /// unreadable for any other reason). `name` must be a single path component
-/// (no separators or `..`) — this function isn't yet called with untrusted
-/// input, but a future `show <spec>` command will pass a raw CLI argument
-/// straight through, so the traversal guard belongs here, not at each caller.
+/// (no separators or `..`) — `spectra show <spec>` (spectra-cli) passes the
+/// raw CLI argument straight through, so this traversal guard is
+/// load-bearing, not defensive-for-a-hypothetical-future-caller.
 pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+    if !is_valid_name(name) {
         return Err(anyhow::anyhow!("invalid spec name '{name}'"));
     }
     let dir = cfg.specs_dir().join(name);
