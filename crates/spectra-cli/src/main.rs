@@ -47,9 +47,9 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show a change's proposal. (spec content: not yet implemented)
+    /// Show a change's proposal, or a spec's content if the name isn't a change.
     Show {
-        /// Change name to show.
+        /// Change or spec name to show.
         item: String,
         #[arg(long)]
         json: bool,
@@ -222,19 +222,38 @@ fn cmd_list_specs(cfg: &Config, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+enum ShowContent {
+    Proposal(String),
+    Spec(String),
+}
+
+/// Resolve `item` to a change's proposal or a spec's content. A change name
+/// takes priority (existing, regression-safe behavior); falls back to a
+/// capability spec so `show` covers both namespaces.
+fn resolve_show_content(cfg: &Config, item: &str) -> Result<ShowContent> {
+    if let Ok(ch) = change::load(cfg, item) {
+        return Ok(ShowContent::Proposal(
+            std::fs::read_to_string(ch.proposal_md()).unwrap_or_default(),
+        ));
+    }
+    if let Ok(sp) = spec::load(cfg, item) {
+        return Ok(ShowContent::Spec(std::fs::read_to_string(sp.spec_md()).unwrap_or_default()));
+    }
+    anyhow::bail!("'{item}' is not a known change or spec")
+}
+
 fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
-    let ch = change::load(cfg, item)?;
-    let proposal = std::fs::read_to_string(ch.proposal_md()).unwrap_or_default();
+    let (content, key) = match resolve_show_content(cfg, item)? {
+        ShowContent::Proposal(text) => (text, "proposal"),
+        ShowContent::Spec(text) => (text, "spec"),
+    };
     if as_json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&json!({
-                "name": item,
-                "proposal": proposal,
-            }))?
+            serde_json::to_string_pretty(&json!({ "name": item, key: content }))?
         );
     } else {
-        print!("{proposal}");
+        print!("{content}");
     }
     Ok(0)
 }
@@ -420,5 +439,55 @@ mod tests {
             .unwrap();
 
         assert!(list_change_items(&cfg, true).unwrap().is_empty());
+    }
+
+    #[test]
+    fn resolve_show_content_prefers_change_over_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.changes_dir().join("auth")).unwrap();
+        std::fs::write(cfg.changes_dir().join("auth").join("proposal.md"), "# Auth change\n")
+            .unwrap();
+        std::fs::create_dir_all(cfg.specs_dir().join("auth")).unwrap();
+        std::fs::write(cfg.specs_dir().join("auth").join("spec.md"), "# Auth spec\n").unwrap();
+
+        match resolve_show_content(&cfg, "auth").unwrap() {
+            ShowContent::Proposal(text) => assert_eq!(text, "# Auth change\n"),
+            ShowContent::Spec(_) => panic!("expected the change to take priority over the spec"),
+        }
+    }
+
+    #[test]
+    fn resolve_show_content_falls_back_to_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        std::fs::create_dir_all(cfg.specs_dir().join("billing")).unwrap();
+        std::fs::write(cfg.specs_dir().join("billing").join("spec.md"), "# Billing spec\n")
+            .unwrap();
+
+        match resolve_show_content(&cfg, "billing").unwrap() {
+            ShowContent::Spec(text) => assert_eq!(text, "# Billing spec\n"),
+            ShowContent::Proposal(_) => panic!("expected a spec, not a change"),
+        }
+    }
+
+    #[test]
+    fn resolve_show_content_errors_when_neither_change_nor_spec() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        assert!(resolve_show_content(&cfg, "ghost").is_err());
     }
 }

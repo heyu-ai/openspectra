@@ -39,14 +39,14 @@ spectra drift [CHANGE] [--json]   # auto-detects if one active change
 spectra list  [--json]            # lists active changes
 spectra list  --specs [--json]    # lists capability specs instead of changes
 spectra list  --parked [--json]   # lists parked changes instead of active ones
-spectra show  <CHANGE> [--json]   # prints the change's proposal
+spectra show  <CHANGE|SPEC> [--json]   # prints the change's proposal, or a spec's content
 ```
 
 Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
 
-> Flags `--no-color`, `list --changes`, and spec content for `show` are
-> accepted by the CLI but **not yet implemented** (marked as such in
-> `--help`); they are placeholders for the wider command set still being ported.
+> Flags `--no-color` and `list --changes` are accepted by the CLI but
+> **not yet implemented** (marked as such in `--help`); they are placeholders
+> for the wider command set still being ported.
 
 ### CI gate example
 
