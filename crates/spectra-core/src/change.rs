@@ -229,7 +229,11 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     // A prior change with the same name may have been removed by hand,
     // leaving its `.parked`/`.started` sidecar files behind; clear them so
     // this fresh change doesn't silently inherit stale parked/baseline state.
-    clear_stale_sidecar_state(cfg, name)?;
+    // Best-effort: a failure here is unrelated to whether the scaffold itself
+    // can succeed, so it's logged rather than blocking `create`.
+    if let Err(e) = clear_stale_sidecar_state(cfg, name) {
+        eprintln!("warning: failed to clear stale sidecar state for '{name}': {e}");
+    }
     match create_inner(cfg, name, &dir) {
         Ok(()) => load(cfg, name),
         Err(e) => {
@@ -240,6 +244,14 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
                         dir.display()
                     );
                 }
+            }
+            // create_inner writes `.started` last, so a failure there can
+            // leave a (possibly partial) baseline file with no change
+            // directory behind it; clear it along with the scaffold dir.
+            if let Err(cleanup_err) = clear_stale_sidecar_state(cfg, name) {
+                eprintln!(
+                    "warning: failed to remove partial sidecar state for '{name}' after create error: {cleanup_err}"
+                );
             }
             Err(e)
         }
