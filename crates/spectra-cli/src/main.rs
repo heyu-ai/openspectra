@@ -55,6 +55,20 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Park a change (mark it on hold, excluding it from the active listing).
+    Park {
+        /// Change name to park.
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Unpark a change (resume it from a parked state).
+    Unpark {
+        /// Change name to unpark.
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Walk up from `start` to find the project root (dir containing `.spectra.yaml`),
@@ -316,6 +330,32 @@ fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
+    change::park(cfg, name)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "name": name, "parked": true }))?
+        );
+    } else {
+        println!("Parked '{name}'.");
+    }
+    Ok(0)
+}
+
+fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
+    change::unpark(cfg, name)?;
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({ "name": name, "parked": false }))?
+        );
+    } else {
+        println!("Unparked '{name}'.");
+    }
+    Ok(0)
+}
+
 fn task_counts(tasks_md: &Path) -> (usize, usize) {
     let Ok(text) = std::fs::read_to_string(tasks_md) else {
         return (0, 0);
@@ -362,6 +402,14 @@ fn run() -> Result<i32> {
         Command::Show { item, json } => {
             let cfg = require_initialized(&root)?;
             cmd_show(&cfg, item, *json)
+        }
+        Command::Park { name, json } => {
+            let cfg = require_initialized(&root)?;
+            cmd_park(&cfg, name, *json)
+        }
+        Command::Unpark { name, json } => {
+            let cfg = require_initialized(&root)?;
+            cmd_unpark(&cfg, name, *json)
         }
     }
 }
