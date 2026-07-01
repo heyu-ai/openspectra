@@ -5,8 +5,9 @@ spec-driven development CLI — reverse-engineered from the closed-source binary
 starting with the `drift` command.
 
 > **Status:** early. `spectra drift` (+ minimal `list` / `show` / `park` /
-> `unpark`) is implemented in Rust and runs on Linux/macOS with zero runtime
-> dependencies (just `git` on `PATH`). The reverse-engineering write-up is in
+> `unpark` / `new change`) is implemented in Rust and runs on Linux/macOS with
+> zero runtime dependencies (just `git` on `PATH`). The reverse-engineering
+> write-up is in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md).
 
 ## Why
@@ -42,6 +43,7 @@ spectra list  --parked [--json]   # lists parked changes instead of active ones
 spectra show  <CHANGE|SPEC> [--json]   # prints the change's proposal, or a spec's content
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
+spectra new change <NAME> [--json]  # scaffolds a new change directory (kebab-case name)
 ```
 
 Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
@@ -82,7 +84,7 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: drift / list / show / park / unpark
+crates/spectra-cli/    # clap CLI: drift / list / show / park / unpark / new change
 docs/reverse-engineering/drift.md   # how the original works, and what's still open
 scripts/               # oracle calibration probes
 ```

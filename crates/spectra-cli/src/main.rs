@@ -1,4 +1,4 @@
-//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`.
+//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -69,6 +69,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Scaffold a new change (currently the only `new` target).
+    New {
+        #[command(subcommand)]
+        target: NewTarget,
+    },
+}
+
+#[derive(Subcommand)]
+enum NewTarget {
+    /// Scaffold a new change directory (.openspec.yaml, proposal.md,
+    /// design.md, tasks.md, and, when run inside a git repo with at least
+    /// one commit, a baseline git SHA).
+    Change {
+        /// Name for the new change (kebab-case, e.g. 'add-search-filter').
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Walk up from `start` to find the project root (dir containing `.spectra.yaml`),
@@ -91,7 +109,12 @@ fn require_initialized(root: &Path) -> Result<Config> {
     Config::load(root)
 }
 
-fn cmd_drift(cfg: &Config, change_name: Option<&str>, as_json: bool, use_color: bool) -> Result<i32> {
+fn cmd_drift(
+    cfg: &Config,
+    change_name: Option<&str>,
+    as_json: bool,
+    use_color: bool,
+) -> Result<i32> {
     let name = change::resolve(cfg, change_name)?;
     let change = change::load(cfg, &name)?;
     let report = drift::analyze(cfg, &change)?;
@@ -109,7 +132,11 @@ fn cmd_drift(cfg: &Config, change_name: Option<&str>, as_json: bool, use_color: 
 /// value**") both disable it; otherwise color is only emitted when stdout is
 /// a terminal (never when piped/redirected).
 fn color_enabled(no_color: bool) -> bool {
-    color_enabled_from(no_color, std::env::var_os("NO_COLOR").is_some(), std::io::stdout().is_terminal())
+    color_enabled_from(
+        no_color,
+        std::env::var_os("NO_COLOR").is_some(),
+        std::io::stdout().is_terminal(),
+    )
 }
 
 /// Pure precedence logic behind [`color_enabled`], split out so all
@@ -195,7 +222,11 @@ fn print_human(r: &drift::DriftReport, use_color: bool) {
 }
 
 fn list_change_items(cfg: &Config, want_parked: bool) -> Result<Vec<serde_json::Value>> {
-    let names = if want_parked { change::list_parked(cfg) } else { change::list_active(cfg) };
+    let names = if want_parked {
+        change::list_parked(cfg)
+    } else {
+        change::list_active(cfg)
+    };
     let mut items = Vec::new();
     for name in &names {
         let ch = change::load(cfg, name)?;
@@ -230,7 +261,14 @@ fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) ->
             serde_json::to_string_pretty(&json!({ "changes": items }))?
         );
     } else if items.is_empty() {
-        println!("{}", if want_parked { "No parked changes." } else { "No active changes." });
+        println!(
+            "{}",
+            if want_parked {
+                "No parked changes."
+            } else {
+                "No active changes."
+            }
+        );
     } else {
         for it in &items {
             println!(
@@ -322,7 +360,10 @@ fn show_json(item: &str, content: &ShowContent) -> serde_json::Value {
 fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
     let content = resolve_show_content(cfg, item)?;
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&show_json(item, &content))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&show_json(item, &content))?
+        );
     } else {
         let (ShowContent::Proposal(text) | ShowContent::Spec(text)) = &content;
         print!("{text}");
@@ -340,7 +381,10 @@ fn park_status_json(name: &str, parked: bool) -> serde_json::Value {
 fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     change::park(cfg, name)?;
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&park_status_json(name, true))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&park_status_json(name, true))?
+        );
     } else {
         println!("Parked '{name}'.");
     }
@@ -350,9 +394,42 @@ fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
 fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     change::unpark(cfg, name)?;
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&park_status_json(name, false))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&park_status_json(name, false))?
+        );
     } else {
         println!("Unparked '{name}'.");
+    }
+    Ok(0)
+}
+
+/// `--json` shape for `new change`: pinned here (rather than inlined in
+/// `cmd_new_change`) so a rename/typo doesn't ship silently, matching
+/// `show_json`/`park_status_json`. Renders `dir` via `to_string_lossy`
+/// instead of serializing the `PathBuf` directly: `json!`'s `PathBuf`
+/// support requires valid UTF-8 and panics (not a recoverable error) on a
+/// path that isn't, which `to_string_lossy` avoids for that rare case.
+fn new_change_json(ch: &change::Change) -> serde_json::Value {
+    json!({
+        "name": ch.name,
+        "dir": ch.dir.to_string_lossy(),
+        "started_sha": ch.started_sha,
+    })
+}
+
+fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
+    let ch = change::create(cfg, name)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&new_change_json(&ch))?);
+    } else {
+        println!("Created change '{}' in {}.", ch.name, ch.dir.display());
+        if ch.started_sha.is_none() {
+            eprintln!(
+                "note: couldn't determine a git baseline for this change; \
+                 task-blocked detection will be skipped for it."
+            );
+        }
     }
     Ok(0)
 }
@@ -412,6 +489,12 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_unpark(&cfg, change, *json)
         }
+        Command::New { target } => match target {
+            NewTarget::Change { name, json } => {
+                let cfg = require_initialized(&root)?;
+                cmd_new_change(&cfg, name, *json)
+            }
+        },
     }
 }
 
@@ -558,13 +641,23 @@ mod tests {
             locale: None,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("shipped")).unwrap();
-        std::fs::write(cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n")
-            .unwrap();
+        std::fs::write(
+            cfg.changes_dir().join("shipped").join("proposal.md"),
+            "# Shipped\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(cfg.changes_dir().join("on-hold")).unwrap();
-        std::fs::write(cfg.changes_dir().join("on-hold").join("proposal.md"), "# On hold\n")
-            .unwrap();
+        std::fs::write(
+            cfg.changes_dir().join("on-hold").join("proposal.md"),
+            "# On hold\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(tmp.join(".spectra").join("changes")).unwrap();
-        std::fs::write(tmp.join(".spectra").join("changes").join("on-hold.parked"), "").unwrap();
+        std::fs::write(
+            tmp.join(".spectra").join("changes").join("on-hold.parked"),
+            "",
+        )
+        .unwrap();
 
         let active = list_change_items(&cfg, false).unwrap();
         assert_eq!(active.len(), 1);
@@ -584,8 +677,11 @@ mod tests {
             locale: None,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("shipped")).unwrap();
-        std::fs::write(cfg.changes_dir().join("shipped").join("proposal.md"), "# Shipped\n")
-            .unwrap();
+        std::fs::write(
+            cfg.changes_dir().join("shipped").join("proposal.md"),
+            "# Shipped\n",
+        )
+        .unwrap();
 
         assert!(list_change_items(&cfg, true).unwrap().is_empty());
     }
@@ -599,10 +695,17 @@ mod tests {
             locale: None,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("auth")).unwrap();
-        std::fs::write(cfg.changes_dir().join("auth").join("proposal.md"), "# Auth change\n")
-            .unwrap();
+        std::fs::write(
+            cfg.changes_dir().join("auth").join("proposal.md"),
+            "# Auth change\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(cfg.specs_dir().join("auth")).unwrap();
-        std::fs::write(cfg.specs_dir().join("auth").join("spec.md"), "# Auth spec\n").unwrap();
+        std::fs::write(
+            cfg.specs_dir().join("auth").join("spec.md"),
+            "# Auth spec\n",
+        )
+        .unwrap();
 
         match resolve_show_content(&cfg, "auth").unwrap() {
             ShowContent::Proposal(text) => assert_eq!(text, "# Auth change\n"),
@@ -619,8 +722,11 @@ mod tests {
             locale: None,
         };
         std::fs::create_dir_all(cfg.specs_dir().join("billing")).unwrap();
-        std::fs::write(cfg.specs_dir().join("billing").join("spec.md"), "# Billing spec\n")
-            .unwrap();
+        std::fs::write(
+            cfg.specs_dir().join("billing").join("spec.md"),
+            "# Billing spec\n",
+        )
+        .unwrap();
 
         match resolve_show_content(&cfg, "billing").unwrap() {
             ShowContent::Spec(text) => assert_eq!(text, "# Billing spec\n"),
@@ -656,8 +762,11 @@ mod tests {
         // A same-named spec exists too, to prove the real error isn't
         // silently swallowed into a fallback.
         std::fs::create_dir_all(cfg.specs_dir().join("broken")).unwrap();
-        std::fs::write(cfg.specs_dir().join("broken").join("spec.md"), "# Should not be used\n")
-            .unwrap();
+        std::fs::write(
+            cfg.specs_dir().join("broken").join("spec.md"),
+            "# Should not be used\n",
+        )
+        .unwrap();
 
         let err = resolve_show_content(&cfg, "broken").unwrap_err();
         assert!(!err.to_string().contains("is not a known change or spec"));
@@ -684,5 +793,44 @@ mod tests {
         assert_eq!(park_status_json("my-change", true)["parked"], true);
         assert_eq!(park_status_json("my-change", false)["parked"], false);
         assert_eq!(park_status_json("my-change", true)["name"], "my-change");
+    }
+
+    fn sample_change(dir: PathBuf, started_sha: Option<&str>) -> change::Change {
+        change::Change {
+            name: "my-change".to_string(),
+            dir,
+            metadata: Default::default(),
+            started_sha: started_sha.map(str::to_string),
+            parked: false,
+        }
+    }
+
+    #[test]
+    fn new_change_json_shape_matches_the_documented_contract() {
+        let ch = sample_change(PathBuf::from("/tmp/changes/my-change"), Some("abc123"));
+        let value = new_change_json(&ch);
+        assert_eq!(value["name"], "my-change");
+        assert_eq!(value["dir"], "/tmp/changes/my-change");
+        assert_eq!(value["started_sha"], "abc123");
+    }
+
+    #[test]
+    fn new_change_json_started_sha_is_null_when_absent() {
+        let ch = sample_change(PathBuf::from("/tmp/changes/my-change"), None);
+        assert!(new_change_json(&ch)["started_sha"].is_null());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_change_json_does_not_panic_on_a_non_utf8_path() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = PathBuf::from(OsStr::from_bytes(b"/tmp/bad-\xFF-path"));
+        let ch = sample_change(dir, None);
+        // `json!` panics serializing a non-UTF-8 PathBuf directly; this must
+        // not panic, since new_change_json renders `dir` via to_string_lossy.
+        let value = new_change_json(&ch);
+        assert!(value["dir"].as_str().unwrap().contains("bad-"));
     }
 }
