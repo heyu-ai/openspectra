@@ -290,11 +290,7 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     // `drift`'s Tasks dimension has no baseline to diff blocked-task detection
     // against (see tasks.rs), not an error.
     if let Some(sha) = crate::git::head_sha(&cfg.root) {
-        let started = cfg
-            .root
-            .join(".spectra")
-            .join("changes")
-            .join(format!("{name}.started"));
+        let started = started_sha_path(cfg, name);
         let parent = started.parent().expect("started path always has a parent");
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
