@@ -56,13 +56,15 @@ impl Change {
     }
 }
 
-fn read_started_sha(cfg: &Config, name: &str) -> Option<String> {
-    let p = cfg
-        .root
+fn started_sha_path(cfg: &Config, name: &str) -> PathBuf {
+    cfg.root
         .join(".spectra")
         .join("changes")
-        .join(format!("{name}.started"));
-    std::fs::read_to_string(p)
+        .join(format!("{name}.started"))
+}
+
+fn read_started_sha(cfg: &Config, name: &str) -> Option<String> {
+    std::fs::read_to_string(started_sha_path(cfg, name))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -77,6 +79,21 @@ fn parked_marker_path(cfg: &Config, name: &str) -> PathBuf {
 
 fn is_parked(cfg: &Config, name: &str) -> bool {
     parked_marker_path(cfg, name).exists()
+}
+
+/// Remove any `.parked`/`.started` sidecar files left behind by a change
+/// directory of the same `name` that was deleted by hand (rather than via
+/// `spectra archive`), so a freshly `create`d change never silently inherits
+/// stale parked/baseline state. A missing file is not an error.
+fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
+    for path in [parked_marker_path(cfg, name), started_sha_path(cfg, name)] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("removing stale {}", path.display())),
+        }
+    }
+    Ok(())
 }
 
 /// Errors unless `name` is both an existing change directory *and* passes
@@ -209,6 +226,10 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
             cfg.changes_dir().display()
         ));
     }
+    // A prior change with the same name may have been removed by hand,
+    // leaving its `.parked`/`.started` sidecar files behind; clear them so
+    // this fresh change doesn't silently inherit stale parked/baseline state.
+    clear_stale_sidecar_state(cfg, name)?;
     match create_inner(cfg, name, &dir) {
         Ok(()) => load(cfg, name),
         Err(e) => {
@@ -565,6 +586,32 @@ mod tests {
         assert!(ch.metadata.created.is_some());
         assert_eq!(list_active(&cfg), vec!["add-search-filter".to_string()]);
         assert_eq!(ch.started_sha, None);
+    }
+
+    #[test]
+    fn create_does_not_inherit_stale_sidecar_state_from_a_deleted_change() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        create(&cfg, "reused-name").unwrap();
+        park(&cfg, "reused-name").unwrap();
+        // Simulate a user manually deleting the change dir (not via `archive`),
+        // leaving the `.parked` marker behind on disk.
+        std::fs::remove_dir_all(cfg.changes_dir().join("reused-name")).unwrap();
+        assert!(parked_marker_path(&cfg, "reused-name").is_file());
+
+        let ch = create(&cfg, "reused-name").unwrap();
+
+        assert!(
+            !ch.parked,
+            "a freshly created change must not inherit a stale parked marker"
+        );
+        assert_eq!(list_active(&cfg), vec!["reused-name".to_string()]);
+        assert_eq!(list_parked(&cfg), Vec::<String>::new());
     }
 
     #[test]
