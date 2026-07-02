@@ -133,23 +133,73 @@ pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
     Some(files)
 }
 
-/// True if `needle` appears in any tracked file (`git grep -F -l`),
-/// i.e. the symbol/function is referenced or defined somewhere in the repo.
-pub fn grep_exists(root: &Path, needle: &str) -> bool {
-    // -F fixed string, -l names only, -I skip binary. Word boundaries are not
-    // used so a definition like `fn foo(` or a struct `Foo` both match.
+/// For each needle, whether it appears in any tracked file, computed with a
+/// single `git grep` invocation. Returns the set of needles that resolve.
+///
+/// This intentionally uses `git grep -F -I -h` and then checks whether each
+/// needle is a substring of any matching output line. `-l` is wrong for batched
+/// checks because it reports only matching files under OR semantics, losing
+/// which needle matched. `-o` is also wrong because `git grep` suppresses
+/// overlapping matches: with needles such as `foobar`, `foobar_baz`, and
+/// `bar_baz` against `foobar_baz`, per-needle grep resolves all three but
+/// `-o` can print only the larger match. With `-h`, a needle appears in tracked
+/// content iff it appears in at least one printed matching line, preserving the
+/// old per-needle `git grep -F` behavior even for nested or overlapping text.
+///
+/// Exit codes preserve the previous `grep_exists` contract: `0` means parse
+/// stdout; `1` is a clean no-match for all needles; every other status,
+/// including signal termination (`code() == None`) or spawn failure, is a real
+/// error where we cannot tell, so all input needles are treated as resolved to
+/// avoid over-reporting drift.
+pub fn grep_existing(root: &Path, needles: &[&str]) -> HashSet<String> {
+    if needles.is_empty() {
+        return HashSet::new();
+    }
+
+    let all: HashSet<String> = needles.iter().map(|needle| (*needle).to_string()).collect();
+    let mut args = vec![
+        "grep".to_string(),
+        "-F".to_string(),
+        "-I".to_string(),
+        "-h".to_string(),
+    ];
+    for needle in needles {
+        args.push("-e".to_string());
+        args.push((*needle).to_string());
+    }
+
     let out = Command::new("git")
+        .args(["-c", "grep.lineNumber=false", "-c", "grep.column=false"])
         .arg("-C")
         .arg(root)
-        .args(["grep", "-F", "-I", "-l", "-e", needle])
+        .args(args)
         .output();
+
     match out {
-        // `git grep` exits 0 on a match, 1 on a clean "no match", and >1 on a
-        // real error (not a repo, bad pathspec, ...). Only a clean no-match
-        // means the anchor is broken; on any error we cannot tell, so we do
-        // NOT over-report drift — treat it as resolved.
-        Ok(o) => o.status.code() != Some(1),
-        Err(_) => true,
+        Ok(o) => match o.status.code() {
+            Some(0) => {
+                let mut pending = all.clone();
+                let mut resolved = HashSet::new();
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    pending.retain(|needle| {
+                        if line.contains(needle.as_str()) {
+                            resolved.insert(needle.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    if pending.is_empty() {
+                        break;
+                    }
+                }
+                resolved
+            }
+            Some(1) => HashSet::new(),
+            _ => all,
+        },
+        Err(_) => all,
     }
 }
 
@@ -221,6 +271,90 @@ mod tests {
         run(&["add", "f.txt"]);
         run(&["commit", "-q", "-m", "init"]);
         git(dir, &["rev-parse", "HEAD"]).unwrap().trim().to_string()
+    }
+
+    fn commit_file(dir: &Path, name: &str, contents: &str) {
+        let run = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        std::fs::write(dir.join(name), contents).unwrap();
+        run(&["add", name]);
+        run(&["commit", "-q", "-m", name]);
+    }
+
+    #[test]
+    fn grep_existing_empty_needles_returns_empty_set() {
+        let dir = TempDir::new("grep-empty");
+
+        assert_eq!(grep_existing(&dir, &[]), HashSet::new());
+    }
+
+    #[test]
+    fn grep_existing_returns_present_needles() {
+        let dir = TempDir::new("grep-present");
+        init_repo(&dir);
+        commit_file(
+            &dir,
+            "code.rs",
+            "fn alpha_fn_0() {}\nstruct PresentSymbol;\n",
+        );
+
+        let resolved = grep_existing(
+            &dir,
+            &[
+                "alpha_fn_0",
+                "missing_fn_1",
+                "PresentSymbol",
+                "MissingSymbol",
+            ],
+        );
+
+        assert_eq!(
+            resolved,
+            ["alpha_fn_0", "PresentSymbol"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+    }
+
+    #[test]
+    fn grep_existing_resolves_overlapping_needles() {
+        let dir = TempDir::new("grep-overlap");
+        init_repo(&dir);
+        commit_file(&dir, "code.txt", "foobar_baz\n");
+
+        let resolved = grep_existing(&dir, &["foobar", "foobar_baz", "bar_baz"]);
+
+        assert_eq!(
+            resolved,
+            ["foobar", "foobar_baz", "bar_baz"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+    }
+
+    #[test]
+    fn grep_existing_treats_non_repo_errors_as_resolved() {
+        let dir = TempDir::new("grep-norepo");
+
+        let resolved = grep_existing(&dir, &["alpha_fn_0", "PresentSymbol"]);
+
+        assert_eq!(
+            resolved,
+            ["alpha_fn_0", "PresentSymbol"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
     }
 
     #[test]
