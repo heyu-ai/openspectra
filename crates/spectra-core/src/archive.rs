@@ -395,9 +395,16 @@ fn apply_added_requirements(
     }
 
     let mut point = requirements_insertion_point(&content);
-    if point == content.len() && !content.ends_with('\n') {
-        content.push('\n');
-        point = content.len();
+    if point == content.len() {
+        if !content.ends_with('\n') {
+            content.push('\n');
+            point = content.len();
+        }
+    } else {
+        // Inserting before an existing trailing section: leave a blank line
+        // between the new trace footer and that section's header, matching
+        // normal markdown spacing between sections.
+        insertion.push('\n');
     }
     content.insert_str(point, &insertion);
 
@@ -836,6 +843,10 @@ mod tests {
             "new requirement must be inserted before the trailing '## Notes' section, got:\n{spec}"
         );
         assert!(spec.contains("Some human-added trailing notes."));
+        assert!(
+            spec[..notes_idx].ends_with("\n\n"),
+            "a blank line must separate the inserted trace footer from '## Notes', got:\n{spec}"
+        );
     }
 
     #[test]

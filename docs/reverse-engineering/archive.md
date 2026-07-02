@@ -195,3 +195,11 @@ Tasks-collision detection.
   archiving isn't its own commit).
 - **MODIFIED/REMOVED/RENAMED spec deltas** — see above.
 - **`code:` trace provenance** — see above.
+- **Section-header matching is case-sensitive.** `## ADDED Requirements`,
+  `## MODIFIED Requirements`, `## Requirements`, and `## Purpose` are matched
+  with their exact reference casing. A hand-written delta using different
+  casing (e.g. `## modified requirements`) matches none of these patterns,
+  so it's silently treated as a no-op section rather than either being
+  applied or hitting the `--skip-specs` error path the correctly-cased
+  header would trigger — no oracle sample exists to confirm the reference
+  CLI's actual casing sensitivity, so this wasn't changed speculatively.
