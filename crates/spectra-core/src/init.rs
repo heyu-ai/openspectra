@@ -151,13 +151,18 @@ fn write_atomically(path: &Path, contents: &str) -> Result<()> {
 /// Best-effort removal of a `write_atomically` temp file after its write or
 /// rename step failed. The primary error is always what the caller returns;
 /// this only logs (rather than silently dropping) a secondary failure here,
-/// so a double-fault doesn't vanish without a trace.
+/// so a double-fault doesn't vanish without a trace. `NotFound` isn't logged:
+/// it means the initial `std::fs::write` failed before ever creating the
+/// temp file (the common case -- an unwritable/missing target directory),
+/// so there's nothing to clean up and no secondary fault to report.
 fn cleanup_temp_file(tmp_path: &Path) {
     if let Err(e) = std::fs::remove_file(tmp_path) {
-        eprintln!(
-            "warning: failed to clean up temp file {}: {e}",
-            tmp_path.display()
-        );
+        if e.kind() != std::io::ErrorKind::NotFound {
+            eprintln!(
+                "warning: failed to clean up temp file {}: {e}",
+                tmp_path.display()
+            );
+        }
     }
 }
 

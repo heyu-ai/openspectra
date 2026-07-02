@@ -22,7 +22,7 @@
 - [x] T010 [US1] `init` 模組（`init()`、`InitOutcome`、gitignore 三情境處理）— target: `crates/spectra-core/src/init.rs`
 - [x] T011 [US1] `lib.rs` 掛載 `pub mod init` — target: `crates/spectra-core/src/lib.rs`
 - [x] T012 [US1] CLI `Command::Init` + `cmd_init` + `init_json` shape helper（不走 `require_initialized`）— target: `crates/spectra-cli/src/main.rs`
-- [x] T013 [US1] Unit tests ×5（scaffold、gitignore create/append/no-dup、already-initialized）— target: `crates/spectra-core/src/init.rs` `#[cfg(test)]`
+- [x] T013 [US1] Unit tests ×13（初始 5：scaffold、gitignore create/append/no-dup、already-initialized；mob review 修復輪次另加 8：CRLF 保留、trailing-whitespace dedup、retry-after-failure、does-not-leave-yaml-behind、`write_atomically` 相關 4 個）— target: `crates/spectra-core/src/init.rs` `#[cfg(test)]`
 - [x] T014 [US1] Integration tests ×2（init→new change→drift 全流程、重複 init 拒絕）— target: `crates/spectra-core/tests/init_integration.rs`
 - [x] T015 [US1] CLI `init_json` shape unit test — target: `crates/spectra-cli/src/main.rs` `#[cfg(test)]`
 - [x] T016 [US1] 手動 e2e 驗證（release binary，空 git repo：init → new change → task done → drift 成功、severity light）
@@ -64,5 +64,5 @@
 - [x] T051 [P] README 檢視：補 `init`、`list --changes`，移除過期的 "not yet implemented" 提示 — target: `README.md`
 - [x] T052 全量驗證四指令全綠（C2）：`cargo fmt --all -- --check` / `cargo clippy --all-targets -- -D warnings` / `cargo build --release --locked` / `cargo test --all`
 - [x] T053 手動 e2e（SMK-001）：release binary 空 git repo `init → new change → task done → drift → archive` 全流程，severity light、exit 0
-- [x] T054 Commit 拆分（C3）：commit type 包含但不限於 `docs(openspec)` / `feat(init)` / `feat(list)` / `fix(tests)` / `style` / `ci` / `docs(init)`（後續 mob review 修復輪次另加數個 `fix(init)` commit：`78a655a`、`d773318`、`d4255b8`，見 PR #23 review 留言）；多行 commit message 用 `git commit -F <file>`；author email `2318485+howie@users.noreply.github.com`
-- [ ] T055 Push（explicit refspec：`git push origin worktree-phase1-usability:worktree-phase1-usability`）+ 更新既有 draft PR #23（PR body 對照 US-001~004 逐項說明 + 驗證結果）；勿 merge
+- [x] T054 Commit 拆分（C3）：commit type 包含但不限於 `docs(openspec)` / `feat(init)` / `feat(list)` / `fix(tests)` / `style` / `ci` / `docs(init)`（後續 mob review 修復輪次另加數個 `fix(init)` commit，完整清單見 `git log --oneline --grep='fix(init)'` 或 PR #23 review 留言，不在此逐一列舉避免每輪自我引用落後）；多行 commit message 用 `git commit -F <file>`；author email `2318485+howie@users.noreply.github.com`
+- [x] T055 Push（explicit refspec：`git push origin worktree-phase1-usability:worktree-phase1-usability`）+ 更新既有 draft PR #23（PR body 對照 US-001~004 逐項說明 + 驗證結果）；勿 merge。已完成，PR #23 open，歷經 5 輪 mob review（`/pr-cycle-deep`）修復並全數 push

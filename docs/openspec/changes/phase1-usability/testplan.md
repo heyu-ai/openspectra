@@ -72,6 +72,8 @@
 | init-already-initialized | INIT-EP-001 | | ✓ |
 | init-json-shape | INIT-VL-004 | key 精確比對 | ✓ |
 | init-e2e-pipeline | SMK-001 | | ✓ |
+| write-atomically-cleanup | INIT-RB-001 | 無對應 Gherkin scenario（實作細節健壯性測試，見 design.md） | ✓ |
+| write-atomically-call-site-wiring | INIT-RB-002 | 同上 | ✓ |
 | changes-flag-same-as-default | LIST-EP-001 | human byte 比對 | ✓ |
 | changes-json-shape | SMK-002 | JSON byte 比對 | ✓ |
 | changes-conflicts-specs | LIST-DT-001 | | ✓ |

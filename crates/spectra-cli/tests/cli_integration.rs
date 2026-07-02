@@ -76,6 +76,14 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
         .current_dir(&*tmp)
         .output()
         .unwrap();
+    assert!(
+        default_human.status.success(),
+        "list failed: {default_human:?}"
+    );
+    assert!(
+        changes_human.status.success(),
+        "list --changes failed: {changes_human:?}"
+    );
     assert_eq!(default_human.stdout, changes_human.stdout);
 
     let default_json = spectra()
@@ -88,6 +96,14 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
         .current_dir(&*tmp)
         .output()
         .unwrap();
+    assert!(
+        default_json.status.success(),
+        "list --json failed: {default_json:?}"
+    );
+    assert!(
+        changes_json.status.success(),
+        "list --changes --json failed: {changes_json:?}"
+    );
     assert_eq!(default_json.stdout, changes_json.stdout);
     assert!(!default_json.stdout.is_empty());
 }

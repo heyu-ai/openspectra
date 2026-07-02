@@ -112,10 +112,10 @@ OpenSpectra 目前所有指令的錯誤訊息都指示使用者跑 `spectra init
 
 - [x] 所有 User Stories（US-001~004）的 AC 均已實作
 - [x] testplan.md 所有 TC 均有對應的 Rust 測試或已標注為手動/CI 驗證項
-- [x] 冒煙測試（SMK-001、SMK-002 已手動驗證；SMK-003 CI 全綠待 push 後由 GitHub Actions 確認）
+- [x] 冒煙測試（SMK-001、SMK-002 已手動驗證；SMK-003 CI 全綠，PR #23 lint + build-and-test ×2 平台已確認通過）
 - [x] 四道全量驗證指令全綠（C2）
 - [x] `docs/reverse-engineering/init.md` 標註 init 未經 oracle 驗證（A1）
-- [ ] 程式碼已 push、draft PR 已開（C3）
+- [x] 程式碼已 push、draft PR 已開（C3，PR #23，已歷經 5 輪 mob review 修復）
 
 ### 冒煙測試情境
 
@@ -148,6 +148,8 @@ OpenSpectra 目前所有指令的錯誤訊息都指示使用者跑 `spectra init
 | US-001 | `init-already-initialized` | INIT-EP-001 | ✓ `init::tests::init_errors_when_already_initialized`、✓ `init_is_idempotent_refusal_not_silent_reinit`（integration） |
 | US-001 | `init-json-shape` | INIT-VL-004 | ✓ `tests::init_json_shape_matches_the_documented_contract`（spectra-cli） |
 | US-001 | `init-e2e-pipeline` | SMK-001 | ✓ `init_then_new_change_then_drift_runs_end_to_end`（integration） |
+| US-001 | `write-atomically-cleanup`（mob review round 2-4 加入，無對應 Gherkin scenario，見 design.md） | INIT-RB-001 | ✓ `write_atomically_cleans_up_the_temp_file_when_rename_fails` |
+| US-001 | `write-atomically-call-site-wiring`（同上） | INIT-RB-002 | ✓ `init_gitignore_update_routes_through_write_atomically_not_a_plain_write` |
 | US-002 | `changes-flag-same-as-default` | LIST-EP-001 | ✓ `list_changes_flag_output_is_byte_identical_to_the_default`（cli_integration） |
 | US-002 | `changes-conflicts-specs` | LIST-DT-001 | ✓ `tests::list_changes_flag_conflicts_with_specs`（spectra-cli） |
 | US-002 | `changes-conflicts-parked` | LIST-DT-002 | ✓ `tests::list_changes_flag_conflicts_with_parked`（spectra-cli） |

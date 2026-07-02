@@ -25,6 +25,10 @@ const GITIGNORE_ENTRY: &str = ".spectra/";
 - `.spectra/` 必須進 `.gitignore` 的原因：該目錄存放 per-change sidecar state（baseline SHA、parked 標記、touched-file 追蹤），不可 commit——PR #19 的 self-recording bug 根因即是專案沒 init、沒有這條 ignore
 - **未經 oracle 驗證**（假設 A1）：檔案集與訊息措辭依 README、各指令錯誤訊息（`Run 'spectra init' first.`）合理設計，需在 `docs/reverse-engineering/init.md` 標註，Phase 4 oracle 可用時回頭比對
 
+### `write_atomically`（mob review round 2-4 修復加入）
+
+`.spectra.yaml`、`.gitignore` 皆改為透過 `write_atomically(path, contents)` 寫入：先寫到同目錄的 `<file>.tmp-<pid>-<seq>`，再 `rename` 到最終路徑。同檔案系統的 `rename` 對讀者與 process kill 是 atomic，避免 `.spectra.yaml` 寫到一半就被視為「已初始化」而卡死無法重試（round 2 發現的 Critical）。失敗時 best-effort 清理 temp 檔並記錄次要失敗（`NotFound` 除外，那代表 temp 檔根本沒建立，非真正的清理失敗）；`INIT-RB-001`/`INIT-RB-002`（見 testplan.md）驗證清理與 call site 真的有走 atomic path，而非退化成 plain write。不處理 symlink（`.gitignore`/`.spectra.yaml` 若是 symlink 會被 rename 直接取代掉），視為已知限制，見函式 doc comment。
+
 ### CLI wiring（`crates/spectra-cli/src/main.rs`，已實作）
 
 - `Command::Init { json: bool }`：唯一**不走** `require_initialized` 的指令
