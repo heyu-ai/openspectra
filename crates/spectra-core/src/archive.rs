@@ -1054,6 +1054,7 @@ mod tests {
         }
 
         let result = archive(&c, "my-feature", false, false);
+        std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         assert!(result.is_err());
         // Validation (which hit the permission error) runs before the move.
@@ -1111,6 +1112,7 @@ mod tests {
         }
 
         let err = archive(&c, "my-feature", true, false).unwrap_err();
+        std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         // {:#} is what main.rs actually prints; the underlying io::Error's
         // message must survive the "where did the change go" wrapper, not

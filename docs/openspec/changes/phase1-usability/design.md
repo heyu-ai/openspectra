@@ -31,7 +31,7 @@ const GITIGNORE_ENTRY: &str = ".spectra/";
 - `init_json()` shape helper：`{root, spec_dir, gitignore_updated}`，仿既有 `park_status_json`/`new_change_json` pattern（shape 抽 helper + 測試釘死，typo 不 silent ship）
 - `root` 以 `to_string_lossy` 序列化（非 UTF-8 path 不 panic，同 `new_change_json` 的處理）
 
-## US-002 — `list --changes` 接線（待實作）
+## US-002 — `list --changes` 接線（已實作）
 
 **檔案**：`crates/spectra-cli/src/main.rs`
 
@@ -39,7 +39,7 @@ const GITIGNORE_ENTRY: &str = ".spectra/";
 - `run()` 的 match arm 顯式 destructure `changes` 傳入 `cmd_list`；因 `--changes` 語意即 default（clap 已擋掉衝突組合），`cmd_list` 內部行為零改動——共用同一 code path 是刻意設計，保證 AC-002-1 的 byte-相容
 - 測試：`Cli::try_parse_from` 斷言衝突組合 `is_err()`、合法組合 `changes == true`
 
-## US-003 — root-skip helper（待實作）
+## US-003 — root-skip helper（已實作）
 
 **檔案**：`crates/spectra-core/src/touched.rs`（1 處）、`crates/spectra-core/src/archive.rs`（2 處，`#[cfg(test)]` 模組內）
 
@@ -64,7 +64,7 @@ if !permission_denied_is_constructible(&path) {
 - helper 兩份小重複分住 touched.rs / archive.rs 測試模組（repo 慣例：測試住模組內，不為測試 helper 開共用模組）
 - `archive.rs:1083`（`archive_preserves_the_underlying_error_cause_after_a_post_rename_failure`）chmod 的是 `.openspec.yaml`，探測同一檔案即可
 
-## US-004 — `ci.yml` 目標結構（待實作）
+## US-004 — `ci.yml` 目標結構（已實作）
 
 **檔案**：`.github/workflows/ci.yml`、`CLAUDE.md`
 

@@ -35,7 +35,8 @@ impl Config {
                 .with_context(|| format!("reading {}", path.display()))?;
             serde_yaml::from_str(&text).with_context(|| {
                 format!(
-                    "parsing {} (if this file is corrupted, delete it and re-run 'spectra init')",
+                    "parsing {} (if this file is corrupted, delete it and re-run 'spectra init' \
+                     -- this resets spec_dir/locale to their defaults)",
                     path.display()
                 )
             })?

@@ -101,7 +101,13 @@ fn init_text_output_reports_root_spec_dir_and_gitignore_update() {
     assert!(out.status.success(), "init failed: {out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
 
-    assert!(stdout.contains(&tmp.display().to_string()));
+    // Canonicalize before comparing: on macOS `std::env::temp_dir()` returns
+    // a `/var/...` path that's actually a symlink to `/private/var/...`, and
+    // the CLI reports whatever `std::env::current_dir()` resolves to after
+    // `cd`-ing in, which follows the symlink -- a raw `contains` would only
+    // pass by coincidence (see the sibling JSON test for the same issue).
+    let canonical_root = tmp.canonicalize().unwrap();
+    assert!(stdout.contains(&canonical_root.display().to_string()));
     assert!(stdout.contains("spec_dir: openspec"));
     assert!(stdout.contains("Added '.spectra/' to .gitignore."));
 }

@@ -9,10 +9,10 @@ OpenSpectra 目前所有指令的錯誤訊息都指示使用者跑 `spectra init
 
 ## What Changes
 
-1. **`spectra init`**：新增 `spectra-core::init` 模組與 CLI `init` 子指令，從零 scaffold 專案（`.spectra.yaml`、`<spec_dir>/{changes,specs}/`、`.gitignore` 的 `.spectra/` entry）。**狀態：已實作並驗證（uncommitted，見 tasks.md US-001）**
-2. **`list --changes` 接線**：把收下但無作用的 flag wire 到現行 default 的 active-change 列表，加 clap 衝突規則，移除 help 的 "(not yet implemented)"
-3. **root 環境測試修正**：3 個 chmod(0o000) 測試在 permission-denied 不可構造時（root / CAP_DAC_OVERRIDE）skip 並印出原因
-4. **CI 強化**：fmt/clippy 改硬性檢查（先修掉 pre-existing 格式 diff）、build+test matrix 加 macOS
+1. **`spectra init`**：新增 `spectra-core::init` 模組與 CLI `init` 子指令，從零 scaffold 專案（`.spectra.yaml`、`<spec_dir>/{changes,specs}/`、`.gitignore` 的 `.spectra/` entry）。**狀態：已實作、已 commit、經 3 輪 mob review 修復（見 tasks.md US-001）**
+2. **`list --changes` 接線**：把收下但無作用的 flag wire 到現行 default 的 active-change 列表，加 clap 衝突規則，移除 help 的 "(not yet implemented)"。**狀態：已實作**
+3. **root 環境測試修正**：3 個 chmod(0o000) 測試在 permission-denied 不可構造時（root / CAP_DAC_OVERRIDE）skip 並印出原因。**狀態：已實作**
+4. **CI 強化**：fmt/clippy 改硬性檢查（先修掉 pre-existing 格式 diff）、build+test matrix 加 macOS。**狀態：已實作**
 
 ## Step 1a — 四元素萃取
 
@@ -139,7 +139,7 @@ OpenSpectra 目前所有指令的錯誤訊息都指示使用者跑 `spectra init
 
 ### Traceability Matrix
 
-| US | Gherkin Scenario slug | TC-ID | Rust 測試（既有=✓ / 待寫=◻） |
+| US | Gherkin Scenario slug | TC-ID | Rust 測試 |
 |----|----------------------|-------|------------------------------|
 | US-001 | `init-scaffold` | INIT-VL-001 | ✓ `init::tests::init_creates_config_and_scaffold_dirs` |
 | US-001 | `init-gitignore-create` | INIT-VL-002 | ✓ `init::tests::init_creates_gitignore_with_spectra_entry_when_missing` |
@@ -148,13 +148,13 @@ OpenSpectra 目前所有指令的錯誤訊息都指示使用者跑 `spectra init
 | US-001 | `init-already-initialized` | INIT-EP-001 | ✓ `init::tests::init_errors_when_already_initialized`、✓ `init_is_idempotent_refusal_not_silent_reinit`（integration） |
 | US-001 | `init-json-shape` | INIT-VL-004 | ✓ `tests::init_json_shape_matches_the_documented_contract`（spectra-cli） |
 | US-001 | `init-e2e-pipeline` | SMK-001 | ✓ `init_then_new_change_then_drift_runs_end_to_end`（integration） |
-| US-002 | `changes-flag-same-as-default` | LIST-EP-001 | ◻ 待寫（clap 解析 + code path 共用斷言） |
-| US-002 | `changes-conflicts-specs` | LIST-DT-001 | ◻ 待寫（`Cli::try_parse_from` 衝突斷言） |
-| US-002 | `changes-conflicts-parked` | LIST-DT-002 | ◻ 待寫（同上） |
-| US-002 | `changes-json-shape` | SMK-002 | ✓ 既有 `list_change_items` 測試覆蓋 shape；smoke 驗證 flag 接線 |
-| US-003 | `root-skip-with-reason` | ROOT-ST-001 | ◻ 修改 3 個既有測試加 skip guard（root 容器內人工/CI 驗證） |
+| US-002 | `changes-flag-same-as-default` | LIST-EP-001 | ✓ `list_changes_flag_output_is_byte_identical_to_the_default`（cli_integration） |
+| US-002 | `changes-conflicts-specs` | LIST-DT-001 | ✓ `tests::list_changes_flag_conflicts_with_specs`（spectra-cli） |
+| US-002 | `changes-conflicts-parked` | LIST-DT-002 | ✓ `tests::list_changes_flag_conflicts_with_parked`（spectra-cli） |
+| US-002 | `changes-json-shape` | SMK-002 | ✓ 同 `list_changes_flag_output_is_byte_identical_to_the_default`（含 `--json` 比對） |
+| US-003 | `root-skip-with-reason` | ROOT-ST-001 | ✓ 3 個既有測試皆加 skip guard（root 容器內人工/CI 驗證） |
 | US-003 | `non-root-still-runs` | ROOT-EP-001 | ✓ 既有 3 測試在非 root 下必須維持原行為（回歸） |
-| US-003 | `probe-mechanism-not-euid` | ROOT-VL-001 | ◻ `permission_denied_is_constructible` helper 語意（chmod 後 read 探測） |
+| US-003 | `probe-mechanism-not-euid` | ROOT-VL-001 | ✓ `permission_denied_is_constructible` helper（chmod 後 read 探測） |
 | US-004 | `fmt-hard-gate` | CI-DT-001 | — CI 設定驗證（SMK-003） |
 | US-004 | `clippy-hard-gate` | CI-DT-002 | — CI 設定驗證（SMK-003） |
 | US-004 | `macos-matrix` | CI-PW-001 | — CI 設定驗證（SMK-003） |

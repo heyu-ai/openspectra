@@ -17,20 +17,20 @@
 | INIT-VL-004 | `--json` 輸出 shape 精確、無雜訊 | VL | Medium (I3×L3) | 空目錄 | Rust `tests::init_json_shape_matches_the_documented_contract`（spectra-cli）；解析 stdout 為 JSON | `spectra init --json` | stdout 為合法 JSON，key 恰為 `{root, spec_dir, gitignore_updated}`；`root` 為絕對路徑、`spec_dir="openspec"`、`gitignore_updated` 為 bool；無額外文字/多餘 key |
 | SMK-001 | init → new change → task done → drift 全流程 | ST | High (I5×L3) | 空 git repo，已 init | Rust integration `init_then_new_change_then_drift_runs_end_to_end` + 手動 release binary 全流程（→ archive） | 單一 change，全 task 完成 | 三（四）指令皆 exit 0；drift severity = `light` |
 
-### capability: list-changes-flag（US-002，待實作）
+### capability: list-changes-flag（US-002，已實作）
 
 | TC-ID | Test Purpose | Technique | Risk | Precondition | Steps | Test Data | Expected Result |
 |-------|-------------|-----------|------|-------------|-------|-----------|----------------|
-| LIST-EP-001 | `--changes` human 輸出等同 default | EP | Medium (I3×L3) | 存在 ≥1 change 的 repo | Rust 待寫：擷取 `list` 與 `list --changes` stdout 比對 | repo 有 2 個 changes | 兩者 human 文字 byte-相同；exit 0 |
-| SMK-002 | `--changes --json` 與 `--json` byte 相同 | EP | Medium (I3×L3) | 存在 ≥1 change 的 repo | 手動/Rust：比對 `list --json` 與 `list --changes --json` | repo 有 changes | 兩者輸出 byte-相同的 `{"changes":[...]}`；exit 0 |
-| LIST-DT-001 | `--changes --specs` clap 衝突拒絕 | DT | Medium (I3×L2) | 任意 repo | Rust 待寫：`Cli::try_parse_from(["spectra","list","--changes","--specs"])` | `list --changes --specs` | 解析 `is_err()`（clap conflict）；list 邏輯不執行 |
-| LIST-DT-002 | `--changes --parked` clap 衝突拒絕 | DT | Medium (I3×L2) | 任意 repo | Rust 待寫：`Cli::try_parse_from(["spectra","list","--changes","--parked"])` | `list --changes --parked` | 解析 `is_err()`（clap conflict）；不執行 list 邏輯 |
-| LIST-VL-001 | help 移除 "(not yet implemented)" | VL | Low (I2×L3) | — | 手動/Rust：擷取 `list --help` | `list --help` | 輸出不含字串 `(not yet implemented)`；exit 0 |
+| LIST-EP-001 | `--changes` human 輸出等同 default | EP | Medium (I3×L3) | 存在 ≥1 change 的 repo | Rust CLI-level `list_changes_flag_output_is_byte_identical_to_the_default`（`crates/spectra-cli/tests/cli_integration.rs`）：擷取 `list` 與 `list --changes` stdout 比對 | repo 有 1 個 change | 兩者 human 文字 byte-相同；exit 0 |
+| SMK-002 | `--changes --json` 與 `--json` byte 相同 | EP | Medium (I3×L3) | 存在 ≥1 change 的 repo | 同上測試涵蓋：比對 `list --json` 與 `list --changes --json` | repo 有 changes | 兩者輸出 byte-相同的 `{"changes":[...]}`；exit 0 |
+| LIST-DT-001 | `--changes --specs` clap 衝突拒絕 | DT | Medium (I3×L2) | 任意 repo | Rust `list_changes_flag_conflicts_with_specs`（`crates/spectra-cli/src/main.rs`）：`Cli::try_parse_from(["spectra","list","--changes","--specs"])` | `list --changes --specs` | 解析 `is_err()`（clap conflict）；list 邏輯不執行 |
+| LIST-DT-002 | `--changes --parked` clap 衝突拒絕 | DT | Medium (I3×L2) | 任意 repo | Rust `list_changes_flag_conflicts_with_parked`（`crates/spectra-cli/src/main.rs`）：`Cli::try_parse_from(["spectra","list","--changes","--parked"])` | `list --changes --parked` | 解析 `is_err()`（clap conflict）；不執行 list 邏輯 |
+| LIST-VL-001 | help 移除 "(not yet implemented)" | VL | Low (I2×L3) | — | Rust `list_help_does_not_mention_changes_as_unimplemented`（`crates/spectra-cli/tests/cli_integration.rs`）：擷取 `list --help` | `list --help` | 輸出不含字串 `(not yet implemented)`；exit 0 |
 | LIST-VL-002 | `--changes` help 描述為顯式 default 行為 | VL | Low (I2×L2) | — | 手動檢視 `list --help` 中 `--changes` 說明 | `list --help` | `--changes` 說明文字描述其等同（顯式）default 行為，無 unimplemented 字樣 |
 
 > DT 說明（clap 互斥矩陣）：`--changes` 與 `--specs`、`--parked` 互斥；`--changes` 單獨或不帶旗標皆為合法（等價）。impossible 組合以 clap 衝突規則保證，故無 3-flag 同開列。
 
-### capability: root-safe-tests（US-003，待實作）
+### capability: root-safe-tests（US-003，已實作）
 
 | TC-ID | Test Purpose | Technique | Risk | Precondition | Steps | Test Data | Expected Result |
 |-------|-------------|-----------|------|-------------|-------|-----------|----------------|

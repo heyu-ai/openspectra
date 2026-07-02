@@ -24,7 +24,11 @@ pub struct InitOutcome {
 
 /// Scaffold `<spec_dir>/{changes,specs}/`, a `.gitignore` entry for
 /// `.spectra/`, and `.spectra.yaml` under `root`. Errors if `root` is already
-/// initialized; run at most once per project.
+/// initialized. Intended to run once per project: `Config::is_initialized`'s
+/// check-then-act isn't lock-protected, so two concurrent invocations on the
+/// same never-initialized `root` could both pass it and both scaffold --
+/// harmless (the content each writes is deterministic) but redundant, not
+/// actually serialized against each other.
 ///
 /// `.spectra.yaml` — the file [`Config::is_initialized`] checks — is written
 /// *last*, after every other step has succeeded, so its mere existence is a
@@ -100,21 +104,36 @@ fn read_gitignore(path: &Path) -> Result<String> {
 
 /// Write `contents` to `path` atomically: write to a temp file in the same
 /// directory, then rename into place. A same-filesystem `rename` is atomic
-/// on POSIX, so `path` is always either fully absent or fully valid — never
-/// left as a partial write (from a disk-full error, `SIGKILL`, or power
-/// loss mid-write) that satisfies `path.exists()` while failing to parse.
-/// This matters most for `.spectra.yaml`, since [`Config::is_initialized`]
-/// treats its mere existence as a reliable "scaffolding is complete" signal.
+/// with respect to concurrent readers and to the process being killed
+/// (`SIGKILL`) or hitting a disk-full error after the syscall returns, so
+/// `path` is never observed as a partial write that satisfies `path.exists()`
+/// while failing to parse. This matters most for `.spectra.yaml`, since
+/// [`Config::is_initialized`] treats its mere existence as a reliable
+/// "scaffolding is complete" signal.
+///
+/// This does *not* guarantee durability across true power loss (that needs
+/// `fsync`-ing the temp file and the parent directory, which this skips as
+/// disproportionate for a few bytes of config) -- but a `.spectra.yaml`
+/// corrupted by that rarer case is still a clean two-step recovery: delete
+/// it and re-run `spectra init` (see [`Config::load`]'s parse-error hint).
 fn write_atomically(path: &Path, contents: &str) -> Result<()> {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
     let file_name = path
         .file_name()
-        .expect("write_atomically requires a path with a file name")
+        .ok_or_else(|| anyhow::anyhow!("path {} has no file name", path.display()))?
         .to_string_lossy();
-    let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
-    std::fs::write(&tmp_path, contents)
-        .with_context(|| format!("writing {}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, path)
-        .with_context(|| format!("renaming {} into place", tmp_path.display()))?;
+    let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
+
+    if let Err(e) = std::fs::write(&tmp_path, contents) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("writing {}", tmp_path.display()));
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e).with_context(|| format!("renaming {} into place", tmp_path.display()));
+    }
     Ok(())
 }
 
@@ -144,14 +163,108 @@ mod tests {
     #[test]
     fn write_atomically_leaves_the_target_untouched_when_the_write_fails() {
         let tmp = TempDir::new();
-        // A nonexistent parent directory makes the temp-file write fail
-        // before any rename is attempted, so the final path is never
-        // created or truncated.
+        // A nonexistent parent directory makes the temp-file write itself
+        // fail before any rename is attempted -- this covers "write fails
+        // before touching the target", not a torn/interrupted write (which
+        // needs fault injection this test doesn't attempt).
         let target = tmp.join("nonexistent-dir").join("out.txt");
 
         write_atomically(&target, "hello").unwrap_err();
 
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn write_atomically_cleans_up_the_temp_file_when_rename_fails() {
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+        // A pre-existing directory at the target path lets the temp-file
+        // write succeed (it's a different filename) but makes the rename
+        // fail (renaming a file onto an existing directory is rejected),
+        // exercising the cleanup-on-rename-failure branch specifically.
+        std::fs::create_dir_all(&target).unwrap();
+
+        write_atomically(&target, "hello").unwrap_err();
+
+        let entries: Vec<_> = std::fs::read_dir(&*tmp)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            entries,
+            vec!["out.txt".to_string()],
+            "no stray out.txt.tmp-<pid>-<seq> should remain after a failed rename, got: {entries:?}"
+        );
+    }
+
+    /// After chmod(0o555), root (or a container with CAP_DAC_OVERRIDE) can
+    /// still create files inside `path`, so the permission-denied scenario
+    /// below is unconstructible; skip rather than fail in that case. Unlike
+    /// `touched.rs`'s/`archive.rs`'s identically-named helper (which probes
+    /// a *file*'s own `0o000` read permission), this probes whether *this
+    /// directory* still accepts new entries under `0o555` -- a different
+    /// check for a different scenario, not a duplicate.
+    #[cfg(unix)]
+    fn permission_denied_is_constructible(path: &Path) -> bool {
+        let probe = path.join(".spectra-permission-probe");
+        let blocked = std::fs::write(&probe, "x").is_err();
+        let _ = std::fs::remove_file(&probe);
+        blocked
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_gitignore_update_routes_through_write_atomically_not_a_plain_write() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        // Pre-create everything init() would otherwise scaffold, and an
+        // existing `.gitignore` that still needs the `.spectra/` entry
+        // appended. The discriminator: a plain `std::fs::write` on an
+        // *existing* `.gitignore` only needs the file's own (default
+        // 0o644) write permission and would succeed even with `root`
+        // read-only, silently updating its content despite `init()`
+        // failing later at `.spectra.yaml` (which always needs `root`'s
+        // write permission to create, atomic or not, so the overall Err
+        // alone can't tell the two implementations apart). But
+        // `write_atomically`'s temp-file-then-rename needs write
+        // permission on `root` itself just to create the temp file, so it
+        // fails *before* ever touching `.gitignore`'s real content --
+        // leaving it byte-for-byte unchanged. Verified by reverting both
+        // call sites to plain `std::fs::write` and confirming the content
+        // assertion below fails (while a naive "did init() return Err"
+        // assertion would not have).
+        let original_gitignore = "target/\n";
+        std::fs::create_dir_all(tmp.join("openspec/changes")).unwrap();
+        std::fs::create_dir_all(tmp.join("openspec/specs")).unwrap();
+        std::fs::write(tmp.join(".gitignore"), original_gitignore).unwrap();
+
+        std::fs::set_permissions(&*tmp, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        if !permission_denied_is_constructible(&tmp) {
+            eprintln!(
+                "skipping init_gitignore_update_routes_through_write_atomically_not_a_plain_write: \
+                 running as root (chmod 0o555 not enforced)"
+            );
+            std::fs::set_permissions(&*tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+
+        let result = init(&tmp);
+        std::fs::set_permissions(&*tmp, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        result.unwrap_err();
+        assert!(
+            !tmp.join(".spectra.yaml").exists(),
+            "must not mark the project initialized when the gitignore update fails"
+        );
+        let gitignore_after = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
+        assert_eq!(
+            gitignore_after, original_gitignore,
+            ".gitignore must stay byte-for-byte unchanged if write_atomically's temp-file \
+             creation failed before any rename -- if this fails, the write no longer routes \
+             through write_atomically"
+        );
     }
 
     struct TempDir(PathBuf);
