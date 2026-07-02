@@ -1020,6 +1020,8 @@ mod tests {
     /// After chmod(0o000), root (or a container with CAP_DAC_OVERRIDE) can
     /// still read the file, so the permission-denied scenario these tests
     /// need is unconstructible; skip rather than fail in that case.
+    ///
+    /// Kept in sync with the identical helper in `touched.rs`'s test module.
     #[cfg(unix)]
     fn permission_denied_is_constructible(path: &std::path::Path) -> bool {
         std::fs::read(path).is_err()
@@ -1047,6 +1049,7 @@ mod tests {
                 "skipping archive_fails_loudly_on_an_unreadable_spec_delta_instead_of_silently_dropping_it: \
                  running as root (chmod 0o000 not enforced)"
             );
+            std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o644)).unwrap();
             return;
         }
 
@@ -1103,6 +1106,7 @@ mod tests {
                 "skipping archive_preserves_the_underlying_error_cause_after_a_post_rename_failure: \
                  running as root (chmod 0o000 not enforced)"
             );
+            std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o644)).unwrap();
             return;
         }
 

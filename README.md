@@ -40,7 +40,7 @@ and exits non-zero on medium/heavy drift so CI can gate on it.
 ## Usage
 
 ```sh
-spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/{changes,specs}/ in the current directory
+spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/{changes,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
 spectra list  [--json]            # lists active changes
 spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)

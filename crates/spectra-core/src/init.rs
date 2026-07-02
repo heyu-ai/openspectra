@@ -22,9 +22,17 @@ pub struct InitOutcome {
     pub gitignore_updated: bool,
 }
 
-/// Scaffold `.spectra.yaml`, `<spec_dir>/{changes,specs}/`, and a
-/// `.gitignore` entry for `.spectra/` under `root`. Errors if `root` is
-/// already initialized; run at most once per project.
+/// Scaffold `<spec_dir>/{changes,specs}/`, a `.gitignore` entry for
+/// `.spectra/`, and `.spectra.yaml` under `root`. Errors if `root` is already
+/// initialized; run at most once per project.
+///
+/// `.spectra.yaml` — the file [`Config::is_initialized`] checks — is written
+/// *last*, after every other step has succeeded, so its mere existence is a
+/// reliable signal that scaffolding is complete. Writing it any earlier would
+/// let a failure in a later step (e.g. an unwritable `.gitignore`) leave the
+/// project marked initialized but missing the `.spectra/` ignore entry, with
+/// no way to retry — every subsequent `init` would immediately bail with
+/// "already initialized" instead of finishing the interrupted work.
 pub fn init(root: &Path) -> Result<InitOutcome> {
     if Config::is_initialized(root) {
         anyhow::bail!(
@@ -39,13 +47,13 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
     std::fs::create_dir_all(root.join(spec_dir).join("specs"))
         .with_context(|| format!("creating {spec_dir}/specs"))?;
 
+    let gitignore_updated = ensure_gitignore_entry(root)?;
+
     std::fs::write(
         root.join(".spectra.yaml"),
         format!("spec_dir: {spec_dir}\n"),
     )
     .context("writing .spectra.yaml")?;
-
-    let gitignore_updated = ensure_gitignore_entry(root)?;
 
     Ok(InitOutcome {
         root: root.to_path_buf(),
@@ -173,5 +181,48 @@ mod tests {
         assert!(!outcome.gitignore_updated);
         let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
         assert_eq!(contents, "target/\n.spectra/\n");
+    }
+
+    #[test]
+    fn init_does_not_duplicate_an_entry_with_trailing_whitespace() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".gitignore"), "target/\n.spectra/ \n").unwrap();
+
+        let outcome = init(&tmp).unwrap();
+
+        assert!(!outcome.gitignore_updated);
+        let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
+        assert_eq!(contents, "target/\n.spectra/ \n");
+    }
+
+    #[test]
+    fn init_does_not_leave_spectra_yaml_behind_when_gitignore_handling_fails() {
+        let tmp = TempDir::new();
+        // A directory named `.gitignore` makes `ensure_gitignore_entry`'s read
+        // fail with a real I/O error (not NotFound), simulating a .gitignore
+        // write failure without needing chmod/root shenanigans.
+        std::fs::create_dir_all(tmp.join(".gitignore")).unwrap();
+
+        let err = init(&tmp).unwrap_err();
+
+        assert!(!err.to_string().contains("already initialized"));
+        assert!(
+            !tmp.join(".spectra.yaml").exists(),
+            "must not mark the project initialized when gitignore handling fails"
+        );
+    }
+
+    #[test]
+    fn init_can_be_retried_after_a_transient_gitignore_failure_is_fixed() {
+        let tmp = TempDir::new();
+        std::fs::create_dir_all(tmp.join(".gitignore")).unwrap();
+        init(&tmp).unwrap_err();
+
+        // Fix the obstruction and retry: since .spectra.yaml is written last,
+        // the failed attempt above must not have marked the project
+        // initialized, so this retry is free to complete normally.
+        std::fs::remove_dir(tmp.join(".gitignore")).unwrap();
+        let outcome = init(&tmp).unwrap();
+        assert!(outcome.gitignore_updated);
     }
 }

@@ -360,6 +360,8 @@ mod tests {
     /// After chmod(0o000), root (or a container with CAP_DAC_OVERRIDE) can
     /// still read the file, so the permission-denied scenario this test needs
     /// is unconstructible; skip rather than fail in that case.
+    ///
+    /// Kept in sync with the identical helper in `archive.rs`'s test module.
     #[cfg(unix)]
     fn permission_denied_is_constructible(path: &std::path::Path) -> bool {
         std::fs::read(path).is_err()

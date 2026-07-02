@@ -19,11 +19,41 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?} failed");
 }
 
+/// RAII scratch directory: removes itself on drop even if a test panics
+/// partway through, so a failed assertion doesn't leak a directory in the
+/// system temp dir.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(label: &str) -> Self {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "spectra-init-it-{label}-{}-{seq}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+}
+
+impl std::ops::Deref for TempDir {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn init_then_new_change_then_drift_runs_end_to_end() {
-    let root = std::env::temp_dir().join(format!("spectra-init-it-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("e2e");
 
     git(&root, &["init", "-q"]);
     git(&root, &["config", "user.email", "t@t.co"]);
@@ -47,19 +77,13 @@ fn init_then_new_change_then_drift_runs_end_to_end() {
     // anchors and no pending-task collisions, so drift is minor.
     assert_eq!(report.severity, "light");
     assert!(report.broken_anchors.is_empty());
-
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn init_is_idempotent_refusal_not_silent_reinit() {
-    let root = std::env::temp_dir().join(format!("spectra-init-it-reinit-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("reinit");
 
     init::init(&root).unwrap();
     let err = init::init(&root).unwrap_err();
     assert!(err.to_string().contains("already initialized"));
-
-    let _ = std::fs::remove_dir_all(&root);
 }

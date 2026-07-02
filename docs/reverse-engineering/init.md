@@ -36,10 +36,11 @@ init' first.` if `.spectra.yaml` is missing.
 1. If `.spectra.yaml` already exists at the target root, fail loudly with an
    error containing `already initialized` and touch nothing else. There is no
    re-init or `--force` escape hatch.
-2. Otherwise, produce:
-   - `.spectra.yaml` containing `spec_dir: openspec\n` (the `spec_dir` name
-     is currently always the `config::DEFAULT_SPEC_DIR` constant — there's no
-     `--spec-dir` flag yet)
+2. Otherwise, produce the following **in this order** — `.spectra.yaml` is
+   written last on purpose, since it's the file `Config::is_initialized`
+   checks: if any earlier step fails, nothing has marked the project
+   initialized yet, so a fixed retry can complete normally instead of
+   immediately hitting step 1's "already initialized" bail:
    - `openspec/changes/` and `openspec/specs/` (empty directories; git won't
      track them until something is written inside)
    - a `.gitignore` entry for `.spectra/` (OpenSpectra's own per-change
@@ -51,6 +52,9 @@ init' first.` if `.spectra.yaml` is missing.
        content is never corrupted
      - `.gitignore` already has a `.spectra/` line (exact match after
        trimming surrounding whitespace) → leave the file untouched
+   - `.spectra.yaml` containing `spec_dir: openspec\n` (the `spec_dir` name
+     is currently always the `config::DEFAULT_SPEC_DIR` constant — there's no
+     `--spec-dir` flag yet)
 3. `--json` output: `{"root": "<absolute path>", "spec_dir": "openspec",
    "gitignore_updated": <bool>}`. `gitignore_updated` reflects whether step 2
    actually wrote to `.gitignore` (`false` when an entry was already present).
@@ -62,10 +66,10 @@ this file set and wording:
 
 | Path | Content |
 |---|---|
-| `.spectra.yaml` | `spec_dir: openspec\n` |
 | `<spec_dir>/changes/` | empty directory |
 | `<spec_dir>/specs/` | empty directory |
 | `.gitignore` | `.spectra/` line ensured present |
+| `.spectra.yaml` | `spec_dir: openspec\n` (written last — see "Behavior" above) |
 
 Open questions an oracle session would need to answer:
 

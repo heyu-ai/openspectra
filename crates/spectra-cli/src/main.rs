@@ -809,6 +809,15 @@ mod tests {
     }
 
     #[test]
+    fn cmd_init_succeeds_on_a_clean_dir_for_both_output_modes() {
+        let tmp = TempDir::new();
+        assert_eq!(cmd_init(&tmp, false).unwrap(), 0);
+
+        let tmp2 = TempDir::new();
+        assert_eq!(cmd_init(&tmp2, true).unwrap(), 0);
+    }
+
+    #[test]
     fn list_specs_items_shape_matches_specs_key_contract() {
         let tmp = TempDir::new();
         let cfg = Config {
