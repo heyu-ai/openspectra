@@ -8,9 +8,13 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 2. **支援 openspec** 格式的 spec-driven-development 工作流
 3. 對原版行為**先忠實重現、再漸進改進**（校準期與 oracle 一致以便驗證，之後以 opt-in 方式修正已知缺陷）
 
-### 現況摘要（2026-07-02）
+### 現況摘要（2026-07-03）
 
-**已完成（皆經 oracle 驗證，已合併 PR：#1、#2、#13–#21，共 11 個）**：`drift`（四維度評分、JSON schema 逐欄位吻合、exit code gate）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。131 個單元測試（Linux；macOS 因 2 個 `#[cfg(target_os = "linux")]` 測試被排除，實際跑 129 個）+ 1 個整合測試，release build 乾淨。
+**Phase 進度以 GitHub issue 追蹤（每個 Phase 一個 epic issue，與本文件雙向連結）**：Phase 1 ✅ [#30](https://github.com/howie/openspectra/issues/30)（已完成）；Phase 2 [#26](https://github.com/howie/openspectra/issues/26)、Phase 3 [#27](https://github.com/howie/openspectra/issues/27)、Phase 4 [#28](https://github.com/howie/openspectra/issues/28)、Phase 5 [#29](https://github.com/howie/openspectra/issues/29) 皆 open。
+
+**已完成（drift 核心經 oracle 驗證，已合併 PR：#1、#2、#13–#21）**：`drift`（四維度評分、JSON schema 逐欄位吻合、exit code gate）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。
+
+**Phase 1 已完成（PR #23）**：`spectra init`、`list --changes` 接線、root 環境 3 個 chmod 權限測試改用 runtime probe 跳過、CI fmt/clippy 硬門檻 + ubuntu/macOS build+test matrix。（`spectra init` 為 oracle-unverified，見 `docs/reverse-engineering/init.md`。）
 
 **Open issues**：
 
@@ -20,13 +24,13 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 - #11 CliFlag 永遠 broken：忠實重現 vs 可設定目標 CLI（設計決策）
 - #12 `Resolver::broken` 逐 anchor fork `git grep`（效能，最多 50 次子程序）
 
-**已知缺口（尚無 issue 追蹤）**：
+**Phase 1 已消除的缺口（PR #23）**：~~`spectra init` 不存在~~、~~`list --changes` 收下但無作用~~、~~root 下 3 個 chmod 權限測試誤判~~、~~無跨平台 CI matrix~~。
 
-- `spectra init` 不存在——所有指令的錯誤訊息都叫使用者跑 `spectra init`，但沒有這個子指令，Linux 新使用者無法 bootstrap
-- `list --changes` flag 收下但無作用（`scripts/capture-golden.sh` 依賴這個指令）
-- archive 不支援 MODIFIED/REMOVED/RENAMED spec delta；無 `unarchive`
-- 以 root 執行 `cargo test` 時 3 個 chmod-權限測試誤判失敗（remote/container CI 常見情境）
-- 無 release 流程、無跨平台 CI matrix、無 OpenSpec 生態相容性驗證
+**尚存缺口（對應後續 Phase）**：
+
+- archive 不支援 MODIFIED/REMOVED/RENAMED spec delta；無 `unarchive`（Phase 2，[#26](https://github.com/howie/openspectra/issues/26)）
+- 無 release 流程（Phase 3，[#27](https://github.com/howie/openspectra/issues/27)）
+- 無 OpenSpec 生態相容性驗證（Phase 2，[#26](https://github.com/howie/openspectra/issues/26)）
 
 ### 計畫假設
 
@@ -39,7 +43,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 ---
 
-## Phase 1 — 基礎修補與可用性（無外部依賴，立即可做）
+## Phase 1 — 基礎修補與可用性（無外部依賴，立即可做）✅ 完成（PR #23，追蹤 [#30](https://github.com/howie/openspectra/issues/30)）
 
 目標：讓 Linux 使用者能從零開始使用，並消除已知的殼 flag / 測試環境問題。
 
@@ -59,7 +63,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **驗證**：`cargo fmt --check` / `clippy -D warnings` / `build --release --locked` / `test --all` 全綠（含 root 容器內）；手動 e2e：空目錄 `init → new change → task done → drift → archive` 全流程在 Linux 通過。
 
-## Phase 2 — OpenSpec 生態相容性
+## Phase 2 — OpenSpec 生態相容性（追蹤 [#26](https://github.com/howie/openspectra/issues/26)）
 
 目標：確認/達成「在真實 OpenSpec 專案上直接可用」。
 
@@ -76,7 +80,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **驗證**：fixture 測試進 CI；手動用 OpenSpec CLI 建一個真實專案，openspectra 全指令跑通。
 
-## Phase 3 — Linux 發佈工程
+## Phase 3 — Linux 發佈工程（追蹤 [#27](https://github.com/howie/openspectra/issues/27)）
 
 目標：使用者能一行安裝、CI 能直接拿來當 drift gate。
 
@@ -89,7 +93,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **驗證**：打 `v0.1.0-rc` tag 走一次完整 release；在乾淨的 x86_64 與 aarch64 容器裡下載 binary 跑 e2e smoke（`init → new change → drift`）。
 
-## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）
+## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）（追蹤 [#28](https://github.com/howie/openspectra/issues/28)，子項 #8/#9/#10）
 
 目標：把「猜的常數」變成「量測的常數」。工作模式：本專案產生校準腳本 → 操作者在 macOS 跑 → golden 結果帶回來實作。每項改動必須同步更新 `docs/reverse-engineering/drift.md`（CLAUDE.md 規範）。
 
@@ -109,7 +113,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **無 oracle 降級**：1–3 改為「保守維持現狀 + 文件明確標註已知分歧」，issues 標 `blocked: needs-oracle` 留存。
 
-## Phase 5 — 品質、效能與改進（忠實期之後）
+## Phase 5 — 品質、效能與改進（忠實期之後）（追蹤 [#29](https://github.com/howie/openspectra/issues/29)，子項 #11/#12）
 
 1. **#12 批次化 `git grep`**：`Resolver::broken` 從 O(anchors) 子程序降到 O(1)（或改用已載入的 `tracked` 內容做 in-memory 比對）；回歸測試：40+ anchor 的合成 design.md，批次前後 `broken_anchors` byte-identical。**排在 #8 之後或確認獨立**（issue 中已記載兩者共處 resolver，需避免混淆歸因）
 2. **#11 CliFlag 決策**（待人類裁決，尚未選定方向）：選項 (a) 預設忠實（永遠 broken），`.spectra.yaml` 新增 opt-in 設定；(b) 只從 fenced code block 抽 flag；(c) 指定目標 CLI 的 `--help` 做真實比對。決策記入 drift.md 的 decision note 後才開始實作與測試
@@ -137,15 +141,16 @@ Phase 1（獨立，先做）──┬──> Phase 2（相容性，依賴 init�
 
 Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Phase 4 的校準結果進 `v0.2.x`；Phase 5 的 opt-in 改進進 `v0.3.x`。
 
-## 需要開的新 issues
+## Issue 追蹤（GitHub Issues ↔ 本文件）
 
-1. `spectra init`（Phase 1）
-2. `list --changes` 接線（Phase 1）
-3. root 環境下 3 個權限測試誤判（Phase 1）
-4. CI：fmt/clippy 硬門檻 + macOS matrix（Phase 1）
-5. OpenSpec 格式差異調查與相容層（Phase 2，調查後可能拆多個）
-6. archive：MODIFIED/REMOVED/RENAMED delta 支援（Phase 2）
-7. Release workflow + crates.io 發佈（Phase 3）
-8. golden fixture 機器可讀回歸測試（Phase 4）
+每個 Phase 有一個 epic tracking issue，與本文件雙向連結；後續進度以 GitHub Issues 為準。
 
-（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8/#9/#10/#11/#12 沿用既有 issues。）
+| Phase | Tracking issue | 狀態 | 子項 issues |
+|---|---|---|---|
+| Phase 1 — 基礎修補與可用性 | [#30](https://github.com/howie/openspectra/issues/30) | ✅ 完成（PR #23） | — |
+| Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | open | （調查後可能拆多個：格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta） |
+| Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | open | （release workflow、crates.io、Docker） |
+| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、#8 Symbol 過濾、golden 回歸自動化 |
+| Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | #12 批次 git grep、#11 CliFlag 決策 |
+
+（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8–#12 沿用既有 issues，並在各 issue 留言連回其 Phase epic。）

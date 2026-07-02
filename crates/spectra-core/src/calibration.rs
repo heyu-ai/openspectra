@@ -191,7 +191,8 @@ mod tests {
         assert_eq!(severity(5, 0.0), "medium"); // enhance-d5: total 5
         assert_eq!(severity(8, 0.0), "medium");
         assert_eq!(severity(9, 0.18), "heavy"); // mycelium: total 9
-                                                // decay over 30% forces heavy even with a low total score.
+
+        // decay over 30% forces heavy even with a low total score.
         assert_eq!(severity(2, 0.48), "heavy");
     }
 

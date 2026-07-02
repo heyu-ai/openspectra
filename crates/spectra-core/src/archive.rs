@@ -1017,6 +1017,16 @@ mod tests {
         assert!(!touched::touched_path(&c, "my-feature").exists());
     }
 
+    /// After chmod(0o000), root (or a container with CAP_DAC_OVERRIDE) can
+    /// still read the file, so the permission-denied scenario these tests
+    /// need is unconstructible; skip rather than fail in that case.
+    ///
+    /// Kept in sync with the identical helper in `touched.rs`'s test module.
+    #[cfg(unix)]
+    fn permission_denied_is_constructible(path: &std::path::Path) -> bool {
+        std::fs::read(path).is_err()
+    }
+
     #[cfg(unix)]
     #[test]
     fn archive_fails_loudly_on_an_unreadable_spec_delta_instead_of_silently_dropping_it() {
@@ -1034,7 +1044,17 @@ mod tests {
         write(&spec_path, DELTA_TEMPLATE);
         std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o000)).unwrap();
 
+        if !permission_denied_is_constructible(&spec_path) {
+            eprintln!(
+                "skipping archive_fails_loudly_on_an_unreadable_spec_delta_instead_of_silently_dropping_it: \
+                 running as root (chmod 0o000 not enforced)"
+            );
+            std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            return;
+        }
+
         let result = archive(&c, "my-feature", false, false);
+        std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         assert!(result.is_err());
         // Validation (which hit the permission error) runs before the move.
@@ -1082,7 +1102,17 @@ mod tests {
         let meta_path = c.changes_dir().join("my-feature").join(".openspec.yaml");
         std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o000)).unwrap();
 
+        if !permission_denied_is_constructible(&meta_path) {
+            eprintln!(
+                "skipping archive_preserves_the_underlying_error_cause_after_a_post_rename_failure: \
+                 running as root (chmod 0o000 not enforced)"
+            );
+            std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            return;
+        }
+
         let err = archive(&c, "my-feature", true, false).unwrap_err();
+        std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         // {:#} is what main.rs actually prints; the underlying io::Error's
         // message must survive the "where did the change go" wrapper, not
