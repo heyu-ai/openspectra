@@ -26,6 +26,7 @@ static UNSUPPORTED_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## (MODIFIED|REMOVED|RENAMED) Requirements\s*$").unwrap());
 static REQUIREMENTS_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## Requirements\s*$").unwrap());
+static PURPOSE_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## Purpose\s*$").unwrap());
 static REQUIREMENT_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^### Requirement:").unwrap());
 static SECTION_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## \S").unwrap());
@@ -83,8 +84,11 @@ fn is_dir(path: &Path) -> Result<bool> {
 /// `<spec_dir>/changes/archive/<today>-<name>/`, then (in order) optionally
 /// mark all pending tasks done, stamp `.openspec.yaml` with
 /// `archived_by`/`archived_at`, and (unless `skip_specs`) apply each
-/// capability's spec delta. Clears the change's `.spectra/` sidecar
-/// (parked/baseline) markers on success.
+/// capability's spec delta. Clears the change's `.spectra/` sidecar state
+/// (parked/baseline/touched-file markers) on success -- best-effort: if
+/// that cleanup itself fails (e.g. a permission error), it's reported as a
+/// warning rather than failing the whole archive, since the move and spec
+/// application have already succeeded by that point.
 ///
 /// Errors with "Change '<name>' not found." when `name` doesn't name an
 /// existing active change — matching the reference CLI, which reports the
@@ -216,8 +220,19 @@ fn stamp_archived_metadata(cfg: &Config, dest: &Path, today: chrono::NaiveDate) 
     let mut metadata: change::ChangeMetadata = match read_optional(&meta_path)? {
         None => change::ChangeMetadata::default(),
         Some(text) => serde_yaml::from_str(&text).unwrap_or_else(|e| {
+            // Mirrors touched.rs::load: an unparseable file is renamed aside
+            // (never silently overwritten in place) before falling back to
+            // an empty default, so the original bytes survive for recovery
+            // even though this function is about to write a fresh file here.
+            let backup = touched::non_colliding_backup_path(&meta_path);
+            let recovery_hint = match std::fs::rename(&meta_path, &backup) {
+                Ok(()) => format!("the original file was preserved at {}", backup.display()),
+                Err(rename_err) => {
+                    format!("failed to preserve the original file too ({rename_err})")
+                }
+            };
             eprintln!(
-                "warning: ignoring unparseable {} ({e})",
+                "warning: {} is unparseable ({e}); resetting its metadata -- {recovery_hint}",
                 meta_path.display()
             );
             change::ChangeMetadata::default()
@@ -267,17 +282,33 @@ fn apply_spec_deltas(
 
 /// Where new requirement blocks belong in the canonical spec's existing
 /// content: right after the `## Requirements` header, before whatever `##`
-/// section (if any) follows it -- never blindly at the very end of the
-/// file, which would incorrectly nest new requirements under an unrelated
-/// trailing section (e.g. a human-added `## Notes`/`## Appendix`).
+/// section (if any) follows it -- never blindly at the very end of the file,
+/// which would incorrectly nest new requirements under an unrelated trailing
+/// section (e.g. a human-added `## Notes`/`## Appendix`).
+///
+/// A spec freshly created by [`apply_added_requirements`] always has a
+/// `## Requirements` header, but an existing canonical spec.md predating
+/// that convention (or hand-edited to drop it) might not. Falling back to
+/// `content.len()` in that case would silently reproduce the exact
+/// trailing-section bug this function exists to avoid, so it falls back one
+/// more step to right after `## Purpose` (using the same before-the-next-
+/// section logic) before finally giving up and using the end of the file --
+/// which is only reachable when the spec has no recognizable section
+/// structure at all, so there's no trailing section left to nest under.
 fn requirements_insertion_point(content: &str) -> usize {
-    let Some(req_match) = REQUIREMENTS_HEADER_RE.find(content) else {
-        return content.len();
-    };
-    let after = &content[req_match.end()..];
-    SECTION_HEADER_RE
-        .find(after)
-        .map_or(content.len(), |m| req_match.end() + m.start())
+    if let Some(req_match) = REQUIREMENTS_HEADER_RE.find(content) {
+        let after = &content[req_match.end()..];
+        return SECTION_HEADER_RE
+            .find(after)
+            .map_or(content.len(), |m| req_match.end() + m.start());
+    }
+    if let Some(purpose_match) = PURPOSE_HEADER_RE.find(content) {
+        let after = &content[purpose_match.end()..];
+        return SECTION_HEADER_RE
+            .find(after)
+            .map_or(content.len(), |m| purpose_match.end() + m.start());
+    }
+    content.len()
 }
 
 /// Extract every `### Requirement:` block from `delta`'s `## ADDED
@@ -540,6 +571,62 @@ mod tests {
     }
 
     #[test]
+    fn archive_preserves_unknown_openspec_yaml_fields_through_the_metadata_round_trip() {
+        // stamp_archived_metadata deserializes .openspec.yaml into
+        // ChangeMetadata and reserializes it; a field this struct doesn't
+        // model by name (e.g. from a newer reference-CLI version, or one a
+        // human added) must survive via ChangeMetadata::extra's #[serde(flatten)]
+        // rather than being silently dropped on every archive.
+        let tmp = TempDir::new();
+        let c = git_repo_cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature").join(".openspec.yaml"),
+            "schema: v1\ncreated: 2024-01-01\nfuture_field: some-value-not-yet-modeled\n",
+        );
+
+        let outcome = archive(&c, "my-feature", true, false).unwrap();
+
+        let meta = std::fs::read_to_string(
+            c.changes_dir()
+                .join("archive")
+                .join(&outcome.archived_name)
+                .join(".openspec.yaml"),
+        )
+        .unwrap();
+        assert!(
+            meta.contains("future_field: some-value-not-yet-modeled"),
+            "unknown field must round-trip, got:\n{meta}"
+        );
+        assert!(meta.contains("created: 2024-01-01"));
+        assert!(meta.contains("archived_at: "));
+    }
+
+    #[test]
+    fn archive_backs_up_an_unparseable_openspec_yaml_instead_of_overwriting_it_in_place() {
+        // Mirrors touched.rs's corrupt-file handling: an unparseable
+        // .openspec.yaml must be renamed aside before stamp_archived_metadata
+        // resets it to a fresh default, so the original bytes are still
+        // recoverable instead of being silently destroyed by the write that
+        // follows.
+        let tmp = TempDir::new();
+        let c = git_repo_cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature").join(".openspec.yaml"),
+            "this: [is, not, : valid yaml\n",
+        );
+
+        let outcome = archive(&c, "my-feature", true, false).unwrap();
+
+        let archived_dir = c.changes_dir().join("archive").join(&outcome.archived_name);
+        let backup = std::fs::read_to_string(archived_dir.join(".openspec.yaml.corrupt")).unwrap();
+        assert!(backup.contains("this: [is, not, : valid yaml"));
+        let meta = std::fs::read_to_string(archived_dir.join(".openspec.yaml")).unwrap();
+        assert!(meta.contains("archived_at: "));
+    }
+
+    #[test]
     fn archive_with_mark_tasks_complete_flips_all_checkboxes() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
@@ -747,6 +834,47 @@ mod tests {
         assert!(
             new_req_idx < notes_idx,
             "new requirement must be inserted before the trailing '## Notes' section, got:\n{spec}"
+        );
+        assert!(spec.contains("Some human-added trailing notes."));
+    }
+
+    #[test]
+    fn archive_inserts_new_requirements_before_a_trailing_section_when_the_canonical_spec_has_no_requirements_header(
+    ) {
+        // Regression: a canonical spec.md predating the "## Requirements"
+        // convention (or hand-edited to drop it) must not fall all the way
+        // back to a blind end-of-file append -- that would reproduce the
+        // exact trailing-section bug `requirements_insertion_point` exists
+        // to avoid. It should fall back to right after "## Purpose" instead.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            "# my-cap Specification\n\n\
+             ## Purpose\n\nExisting.\n\n\
+             ## Notes\n\nSome human-added trailing notes.\n",
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            DELTA_TEMPLATE,
+        );
+
+        archive(&c, "my-feature", false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        let new_req_idx = spec
+            .find("### Requirement: <!-- requirement name -->")
+            .unwrap();
+        let notes_idx = spec.find("## Notes").unwrap();
+        assert!(
+            new_req_idx < notes_idx,
+            "new requirement must be inserted before the trailing '## Notes' section \
+             even without a '## Requirements' header, got:\n{spec}"
         );
         assert!(spec.contains("Some human-added trailing notes."));
     }

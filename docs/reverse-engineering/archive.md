@@ -107,13 +107,19 @@ each followed by one or more `### Requirement: <name>` blocks.
 requirement blocks into the canonical spec's `## Requirements` section,
 verbatim, each followed by its own trace footer"** — not a smart merge. New
 blocks are inserted right after the `## Requirements` header, before whatever
-`##` section (if any) follows it — **not** blindly appended to the end of
+`##` section (if any) follows it, rather than blindly appended to the end of
 the file. This matters once a canonical spec has grown a trailing section of
 its own (e.g. a human-added `## Notes`/`## Appendix`): appending at the
 file's end would incorrectly nest the new requirement under that unrelated
 section instead of inside `## Requirements` (OpenSpectra-only fix, not
 independently oracle-confirmed for this specific edge case — the golden
 samples observed only had a bare `## Requirements` with nothing after it).
+If the canonical spec has no `## Requirements` header at all (predating the
+convention, or hand-edited to drop it), insertion falls back to right after
+`## Purpose` instead, using the same before-the-next-section logic; only a
+spec with neither header falls all the way back to the literal end of the
+file, since at that point there's no recognizable section structure left to
+nest under incorrectly.
 The very first requirement appended to a fresh spec has no separator; every
 subsequent one (including the first appended to an *already-populated*
 spec) is preceded by a `\n---\n` line. If the canonical spec doesn't exist

@@ -83,12 +83,15 @@ fn load(cfg: &Config, name: &str) -> TouchedTracking {
     }
 }
 
-/// `<name>.json.corrupt`, or `<name>.json.corrupt.2`, `.3`, ... if that's
+/// `<name>.<ext>.corrupt`, or `<name>.<ext>.corrupt.2`, `.3`, ... if that's
 /// already taken — so a second (or third...) corruption event doesn't
 /// silently clobber the backup of a previous one via `rename`'s
-/// overwrite-the-destination semantics.
-fn non_colliding_backup_path(path: &std::path::Path) -> PathBuf {
-    let base = path.with_extension("json.corrupt");
+/// overwrite-the-destination semantics. Shared with `archive`'s
+/// `stamp_archived_metadata`, which backs up an unparseable `.openspec.yaml`
+/// the same way before overwriting it.
+pub(crate) fn non_colliding_backup_path(path: &std::path::Path) -> PathBuf {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bak");
+    let base = path.with_extension(format!("{ext}.corrupt"));
     if !base.exists() {
         return base;
     }
