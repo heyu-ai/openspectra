@@ -28,10 +28,14 @@ cargo build --release --locked
 cargo test --all
 ```
 
-`fmt`/`clippy` are `continue-on-error` in CI right now (the toolchain that
-produced this tree predates rustfmt/clippy components being reliably
-available), but treat them as hard gates locally — fix findings rather than
-relying on CI leniency. `build` + `test` are the real CI gate.
+`fmt`/`clippy` are `continue-on-error` in CI (see the comment in `ci.yml`),
+but `build` + `test` are the only checks CI actually enforces — treat `fmt`
+and `clippy` as hard gates locally regardless. In practice `cargo clippy`
+currently passes clean, and `cargo fmt --check` failures are real formatting
+diffs, not a toolchain gap — run `cargo fmt --all` rather than ignoring the
+check. If a clippy finding is a false positive, suppress it narrowly with a
+comment explaining why; never add a blanket `#[allow]` just to make the
+check pass.
 
 ## Testing conventions
 
@@ -45,15 +49,18 @@ relying on CI leniency. `build` + `test` are the real CI gate.
 
 ## Applicable skills for this repo
 
-No Rust-specific skill is installed; these general-purpose skills already
-cover this repo's workflow and should be reached for proactively:
+None of these are Rust-specific or bundled with this repo — availability
+depends on the operator's own Claude Code setup — but if present, reach for
+them proactively:
 
 - `tdd-kentbeck` — TDD/Tidy-First discipline for `spectra-core` logic changes.
-- `ci-triage` — funnel for diagnosing `cargo fmt`/`clippy`/`test` CI failures.
+- `ci-triage` — a generic fmt/lint/test-failure triage funnel; not
+  Rust-specific but applicable to `cargo fmt`/`clippy`/`test` failures.
 - `verify` — run the built CLI against a real project before claiming a fix
   works (`./target/release/spectra drift`, etc.), not just `cargo test`.
 - `run` — launch/drive the CLI binary to observe a change working.
 
 ## Issue tracking
 
-GitHub Issues (this repo has no Jira/Linear project configured).
+GitHub Issues (as of writing, this repo has no Jira/Linear project
+configured).
