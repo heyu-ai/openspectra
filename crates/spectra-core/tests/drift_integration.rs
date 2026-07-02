@@ -63,13 +63,15 @@ fn drift_over_synthetic_repo_matches_recovered_rules() {
     assert_eq!(broken, vec!["--json", "--verbose", "src/gone.rs"]);
 
     // 5 anchors total (2 paths + 2 flags + 1 function), 3 broken => 60% decay.
+    // 2 of the 3 broken are CliFlags => D2, min(2*2+3, 2*2+2) = 6.
+    // (Verified directly against the reference oracle: Structure score 6.)
     let structure = report
         .dimensions
         .iter()
         .find(|d| matches!(d.kind, drift::DimensionKind::Structure))
         .unwrap();
     assert_eq!(structure.status, "3/5 anchors broken");
-    assert_eq!(structure.score, 7);
+    assert_eq!(structure.score, 6);
 
     // 60% decay exceeds the 30% threshold => heavy, regardless of run date.
     assert_eq!(report.severity, "heavy");

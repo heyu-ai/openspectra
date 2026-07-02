@@ -87,20 +87,30 @@ diff design flags against in an arbitrary project, so every extracted `--flag`
 is reported broken — even ones written in a *Non-Goal* section. OpenSpectra
 reproduces this faithfully (see Known divergences for the improvement path).
 
-Score is a function of **decay = broken / total** (fits every field sample):
+Score is **category-weighted**, not a pure function of decay. Recovered exactly
+via the calibration harness (`scripts/calibrate-structure.py`):
 
-| decay | score |
-|-------|-------|
-| 0 | 0 |
-| <6% | 0 |
-| <7% | 1 |
-| <25% | 3 |
-| <30% | 5 |
-| ≥30% | 7 |
+```text
+decay = broken / total
+D = 0 if decay < 10% | 1 if 10% ≤ decay < 30% | 2 if decay ≥ 30%
+score = min(2·D + 3,  2·D + broken_cliflag_count)
+```
 
-The score ladder is `0,1,3,5,7` (odd). `>30%` decay also forces `heavy`
-severity. Inner boundaries (the tight 6%/7% band) are interpolated between
-sparse samples — `calibration::structure_score`.
+A broken **CliFlag** adds 1 each (capped by `2·D+3`, global max 7); a broken
+**FilePath** contributes *only* through the decay band `D`. Isolation evidence
+(harness): `1/7` FilePath → 2 but `1/7` CliFlag → 3; `3/40` FilePath → 0 but
+`3/40` CliFlag → 3. Same decay, different score ⇒ category matters. The `D`
+boundaries are exact: `10%` (`10.0%` → D1, `9.1%` → D0) and `30%` (= the heavy
+short-circuit). Verified against every real golden: `0/16` cf0 → 0, `3/40`
+cf3 → 3, `9/29` cf9 → 7, `12/25` cf12 → 7.
+
+> An earlier revision modelled this as a decay-only ladder `0,1,3,5,7`. That fit
+> the goldens **only by accident**: every golden's broken anchors were CliFlags,
+> so `min` always saturated at the `2·D+3` cap. It scored FilePath-broken and
+> mixed changes wrong (e.g. returned 3 for `3/40` FilePath, oracle returns 0).
+> Reproduce the derivation: `python3 scripts/calibrate-structure.py --oracle
+> <path> --mode iso` (count isolation) and `--mode verify-model` (cross-check).
+> `>30%` decay also forces `heavy` severity — `calibration::structure_score`.
 
 ### 3. Tasks — collisions with external work
 Parses `tasks.md` checkboxes (`- [ ]` / `- [x]`) and the inline backtick file
@@ -140,7 +150,7 @@ a positive sample is captured.
 |------|--------|
 | JSON schema, dimension model, `total_score` rule | ✅ exact |
 | FilePath / CliFlag / Function extraction & resolution | ✅ exact (byte-for-byte on golden runs) |
-| Structure score curve, severity bands, recommendation map | ✅ exact on all samples |
+| Structure score formula (category-weighted), severity bands, recommendation map | ✅ exact — harness-recovered + golden-verified |
 | Time score curve | ✅ matches all samples; outer day boundaries `CALIBRATE` |
 | `commits_since_created`, git commands | ✅ exact |
 | **Symbol extraction narrowing** | ⚠️ **open** — see below |
@@ -170,9 +180,13 @@ Two resolution behaviours are carried as-is pending a positive oracle decision
    Symbol/Function anchor always finds itself and is never reported broken; only
    FilePath/CliFlag anchors drive Structure on a committed change. This is
    consistent with the oracle's observed output (golden samples only ever showed
-   CliFlags broken) and with the calibration harness below, which deliberately
-   leaves `design.md` **untracked** precisely so anchors resolve to nothing. A
-   future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
+   CliFlags broken). The scripted harness (`scripts/calibrate-structure.py`)
+   works *with* this behaviour: it commits `design.md` but writes it in
+   all-lowercase prose so the Symbol/Function regexes extract nothing, leaving
+   `total` = resolved + broken FilePaths + broken CliFlags. (The separate manual
+   probe below instead leaves `design.md` **untracked** to force *every* anchor
+   broken and reveal the full set — a different technique for a different goal.)
+   A future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
    it is deferred until an oracle run confirms the intended behaviour.
 2. **FilePath resolves while still in the git index.** A path is considered
    present if it is tracked *or* on disk, so a working-tree `rm` without `git rm`

@@ -7,20 +7,27 @@
 //! observed `score`/`status` outputs. See `docs/reverse-engineering/drift.md`
 //! for the full method.
 //!
-//! ## Field-sample calibration table (oracle = spectra 2.3.1)
+//! ## Structure score — exact formula (recovered via the calibration harness)
 //!
-//! Structure (score is a function of anchor *decay* = broken / total):
+//! Structure score is NOT a pure function of decay: it is category-weighted.
+//! A broken **CliFlag** raises the score; a broken **FilePath** only raises the
+//! decay (it does not add on its own). Recovered by sweeping the oracle with
+//! synthetic changes (`scripts/calibrate-structure.py`) over the (broken
+//! FilePath count × broken CliFlag count × total) space, then verified against
+//! every real golden:
 //! ```text
-//!   broken/total  decay%   score
-//!   0/*            0.0       0
-//!   1/17           5.9       0
-//!   3/46           6.5       1
-//!   3/40           7.5       3
-//!   4/16          25.0       5
-//!   5/19          26.3       5
-//!   9/29          31.0       7
-//!  12/25          48.0       7
+//!   decay = broken / total
+//!   D = 0 if decay < 10% | 1 if 10% <= decay < 30% | 2 if decay >= 30%
+//!   score = min(2*D + 3,  2*D + broken_cliflag_count)
 //! ```
+//! Golden checks (all exact): 0/16 cf0 -> 0; 3/40 cf3 -> 3; 9/29 cf9 -> 7;
+//! 12/25 cf12 -> 7. Category isolation (harness): 1/7 FilePath -> 2 but
+//! 1/7 CliFlag -> 3; 3/40 FilePath -> 0 but 3/40 CliFlag -> 3. The earlier
+//! decay-only table happened to fit the goldens only because every golden's
+//! broken anchors were CliFlags (so `min` saturated at the `2D+3` cap).
+//! In practice only FilePath and CliFlag are ever broken on a committed change
+//! (Function/Symbol self-match the tracked design.md), so "non-CliFlag broken"
+//! == FilePath here.
 //!
 //! Time (score is a function of days since `created`):
 //! ```text
@@ -47,25 +54,36 @@ pub const ANCHOR_CAP: usize = 50;
 /// shipping false positives. See `tasks::analyze` and the RE doc.
 pub const TASKS_DETECTION_CALIBRATED: bool = false;
 
-/// Structure dimension score from broken-anchor decay (broken / total).
-/// Reproduces every observed field sample; inner boundaries are CALIBRATE.
-pub fn structure_score(broken: usize, total: usize) -> i64 {
+/// Structure dimension score.
+///
+/// `broken` is the total broken-anchor count, `broken_cliflags` how many of
+/// those are CliFlags, `total` the extracted anchor count. The score is
+/// `min(2D + 3, 2D + broken_cliflags)` where `D` is the decay band (see the
+/// module-level table). FilePath (and other non-CliFlag) broken anchors only
+/// contribute through `D`; CliFlags additionally raise the additive term.
+pub fn structure_score(broken: usize, broken_cliflags: usize, total: usize) -> i64 {
     if total == 0 || broken == 0 {
         return 0;
     }
     let decay = broken as f64 / total as f64;
-    if decay < 0.06 {
+    let d: i64 = if decay < STRUCTURE_DECAY_LOW {
         0
-    } else if decay < 0.07 {
+    } else if decay < STRUCTURE_DECAY_HIGH {
         1
-    } else if decay < 0.25 {
-        3
-    } else if decay < 0.30 {
-        5
     } else {
-        7
-    }
+        2
+    };
+    (2 * d + 3).min(2 * d + broken_cliflags as i64)
 }
+
+/// Decay-band boundaries for the Structure score (recovered exactly: `10.0%` is
+/// D1, `9.1%` is D0; `30.0%` is D2). `STRUCTURE_DECAY_HIGH` empirically equals
+/// [`HEAVY_DECAY_THRESHOLD`], but they are kept as separate constants on purpose:
+/// one is the score-band edge, the other the severity short-circuit, and the
+/// oracle treats exactly 30% differently for each (D2 for the score, but *not*
+/// forced `heavy` — verified by probe). Tuning one must not silently move the other.
+pub const STRUCTURE_DECAY_LOW: f64 = 0.10;
+pub const STRUCTURE_DECAY_HIGH: f64 = 0.30;
 
 /// The "heavy" severity short-circuit: anchor decay over this fraction forces
 /// `heavy` regardless of total score (recovered: "anchor decay >30%").
@@ -126,16 +144,34 @@ mod tests {
     use super::*;
 
     #[test]
-    fn structure_score_reproduces_field_samples() {
-        // (broken, total) -> expected score, from the oracle calibration table.
-        assert_eq!(structure_score(0, 16), 0);
-        assert_eq!(structure_score(1, 17), 0); // 5.9%
-        assert_eq!(structure_score(3, 46), 1); // 6.5%
-        assert_eq!(structure_score(3, 40), 3); // 7.5%
-        assert_eq!(structure_score(4, 16), 5); // 25%
-        assert_eq!(structure_score(5, 19), 5); // 26.3%
-        assert_eq!(structure_score(9, 29), 7); // 31%
-        assert_eq!(structure_score(12, 25), 7); // 48%
+    fn structure_score_reproduces_real_goldens() {
+        // (broken, broken_cliflags, total) -> score, from the 4 real golden JSONs.
+        assert_eq!(structure_score(0, 0, 16), 0); // add-token-economy
+        assert_eq!(structure_score(3, 3, 40), 3); // enhance-d5 (D0, cap 3)
+        assert_eq!(structure_score(9, 9, 29), 7); // mycelium  (D2, cap 7)
+        assert_eq!(structure_score(12, 12, 25), 7); // pr-control-log (D2, cap 7)
+    }
+
+    #[test]
+    fn structure_score_is_category_weighted() {
+        // Same (broken, total), different category composition -> different score
+        // (harness-verified: a broken CliFlag weighs more than a broken FilePath).
+        assert_eq!(structure_score(1, 0, 7), 2); // 1 FilePath broken, 14% -> D1 -> 2D=2
+        assert_eq!(structure_score(1, 1, 7), 3); // 1 CliFlag broken  -> 2D+1=3
+        assert_eq!(structure_score(3, 0, 40), 0); // 3 FilePath, 7.5% -> D0 -> 0
+        assert_eq!(structure_score(3, 3, 40), 3); // 3 CliFlag        -> min(3,3)=3
+    }
+
+    #[test]
+    fn structure_score_decay_bands_and_cap() {
+        // D0 (<10%): 1/11 = 9.09% -> D0, cf1 -> min(0+3, 0+1) = 1.
+        assert_eq!(structure_score(1, 1, 11), 1);
+        // D1 boundary at exactly 10%: 1/10 -> D1, cf1 -> min(5, 2+1)=3.
+        assert_eq!(structure_score(1, 1, 10), 3);
+        // D2 boundary at 30%: 3/10 -> D2, cf3 -> min(7, 4+3)=7.
+        assert_eq!(structure_score(3, 3, 10), 7);
+        // CliFlag additive is capped by 2D+3: many flags at D1 saturate at 5.
+        assert_eq!(structure_score(6, 6, 24), 5); // 25% -> D1, min(5, 2+6)=5
     }
 
     #[test]

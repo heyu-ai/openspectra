@@ -81,7 +81,10 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
         let broken = resolver.broken(&anchors);
         let decay = if total == 0 { 0.0 } else { broken.len() as f64 / total as f64 };
         let status = format!("{}/{} anchors broken", broken.len(), total);
-        let score = calibration::structure_score(broken.len(), total);
+        // Structure score is category-weighted: broken CliFlags raise the score,
+        // broken FilePaths only raise the decay band. See calibration::structure_score.
+        let broken_cliflags = broken.iter().filter(|b| b.category == "CliFlag").count();
+        let score = calibration::structure_score(broken.len(), broken_cliflags, total);
         (
             Dimension { kind: DimensionKind::Structure, status, score, contributes_to_total: true },
             broken,
