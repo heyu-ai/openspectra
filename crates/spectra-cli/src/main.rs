@@ -11,7 +11,7 @@ use serde_json::json;
 
 use spectra_core::{change, config::Config, drift, spec};
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(
     name = "spectra",
     version,
@@ -25,7 +25,7 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Command {
     /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/{changes,specs}/`,
     /// and a `.spectra/` entry in `.gitignore`. Every other command requires
@@ -44,8 +44,9 @@ enum Command {
     },
     /// List active changes (or specs with --specs, or parked changes with --parked).
     List {
-        /// (not yet implemented) Filter to changes only.
-        #[arg(long)]
+        /// List active changes explicitly (the default when no filter flag
+        /// is given; mutually exclusive with --specs/--parked).
+        #[arg(long, conflicts_with_all = ["specs", "parked"])]
         changes: bool,
         /// List specs instead of changes.
         #[arg(long, conflicts_with = "parked")]
@@ -101,7 +102,7 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum NewTarget {
     /// Scaffold a new change directory (.openspec.yaml, proposal.md,
     /// design.md, tasks.md, and, when run inside a git repo with at least
@@ -114,7 +115,7 @@ enum NewTarget {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum TaskTarget {
     /// Mark a task as done and record touched files.
     Done {
@@ -605,10 +606,15 @@ fn run() -> Result<i32> {
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
         }
         Command::List {
+            // `changes` is unused here on purpose: clap's `conflicts_with_all`
+            // already rejects it alongside --specs/--parked, so whenever it's
+            // true the other two are false and cmd_list's default branch
+            // (active changes) already produces the same output -- see
+            // design.md's list-changes-flag section.
+            changes: _,
             specs,
             parked,
             json,
-            ..
         } => {
             let cfg = require_initialized(&root)?;
             cmd_list(&cfg, *specs, *parked, *json)
@@ -747,6 +753,45 @@ mod tests {
     impl Drop for TempDir {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn list_changes_flag_conflicts_with_specs() {
+        let err = Cli::try_parse_from(["spectra", "list", "--changes", "--specs"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "expected --changes/--specs to be rejected as conflicting, got: {err}"
+        );
+    }
+
+    #[test]
+    fn list_changes_flag_conflicts_with_parked() {
+        let err = Cli::try_parse_from(["spectra", "list", "--changes", "--parked"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "expected --changes/--parked to be rejected as conflicting, got: {err}"
+        );
+    }
+
+    #[test]
+    fn list_changes_flag_parses_alone() {
+        let cli = Cli::try_parse_from(["spectra", "list", "--changes"]).unwrap();
+        match cli.command {
+            Command::List {
+                changes,
+                specs,
+                parked,
+                json,
+            } => {
+                assert!(changes);
+                assert!(!specs);
+                assert!(!parked);
+                assert!(!json);
+            }
+            _ => panic!("expected Command::List"),
         }
     }
 
