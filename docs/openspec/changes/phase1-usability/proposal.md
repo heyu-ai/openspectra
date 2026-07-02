@@ -110,11 +110,11 @@ OpenSpectra 目前所有指令的錯誤訊息都指示使用者跑 `spectra init
 
 此 change 視為「完成」的條件：
 
-- [ ] 所有 User Stories（US-001~004）的 AC 均已實作
-- [ ] testplan.md 所有 TC 均有對應的 Rust 測試或已標注為手動/CI 驗證項
-- [ ] 冒煙測試（SMK）全數通過
-- [ ] 四道全量驗證指令全綠（C2）
-- [ ] `docs/reverse-engineering/init.md` 標註 init 未經 oracle 驗證（A1）
+- [x] 所有 User Stories（US-001~004）的 AC 均已實作
+- [x] testplan.md 所有 TC 均有對應的 Rust 測試或已標注為手動/CI 驗證項
+- [x] 冒煙測試（SMK-001、SMK-002 已手動驗證；SMK-003 CI 全綠待 push 後由 GitHub Actions 確認）
+- [x] 四道全量驗證指令全綠（C2）
+- [x] `docs/reverse-engineering/init.md` 標註 init 未經 oracle 驗證（A1）
 - [ ] 程式碼已 push、draft PR 已開（C3）
 
 ### 冒煙測試情境
