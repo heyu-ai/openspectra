@@ -175,9 +175,12 @@ pub fn grep_existing(root: &Path, needles: &[&str]) -> HashSet<String> {
     // can land between adjacent matched substrings and break the
     // `line.contains(needle)` check below, producing a false "not found".
     args.push("--no-color".to_string());
-    for needle in needles {
+    // Iterate the deduped `all` set (not `needles`) so a caller passing repeated
+    // needles does not append redundant `-e <needle>` pairs; -e order does not
+    // affect results.
+    for needle in &all {
         args.push("-e".to_string());
-        args.push((*needle).to_string());
+        args.push(needle.clone());
     }
 
     // -c grep.lineNumber=false / grep.column=false: both are real git config
@@ -414,20 +417,15 @@ mod tests {
 
     #[test]
     fn grep_existing_treats_non_repo_errors_as_resolved() {
-        let dir = TempDir::new("grep-norepo");
-        // Precondition: the temp dir must not sit inside a git work tree, or
-        // `git grep` returns exit 1 (clean no-match) instead of >1 (not a repo)
-        // and this test would exercise the wrong branch. env::temp_dir() is
-        // effectively never inside a checkout, but assert it so a misconfigured
-        // TMPDIR fails loudly with a clear message rather than a confusing
-        // empty-set mismatch.
-        assert!(
-            !is_repo(&dir),
-            "temp dir {} is unexpectedly inside a git repo; set TMPDIR outside any checkout",
-            dir.display()
-        );
+        // A guaranteed-nonexistent path makes `git -C <path>` fail to chdir and
+        // exit 128 (>1), deterministically exercising the "cannot tell -> treat
+        // all as resolved" arm with no filesystem dependency. (A real temp dir
+        // could sit inside a git checkout in some CI/sandbox setups, where git
+        // grep would instead exit 1 and this test would exercise the wrong
+        // branch.)
+        let root = Path::new("/nonexistent/spectra-grep-existing-not-a-repo-xyz");
 
-        let resolved = grep_existing(&dir, &["alpha_fn_0", "PresentSymbol"]);
+        let resolved = grep_existing(root, &["alpha_fn_0", "PresentSymbol"]);
 
         assert_eq!(
             resolved,
