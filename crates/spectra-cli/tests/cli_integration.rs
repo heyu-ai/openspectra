@@ -143,6 +143,7 @@ fn init_json_output_matches_the_documented_shape() {
 
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(value["spec_dir"], "openspec");
+    assert_eq!(value["adopted"], false);
     assert_eq!(value["gitignore_updated"], true);
     // Compare canonicalized paths: on macOS `std::env::temp_dir()` returns a
     // `/var/...` path that's actually a symlink to `/private/var/...`, and

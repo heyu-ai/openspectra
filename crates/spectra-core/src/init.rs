@@ -17,6 +17,7 @@ const GITIGNORE_ENTRY: &str = ".spectra/";
 pub struct InitOutcome {
     pub root: PathBuf,
     pub spec_dir: String,
+    pub adopted: bool,
     /// Whether `.gitignore` was created or appended to. `false` when the
     /// entry was already present (e.g. a hand-written `.gitignore`).
     pub gitignore_updated: bool,
@@ -38,6 +39,18 @@ pub struct InitOutcome {
 /// no way to retry — every subsequent `init` would immediately bail with
 /// "already initialized" instead of finishing the interrupted work.
 pub fn init(root: &Path) -> Result<InitOutcome> {
+    init_with_options(root, false)
+}
+
+/// Variant of [`init`] that can adopt an existing OpenSpec-style project.
+///
+/// Plain `init` keeps its original "fresh project" contract. `adopt` is the
+/// explicit compatibility path for a root that already has OpenSpec content:
+/// it only creates the two required directories if missing, ensures
+/// `.spectra/` is ignored, and writes `.spectra.yaml` last. It deliberately
+/// does not touch `project.md`, `AGENTS.md`, `config.yaml`, or any existing
+/// change/spec content under the spec directory.
+pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
     if Config::is_initialized(root) {
         anyhow::bail!(
             "already initialized ({} exists)",
@@ -45,10 +58,14 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
         );
     }
 
-    let spec_dir = DEFAULT_SPEC_DIR;
-    std::fs::create_dir_all(root.join(spec_dir).join("changes"))
+    let spec_dir = if adopt {
+        detect_adopt_spec_dir(root)?
+    } else {
+        DEFAULT_SPEC_DIR.to_string()
+    };
+    std::fs::create_dir_all(root.join(&spec_dir).join("changes"))
         .with_context(|| format!("creating {spec_dir}/changes"))?;
-    std::fs::create_dir_all(root.join(spec_dir).join("specs"))
+    std::fs::create_dir_all(root.join(&spec_dir).join("specs"))
         .with_context(|| format!("creating {spec_dir}/specs"))?;
 
     let gitignore_updated = ensure_gitignore_entry(root)?;
@@ -61,9 +78,30 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
 
     Ok(InitOutcome {
         root: root.to_path_buf(),
-        spec_dir: spec_dir.to_string(),
+        spec_dir,
+        adopted: adopt,
         gitignore_updated,
     })
+}
+
+fn detect_adopt_spec_dir(root: &Path) -> Result<String> {
+    let candidate = root.join(DEFAULT_SPEC_DIR);
+    // Only the default `openspec` directory name is probed today. The probes
+    // still matter because they surface real I/O errors (for example,
+    // permission denied) before adoption scaffolding proceeds; configurable
+    // spec-dir discovery is future work.
+    let _ = is_dir(&candidate)?;
+    let _ = is_dir(&candidate.join("changes"))?;
+    let _ = is_dir(&candidate.join("specs"))?;
+    Ok(DEFAULT_SPEC_DIR.to_string())
+}
+
+fn is_dir(path: &Path) -> Result<bool> {
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(m.is_dir()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
 }
 
 /// Append [`GITIGNORE_ENTRY`] to `.gitignore` as its own line, unless a line
@@ -334,6 +372,7 @@ mod tests {
         let outcome = init(&tmp).unwrap();
 
         assert_eq!(outcome.spec_dir, "openspec");
+        assert!(!outcome.adopted);
         assert!(tmp.join(".spectra.yaml").is_file());
         assert!(tmp.join("openspec/changes").is_dir());
         assert!(tmp.join("openspec/specs").is_dir());
@@ -349,6 +388,60 @@ mod tests {
 
         let err = init(&tmp).unwrap_err();
         assert!(err.to_string().contains("already initialized"));
+    }
+
+    #[test]
+    fn init_adopt_preserves_existing_openspec_content() {
+        let tmp = TempDir::new();
+        let project = tmp.join("openspec/project.md");
+        let spec = tmp.join("openspec/specs/search/spec.md");
+        std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        std::fs::write(&project, "# Existing project\n\nDo not touch.\n").unwrap();
+        std::fs::write(
+            &spec,
+            "# Search Specification\n\n## Requirements\n\n### Requirement: Search\n\nExisting.\n",
+        )
+        .unwrap();
+
+        let outcome = init_with_options(&tmp, true).unwrap();
+
+        assert!(outcome.adopted);
+        assert_eq!(outcome.spec_dir, "openspec");
+        assert_eq!(
+            std::fs::read_to_string(&project).unwrap(),
+            "# Existing project\n\nDo not touch.\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&spec).unwrap(),
+            "# Search Specification\n\n## Requirements\n\n### Requirement: Search\n\nExisting.\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+            "spec_dir: openspec\n"
+        );
+    }
+
+    #[test]
+    fn init_adopt_errors_when_already_initialized() {
+        let tmp = TempDir::new();
+        init(&tmp).unwrap();
+
+        let err = init_with_options(&tmp, true).unwrap_err();
+
+        assert!(err.to_string().contains("already initialized"));
+    }
+
+    #[test]
+    fn init_adopt_on_empty_dir_creates_the_default_skeleton() {
+        let tmp = TempDir::new();
+
+        let outcome = init_with_options(&tmp, true).unwrap();
+
+        assert!(outcome.adopted);
+        assert_eq!(outcome.spec_dir, "openspec");
+        assert!(tmp.join("openspec/changes").is_dir());
+        assert!(tmp.join("openspec/specs").is_dir());
+        assert!(tmp.join(".spectra.yaml").is_file());
     }
 
     #[test]

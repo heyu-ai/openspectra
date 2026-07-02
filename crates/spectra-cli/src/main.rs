@@ -32,6 +32,8 @@ enum Command {
     /// this to have run first.
     Init {
         #[arg(long)]
+        adopt: bool,
+        #[arg(long)]
         json: bool,
     },
     /// Detect drift between a change and the current codebase state.
@@ -155,14 +157,21 @@ fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
     json!({
         "root": outcome.root.to_string_lossy(),
         "spec_dir": outcome.spec_dir,
+        "adopted": outcome.adopted,
         "gitignore_updated": outcome.gitignore_updated,
     })
 }
 
-fn cmd_init(root: &Path, as_json: bool) -> Result<i32> {
-    let outcome = spectra_core::init::init(root)?;
+fn cmd_init(root: &Path, adopt: bool, as_json: bool) -> Result<i32> {
+    let outcome = spectra_core::init::init_with_options(root, adopt)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
+    } else if outcome.adopted {
+        println!(
+            "Adopted existing spectra project in {} (spec_dir: {}).",
+            outcome.root.display(),
+            outcome.spec_dir
+        );
     } else {
         println!(
             "Initialized spectra project in {} (spec_dir: {}).",
@@ -557,14 +566,9 @@ fn cmd_archive(
         outcome.name, outcome.archived_name
     );
     for applied in &outcome.specs_applied {
-        // modified/removed/renamed are always 0: MODIFIED/REMOVED/RENAMED
-        // deltas are rejected before archiving reaches this point (see
-        // archive::validate_spec_deltas), so printing them isn't a claim
-        // those delta kinds are supported -- it matches the reference CLI's
-        // fuller summary line format for the delta kinds this does apply.
         println!(
-            "Specs applied: {} (added: {}, modified: 0, removed: 0, renamed: 0)",
-            applied.capability, applied.added
+            "Specs applied: {} (added: {}, modified: {}, removed: {}, renamed: {})",
+            applied.capability, applied.added, applied.modified, applied.removed, applied.renamed
         );
     }
     Ok(0)
@@ -600,7 +604,7 @@ fn run() -> Result<i32> {
     let root = find_root(&cwd);
 
     match &cli.command {
-        Command::Init { json } => cmd_init(&root, *json),
+        Command::Init { adopt, json } => cmd_init(&root, *adopt, *json),
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
@@ -800,11 +804,13 @@ mod tests {
         let outcome = spectra_core::init::InitOutcome {
             root: PathBuf::from("/tmp/proj"),
             spec_dir: "openspec".to_string(),
+            adopted: true,
             gitignore_updated: true,
         };
         let value = init_json(&outcome);
         assert_eq!(value["root"], "/tmp/proj");
         assert_eq!(value["spec_dir"], "openspec");
+        assert_eq!(value["adopted"], true);
         assert_eq!(value["gitignore_updated"], true);
     }
 

@@ -1,0 +1,3 @@
+- [ ] Update session expiration policy.
+- [ ] Remove remember-me support.
+- [ ] Add device trust requirement.
