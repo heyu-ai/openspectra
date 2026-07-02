@@ -1,15 +1,13 @@
 //! `spectra archive` — move a completed change to
 //! `<spec_dir>/changes/archive/YYYY-MM-DD-<name>/`, stamp its
 //! `.openspec.yaml` with `archived_by`/`archived_at`, and (unless
-//! `--skip-specs`) merge each capability's proposed `## ADDED Requirements`
-//! delta into the canonical `<spec_dir>/specs/<capability>/spec.md`.
+//! `--skip-specs`) merge each capability's proposed requirement deltas into
+//! the canonical `<spec_dir>/specs/<capability>/spec.md`.
 //!
 //! Reverse-engineered against `/Applications/Spectra.app` v2.3.1 — see
 //! `docs/reverse-engineering/archive.md` for the full write-up, including
-//! the deliberately narrowed spec-merge scope (only `## ADDED Requirements`
-//! is applied; a delta containing `MODIFIED`/`REMOVED`/`RENAMED` sections
-//! errors, asking for `--skip-specs`) and other documented gaps (no
-//! snapshot/unarchive support).
+//! the Phase 2 OpenSpec compatibility delta behavior and other documented
+//! gaps (no snapshot/unarchive support).
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
@@ -22,8 +20,12 @@ use crate::{change, touched};
 
 static ADDED_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## ADDED Requirements\s*$").unwrap());
-static UNSUPPORTED_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^## (MODIFIED|REMOVED|RENAMED) Requirements\s*$").unwrap());
+static MODIFIED_HEADER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^## MODIFIED Requirements\s*$").unwrap());
+static REMOVED_HEADER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^## REMOVED Requirements\s*$").unwrap());
+static RENAMED_HEADER_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?m)^## RENAMED Requirements\s*$").unwrap());
 static REQUIREMENTS_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## Requirements\s*$").unwrap());
 static PURPOSE_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## Purpose\s*$").unwrap());
@@ -36,6 +38,9 @@ static SECTION_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## \S").u
 pub struct SpecApplyResult {
     pub capability: String,
     pub added: usize,
+    pub modified: usize,
+    pub removed: usize,
+    pub renamed: usize,
 }
 
 /// Outcome of [`archive`].
@@ -96,8 +101,7 @@ fn is_dir(path: &Path) -> Result<bool> {
 /// (archived changes live under `changes/archive/`, outside the active
 /// namespace `try_load` searches).
 ///
-/// Unless `skip_specs`, every capability's spec delta is validated (checked
-/// for an unsupported `MODIFIED`/`REMOVED`/`RENAMED Requirements` section)
+/// Unless `skip_specs`, every capability's spec delta is validated
 /// *before* the change directory is moved or anything else is written, so a
 /// validation failure leaves the change exactly as it was — still active,
 /// not stuck half-archived with the directory already moved but its specs
@@ -117,7 +121,7 @@ pub fn archive(
     let ch = change::try_load(cfg, name)?.ok_or_else(|| anyhow!("Change '{name}' not found."))?;
 
     if !skip_specs {
-        validate_spec_deltas(&ch.dir)?;
+        validate_spec_deltas(cfg, &ch.dir, name)?;
     }
 
     let today = chrono::Local::now().date_naive();
@@ -160,11 +164,11 @@ pub fn archive(
     })
 }
 
-/// Errors if any capability's `specs/<cap>/spec.md` under `change_dir`
-/// contains a `MODIFIED`/`REMOVED`/`RENAMED Requirements` section, or has a
-/// non-UTF-8 capability directory name, before anything about the change
-/// has been touched.
-fn validate_spec_deltas(change_dir: &Path) -> Result<()> {
+/// Computes every capability merge without writing it. This catches all
+/// requirement-name conflicts before anything about the change has been
+/// touched, preserving the same "active and unmoved on validation failure"
+/// guarantee the earlier unsupported-header gate provided.
+fn validate_spec_deltas(cfg: &Config, change_dir: &Path, source: &str) -> Result<()> {
     let specs_dir = change_dir.join("specs");
     let Some(entries) = read_dir_optional(&specs_dir)? else {
         return Ok(());
@@ -182,13 +186,8 @@ fn validate_spec_deltas(change_dir: &Path) -> Result<()> {
             .file_name()
             .into_string()
             .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
-        if let Some(caps) = UNSUPPORTED_HEADER_RE.captures(&delta) {
-            let kind = &caps[1];
-            return Err(anyhow!(
-                "capability '{capability}': {kind} requirement deltas aren't supported yet -- \
-                 re-run with --skip-specs and apply this spec change by hand"
-            ));
-        }
+        let today = chrono::Local::now().date_naive();
+        merge_spec_delta(cfg, &capability, &delta, source, today, true)?;
     }
     Ok(())
 }
@@ -273,11 +272,436 @@ fn apply_spec_deltas(
             .file_name()
             .into_string()
             .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
-        let added = apply_added_requirements(cfg, &capability, &delta, source, today)?;
-        results.push(SpecApplyResult { capability, added });
+        let (content, result) = merge_spec_delta(cfg, &capability, &delta, source, today, false)?;
+        if let Some(content) = content {
+            let spec_path = cfg.specs_dir().join(&capability).join("spec.md");
+            let parent = spec_path.parent().expect("spec path always has a parent");
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+            std::fs::write(&spec_path, content)
+                .with_context(|| format!("writing {}", spec_path.display()))?;
+        }
+        results.push(result);
     }
     results.sort_by(|a, b| a.capability.cmp(&b.capability));
     Ok(results)
+}
+
+#[derive(Debug, Clone)]
+struct RequirementBlock {
+    name: String,
+    normalized_name: String,
+    start: usize,
+    end: usize,
+    header_end: usize,
+}
+
+#[derive(Debug)]
+struct RequirementDelta {
+    added: Vec<String>,
+    modified: Vec<String>,
+    removed: Vec<String>,
+    renamed: Vec<RenameDelta>,
+}
+
+#[derive(Debug)]
+struct RenameDelta {
+    from: String,
+    to: String,
+}
+
+/// Merge one capability's delta into its canonical spec, returning the full
+/// replacement content only when the canonical file should be written. The
+/// same function is used by pre-move validation and post-move application so
+/// conflicts are found against the exact operation order OpenSpec documents:
+/// RENAMED, REMOVED, MODIFIED, then ADDED.
+fn merge_spec_delta(
+    cfg: &Config,
+    capability: &str,
+    delta: &str,
+    source: &str,
+    today: chrono::NaiveDate,
+    dry_run: bool,
+) -> Result<(Option<String>, SpecApplyResult)> {
+    let parsed = parse_requirement_delta(capability, delta)?;
+    let result = SpecApplyResult {
+        capability: capability.to_string(),
+        added: parsed.added.len(),
+        modified: parsed.modified.len(),
+        removed: parsed.removed.len(),
+        renamed: parsed.renamed.len(),
+    };
+    let has_changes = result.added + result.modified + result.removed + result.renamed > 0;
+    if !has_changes {
+        return Ok((None, result));
+    }
+
+    let spec_path = cfg.specs_dir().join(capability).join("spec.md");
+    let existing = read_optional(&spec_path)?;
+    let mut content = match existing {
+        Some(content) => content,
+        None if parsed.modified.is_empty()
+            && parsed.removed.is_empty()
+            && parsed.renamed.is_empty() =>
+        {
+            format!(
+                "# {capability} Specification\n\n\
+                 ## Purpose\n\n\
+                 TBD - created by archiving change '{source}'. Update Purpose after archive.\n\n\
+                 ## Requirements\n"
+            )
+        }
+        None => {
+            let first_missing = parsed
+                .renamed
+                .first()
+                .map(|r| ("RENAME", r.from.as_str()))
+                .or_else(|| parsed.removed.first().map(|r| ("REMOVE", r.as_str())))
+                .or_else(|| {
+                    parsed
+                        .modified
+                        .first()
+                        .map(|r| ("MODIFY", requirement_name(r)))
+                });
+            let (kind, name) = first_missing.expect("non-ADDED delta exists");
+            return Err(missing_requirement_error(
+                capability, kind, name, &spec_path,
+            ));
+        }
+    };
+
+    for rename in &parsed.renamed {
+        if find_requirement_block(&content, &rename.to).is_some() {
+            return Err(anyhow!(
+                "capability '{capability}': cannot RENAME requirement to '{}' -- a requirement with that name already exists in {}",
+                normalize_requirement_name(&rename.to),
+                spec_path.display()
+            ));
+        }
+        let block = find_requirement_block(&content, &rename.from).ok_or_else(|| {
+            missing_requirement_error(capability, "RENAME", &rename.from, &spec_path)
+        })?;
+        content.replace_range(
+            block.start..block.header_end,
+            &format!("### Requirement: {}", rename.to.trim()),
+        );
+    }
+
+    for removed in &parsed.removed {
+        let block = find_requirement_block(&content, removed)
+            .ok_or_else(|| missing_requirement_error(capability, "REMOVE", removed, &spec_path))?;
+        content.replace_range(block.start..block.end, "");
+    }
+
+    for modified in &parsed.modified {
+        let name = requirement_name(modified);
+        let block = find_requirement_block(&content, name)
+            .ok_or_else(|| missing_requirement_error(capability, "MODIFY", name, &spec_path))?;
+        // `block.start..block.end` spans the canonical block *including* the
+        // trailing separator (blank line / `\n---\n` / EOF) that sits before
+        // the next header, but `modified` is `trim_end()`'d. Re-append the
+        // original block's trailing whitespace so the following
+        // `### Requirement:` stays at the start of its own line -- otherwise it
+        // is glued onto the modified block's last line and the multiline
+        // `^### Requirement:` regex silently stops matching it, dropping the
+        // requirement from every later parse.
+        let trailing = {
+            let original = &content[block.start..block.end];
+            original[original.trim_end().len()..].to_string()
+        };
+        content.replace_range(block.start..block.end, &format!("{modified}{trailing}"));
+    }
+
+    let mut added_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for added in &parsed.added {
+        let name = requirement_name(added);
+        if find_requirement_block(&content, name).is_some() {
+            return Err(anyhow!(
+                "capability '{capability}': cannot ADD requirement '{name}' -- it already exists in {}",
+                spec_path.display()
+            ));
+        }
+        // The exists check above only compares against the canonical spec, not
+        // the delta's own ADDED list -- so two same-named `### Requirement:`
+        // blocks in one ADDED section would both append (a duplicate header).
+        // Reject the second loudly instead.
+        if !added_names.insert(normalize_requirement_name(name)) {
+            return Err(anyhow!(
+                "capability '{capability}': delta ADDs requirement '{}' more than once",
+                normalize_requirement_name(name)
+            ));
+        }
+    }
+
+    // Only application writes; validation (`dry_run`) discards `content`, so it
+    // must skip the append -- `append_added_requirements` loads this change's
+    // touched-file sidecar, which renames a *corrupt* sidecar aside. Doing that
+    // during validation would be a side effect on a run that may still fail on a
+    // later capability, breaking the "validation failure leaves the change
+    // untouched" guarantee. The conflict checks above are what validation needs;
+    // they've all run by this point.
+    if !dry_run {
+        append_added_requirements(&mut content, &parsed.added, cfg, source, today);
+    }
+
+    Ok((Some(content), result))
+}
+
+fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
+    // Each delta kind is parsed from its *first* matching header, with the
+    // section bounded by the next `## ` header -- so a second same-kind header
+    // (e.g. from a bad merge) would have its body silently dropped. Reject a
+    // duplicate loudly instead, consistent with the empty-section guard below.
+    for (header_re, kind) in [
+        (&*ADDED_HEADER_RE, "ADDED"),
+        (&*MODIFIED_HEADER_RE, "MODIFIED"),
+        (&*REMOVED_HEADER_RE, "REMOVED"),
+        (&*RENAMED_HEADER_RE, "RENAMED"),
+    ] {
+        if header_re.find_iter(delta).count() > 1 {
+            return Err(anyhow!(
+                "capability '{capability}': delta has more than one \
+                 `## {kind} Requirements` section -- merge them into one"
+            ));
+        }
+    }
+
+    let added: Vec<String> = requirement_blocks_in_section(delta, &ADDED_HEADER_RE)?
+        .into_iter()
+        .map(|b| block_text(delta, &b))
+        .collect();
+    let modified: Vec<String> = requirement_blocks_in_section(delta, &MODIFIED_HEADER_RE)?
+        .into_iter()
+        .map(|b| block_text(delta, &b))
+        .collect();
+    let removed: Vec<String> = requirement_blocks_in_section(delta, &REMOVED_HEADER_RE)?
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    let renamed = parse_renamed_requirements(capability, delta)?;
+
+    // A recognized delta section header that parsed to zero entries is almost
+    // always a malformed delta (a prose-only body, the wrong heading level, or
+    // a REMOVED/RENAMED entry not written as a `### Requirement:` header).
+    // Erroring loudly here preserves the guarantee the old unsupported-header
+    // reject gave: `archive` must never silently drop a MODIFIED/REMOVED/RENAMED
+    // intent and move the change out of the active set with nothing applied.
+    // ADDED keeps its historical lenient no-op for an empty section -- it never
+    // had a reject gate to preserve, and an empty ADDED section is harmless.
+    ensure_section_non_empty(
+        capability,
+        delta,
+        &MODIFIED_HEADER_RE,
+        "MODIFIED",
+        modified.len(),
+    )?;
+    ensure_section_non_empty(
+        capability,
+        delta,
+        &REMOVED_HEADER_RE,
+        "REMOVED",
+        removed.len(),
+    )?;
+    ensure_section_non_empty(
+        capability,
+        delta,
+        &RENAMED_HEADER_RE,
+        "RENAMED",
+        renamed.len(),
+    )?;
+
+    Ok(RequirementDelta {
+        added,
+        modified,
+        removed,
+        renamed,
+    })
+}
+
+/// Errors when `header_re` matches `delta` (the section is present) but the
+/// section parsed to zero entries -- see [`parse_requirement_delta`] for why a
+/// present-but-empty MODIFIED/REMOVED/RENAMED section must fail loudly rather
+/// than archive as a silent no-op.
+fn ensure_section_non_empty(
+    capability: &str,
+    delta: &str,
+    header_re: &Regex,
+    kind: &str,
+    parsed_count: usize,
+) -> Result<()> {
+    if parsed_count == 0 && header_re.is_match(delta) {
+        return Err(anyhow!(
+            "capability '{capability}': `## {kind} Requirements` section contains no \
+             recognizable entries -- fix the delta or re-run with --skip-specs"
+        ));
+    }
+    Ok(())
+}
+
+fn requirement_blocks_in_section(delta: &str, header_re: &Regex) -> Result<Vec<RequirementBlock>> {
+    let Some(header_match) = header_re.find(delta) else {
+        return Ok(Vec::new());
+    };
+    let after_header = &delta[header_match.end()..];
+    let section_end = SECTION_HEADER_RE
+        .find(after_header)
+        .map_or(after_header.len(), |m| m.start());
+    Ok(requirement_blocks(after_header[..section_end].as_ref())
+        .into_iter()
+        .map(|mut block| {
+            block.start += header_match.end();
+            block.end += header_match.end();
+            block.header_end += header_match.end();
+            block
+        })
+        .collect())
+}
+
+fn parse_renamed_requirements(capability: &str, delta: &str) -> Result<Vec<RenameDelta>> {
+    let Some(header_match) = RENAMED_HEADER_RE.find(delta) else {
+        return Ok(Vec::new());
+    };
+    let after_header = &delta[header_match.end()..];
+    let section_end = SECTION_HEADER_RE
+        .find(after_header)
+        .map_or(after_header.len(), |m| m.start());
+    let section = &after_header[..section_end];
+
+    let mut renames = Vec::new();
+    let mut pending_from: Option<String> = None;
+    for line in section.lines() {
+        // Accept either `-` or `*` as the list bullet: a markdown auto-formatter
+        // routinely rewrites one to the other, and OpenSpec's own examples use
+        // `-` but don't forbid `*`. A line that isn't a bullet at all is skipped.
+        let Some(item) = line
+            .trim_start()
+            .strip_prefix('-')
+            .or_else(|| line.trim_start().strip_prefix('*'))
+            .map(str::trim_start)
+        else {
+            continue;
+        };
+        if let Some(raw) = item.strip_prefix("FROM:") {
+            if pending_from.is_some() {
+                return Err(anyhow!(
+                    "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
+                ));
+            }
+            pending_from = Some(parse_backticked_requirement_header(
+                capability, "FROM", raw,
+            )?);
+        } else if let Some(raw) = item.strip_prefix("TO:") {
+            let Some(from) = pending_from.take() else {
+                return Err(anyhow!(
+                    "capability '{capability}': malformed RENAMED Requirements section -- TO without preceding FROM"
+                ));
+            };
+            let to = parse_backticked_requirement_header(capability, "TO", raw)?;
+            renames.push(RenameDelta { from, to });
+        }
+    }
+
+    if pending_from.is_some() {
+        return Err(anyhow!(
+            "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
+        ));
+    }
+
+    Ok(renames)
+}
+
+fn parse_backticked_requirement_header(capability: &str, field: &str, raw: &str) -> Result<String> {
+    let Some(start) = raw.find('`') else {
+        return Err(anyhow!(
+            "capability '{capability}': malformed RENAMED Requirements section -- {field} is missing a backticked requirement header"
+        ));
+    };
+    let rest = &raw[start + 1..];
+    let Some(end) = rest.find('`') else {
+        return Err(anyhow!(
+            "capability '{capability}': malformed RENAMED Requirements section -- {field} is missing a closing backtick"
+        ));
+    };
+    requirement_name_from_header(&rest[..end]).ok_or_else(|| {
+        anyhow!(
+            "capability '{capability}': malformed RENAMED Requirements section -- {field} must be a `### Requirement: <name>` header"
+        )
+    })
+}
+
+fn block_text(content: &str, block: &RequirementBlock) -> String {
+    content[block.start..block.end].trim_end().to_string()
+}
+
+fn requirement_blocks(content: &str) -> Vec<RequirementBlock> {
+    REQUIREMENT_HEADER_RE
+        .find_iter(content)
+        .filter_map(|m| {
+            let line_end = content[m.start()..]
+                .find('\n')
+                .map_or(content.len(), |offset| m.start() + offset);
+            let header = &content[m.start()..line_end];
+            let name = requirement_name_from_header(header)?;
+            let after_header = &content[line_end..];
+            let next_requirement = REQUIREMENT_HEADER_RE
+                .find(after_header)
+                .map(|next| line_end + next.start());
+            let next_section = SECTION_HEADER_RE
+                .find(after_header)
+                .map(|next| line_end + next.start());
+            let end = match (next_requirement, next_section) {
+                (Some(req), Some(section)) => req.min(section),
+                (Some(req), None) => req,
+                (None, Some(section)) => section,
+                (None, None) => content.len(),
+            };
+            Some(RequirementBlock {
+                name: name.clone(),
+                normalized_name: normalize_requirement_name(&name),
+                start: m.start(),
+                end,
+                header_end: line_end,
+            })
+        })
+        .collect()
+}
+
+fn find_requirement_block(content: &str, name: &str) -> Option<RequirementBlock> {
+    let needle = normalize_requirement_name(name);
+    requirement_blocks(content)
+        .into_iter()
+        .find(|block| block.normalized_name == needle)
+}
+
+fn requirement_name(block: &str) -> &str {
+    let line_end = block.find('\n').unwrap_or(block.len());
+    block[..line_end]
+        .strip_prefix("### Requirement:")
+        .expect("requirement block starts with a requirement header")
+        .trim()
+}
+
+fn requirement_name_from_header(header: &str) -> Option<String> {
+    header
+        .strip_prefix("### Requirement:")
+        .map(|name| name.trim().to_string())
+}
+
+fn normalize_requirement_name(name: &str) -> String {
+    name.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn missing_requirement_error(
+    capability: &str,
+    kind: &str,
+    name: &str,
+    spec_path: &Path,
+) -> anyhow::Error {
+    anyhow!(
+        "capability '{capability}': cannot {kind} requirement '{}' -- it does not exist in {}",
+        normalize_requirement_name(name),
+        spec_path.display()
+    )
 }
 
 /// Where new requirement blocks belong in the canonical spec's existing
@@ -311,63 +735,20 @@ fn requirements_insertion_point(content: &str) -> usize {
     content.len()
 }
 
-/// Extract every `### Requirement:` block from `delta`'s `## ADDED
-/// Requirements` section (if present) and insert each, verbatim, into
-/// `<spec_dir>/specs/<capability>/spec.md`'s own `## Requirements` section
-/// (creating the file with a placeholder Purpose if it doesn't exist yet),
-/// followed by a `<!-- @trace ... -->` footer recording
-/// `source`/`updated`/`code` (the latter from this change's
-/// `.spectra/touched/<name>.json`, if any). New blocks are inserted via
-/// [`requirements_insertion_point`], not blindly appended to the end of the
-/// file. Returns the number of requirements appended — 0 both when the delta
-/// has no `## ADDED Requirements` section at all, and when that section is
-/// present but empty (no `### Requirement:` blocks).
-///
-/// Assumes `delta` already passed [`validate_spec_deltas`] (called by
-/// `archive` before the change directory is moved) and so has no
-/// `MODIFIED`/`REMOVED`/`RENAMED Requirements` section.
-fn apply_added_requirements(
+/// Append ADDED requirement blocks to `content` using the original
+/// reverse-engineered placement and trace-footer rules. The earlier
+/// RENAMED/REMOVED/MODIFIED operations mutate `content` first, so ADDED's
+/// duplicate checks and insertion point see the post-merge canonical spec.
+fn append_added_requirements(
+    content: &mut String,
+    blocks: &[String],
     cfg: &Config,
-    capability: &str,
-    delta: &str,
     source: &str,
     today: chrono::NaiveDate,
-) -> Result<usize> {
-    let Some(added_match) = ADDED_HEADER_RE.find(delta) else {
-        return Ok(0);
-    };
-    let after_header = &delta[added_match.end()..];
-    let section_end = SECTION_HEADER_RE
-        .find(after_header)
-        .map_or(after_header.len(), |m| m.start());
-    let section = &after_header[..section_end];
-
-    let boundaries: Vec<usize> = REQUIREMENT_HEADER_RE
-        .find_iter(section)
-        .map(|m| m.start())
-        .collect();
-    if boundaries.is_empty() {
-        return Ok(0);
+) {
+    if blocks.is_empty() {
+        return;
     }
-    let blocks: Vec<String> = boundaries
-        .iter()
-        .enumerate()
-        .map(|(i, &start)| {
-            let end = boundaries.get(i + 1).copied().unwrap_or(section.len());
-            section[start..end].trim_end().to_string()
-        })
-        .collect();
-
-    let spec_path = cfg.specs_dir().join(capability).join("spec.md");
-    let mut content = read_optional(&spec_path)?.unwrap_or_else(|| {
-        format!(
-            "# {capability} Specification\n\n\
-             ## Purpose\n\n\
-             TBD - created by archiving change '{source}'. Update Purpose after archive.\n\n\
-             ## Requirements\n"
-        )
-    });
-
     let mut code_files: Vec<String> = touched::already_recorded(cfg, source).into_iter().collect();
     code_files.sort();
     let code_yaml = if code_files.is_empty() {
@@ -382,7 +763,7 @@ fn apply_added_requirements(
 
     let mut has_existing_requirement = content.contains("### Requirement:");
     let mut insertion = String::new();
-    for block in &blocks {
+    for block in blocks {
         insertion.push_str(if has_existing_requirement {
             "\n---\n"
         } else {
@@ -394,7 +775,7 @@ fn apply_added_requirements(
         has_existing_requirement = true;
     }
 
-    let mut point = requirements_insertion_point(&content);
+    let mut point = requirements_insertion_point(content);
     if point == content.len() {
         if !content.ends_with('\n') {
             content.push('\n');
@@ -407,13 +788,6 @@ fn apply_added_requirements(
         insertion.push('\n');
     }
     content.insert_str(point, &insertion);
-
-    let parent = spec_path.parent().expect("spec path always has a parent");
-    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    std::fs::write(&spec_path, content)
-        .with_context(|| format!("writing {}", spec_path.display()))?;
-
-    Ok(blocks.len())
 }
 
 #[cfg(test)]
@@ -493,6 +867,16 @@ mod tests {
         #### Scenario: <!-- scenario name -->\n\n\
         - **WHEN** <!-- condition -->\n\
         - **THEN** <!-- expected outcome -->\n";
+
+    const CANONICAL_SPEC: &str = "# my-cap Specification\n\n\
+        ## Purpose\n\nExisting.\n\n\
+        ## Requirements\n\n\
+        ### Requirement: First\n\nfirst text\n\n\
+        #### Scenario: First scenario\n\n\
+        - **WHEN** first happens\n\
+        - **THEN** first works\n\n\
+        ### Requirement: Second\n\nsecond text\n\n\
+        ### Requirement: Third\n\nthird text\n";
 
     #[test]
     fn archive_moves_the_change_dir_to_dated_archive_subdir() {
@@ -911,7 +1295,443 @@ mod tests {
     }
 
     #[test]
-    fn archive_errors_on_a_modified_requirements_delta_without_skip_specs() {
+    fn archive_applies_a_modified_requirements_delta() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n\
+             ### Requirement: Second\n\n\
+             modified text\n\
+             (Previously: second text)\n\n\
+             #### Scenario: Modified scenario\n\n\
+             - **WHEN** second changes\n\
+             - **THEN** modified behavior applies\n",
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied[0].modified, 1);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("### Requirement: First"));
+        assert!(spec.contains("first text"));
+        assert!(spec.contains("### Requirement: Second\n\nmodified text"));
+        assert!(spec.contains("(Previously: second text)"));
+        assert!(!spec.contains("second text\n\n### Requirement: Third"));
+        // Regression: the header following a MODIFIED block must stay at the
+        // start of its own line. A `trim_end()`'d replacement used to glue it
+        // onto the modified block's last line ("modified text### Requirement:
+        // Third"), after which `^### Requirement:` silently dropped it.
+        assert!(
+            spec.contains("\n### Requirement: Third"),
+            "Third must remain at line-start after MODIFY, got:\n{spec}"
+        );
+        assert_eq!(
+            REQUIREMENT_HEADER_RE.find_iter(&spec).count(),
+            3,
+            "all three requirement headers must remain line-anchored, got:\n{spec}"
+        );
+    }
+
+    #[test]
+    fn archive_applies_a_removed_requirements_delta() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## REMOVED Requirements\n\n### Requirement: Second\n\nDeprecated.\n",
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied[0].removed, 1);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("### Requirement: First"));
+        assert!(!spec.contains("### Requirement: Second"));
+        assert!(spec.contains("### Requirement: Third"));
+    }
+
+    #[test]
+    fn archive_applies_rename_before_modify_on_the_new_name() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## RENAMED Requirements\n\
+             - FROM: `### Requirement: Second`\n\
+             - TO: `### Requirement: Better Second`\n\n\
+             ## MODIFIED Requirements\n\n\
+             ### Requirement: Better Second\n\n\
+             renamed and modified text\n",
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied[0].renamed, 1);
+        assert_eq!(outcome.specs_applied[0].modified, 1);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(!spec.contains("### Requirement: Second"));
+        assert!(spec.contains("### Requirement: Better Second\n\nrenamed and modified text"));
+    }
+
+    #[test]
+    fn archive_applies_all_delta_kinds_in_openspec_order() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## ADDED Requirements\n\n\
+             ### Requirement: Fourth\n\nfourth text\n\n\
+             ## MODIFIED Requirements\n\n\
+             ### Requirement: Renamed First\n\nrenamed first modified text\n\n\
+             ## REMOVED Requirements\n\n\
+             ### Requirement: Third\n\nremove it\n\n\
+             ## RENAMED Requirements\n\
+             - FROM: `### Requirement: First`\n\
+             - TO: `### Requirement: Renamed First`\n",
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied[0].added, 1);
+        assert_eq!(outcome.specs_applied[0].modified, 1);
+        assert_eq!(outcome.specs_applied[0].removed, 1);
+        assert_eq!(outcome.specs_applied[0].renamed, 1);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(!spec.contains("### Requirement: First"));
+        assert!(spec.contains("### Requirement: Renamed First\n\nrenamed first modified text"));
+        assert!(spec.contains("### Requirement: Second"));
+        assert!(!spec.contains("### Requirement: Third"));
+        assert!(spec.contains("### Requirement: Fourth"));
+        assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
+    }
+
+    #[test]
+    fn archive_errors_on_a_modified_delta_for_a_nonexistent_requirement() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Missing\n\nnew text\n",
+        );
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("capability 'my-cap': cannot MODIFY requirement 'Missing'"));
+        assert!(
+            c.changes_dir().join("my-feature").is_dir(),
+            "change directory must still be active"
+        );
+        assert!(
+            !c.changes_dir().join("archive").exists(),
+            "nothing should have been moved"
+        );
+    }
+
+    #[test]
+    fn archive_errors_on_a_renamed_delta_for_an_existing_target_requirement() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap").join("spec.md");
+        write(&spec_path, CANONICAL_SPEC);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## RENAMED Requirements\n- FROM: `### Requirement: First`\n- TO: `### Requirement: Second`\n",
+        );
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("capability 'my-cap': cannot RENAME requirement to 'Second'"));
+        assert!(
+            c.changes_dir().join("my-feature").is_dir(),
+            "change directory must still be active"
+        );
+        assert!(
+            !c.changes_dir().join("archive").exists(),
+            "nothing should have been moved"
+        );
+        assert_eq!(std::fs::read_to_string(spec_path).unwrap(), CANONICAL_SPEC);
+    }
+
+    #[test]
+    fn archive_errors_on_removed_and_renamed_missing_requirements() {
+        for (kind, delta, expected) in [
+            (
+                "removed",
+                "## REMOVED Requirements\n\n### Requirement: Missing\n\nold\n",
+                "cannot REMOVE requirement 'Missing'",
+            ),
+            (
+                "renamed",
+                "## RENAMED Requirements\n- FROM: `### Requirement: Missing`\n- TO: `### Requirement: New`\n",
+                "cannot RENAME requirement 'Missing'",
+            ),
+        ] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(&c.specs_dir().join("my-cap").join("spec.md"), CANONICAL_SPEC);
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                delta,
+            );
+
+            let err = archive(&c, "my-feature", false, false).unwrap_err();
+
+            assert!(
+                err.to_string().contains(expected),
+                "{kind} conflict should name the missing requirement, got: {err}"
+            );
+            assert!(c.changes_dir().join("my-feature").is_dir());
+            assert!(!c.changes_dir().join("archive").exists());
+        }
+    }
+
+    #[test]
+    fn archive_errors_on_an_added_requirement_that_already_exists() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Second\n\nnew duplicate\n",
+        );
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("capability 'my-cap': cannot ADD requirement 'Second'"));
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c.changes_dir().join("archive").exists());
+    }
+
+    #[test]
+    fn archive_matches_requirement_headers_with_collapsed_whitespace() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            "# my-cap Specification\n\n## Requirements\n\n### Requirement: Session Expiration\n\nold\n",
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement:   Session    Expiration  \n\nnew\n",
+        );
+
+        archive(&c, "my-feature", false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("### Requirement:   Session    Expiration  \n\nnew"));
+        assert!(!spec.contains("\nold\n"));
+    }
+
+    // A canonical spec in the exact shape `archive` itself produces: `---`
+    // separators between requirements and a `<!-- @trace -->` footer on each.
+    // The hand-written CANONICAL_SPEC lacks both, so MODIFYing a spectra-
+    // produced spec is only exercised here.
+    const SPECTRA_PRODUCED_SPEC: &str = "# my-cap Specification\n\n\
+        ## Purpose\n\nExisting.\n\n\
+        ## Requirements\n\n\
+        ### Requirement: Alpha\n\nalpha text\n\n\
+        <!-- @trace\nsource: old\nupdated: 2026-01-01\ncode: []\n-->\n\n\
+        ---\n\
+        ### Requirement: Beta\n\nbeta text\n\n\
+        <!-- @trace\nsource: old\nupdated: 2026-01-01\ncode: []\n-->\n\n\
+        ---\n\
+        ### Requirement: Gamma\n\ngamma text\n\n\
+        <!-- @trace\nsource: old\nupdated: 2026-01-01\ncode: []\n-->\n";
+
+    #[test]
+    fn archive_modify_on_a_spectra_produced_spec_keeps_following_headers_line_anchored() {
+        // Regression for the MODIFIED-glue bug: MODIFYing a non-last
+        // requirement in a spec that carries `---`/`@trace` footers must not
+        // glue the following `### Requirement:` onto the modified block's last
+        // line. Before the fix this dropped Beta (count == 2, corrupt output);
+        // it still archived "successfully", so a `.contains(header)` assertion
+        // wouldn't catch it.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            SPECTRA_PRODUCED_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nmodified alpha text\n",
+        );
+
+        archive(&c, "my-feature", false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("modified alpha text"));
+        assert_eq!(
+            REQUIREMENT_HEADER_RE.find_iter(&spec).count(),
+            3,
+            "all three requirement headers must survive as line-anchored, got:\n{spec}"
+        );
+        assert!(spec.contains("\n### Requirement: Beta"));
+        assert!(spec.contains("\n### Requirement: Gamma"));
+        // Beta/Gamma were untouched, so their trace footers must remain.
+        assert!(spec.contains("### Requirement: Beta\n\nbeta text"));
+    }
+
+    #[test]
+    fn archive_errors_on_a_present_but_empty_delta_section() {
+        // A recognized MODIFIED/REMOVED/RENAMED header whose body parses to
+        // zero entries must fail loudly, not archive as a silent no-op (the
+        // guarantee the old unsupported-header reject provided).
+        for (delta, kind) in [
+            (
+                "## MODIFIED Requirements\n\nsome prose but no requirement blocks\n",
+                "MODIFIED",
+            ),
+            (
+                "## REMOVED Requirements\n\nsome prose but no requirement blocks\n",
+                "REMOVED",
+            ),
+            (
+                "## RENAMED Requirements\n\nsome prose but no from/to bullets\n",
+                "RENAMED",
+            ),
+        ] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(
+                &c.specs_dir().join("my-cap").join("spec.md"),
+                CANONICAL_SPEC,
+            );
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                delta,
+            );
+
+            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("`## {kind} Requirements` section contains no")),
+                "{kind} empty section should fail loudly, got: {err}"
+            );
+            assert!(c.changes_dir().join("my-feature").is_dir());
+            assert!(!c.changes_dir().join("archive").exists());
+        }
+    }
+
+    #[test]
+    fn archive_errors_on_duplicate_section_headers() {
+        // Two `## MODIFIED Requirements` sections: only the first is parsed, so
+        // the second would be silently dropped -- reject loudly instead.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: First\n\na\n\n\
+             ## MODIFIED Requirements\n\n### Requirement: Second\n\nb\n",
+        );
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("more than one `## MODIFIED Requirements` section"),
+            "got: {err}"
+        );
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c.changes_dir().join("archive").exists());
+    }
+
+    #[test]
+    fn archive_errors_on_a_delta_that_adds_the_same_requirement_twice() {
+        // The canonical-spec exists check can't catch an intra-delta duplicate
+        // (neither block is in the canonical spec yet), so a dedicated guard
+        // must reject it rather than append a duplicate header.
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
@@ -921,11 +1741,178 @@ mod tests {
                 .join("specs")
                 .join("my-cap")
                 .join("spec.md"),
-            "## MODIFIED Requirements\n\n### Requirement: First\n\nnew text\n",
+            "## ADDED Requirements\n\n\
+             ### Requirement: Dup\n\na\n\n\
+             ### Requirement: Dup\n\nb\n",
         );
 
         let err = archive(&c, "my-feature", false, false).unwrap_err();
-        assert!(err.to_string().contains("--skip-specs"));
+        assert!(
+            err.to_string()
+                .contains("delta ADDs requirement 'Dup' more than once"),
+            "got: {err}"
+        );
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c.changes_dir().join("archive").exists());
+    }
+
+    #[test]
+    fn merge_validation_is_side_effect_free_on_the_touched_sidecar() {
+        // Regression: pre-move validation runs `merge_spec_delta` in `dry_run`
+        // mode, which must NOT run the ADDED append -- the append loads this
+        // change's touched sidecar and renames a *corrupt* one aside. Doing that
+        // during validation would mutate `.spectra/touched/` even on a run that
+        // later fails another capability, breaking the "validation failure
+        // leaves the change untouched" guarantee.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let touched = crate::touched::touched_path(&c, "my-feature");
+        write(&touched, "not valid json");
+        let corrupt_backup = touched.with_extension("json.corrupt");
+        let today = chrono::Local::now().date_naive();
+        let added_delta = "## ADDED Requirements\n\n### Requirement: New\n\ntext\n";
+
+        // dry_run (validation): no append, so the corrupt sidecar is untouched.
+        merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, true).unwrap();
+        assert!(
+            touched.is_file() && !corrupt_backup.exists(),
+            "validation must not read or rename the touched sidecar"
+        );
+
+        // application (dry_run = false) is where the sidecar is read, so a
+        // corrupt one is renamed aside there -- confirming the load lives only
+        // in the apply path, not validation.
+        merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, false).unwrap();
+        assert!(
+            corrupt_backup.is_file(),
+            "application should have read and backed up the corrupt sidecar"
+        );
+    }
+
+    #[test]
+    fn archive_accepts_asterisk_bullets_in_renamed() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## RENAMED Requirements\n\
+             * FROM: `### Requirement: First`\n\
+             * TO: `### Requirement: Primero`\n",
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        assert_eq!(outcome.specs_applied[0].renamed, 1);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("### Requirement: Primero"));
+        assert!(!spec.contains("### Requirement: First"));
+    }
+
+    #[test]
+    fn archive_matches_collapsed_whitespace_for_removed_and_renamed() {
+        // REMOVED with a whitespace-noisy header.
+        {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(
+                &c.specs_dir().join("my-cap").join("spec.md"),
+                CANONICAL_SPEC,
+            );
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                "## REMOVED Requirements\n\n### Requirement:   Second  \n\ngone\n",
+            );
+            archive(&c, "my-feature", false, false).unwrap();
+            let spec =
+                std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+            assert!(!spec.contains("### Requirement: Second"));
+        }
+        // RENAMED whose FROM header has collapsed whitespace.
+        {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(
+                &c.specs_dir().join("my-cap").join("spec.md"),
+                CANONICAL_SPEC,
+            );
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement:   Second  `\n\
+                 - TO: `### Requirement: Segundo`\n",
+            );
+            archive(&c, "my-feature", false, false).unwrap();
+            let spec =
+                std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+            assert!(spec.contains("### Requirement: Segundo"));
+            assert!(!spec.contains("### Requirement: Second"));
+        }
+    }
+
+    #[test]
+    fn archive_errors_on_malformed_renamed_sections() {
+        for (delta, needle) in [
+            (
+                "## RENAMED Requirements\n- FROM: `### Requirement: First`\n- FROM: `### Requirement: Second`\n",
+                "FROM without following TO",
+            ),
+            (
+                "## RENAMED Requirements\n- TO: `### Requirement: New`\n",
+                "TO without preceding FROM",
+            ),
+            (
+                "## RENAMED Requirements\n- FROM: ### Requirement: First\n- TO: `### Requirement: New`\n",
+                "missing a backticked requirement header",
+            ),
+            (
+                "## RENAMED Requirements\n- FROM: `### Requirement: First\n- TO: `### Requirement: New`\n",
+                "missing a closing backtick",
+            ),
+            (
+                "## RENAMED Requirements\n- FROM: `not a requirement header`\n- TO: `### Requirement: New`\n",
+                "must be a `### Requirement: <name>` header",
+            ),
+        ] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(&c.specs_dir().join("my-cap").join("spec.md"), CANONICAL_SPEC);
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                delta,
+            );
+
+            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            assert!(
+                err.to_string().contains(needle),
+                "malformed RENAMED should error with '{needle}', got: {err}"
+            );
+            assert!(c.changes_dir().join("my-feature").is_dir());
+            assert!(!c.changes_dir().join("archive").exists());
+        }
     }
 
     #[test]

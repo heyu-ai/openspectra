@@ -70,12 +70,9 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
 5. Unless `--skip-specs`: for each `specs/<capability>/spec.md` under the
    (now-moved) change, merge its delta into
    `<spec_dir>/specs/<capability>/spec.md`, then print
-   `Specs applied: <capability> (added: N, modified: 0, removed: 0, renamed: 0)`
-   per capability — `modified`/`removed`/`renamed` are always `0` since
-   those delta kinds are rejected before archiving reaches this point (see
-   validation below), not a claim they're supported. The oracle also prints
-   "Snapshot created for unarchive support." — **not implemented**; see
-   "Known limitations" below.
+   `Specs applied: <capability> (added: N, modified: N, removed: N, renamed: N)`
+   per capability. The oracle also prints "Snapshot created for unarchive
+   support." — **not implemented**; see "Known limitations" below.
 6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
    markers **and** its `.spectra/touched/<name>.json` tracking file, if any
    (best-effort; a failure here only warns, since archiving itself already
@@ -89,7 +86,7 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    its trace footer to files touched by the *previous*, already-archived
    change of the same name.
 
-## Spec delta format (and OpenSpectra's narrowed scope)
+## Spec delta format
 
 A change's own `specs/<cap>/spec.md` is a *delta* against the canonical
 `<spec_dir>/specs/<cap>/spec.md`, using section headers to mean:
@@ -157,28 +154,58 @@ sorted — a reasonable, self-consistent choice given the infrastructure
 already exists for exactly this purpose, but **not verified against the
 oracle**. `code: []` when no touched-file data exists for the change.
 
-**MODIFIED/REMOVED/RENAMED are not implemented.** Applying those correctly
-means locating a specific existing requirement in the canonical spec by name
-and replacing/deleting/renaming it — a materially different, more complex
-operation than ADDED's pure append, and genuinely under-observed (only one
-golden sample per header would be needed to nail down the exact behavior,
-but doing so for all three, plus their interaction with the same-named
-duplicate-append quirk ADDED itself has, was out of scope for this pass).
-`spectra archive` errors when the delta contains any of these three headers,
-naming the offending capability and instructing the user to re-run with
-`--skip-specs` and apply that spec change by hand:
+OpenSpectra Phase 2 implements `MODIFIED`, `REMOVED`, and `RENAMED` against
+the **OpenSpec published convention** recorded in `docs/openspec-compat.md`,
+not against a golden oracle sample. No oracle samples were captured for
+these delta kinds, so the closed-source reference could still diverge in edge
+cases such as trace-footer handling or conflict wording. For Phase 2, the
+OpenSpec convention is the compatibility target.
 
-```
-capability '<cap>': <MODIFIED|REMOVED|RENAMED> requirement deltas aren't supported yet -- re-run with --skip-specs and apply this spec change by hand
-```
+Application order is:
 
-This validation runs **before** the change directory is moved (a
-self-caught bug during manual E2E testing: the original implementation
-validated *after* the move, so a MODIFIED-delta error left the change
-stuck half-archived — directory already gone from the active list, but
-never actually fully archived, with no easy way back short of manually
-moving the directory back). Validating first means the change is left
-exactly as it was on any spec-format error.
+1. `RENAMED Requirements`: parse `- FROM: ` / `- TO: ` bullet pairs whose
+   values are backticked full `### Requirement: <name>` headers. The matched
+   canonical requirement block's header line is rewritten to the TO name;
+   the block body is otherwise untouched. A FROM without a following TO, or
+   a TO without a preceding FROM, is an error naming the capability.
+2. `REMOVED Requirements`: delete each matching canonical requirement block.
+3. `MODIFIED Requirements`: replace each matching canonical requirement block
+   with the delta's block verbatim, including any `(Previously: ...)` line.
+4. `ADDED Requirements`: append new requirement blocks using the existing
+   insertion-point and trace-footer behavior described above.
+
+A requirement block runs from a `### Requirement:` header up to, but not
+including, the next `### Requirement:` header, the next `## ` section header,
+or EOF. Requirement names are matched case-sensitively after trimming
+leading/trailing whitespace and collapsing internal whitespace runs to a
+single space. This keeps OpenSpectra's existing case-sensitive section and
+requirement-header behavior while tolerating hand-written spacing differences.
+
+Spec validation still runs **before** the change directory is moved. During
+validation OpenSpectra computes the full merged result in memory using the
+same RENAMED → REMOVED → MODIFIED → ADDED order that archive later writes.
+A missing MODIFIED/REMOVED/RENAMED-FROM target, a RENAMED-TO name that already
+exists in the canonical spec, or an ADDED requirement that already exists after
+the earlier operations, is a conflict and leaves the change active and unmoved.
+ADDED-only deltas may create a previously missing canonical
+`specs/<cap>/spec.md`; MODIFIED/REMOVED/RENAMED against a missing canonical spec
+are conflicts because there is nothing to match.
+
+Several **malformed-delta** shapes are also rejected loudly at validation
+(rather than silently dropping the author's intent, which would be worse than
+the pre-Phase-2 unsupported-header reject this replaced): a recognized
+`## MODIFIED/REMOVED/RENAMED Requirements` header that parses to zero entries;
+a duplicate section header of the same kind (only the first is parsed, so the
+second would be dropped); the same requirement ADDED twice within one delta
+(the canonical-spec exists check can't see an intra-delta duplicate); and a
+malformed `## RENAMED Requirements` FROM/TO pair (a FROM without a TO, a
+missing/unbalanced backtick, or backtick content that isn't a
+`### Requirement:` header). RENAMED accepts either `-` or `*` list bullets. To
+keep validation genuinely side-effect-free, the in-memory validation pass skips
+the ADDED trace-footer step (it reads this change's `.spectra/touched/` sidecar
+and would rename a corrupt one aside) -- that only happens during the real
+write, so a validation that fails on a later capability leaves the sidecar
+untouched.
 
 ## Known limitations
 
@@ -193,13 +220,11 @@ Tasks-collision detection.
   archive today means manually moving the directory back and reverting
   `.openspec.yaml`/the canonical spec by hand (or via `git revert`, since
   archiving isn't its own commit).
-- **MODIFIED/REMOVED/RENAMED spec deltas** — see above.
 - **`code:` trace provenance** — see above.
 - **Section-header matching is case-sensitive.** `## ADDED Requirements`,
   `## MODIFIED Requirements`, `## Requirements`, and `## Purpose` are matched
   with their exact reference casing. A hand-written delta using different
-  casing (e.g. `## modified requirements`) matches none of these patterns,
-  so it's silently treated as a no-op section rather than either being
-  applied or hitting the `--skip-specs` error path the correctly-cased
-  header would trigger — no oracle sample exists to confirm the reference
-  CLI's actual casing sensitivity, so this wasn't changed speculatively.
+  casing (e.g. `## modified requirements`) matches none of these patterns
+  and is treated as a no-op section — no oracle sample exists to confirm the
+  reference CLI's actual casing sensitivity, so this wasn't changed
+  speculatively.

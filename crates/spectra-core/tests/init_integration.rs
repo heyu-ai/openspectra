@@ -87,3 +87,20 @@ fn init_is_idempotent_refusal_not_silent_reinit() {
     let err = init::init(&root).unwrap_err();
     assert!(err.to_string().contains("already initialized"));
 }
+
+#[test]
+fn init_adopt_then_list_specs_sees_preexisting_capability() {
+    let root = TempDir::new("adopt-list");
+    std::fs::create_dir_all(root.join("openspec/specs/search")).unwrap();
+    std::fs::write(
+        root.join("openspec/specs/search/spec.md"),
+        "# Search Specification\n\n## Purpose\n\nExisting.\n",
+    )
+    .unwrap();
+
+    let outcome = init::init_with_options(&root, true).unwrap();
+
+    assert!(outcome.adopted);
+    let cfg = Config::load(&root).unwrap();
+    assert_eq!(spectra_core::spec::list(&cfg).unwrap(), vec!["search"]);
+}

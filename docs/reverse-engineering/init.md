@@ -23,7 +23,7 @@ against the closed-source reference.
 ## CLI shape
 
 ```
-spectra init [--json]
+spectra init [--adopt] [--json]
 ```
 
 `init` is the only command that does **not** require
@@ -56,8 +56,40 @@ init' first.` if `.spectra.yaml` is missing.
      is currently always the `config::DEFAULT_SPEC_DIR` constant — there's no
      `--spec-dir` flag yet)
 3. `--json` output: `{"root": "<absolute path>", "spec_dir": "openspec",
-   "gitignore_updated": <bool>}`. `gitignore_updated` reflects whether step 2
+   "adopted": <bool>, "gitignore_updated": <bool>}`. `adopted` is `false`
+   for this plain init path. `gitignore_updated` reflects whether step 2
    actually wrote to `.gitignore` (`false` when an entry was already present).
+
+## OpenSpectra Phase 2 addition: `--adopt`
+
+`spectra init --adopt` is an OpenSpectra compatibility addition for real
+OpenSpec projects, documented in `docs/openspec-compat.md`. It is still not
+oracle-verified against `Spectra.app`; it exists because OpenSpec projects
+have `openspec/` content but no root `.spectra.yaml`, while every
+OpenSpectra command uses `.spectra.yaml` to find and load the project.
+
+Adopt mode keeps the same already-initialized refusal: if `.spectra.yaml`
+exists, it fails with an error containing `already initialized` and touches
+nothing else. The `spec_dir` is always the default `openspec` — adopt does
+**not** inspect the directory's contents to choose a name (configurable
+spec-dir discovery is future work). Its one content check is a guard: if
+`openspec` already exists as a *file* rather than a directory, adoption fails
+with `cannot adopt: … exists but is not a directory` instead of letting the
+later `create_dir_all` surface a generic I/O error.
+
+Adopt mode is deliberately non-destructive. It creates
+`openspec/changes/` and `openspec/specs/` with `create_dir_all` (a no-op when
+they already exist), ensures the `.spectra/` `.gitignore` entry, and writes
+`.spectra.yaml` last with `spec_dir: openspec\n`. It never creates or
+overwrites OpenSpec-owned `project.md`, `AGENTS.md`, `config.yaml`, existing
+changes, or existing canonical specs.
+
+Mechanically, plain `init` and `--adopt` perform the same filesystem work
+(both create the two dirs idempotently, both refuse only when `.spectra.yaml`
+exists); `--adopt` differs in **intent and messaging** — it announces
+`Adopted …` and is the self-documenting path for a project that already holds
+OpenSpec content. A plain `init` on such a project (with no `.spectra.yaml`
+yet) also succeeds.
 
 ## Files produced (for future oracle comparison)
 
@@ -75,7 +107,5 @@ Open questions an oracle session would need to answer:
 
 - Does the reference CLI print a human-readable confirmation message, and if
   so, what's its exact wording?
-- Does it support adopting an existing (non-Spectra) project layout, or is
-  that purely an OpenSpectra Phase 2 addition (`init --adopt`)?
 - Is `spec_dir` ever anything other than `openspec` by default, or
   configurable via a flag?
