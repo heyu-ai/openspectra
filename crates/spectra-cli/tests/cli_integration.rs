@@ -3,7 +3,7 @@
 //! parsing) -- unit tests in `main.rs` cover the parser; these cover the
 //! actual runtime behavior.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn spectra() -> Command {
@@ -90,6 +90,47 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
         .unwrap();
     assert_eq!(default_json.stdout, changes_json.stdout);
     assert!(!default_json.stdout.is_empty());
+}
+
+#[test]
+fn init_text_output_reports_root_spec_dir_and_gitignore_update() {
+    let tmp = TempDir::new("init-text");
+    git(&tmp, &["init", "-q"]);
+
+    let out = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    assert!(out.status.success(), "init failed: {out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+
+    assert!(stdout.contains(&tmp.display().to_string()));
+    assert!(stdout.contains("spec_dir: openspec"));
+    assert!(stdout.contains("Added '.spectra/' to .gitignore."));
+}
+
+#[test]
+fn init_json_output_matches_the_documented_shape() {
+    let tmp = TempDir::new("init-json");
+    git(&tmp, &["init", "-q"]);
+
+    let out = spectra()
+        .args(["init", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "init --json failed: {out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+
+    let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(value["spec_dir"], "openspec");
+    assert_eq!(value["gitignore_updated"], true);
+    // Compare canonicalized paths: on macOS `std::env::temp_dir()` returns a
+    // `/var/...` path that's actually a symlink to `/private/var/...`, and
+    // the CLI reports whatever `std::env::current_dir()` resolves to after
+    // `cd`-ing in, which follows the symlink.
+    let reported_root = PathBuf::from(value["root"].as_str().unwrap());
+    assert_eq!(
+        reported_root.canonicalize().unwrap(),
+        tmp.canonicalize().unwrap()
+    );
 }
 
 #[test]

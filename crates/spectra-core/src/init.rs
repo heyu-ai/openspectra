@@ -49,9 +49,9 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
 
     let gitignore_updated = ensure_gitignore_entry(root)?;
 
-    std::fs::write(
-        root.join(".spectra.yaml"),
-        format!("spec_dir: {spec_dir}\n"),
+    write_atomically(
+        &root.join(".spectra.yaml"),
+        &format!("spec_dir: {spec_dir}\n"),
     )
     .context("writing .spectra.yaml")?;
 
@@ -72,13 +72,21 @@ fn ensure_gitignore_entry(root: &Path) -> Result<bool> {
         return Ok(false);
     }
 
+    // Match the existing file's line-ending style so appending doesn't leave
+    // a CRLF file with one stray LF-terminated line.
+    let newline = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+
     let mut updated = existing;
     if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
+        updated.push_str(newline);
     }
     updated.push_str(GITIGNORE_ENTRY);
-    updated.push('\n');
-    std::fs::write(&path, updated).context("writing .gitignore")?;
+    updated.push_str(newline);
+    write_atomically(&path, &updated).context("writing .gitignore")?;
     Ok(true)
 }
 
@@ -90,9 +98,61 @@ fn read_gitignore(path: &Path) -> Result<String> {
     }
 }
 
+/// Write `contents` to `path` atomically: write to a temp file in the same
+/// directory, then rename into place. A same-filesystem `rename` is atomic
+/// on POSIX, so `path` is always either fully absent or fully valid — never
+/// left as a partial write (from a disk-full error, `SIGKILL`, or power
+/// loss mid-write) that satisfies `path.exists()` while failing to parse.
+/// This matters most for `.spectra.yaml`, since [`Config::is_initialized`]
+/// treats its mere existence as a reliable "scaffolding is complete" signal.
+fn write_atomically(path: &Path, contents: &str) -> Result<()> {
+    let file_name = path
+        .file_name()
+        .expect("write_atomically requires a path with a file name")
+        .to_string_lossy();
+    let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}", std::process::id()));
+    std::fs::write(&tmp_path, contents)
+        .with_context(|| format!("writing {}", tmp_path.display()))?;
+    std::fs::rename(&tmp_path, path)
+        .with_context(|| format!("renaming {} into place", tmp_path.display()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_atomically_writes_full_content_and_leaves_no_temp_file_behind() {
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+
+        write_atomically(&target, "hello\n").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
+        let entries: Vec<_> = std::fs::read_dir(&*tmp)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            entries,
+            vec!["out.txt".to_string()],
+            "no stray <file>.tmp-<pid> should remain after a successful write"
+        );
+    }
+
+    #[test]
+    fn write_atomically_leaves_the_target_untouched_when_the_write_fails() {
+        let tmp = TempDir::new();
+        // A nonexistent parent directory makes the temp-file write fail
+        // before any rename is attempted, so the final path is never
+        // created or truncated.
+        let target = tmp.join("nonexistent-dir").join("out.txt");
+
+        write_atomically(&target, "hello").unwrap_err();
+
+        assert!(!target.exists());
+    }
 
     struct TempDir(PathBuf);
 
@@ -169,6 +229,18 @@ mod tests {
         assert!(outcome.gitignore_updated);
         let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
         assert_eq!(contents, "target/\n.spectra/\n");
+    }
+
+    #[test]
+    fn init_preserves_crlf_line_endings_when_appending_to_gitignore() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".gitignore"), "target/\r\n").unwrap();
+
+        let outcome = init(&tmp).unwrap();
+
+        assert!(outcome.gitignore_updated);
+        let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
+        assert_eq!(contents, "target/\r\n.spectra/\r\n");
     }
 
     #[test]

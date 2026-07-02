@@ -33,7 +33,12 @@ impl Config {
         let raw: RawConfig = if path.exists() {
             let text = std::fs::read_to_string(&path)
                 .with_context(|| format!("reading {}", path.display()))?;
-            serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
+            serde_yaml::from_str(&text).with_context(|| {
+                format!(
+                    "parsing {} (if this file is corrupted, delete it and re-run 'spectra init')",
+                    path.display()
+                )
+            })?
         } else {
             RawConfig::default()
         };
