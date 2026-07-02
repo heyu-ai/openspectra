@@ -4,13 +4,15 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** early. `spectra drift` (+ minimal `list` / `show` / `park` /
-> `unpark` / `new change` / `task done` / `archive`) is implemented in Rust
-> and runs on Linux/macOS with zero runtime dependencies (just `git` on
-> `PATH`). The reverse-engineering write-ups are in
+> **Status:** early. `spectra init` / `drift` (+ minimal `list` / `show` /
+> `park` / `unpark` / `new change` / `task done` / `archive`) is implemented
+> in Rust and runs on Linux/macOS with zero runtime dependencies (just `git`
+> on `PATH`). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
-> [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md), and
-> [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md).
+> [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
+> [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
+> and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
+> (the last one is **not** oracle-verified — see that doc).
 
 ## Why
 
@@ -38,8 +40,10 @@ and exits non-zero on medium/heavy drift so CI can gate on it.
 ## Usage
 
 ```sh
+spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/{changes,specs}/ in the current directory
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
 spectra list  [--json]            # lists active changes
+spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
 spectra list  --specs [--json]    # lists capability specs instead of changes
 spectra list  --parked [--json]   # lists parked changes instead of active ones
 spectra show  <CHANGE|SPEC> [--json]   # prints the change's proposal, or a spec's content
@@ -55,10 +59,6 @@ Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
 `spectra drift`'s human-readable conclusion line is colored by severity
 (green/yellow/red) when stdout is a terminal; `--no-color` or the
 [`NO_COLOR`](https://no-color.org) env var disables it.
-
-> Flag `list --changes` is accepted by the CLI but **not yet implemented**
-> (marked as such in `--help`); it's a placeholder for the wider command set
-> still being ported.
 
 ### CI gate example
 
@@ -88,8 +88,8 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: drift / list / show / park / unpark / new change / task done / archive
-docs/reverse-engineering/drift.md   # how the original works, and what's still open
+crates/spectra-cli/    # clap CLI: init / drift / list / show / park / unpark / new change / task done / archive
+docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
 scripts/               # oracle calibration probes
 ```
 

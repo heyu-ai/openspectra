@@ -1,0 +1,77 @@
+# Reverse-engineering `spectra init`
+
+How OpenSpectra's `init` command was designed, and what's still unverified
+against the closed-source reference.
+
+> **Not oracle-verified.** Unlike `drift.md`/`archive.md`/`task.md`, this
+> command's behavior was **not** confirmed against
+> `Spectra.app/Contents/MacOS/spectra`. Every other OpenSpectra command's
+> error message says `Not initialized. Run 'spectra init' first.`, which
+> implies the reference CLI has an `init` (or equivalent) subcommand, but no
+> golden-oracle session covering it exists yet. OpenSpectra's `init` was
+> instead designed from:
+>
+> - the error message wording above (all commands point at it)
+> - `README.md`'s description of the on-disk layout (`.spectra.yaml`,
+>   `<spec_dir>/changes/`, `<spec_dir>/specs/`)
+> - the PR #19 self-recording bug, whose root cause was a project that had
+>   never been `init`-ed and so had no `.spectra/` entry in `.gitignore`
+>
+> Treat every detail below as OpenSpectra's own design choice, not a
+> confirmed match to the reference binary.
+
+## CLI shape
+
+```
+spectra init [--json]
+```
+
+`init` is the only command that does **not** require
+`Config::is_initialized` to already be true — every other subcommand calls
+`require_initialized` first and fails with `Not initialized. Run 'spectra
+init' first.` if `.spectra.yaml` is missing.
+
+## Behavior
+
+1. If `.spectra.yaml` already exists at the target root, fail loudly with an
+   error containing `already initialized` and touch nothing else. There is no
+   re-init or `--force` escape hatch.
+2. Otherwise, produce:
+   - `.spectra.yaml` containing `spec_dir: openspec\n` (the `spec_dir` name
+     is currently always the `config::DEFAULT_SPEC_DIR` constant — there's no
+     `--spec-dir` flag yet)
+   - `openspec/changes/` and `openspec/specs/` (empty directories; git won't
+     track them until something is written inside)
+   - a `.gitignore` entry for `.spectra/` (OpenSpectra's own per-change
+     sidecar state directory — baseline SHAs, parked markers, touched-file
+     tracking — which must never be committed):
+     - no `.gitignore` exists → create one containing just `.spectra/`
+     - `.gitignore` exists but lacks the entry → append it, first inserting a
+       trailing newline if the file didn't already end in one, so existing
+       content is never corrupted
+     - `.gitignore` already has a `.spectra/` line (exact match after
+       trimming surrounding whitespace) → leave the file untouched
+3. `--json` output: `{"root": "<absolute path>", "spec_dir": "openspec",
+   "gitignore_updated": <bool>}`. `gitignore_updated` reflects whether step 2
+   actually wrote to `.gitignore` (`false` when an entry was already present).
+
+## Files produced (for future oracle comparison)
+
+If a golden-oracle session for `init` ever becomes possible, compare against
+this file set and wording:
+
+| Path | Content |
+|---|---|
+| `.spectra.yaml` | `spec_dir: openspec\n` |
+| `<spec_dir>/changes/` | empty directory |
+| `<spec_dir>/specs/` | empty directory |
+| `.gitignore` | `.spectra/` line ensured present |
+
+Open questions an oracle session would need to answer:
+
+- Does the reference CLI print a human-readable confirmation message, and if
+  so, what's its exact wording?
+- Does it support adopting an existing (non-Spectra) project layout, or is
+  that purely an OpenSpectra Phase 2 addition (`init --adopt`)?
+- Is `spec_dir` ever anything other than `openspec` by default, or
+  configurable via a flag?
