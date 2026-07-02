@@ -1,0 +1,33 @@
+{
+  "verdict": "NEEDS_CHANGES",
+  "summary": "此 PR 成功為 Spectra 引入 OpenSpec 相容性並實作相關功能。然而，合併邏輯中的嚴重格式化錯誤會導致 canonical 規格檔案排版損壞。",
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "區塊格式化損壞",
+      "file": "crates/spectra-core/src/archive.rs",
+      "line_start": 372,
+      "line_end": 372,
+      "issue": "替換 canonical 規格中的修改區塊時，程式碼呼叫了 `content.replace_range(block.start..block.end, modified)`。由於 `modified` 文本已被修剪掉尾隨的換行符，這會移除區塊之間的空白行與尾隨換行，導致後續區塊的標題與修改區塊的最後一行合併在同一行，從而損壞 markdown 規格檔案。",
+      "fix": "擷取 canonical 規格中原始需求區塊的尾隨空白，並在呼叫 `replace_range` 之前，將其附加到修剪後的替換內容尾端。"
+    },
+    {
+      "severity": "important",
+      "title": "重命名解析器脆弱",
+      "file": "crates/spectra-core/src/archive.rs",
+      "line_start": 440,
+      "line_end": 440,
+      "issue": "`parse_renamed_requirements` 嚴格檢查 `- FROM:` 和 `- TO:`。若使用者或 Markdown 自動格式化工具使用 `* FROM:` 或 `* TO:` 項目符號，重命名指令將會被靜默忽略，導致後續修改處理時發生重命名驗證失敗或錯誤。",
+      "fix": "同時支援 `-` 和 `*` 作為清單項目符號的前綴。"
+    },
+    {
+      "severity": "actionable_nit",
+      "title": "目錄驗證不完整",
+      "file": "crates/spectra-core/src/init.rs",
+      "line_start": 83,
+      "line_end": 93,
+      "issue": "`detect_adopt_spec_dir` 對路徑進行 `is_dir` 檢查，但忽略了其回傳的布林值。若這些路徑以檔案而非目錄形式存在，檢查會回傳 `Ok(false)` 且不拋出錯誤，隨後在 `create_dir_all` 時導致通用 I/O 錯誤。",
+      "fix": "明確驗證目錄狀態，若路徑存在但不是目錄，則回傳描述性的錯誤。"
+    }
+  ]
+}

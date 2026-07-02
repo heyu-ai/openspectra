@@ -70,17 +70,26 @@ OpenSpectra command uses `.spectra.yaml` to find and load the project.
 
 Adopt mode keeps the same already-initialized refusal: if `.spectra.yaml`
 exists, it fails with an error containing `already initialized` and touches
-nothing else. Otherwise it detects the spec dir by probing only the default
-`openspec/` name: if that directory exists and contains `changes/` and/or
-`specs/`, `spec_dir` is `openspec`; otherwise it falls back to the default
-`openspec` name and creates the normal directory skeleton.
+nothing else. The `spec_dir` is always the default `openspec` — adopt does
+**not** inspect the directory's contents to choose a name (configurable
+spec-dir discovery is future work). Its one content check is a guard: if
+`openspec` already exists as a *file* rather than a directory, adoption fails
+with `cannot adopt: … exists but is not a directory` instead of letting the
+later `create_dir_all` surface a generic I/O error.
 
 Adopt mode is deliberately non-destructive. It creates
-`openspec/changes/` and `openspec/specs/` with `create_dir_all`, ensures the
-`.spectra/` `.gitignore` entry, and writes `.spectra.yaml` last with
-`spec_dir: openspec\n`. It never creates or overwrites OpenSpec-owned
-`project.md`, `AGENTS.md`, `config.yaml`, existing changes, or existing
-canonical specs. Plain `spectra init` remains the fresh-project path.
+`openspec/changes/` and `openspec/specs/` with `create_dir_all` (a no-op when
+they already exist), ensures the `.spectra/` `.gitignore` entry, and writes
+`.spectra.yaml` last with `spec_dir: openspec\n`. It never creates or
+overwrites OpenSpec-owned `project.md`, `AGENTS.md`, `config.yaml`, existing
+changes, or existing canonical specs.
+
+Mechanically, plain `init` and `--adopt` perform the same filesystem work
+(both create the two dirs idempotently, both refuse only when `.spectra.yaml`
+exists); `--adopt` differs in **intent and messaging** — it announces
+`Adopted …` and is the self-documenting path for a project that already holds
+OpenSpec content. A plain `init` on such a project (with no `.spectra.yaml`
+yet) also succeeds.
 
 ## Files produced (for future oracle comparison)
 

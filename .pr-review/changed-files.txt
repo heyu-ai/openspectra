@@ -1,0 +1,15 @@
+crates/spectra-cli/src/main.rs
+crates/spectra-cli/tests/cli_integration.rs
+crates/spectra-cli/tests/fixtures/openspec_project/openspec/AGENTS.md
+crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/proposal.md
+crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/specs/session-management/spec.md
+crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/tasks.md
+crates/spectra-cli/tests/fixtures/openspec_project/openspec/project.md
+crates/spectra-cli/tests/fixtures/openspec_project/openspec/specs/session-management/spec.md
+crates/spectra-cli/tests/openspec_compat.rs
+crates/spectra-core/src/archive.rs
+crates/spectra-core/src/init.rs
+crates/spectra-core/tests/init_integration.rs
+docs/openspec-compat.md
+docs/reverse-engineering/archive.md
+docs/reverse-engineering/init.md

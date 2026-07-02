@@ -84,24 +84,26 @@ pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
     })
 }
 
+/// Resolve the spec directory for an `--adopt`. Only the default `openspec`
+/// name is used today (configurable spec-dir discovery is future work), so this
+/// always resolves to [`DEFAULT_SPEC_DIR`] -- it does **not** inspect the
+/// directory's contents to pick a name. The probe still earns its keep: it
+/// surfaces a real I/O error (e.g. permission denied) before scaffolding
+/// proceeds, and it fails with a clear message when `openspec` already exists as
+/// a non-directory (a file or a symlink to one), rather than letting the later
+/// `create_dir_all` fail with a generic, harder-to-read error.
 fn detect_adopt_spec_dir(root: &Path) -> Result<String> {
     let candidate = root.join(DEFAULT_SPEC_DIR);
-    // Only the default `openspec` directory name is probed today. The probes
-    // still matter because they surface real I/O errors (for example,
-    // permission denied) before adoption scaffolding proceeds; configurable
-    // spec-dir discovery is future work.
-    let _ = is_dir(&candidate)?;
-    let _ = is_dir(&candidate.join("changes"))?;
-    let _ = is_dir(&candidate.join("specs"))?;
-    Ok(DEFAULT_SPEC_DIR.to_string())
-}
-
-fn is_dir(path: &Path) -> Result<bool> {
-    match std::fs::metadata(path) {
-        Ok(m) => Ok(m.is_dir()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    match std::fs::metadata(&candidate) {
+        Ok(m) if m.is_dir() => {}
+        Ok(_) => anyhow::bail!(
+            "cannot adopt: {} exists but is not a directory",
+            candidate.display()
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("reading {}", candidate.display())),
     }
+    Ok(DEFAULT_SPEC_DIR.to_string())
 }
 
 /// Append [`GITIGNORE_ENTRY`] to `.gitignore` as its own line, unless a line
@@ -442,6 +444,20 @@ mod tests {
         assert!(tmp.join("openspec/changes").is_dir());
         assert!(tmp.join("openspec/specs").is_dir());
         assert!(tmp.join(".spectra.yaml").is_file());
+    }
+
+    #[test]
+    fn init_adopt_errors_when_openspec_exists_as_a_file() {
+        // A clear "not a directory" error beats letting the later
+        // create_dir_all surface a generic I/O error.
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join("openspec"), "not a directory\n").unwrap();
+
+        let err = init_with_options(&tmp, true).unwrap_err();
+
+        assert!(err.to_string().contains("is not a directory"), "got: {err}");
+        // Nothing was marked initialized.
+        assert!(!tmp.join(".spectra.yaml").exists());
     }
 
     #[test]

@@ -396,7 +396,19 @@ fn merge_spec_delta(
         let name = requirement_name(modified);
         let block = find_requirement_block(&content, name)
             .ok_or_else(|| missing_requirement_error(capability, "MODIFY", name, &spec_path))?;
-        content.replace_range(block.start..block.end, modified);
+        // `block.start..block.end` spans the canonical block *including* the
+        // trailing separator (blank line / `\n---\n` / EOF) that sits before
+        // the next header, but `modified` is `trim_end()`'d. Re-append the
+        // original block's trailing whitespace so the following
+        // `### Requirement:` stays at the start of its own line -- otherwise it
+        // is glued onto the modified block's last line and the multiline
+        // `^### Requirement:` regex silently stops matching it, dropping the
+        // requirement from every later parse.
+        let trailing = {
+            let original = &content[block.start..block.end];
+            original[original.trim_end().len()..].to_string()
+        };
+        content.replace_range(block.start..block.end, &format!("{modified}{trailing}"));
     }
 
     for added in &parsed.added {
@@ -415,21 +427,76 @@ fn merge_spec_delta(
 }
 
 fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
+    let added: Vec<String> = requirement_blocks_in_section(delta, &ADDED_HEADER_RE)?
+        .into_iter()
+        .map(|b| block_text(delta, &b))
+        .collect();
+    let modified: Vec<String> = requirement_blocks_in_section(delta, &MODIFIED_HEADER_RE)?
+        .into_iter()
+        .map(|b| block_text(delta, &b))
+        .collect();
+    let removed: Vec<String> = requirement_blocks_in_section(delta, &REMOVED_HEADER_RE)?
+        .into_iter()
+        .map(|b| b.name)
+        .collect();
+    let renamed = parse_renamed_requirements(capability, delta)?;
+
+    // A recognized delta section header that parsed to zero entries is almost
+    // always a malformed delta (a prose-only body, the wrong heading level, or
+    // a REMOVED/RENAMED entry not written as a `### Requirement:` header).
+    // Erroring loudly here preserves the guarantee the old unsupported-header
+    // reject gave: `archive` must never silently drop a MODIFIED/REMOVED/RENAMED
+    // intent and move the change out of the active set with nothing applied.
+    // ADDED keeps its historical lenient no-op for an empty section -- it never
+    // had a reject gate to preserve, and an empty ADDED section is harmless.
+    ensure_section_non_empty(
+        capability,
+        delta,
+        &MODIFIED_HEADER_RE,
+        "MODIFIED",
+        modified.len(),
+    )?;
+    ensure_section_non_empty(
+        capability,
+        delta,
+        &REMOVED_HEADER_RE,
+        "REMOVED",
+        removed.len(),
+    )?;
+    ensure_section_non_empty(
+        capability,
+        delta,
+        &RENAMED_HEADER_RE,
+        "RENAMED",
+        renamed.len(),
+    )?;
+
     Ok(RequirementDelta {
-        added: requirement_blocks_in_section(delta, &ADDED_HEADER_RE)?
-            .into_iter()
-            .map(|b| block_text(delta, &b))
-            .collect(),
-        modified: requirement_blocks_in_section(delta, &MODIFIED_HEADER_RE)?
-            .into_iter()
-            .map(|b| block_text(delta, &b))
-            .collect(),
-        removed: requirement_blocks_in_section(delta, &REMOVED_HEADER_RE)?
-            .into_iter()
-            .map(|b| b.name)
-            .collect(),
-        renamed: parse_renamed_requirements(capability, delta)?,
+        added,
+        modified,
+        removed,
+        renamed,
     })
+}
+
+/// Errors when `header_re` matches `delta` (the section is present) but the
+/// section parsed to zero entries -- see [`parse_requirement_delta`] for why a
+/// present-but-empty MODIFIED/REMOVED/RENAMED section must fail loudly rather
+/// than archive as a silent no-op.
+fn ensure_section_non_empty(
+    capability: &str,
+    delta: &str,
+    header_re: &Regex,
+    kind: &str,
+    parsed_count: usize,
+) -> Result<()> {
+    if parsed_count == 0 && header_re.is_match(delta) {
+        return Err(anyhow!(
+            "capability '{capability}': `## {kind} Requirements` section contains no \
+             recognizable entries -- fix the delta or re-run with --skip-specs"
+        ));
+    }
+    Ok(())
 }
 
 fn requirement_blocks_in_section(delta: &str, header_re: &Regex) -> Result<Vec<RequirementBlock>> {
@@ -464,8 +531,18 @@ fn parse_renamed_requirements(capability: &str, delta: &str) -> Result<Vec<Renam
     let mut renames = Vec::new();
     let mut pending_from: Option<String> = None;
     for line in section.lines() {
-        let trimmed = line.trim_start();
-        if let Some(raw) = trimmed.strip_prefix("- FROM:") {
+        // Accept either `-` or `*` as the list bullet: a markdown auto-formatter
+        // routinely rewrites one to the other, and OpenSpec's own examples use
+        // `-` but don't forbid `*`. A line that isn't a bullet at all is skipped.
+        let Some(item) = line
+            .trim_start()
+            .strip_prefix('-')
+            .or_else(|| line.trim_start().strip_prefix('*'))
+            .map(str::trim_start)
+        else {
+            continue;
+        };
+        if let Some(raw) = item.strip_prefix("FROM:") {
             if pending_from.is_some() {
                 return Err(anyhow!(
                     "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
@@ -474,7 +551,7 @@ fn parse_renamed_requirements(capability: &str, delta: &str) -> Result<Vec<Renam
             pending_from = Some(parse_backticked_requirement_header(
                 capability, "FROM", raw,
             )?);
-        } else if let Some(raw) = trimmed.strip_prefix("- TO:") {
+        } else if let Some(raw) = item.strip_prefix("TO:") {
             let Some(from) = pending_from.take() else {
                 return Err(anyhow!(
                     "capability '{capability}': malformed RENAMED Requirements section -- TO without preceding FROM"
@@ -1211,7 +1288,19 @@ mod tests {
         assert!(spec.contains("### Requirement: Second\n\nmodified text"));
         assert!(spec.contains("(Previously: second text)"));
         assert!(!spec.contains("second text\n\n### Requirement: Third"));
-        assert!(spec.contains("### Requirement: Third"));
+        // Regression: the header following a MODIFIED block must stay at the
+        // start of its own line. A `trim_end()`'d replacement used to glue it
+        // onto the modified block's last line ("modified text### Requirement:
+        // Third"), after which `^### Requirement:` silently dropped it.
+        assert!(
+            spec.contains("\n### Requirement: Third"),
+            "Third must remain at line-start after MODIFY, got:\n{spec}"
+        );
+        assert_eq!(
+            REQUIREMENT_HEADER_RE.find_iter(&spec).count(),
+            3,
+            "all three requirement headers must remain line-anchored, got:\n{spec}"
+        );
     }
 
     #[test]
@@ -1465,6 +1554,232 @@ mod tests {
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("### Requirement:   Session    Expiration  \n\nnew"));
         assert!(!spec.contains("\nold\n"));
+    }
+
+    // A canonical spec in the exact shape `archive` itself produces: `---`
+    // separators between requirements and a `<!-- @trace -->` footer on each.
+    // The hand-written CANONICAL_SPEC lacks both, so MODIFYing a spectra-
+    // produced spec is only exercised here.
+    const SPECTRA_PRODUCED_SPEC: &str = "# my-cap Specification\n\n\
+        ## Purpose\n\nExisting.\n\n\
+        ## Requirements\n\n\
+        ### Requirement: Alpha\n\nalpha text\n\n\
+        <!-- @trace\nsource: old\nupdated: 2026-01-01\ncode: []\n-->\n\n\
+        ---\n\
+        ### Requirement: Beta\n\nbeta text\n\n\
+        <!-- @trace\nsource: old\nupdated: 2026-01-01\ncode: []\n-->\n\n\
+        ---\n\
+        ### Requirement: Gamma\n\ngamma text\n\n\
+        <!-- @trace\nsource: old\nupdated: 2026-01-01\ncode: []\n-->\n";
+
+    #[test]
+    fn archive_modify_on_a_spectra_produced_spec_keeps_following_headers_line_anchored() {
+        // Regression for the MODIFIED-glue bug: MODIFYing a non-last
+        // requirement in a spec that carries `---`/`@trace` footers must not
+        // glue the following `### Requirement:` onto the modified block's last
+        // line. Before the fix this dropped Beta (count == 2, corrupt output);
+        // it still archived "successfully", so a `.contains(header)` assertion
+        // wouldn't catch it.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            SPECTRA_PRODUCED_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nmodified alpha text\n",
+        );
+
+        archive(&c, "my-feature", false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("modified alpha text"));
+        assert_eq!(
+            REQUIREMENT_HEADER_RE.find_iter(&spec).count(),
+            3,
+            "all three requirement headers must survive as line-anchored, got:\n{spec}"
+        );
+        assert!(spec.contains("\n### Requirement: Beta"));
+        assert!(spec.contains("\n### Requirement: Gamma"));
+        // Beta/Gamma were untouched, so their trace footers must remain.
+        assert!(spec.contains("### Requirement: Beta\n\nbeta text"));
+    }
+
+    #[test]
+    fn archive_errors_on_a_present_but_empty_delta_section() {
+        // A recognized MODIFIED/REMOVED/RENAMED header whose body parses to
+        // zero entries must fail loudly, not archive as a silent no-op (the
+        // guarantee the old unsupported-header reject provided).
+        for (delta, kind) in [
+            (
+                "## MODIFIED Requirements\n\nsome prose but no requirement blocks\n",
+                "MODIFIED",
+            ),
+            (
+                "## REMOVED Requirements\n\nsome prose but no requirement blocks\n",
+                "REMOVED",
+            ),
+            (
+                "## RENAMED Requirements\n\nsome prose but no from/to bullets\n",
+                "RENAMED",
+            ),
+        ] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(
+                &c.specs_dir().join("my-cap").join("spec.md"),
+                CANONICAL_SPEC,
+            );
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                delta,
+            );
+
+            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("`## {kind} Requirements` section contains no")),
+                "{kind} empty section should fail loudly, got: {err}"
+            );
+            assert!(c.changes_dir().join("my-feature").is_dir());
+            assert!(!c.changes_dir().join("archive").exists());
+        }
+    }
+
+    #[test]
+    fn archive_accepts_asterisk_bullets_in_renamed() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## RENAMED Requirements\n\
+             * FROM: `### Requirement: First`\n\
+             * TO: `### Requirement: Primero`\n",
+        );
+
+        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        assert_eq!(outcome.specs_applied[0].renamed, 1);
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("### Requirement: Primero"));
+        assert!(!spec.contains("### Requirement: First"));
+    }
+
+    #[test]
+    fn archive_matches_collapsed_whitespace_for_removed_and_renamed() {
+        // REMOVED with a whitespace-noisy header.
+        {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(
+                &c.specs_dir().join("my-cap").join("spec.md"),
+                CANONICAL_SPEC,
+            );
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                "## REMOVED Requirements\n\n### Requirement:   Second  \n\ngone\n",
+            );
+            archive(&c, "my-feature", false, false).unwrap();
+            let spec =
+                std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+            assert!(!spec.contains("### Requirement: Second"));
+        }
+        // RENAMED whose FROM header has collapsed whitespace.
+        {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(
+                &c.specs_dir().join("my-cap").join("spec.md"),
+                CANONICAL_SPEC,
+            );
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement:   Second  `\n\
+                 - TO: `### Requirement: Segundo`\n",
+            );
+            archive(&c, "my-feature", false, false).unwrap();
+            let spec =
+                std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+            assert!(spec.contains("### Requirement: Segundo"));
+            assert!(!spec.contains("### Requirement: Second"));
+        }
+    }
+
+    #[test]
+    fn archive_errors_on_malformed_renamed_sections() {
+        for (delta, needle) in [
+            (
+                "## RENAMED Requirements\n- FROM: `### Requirement: First`\n- FROM: `### Requirement: Second`\n",
+                "FROM without following TO",
+            ),
+            (
+                "## RENAMED Requirements\n- TO: `### Requirement: New`\n",
+                "TO without preceding FROM",
+            ),
+            (
+                "## RENAMED Requirements\n- FROM: ### Requirement: First\n- TO: `### Requirement: New`\n",
+                "missing a backticked requirement header",
+            ),
+            (
+                "## RENAMED Requirements\n- FROM: `### Requirement: First\n- TO: `### Requirement: New`\n",
+                "missing a closing backtick",
+            ),
+            (
+                "## RENAMED Requirements\n- FROM: `not a requirement header`\n- TO: `### Requirement: New`\n",
+                "must be a `### Requirement: <name>` header",
+            ),
+        ] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            write(&c.specs_dir().join("my-cap").join("spec.md"), CANONICAL_SPEC);
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir()
+                    .join("my-feature")
+                    .join("specs")
+                    .join("my-cap")
+                    .join("spec.md"),
+                delta,
+            );
+
+            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            assert!(
+                err.to_string().contains(needle),
+                "malformed RENAMED should error with '{needle}', got: {err}"
+            );
+            assert!(c.changes_dir().join("my-feature").is_dir());
+            assert!(!c.changes_dir().join("archive").exists());
+        }
     }
 
     #[test]

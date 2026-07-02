@@ -1,0 +1,1748 @@
+diff --git a/crates/spectra-cli/src/main.rs b/crates/spectra-cli/src/main.rs
+index d1ec0bd..e5ac440 100644
+--- a/crates/spectra-cli/src/main.rs
++++ b/crates/spectra-cli/src/main.rs
+@@ -31,6 +31,8 @@ enum Command {
+     /// and a `.spectra/` entry in `.gitignore`. Every other command requires
+     /// this to have run first.
+     Init {
++        #[arg(long)]
++        adopt: bool,
+         #[arg(long)]
+         json: bool,
+     },
+@@ -155,14 +157,21 @@ fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
+     json!({
+         "root": outcome.root.to_string_lossy(),
+         "spec_dir": outcome.spec_dir,
++        "adopted": outcome.adopted,
+         "gitignore_updated": outcome.gitignore_updated,
+     })
+ }
+ 
+-fn cmd_init(root: &Path, as_json: bool) -> Result<i32> {
+-    let outcome = spectra_core::init::init(root)?;
++fn cmd_init(root: &Path, adopt: bool, as_json: bool) -> Result<i32> {
++    let outcome = spectra_core::init::init_with_options(root, adopt)?;
+     if as_json {
+         println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
++    } else if outcome.adopted {
++        println!(
++            "Adopted existing spectra project in {} (spec_dir: {}).",
++            outcome.root.display(),
++            outcome.spec_dir
++        );
+     } else {
+         println!(
+             "Initialized spectra project in {} (spec_dir: {}).",
+@@ -557,14 +566,9 @@ fn cmd_archive(
+         outcome.name, outcome.archived_name
+     );
+     for applied in &outcome.specs_applied {
+-        // modified/removed/renamed are always 0: MODIFIED/REMOVED/RENAMED
+-        // deltas are rejected before archiving reaches this point (see
+-        // archive::validate_spec_deltas), so printing them isn't a claim
+-        // those delta kinds are supported -- it matches the reference CLI's
+-        // fuller summary line format for the delta kinds this does apply.
+         println!(
+-            "Specs applied: {} (added: {}, modified: 0, removed: 0, renamed: 0)",
+-            applied.capability, applied.added
++            "Specs applied: {} (added: {}, modified: {}, removed: {}, renamed: {})",
++            applied.capability, applied.added, applied.modified, applied.removed, applied.renamed
+         );
+     }
+     Ok(0)
+@@ -600,7 +604,7 @@ fn run() -> Result<i32> {
+     let root = find_root(&cwd);
+ 
+     match &cli.command {
+-        Command::Init { json } => cmd_init(&root, *json),
++        Command::Init { adopt, json } => cmd_init(&root, *adopt, *json),
+         Command::Drift { change, json } => {
+             let cfg = require_initialized(&root)?;
+             cmd_drift(&cfg, change.as_deref(), *json, use_color)
+@@ -800,11 +804,13 @@ mod tests {
+         let outcome = spectra_core::init::InitOutcome {
+             root: PathBuf::from("/tmp/proj"),
+             spec_dir: "openspec".to_string(),
++            adopted: true,
+             gitignore_updated: true,
+         };
+         let value = init_json(&outcome);
+         assert_eq!(value["root"], "/tmp/proj");
+         assert_eq!(value["spec_dir"], "openspec");
++        assert_eq!(value["adopted"], true);
+         assert_eq!(value["gitignore_updated"], true);
+     }
+ 
+diff --git a/crates/spectra-cli/tests/cli_integration.rs b/crates/spectra-cli/tests/cli_integration.rs
+index b6e24fc..f753016 100644
+--- a/crates/spectra-cli/tests/cli_integration.rs
++++ b/crates/spectra-cli/tests/cli_integration.rs
+@@ -143,6 +143,7 @@ fn init_json_output_matches_the_documented_shape() {
+ 
+     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+     assert_eq!(value["spec_dir"], "openspec");
++    assert_eq!(value["adopted"], false);
+     assert_eq!(value["gitignore_updated"], true);
+     // Compare canonicalized paths: on macOS `std::env::temp_dir()` returns a
+     // `/var/...` path that's actually a symlink to `/private/var/...`, and
+diff --git a/crates/spectra-cli/tests/fixtures/openspec_project/openspec/AGENTS.md b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/AGENTS.md
+new file mode 100644
+index 0000000..b540977
+--- /dev/null
++++ b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/AGENTS.md
+@@ -0,0 +1,4 @@
++# Agent Notes
++
++- Keep session-management requirements user-visible and audit-friendly.
++- Prefer explicit WHEN/THEN scenarios for security behavior.
+diff --git a/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/proposal.md b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/proposal.md
+new file mode 100644
+index 0000000..ff602c1
+--- /dev/null
++++ b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/proposal.md
+@@ -0,0 +1,4 @@
++# Tighten session security
++
++Shorten idle sessions, remove persistent login, rename the audit requirement,
++and add device trust checks.
+diff --git a/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/specs/session-management/spec.md b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/specs/session-management/spec.md
+new file mode 100644
+index 0000000..897e7da
+--- /dev/null
++++ b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/specs/session-management/spec.md
+@@ -0,0 +1,32 @@
++## ADDED Requirements
++
++### Requirement: Device Trust
++
++The system MUST challenge sessions created from unknown devices.
++
++#### Scenario: Unknown device
++
++- **WHEN** a user signs in from a new device
++- **THEN** the session requires an additional verification step
++
++## MODIFIED Requirements
++
++### Requirement: Session Expiration
++
++The system MUST expire sessions after 15 minutes of inactivity.
++(Previously: 30 minutes)
++
++#### Scenario: Idle timeout
++
++- **WHEN** 15 minutes pass without user activity
++- **THEN** the session is invalidated
++
++## REMOVED Requirements
++
++### Requirement: Remember Me
++
++Persistent login is removed in favor of explicit reauthentication.
++
++## RENAMED Requirements
++- FROM: `### Requirement: Legacy Audit Log`
++- TO: `### Requirement: Session Audit Trail`
+diff --git a/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/tasks.md b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/tasks.md
+new file mode 100644
+index 0000000..ef2e0b4
+--- /dev/null
++++ b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/changes/tighten-session-security/tasks.md
+@@ -0,0 +1,3 @@
++- [ ] Update session expiration policy.
++- [ ] Remove remember-me support.
++- [ ] Add device trust requirement.
+diff --git a/crates/spectra-cli/tests/fixtures/openspec_project/openspec/project.md b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/project.md
+new file mode 100644
+index 0000000..a3d162f
+--- /dev/null
++++ b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/project.md
+@@ -0,0 +1,5 @@
++# Customer Portal
++
++Customer Portal manages authenticated sessions for web users and support
++operators. Specifications in this project follow the OpenSpec layout and do
++not require a root `.spectra.yaml`.
+diff --git a/crates/spectra-cli/tests/fixtures/openspec_project/openspec/specs/session-management/spec.md b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/specs/session-management/spec.md
+new file mode 100644
+index 0000000..6eec88e
+--- /dev/null
++++ b/crates/spectra-cli/tests/fixtures/openspec_project/openspec/specs/session-management/spec.md
+@@ -0,0 +1,35 @@
++# Session Management Specification
++
++## Purpose
++
++Session management keeps customer accounts secure while preserving a predictable
++sign-in experience.
++
++## Requirements
++
++### Requirement: Session Expiration
++
++The system MUST expire sessions after 30 minutes of inactivity.
++
++#### Scenario: Idle timeout
++
++- **WHEN** 30 minutes pass without user activity
++- **THEN** the session is invalidated
++
++### Requirement: Remember Me
++
++The system MUST allow users to remain signed in for 30 days.
++
++#### Scenario: Persistent login
++
++- **WHEN** a user selects remember me
++- **THEN** the session remains valid across browser restarts
++
++### Requirement: Legacy Audit Log
++
++The system MUST record session creation in the legacy audit stream.
++
++#### Scenario: Session starts
++
++- **WHEN** a user signs in
++- **THEN** a legacy audit event is recorded
+diff --git a/crates/spectra-cli/tests/openspec_compat.rs b/crates/spectra-cli/tests/openspec_compat.rs
+new file mode 100644
+index 0000000..610b033
+--- /dev/null
++++ b/crates/spectra-cli/tests/openspec_compat.rs
+@@ -0,0 +1,149 @@
++//! End-to-end compatibility coverage for an OpenSpec-style project that has
++//! `openspec/` content but no root `.spectra.yaml`.
++
++use std::path::{Path, PathBuf};
++use std::process::Command;
++
++fn spectra() -> Command {
++    Command::new(env!("CARGO_BIN_EXE_spectra"))
++}
++
++fn git(dir: &Path, args: &[&str]) {
++    let ok = Command::new("git")
++        .arg("-C")
++        .arg(dir)
++        .args(args)
++        .output()
++        .expect("git runs")
++        .status
++        .success();
++    assert!(ok, "git {args:?} failed");
++}
++
++struct TempDir(std::path::PathBuf);
++
++impl TempDir {
++    fn new(label: &str) -> Self {
++        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++        let dir = std::env::temp_dir().join(format!(
++            "spectra-openspec-compat-{label}-{}-{seq}",
++            std::process::id()
++        ));
++        let _ = std::fs::remove_dir_all(&dir);
++        std::fs::create_dir_all(&dir).unwrap();
++        Self(dir)
++    }
++}
++
++impl std::ops::Deref for TempDir {
++    type Target = Path;
++    fn deref(&self) -> &Path {
++        &self.0
++    }
++}
++
++impl Drop for TempDir {
++    fn drop(&mut self) {
++        let _ = std::fs::remove_dir_all(&self.0);
++    }
++}
++
++fn copy_dir_all(from: &Path, to: &Path) {
++    std::fs::create_dir_all(to).unwrap();
++    for entry in std::fs::read_dir(from).unwrap() {
++        let entry = entry.unwrap();
++        let src = entry.path();
++        let dst = to.join(entry.file_name());
++        if src.is_dir() {
++            copy_dir_all(&src, &dst);
++        } else {
++            std::fs::copy(&src, &dst).unwrap();
++        }
++    }
++}
++
++#[test]
++fn adopt_list_drift_and_archive_a_vendored_openspec_project() {
++    let root = TempDir::new("e2e");
++    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
++        .join("tests")
++        .join("fixtures")
++        .join("openspec_project");
++    copy_dir_all(&fixture, &root);
++    git(&root, &["init", "-q"]);
++    git(&root, &["config", "user.email", "t@t.co"]);
++    git(&root, &["config", "user.name", "t"]);
++
++    let init = spectra()
++        .args(["init", "--adopt", "--json"])
++        .current_dir(&*root)
++        .output()
++        .unwrap();
++    assert!(init.status.success(), "init --adopt failed: {init:?}");
++    let init_json: serde_json::Value = serde_json::from_slice(&init.stdout).unwrap();
++    assert_eq!(init_json["spec_dir"], "openspec");
++    assert_eq!(init_json["adopted"], true);
++    assert!(root.join(".spectra.yaml").is_file());
++
++    let list = spectra()
++        .args(["list", "--specs", "--json"])
++        .current_dir(&*root)
++        .output()
++        .unwrap();
++    assert!(list.status.success(), "list --specs failed: {list:?}");
++    let list_json: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
++    assert!(list_json["specs"]
++        .as_array()
++        .unwrap()
++        .iter()
++        .any(|item| item["name"] == "session-management"));
++
++    let drift = spectra()
++        .args(["drift", "tighten-session-security", "--json"])
++        .current_dir(&*root)
++        .output()
++        .unwrap();
++    assert!(
++        matches!(drift.status.code(), Some(0..=2)),
++        "drift should exit with a drift code, got: {drift:?}"
++    );
++    let _: serde_json::Value = serde_json::from_slice(&drift.stdout).unwrap();
++
++    let archive = spectra()
++        .args(["archive", "tighten-session-security"])
++        .current_dir(&*root)
++        .output()
++        .unwrap();
++    assert!(archive.status.success(), "archive failed: {archive:?}");
++
++    let spec = std::fs::read_to_string(
++        root.join("openspec")
++            .join("specs")
++            .join("session-management")
++            .join("spec.md"),
++    )
++    .unwrap();
++    assert!(spec.contains("### Requirement: Device Trust"));
++    assert!(spec.contains("The system MUST expire sessions after 15 minutes of inactivity."));
++    assert!(!spec.contains("### Requirement: Remember Me"));
++    assert!(spec.contains("### Requirement: Session Audit Trail"));
++    assert!(!spec.contains("### Requirement: Legacy Audit Log"));
++
++    assert!(!root
++        .join("openspec")
++        .join("changes")
++        .join("tighten-session-security")
++        .exists());
++    let archive_dir = root.join("openspec").join("changes").join("archive");
++    let archived_names: Vec<String> = std::fs::read_dir(archive_dir)
++        .unwrap()
++        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
++        .collect();
++    assert!(
++        archived_names
++            .iter()
++            .any(|name| name.ends_with("-tighten-session-security")),
++        "expected archived change directory, got: {archived_names:?}"
++    );
++}
+diff --git a/crates/spectra-core/src/archive.rs b/crates/spectra-core/src/archive.rs
+index 68fd36e..90e03bf 100644
+--- a/crates/spectra-core/src/archive.rs
++++ b/crates/spectra-core/src/archive.rs
+@@ -1,15 +1,13 @@
+ //! `spectra archive` — move a completed change to
+ //! `<spec_dir>/changes/archive/YYYY-MM-DD-<name>/`, stamp its
+ //! `.openspec.yaml` with `archived_by`/`archived_at`, and (unless
+-//! `--skip-specs`) merge each capability's proposed `## ADDED Requirements`
+-//! delta into the canonical `<spec_dir>/specs/<capability>/spec.md`.
++//! `--skip-specs`) merge each capability's proposed requirement deltas into
++//! the canonical `<spec_dir>/specs/<capability>/spec.md`.
+ //!
+ //! Reverse-engineered against `/Applications/Spectra.app` v2.3.1 — see
+ //! `docs/reverse-engineering/archive.md` for the full write-up, including
+-//! the deliberately narrowed spec-merge scope (only `## ADDED Requirements`
+-//! is applied; a delta containing `MODIFIED`/`REMOVED`/`RENAMED` sections
+-//! errors, asking for `--skip-specs`) and other documented gaps (no
+-//! snapshot/unarchive support).
++//! the Phase 2 OpenSpec compatibility delta behavior and other documented
++//! gaps (no snapshot/unarchive support).
+ 
+ use anyhow::{anyhow, Context, Result};
+ use once_cell::sync::Lazy;
+@@ -22,8 +20,12 @@ use crate::{change, touched};
+ 
+ static ADDED_HEADER_RE: Lazy<Regex> =
+     Lazy::new(|| Regex::new(r"(?m)^## ADDED Requirements\s*$").unwrap());
+-static UNSUPPORTED_HEADER_RE: Lazy<Regex> =
+-    Lazy::new(|| Regex::new(r"(?m)^## (MODIFIED|REMOVED|RENAMED) Requirements\s*$").unwrap());
++static MODIFIED_HEADER_RE: Lazy<Regex> =
++    Lazy::new(|| Regex::new(r"(?m)^## MODIFIED Requirements\s*$").unwrap());
++static REMOVED_HEADER_RE: Lazy<Regex> =
++    Lazy::new(|| Regex::new(r"(?m)^## REMOVED Requirements\s*$").unwrap());
++static RENAMED_HEADER_RE: Lazy<Regex> =
++    Lazy::new(|| Regex::new(r"(?m)^## RENAMED Requirements\s*$").unwrap());
+ static REQUIREMENTS_HEADER_RE: Lazy<Regex> =
+     Lazy::new(|| Regex::new(r"(?m)^## Requirements\s*$").unwrap());
+ static PURPOSE_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## Purpose\s*$").unwrap());
+@@ -36,6 +38,9 @@ static SECTION_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## \S").u
+ pub struct SpecApplyResult {
+     pub capability: String,
+     pub added: usize,
++    pub modified: usize,
++    pub removed: usize,
++    pub renamed: usize,
+ }
+ 
+ /// Outcome of [`archive`].
+@@ -96,8 +101,7 @@ fn is_dir(path: &Path) -> Result<bool> {
+ /// (archived changes live under `changes/archive/`, outside the active
+ /// namespace `try_load` searches).
+ ///
+-/// Unless `skip_specs`, every capability's spec delta is validated (checked
+-/// for an unsupported `MODIFIED`/`REMOVED`/`RENAMED Requirements` section)
++/// Unless `skip_specs`, every capability's spec delta is validated
+ /// *before* the change directory is moved or anything else is written, so a
+ /// validation failure leaves the change exactly as it was — still active,
+ /// not stuck half-archived with the directory already moved but its specs
+@@ -117,7 +121,7 @@ pub fn archive(
+     let ch = change::try_load(cfg, name)?.ok_or_else(|| anyhow!("Change '{name}' not found."))?;
+ 
+     if !skip_specs {
+-        validate_spec_deltas(&ch.dir)?;
++        validate_spec_deltas(cfg, &ch.dir, name)?;
+     }
+ 
+     let today = chrono::Local::now().date_naive();
+@@ -160,11 +164,11 @@ pub fn archive(
+     })
+ }
+ 
+-/// Errors if any capability's `specs/<cap>/spec.md` under `change_dir`
+-/// contains a `MODIFIED`/`REMOVED`/`RENAMED Requirements` section, or has a
+-/// non-UTF-8 capability directory name, before anything about the change
+-/// has been touched.
+-fn validate_spec_deltas(change_dir: &Path) -> Result<()> {
++/// Computes every capability merge without writing it. This catches all
++/// requirement-name conflicts before anything about the change has been
++/// touched, preserving the same "active and unmoved on validation failure"
++/// guarantee the earlier unsupported-header gate provided.
++fn validate_spec_deltas(cfg: &Config, change_dir: &Path, source: &str) -> Result<()> {
+     let specs_dir = change_dir.join("specs");
+     let Some(entries) = read_dir_optional(&specs_dir)? else {
+         return Ok(());
+@@ -182,13 +186,8 @@ fn validate_spec_deltas(change_dir: &Path) -> Result<()> {
+             .file_name()
+             .into_string()
+             .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
+-        if let Some(caps) = UNSUPPORTED_HEADER_RE.captures(&delta) {
+-            let kind = &caps[1];
+-            return Err(anyhow!(
+-                "capability '{capability}': {kind} requirement deltas aren't supported yet -- \
+-                 re-run with --skip-specs and apply this spec change by hand"
+-            ));
+-        }
++        let today = chrono::Local::now().date_naive();
++        merge_spec_delta(cfg, &capability, &delta, source, today)?;
+     }
+     Ok(())
+ }
+@@ -273,13 +272,322 @@ fn apply_spec_deltas(
+             .file_name()
+             .into_string()
+             .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
+-        let added = apply_added_requirements(cfg, &capability, &delta, source, today)?;
+-        results.push(SpecApplyResult { capability, added });
++        let (content, result) = merge_spec_delta(cfg, &capability, &delta, source, today)?;
++        if let Some(content) = content {
++            let spec_path = cfg.specs_dir().join(&capability).join("spec.md");
++            let parent = spec_path.parent().expect("spec path always has a parent");
++            std::fs::create_dir_all(parent)
++                .with_context(|| format!("creating {}", parent.display()))?;
++            std::fs::write(&spec_path, content)
++                .with_context(|| format!("writing {}", spec_path.display()))?;
++        }
++        results.push(result);
+     }
+     results.sort_by(|a, b| a.capability.cmp(&b.capability));
+     Ok(results)
+ }
+ 
++#[derive(Debug, Clone)]
++struct RequirementBlock {
++    name: String,
++    normalized_name: String,
++    start: usize,
++    end: usize,
++    header_end: usize,
++}
++
++#[derive(Debug)]
++struct RequirementDelta {
++    added: Vec<String>,
++    modified: Vec<String>,
++    removed: Vec<String>,
++    renamed: Vec<RenameDelta>,
++}
++
++#[derive(Debug)]
++struct RenameDelta {
++    from: String,
++    to: String,
++}
++
++/// Merge one capability's delta into its canonical spec, returning the full
++/// replacement content only when the canonical file should be written. The
++/// same function is used by pre-move validation and post-move application so
++/// conflicts are found against the exact operation order OpenSpec documents:
++/// RENAMED, REMOVED, MODIFIED, then ADDED.
++fn merge_spec_delta(
++    cfg: &Config,
++    capability: &str,
++    delta: &str,
++    source: &str,
++    today: chrono::NaiveDate,
++) -> Result<(Option<String>, SpecApplyResult)> {
++    let parsed = parse_requirement_delta(capability, delta)?;
++    let result = SpecApplyResult {
++        capability: capability.to_string(),
++        added: parsed.added.len(),
++        modified: parsed.modified.len(),
++        removed: parsed.removed.len(),
++        renamed: parsed.renamed.len(),
++    };
++    let has_changes = result.added + result.modified + result.removed + result.renamed > 0;
++    if !has_changes {
++        return Ok((None, result));
++    }
++
++    let spec_path = cfg.specs_dir().join(capability).join("spec.md");
++    let existing = read_optional(&spec_path)?;
++    let mut content = match existing {
++        Some(content) => content,
++        None if parsed.modified.is_empty()
++            && parsed.removed.is_empty()
++            && parsed.renamed.is_empty() =>
++        {
++            format!(
++                "# {capability} Specification\n\n\
++                 ## Purpose\n\n\
++                 TBD - created by archiving change '{source}'. Update Purpose after archive.\n\n\
++                 ## Requirements\n"
++            )
++        }
++        None => {
++            let first_missing = parsed
++                .renamed
++                .first()
++                .map(|r| ("RENAME", r.from.as_str()))
++                .or_else(|| parsed.removed.first().map(|r| ("REMOVE", r.as_str())))
++                .or_else(|| {
++                    parsed
++                        .modified
++                        .first()
++                        .map(|r| ("MODIFY", requirement_name(r)))
++                });
++            let (kind, name) = first_missing.expect("non-ADDED delta exists");
++            return Err(missing_requirement_error(
++                capability, kind, name, &spec_path,
++            ));
++        }
++    };
++
++    for rename in &parsed.renamed {
++        if find_requirement_block(&content, &rename.to).is_some() {
++            return Err(anyhow!(
++                "capability '{capability}': cannot RENAME requirement to '{}' -- a requirement with that name already exists in {}",
++                normalize_requirement_name(&rename.to),
++                spec_path.display()
++            ));
++        }
++        let block = find_requirement_block(&content, &rename.from).ok_or_else(|| {
++            missing_requirement_error(capability, "RENAME", &rename.from, &spec_path)
++        })?;
++        content.replace_range(
++            block.start..block.header_end,
++            &format!("### Requirement: {}", rename.to.trim()),
++        );
++    }
++
++    for removed in &parsed.removed {
++        let block = find_requirement_block(&content, removed)
++            .ok_or_else(|| missing_requirement_error(capability, "REMOVE", removed, &spec_path))?;
++        content.replace_range(block.start..block.end, "");
++    }
++
++    for modified in &parsed.modified {
++        let name = requirement_name(modified);
++        let block = find_requirement_block(&content, name)
++            .ok_or_else(|| missing_requirement_error(capability, "MODIFY", name, &spec_path))?;
++        content.replace_range(block.start..block.end, modified);
++    }
++
++    for added in &parsed.added {
++        let name = requirement_name(added);
++        if find_requirement_block(&content, name).is_some() {
++            return Err(anyhow!(
++                "capability '{capability}': cannot ADD requirement '{name}' -- it already exists in {}",
++                spec_path.display()
++            ));
++        }
++    }
++
++    append_added_requirements(&mut content, &parsed.added, cfg, source, today);
++
++    Ok((Some(content), result))
++}
++
++fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
++    Ok(RequirementDelta {
++        added: requirement_blocks_in_section(delta, &ADDED_HEADER_RE)?
++            .into_iter()
++            .map(|b| block_text(delta, &b))
++            .collect(),
++        modified: requirement_blocks_in_section(delta, &MODIFIED_HEADER_RE)?
++            .into_iter()
++            .map(|b| block_text(delta, &b))
++            .collect(),
++        removed: requirement_blocks_in_section(delta, &REMOVED_HEADER_RE)?
++            .into_iter()
++            .map(|b| b.name)
++            .collect(),
++        renamed: parse_renamed_requirements(capability, delta)?,
++    })
++}
++
++fn requirement_blocks_in_section(delta: &str, header_re: &Regex) -> Result<Vec<RequirementBlock>> {
++    let Some(header_match) = header_re.find(delta) else {
++        return Ok(Vec::new());
++    };
++    let after_header = &delta[header_match.end()..];
++    let section_end = SECTION_HEADER_RE
++        .find(after_header)
++        .map_or(after_header.len(), |m| m.start());
++    Ok(requirement_blocks(after_header[..section_end].as_ref())
++        .into_iter()
++        .map(|mut block| {
++            block.start += header_match.end();
++            block.end += header_match.end();
++            block.header_end += header_match.end();
++            block
++        })
++        .collect())
++}
++
++fn parse_renamed_requirements(capability: &str, delta: &str) -> Result<Vec<RenameDelta>> {
++    let Some(header_match) = RENAMED_HEADER_RE.find(delta) else {
++        return Ok(Vec::new());
++    };
++    let after_header = &delta[header_match.end()..];
++    let section_end = SECTION_HEADER_RE
++        .find(after_header)
++        .map_or(after_header.len(), |m| m.start());
++    let section = &after_header[..section_end];
++
++    let mut renames = Vec::new();
++    let mut pending_from: Option<String> = None;
++    for line in section.lines() {
++        let trimmed = line.trim_start();
++        if let Some(raw) = trimmed.strip_prefix("- FROM:") {
++            if pending_from.is_some() {
++                return Err(anyhow!(
++                    "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
++                ));
++            }
++            pending_from = Some(parse_backticked_requirement_header(
++                capability, "FROM", raw,
++            )?);
++        } else if let Some(raw) = trimmed.strip_prefix("- TO:") {
++            let Some(from) = pending_from.take() else {
++                return Err(anyhow!(
++                    "capability '{capability}': malformed RENAMED Requirements section -- TO without preceding FROM"
++                ));
++            };
++            let to = parse_backticked_requirement_header(capability, "TO", raw)?;
++            renames.push(RenameDelta { from, to });
++        }
++    }
++
++    if pending_from.is_some() {
++        return Err(anyhow!(
++            "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
++        ));
++    }
++
++    Ok(renames)
++}
++
++fn parse_backticked_requirement_header(capability: &str, field: &str, raw: &str) -> Result<String> {
++    let Some(start) = raw.find('`') else {
++        return Err(anyhow!(
++            "capability '{capability}': malformed RENAMED Requirements section -- {field} is missing a backticked requirement header"
++        ));
++    };
++    let rest = &raw[start + 1..];
++    let Some(end) = rest.find('`') else {
++        return Err(anyhow!(
++            "capability '{capability}': malformed RENAMED Requirements section -- {field} is missing a closing backtick"
++        ));
++    };
++    requirement_name_from_header(&rest[..end]).ok_or_else(|| {
++        anyhow!(
++            "capability '{capability}': malformed RENAMED Requirements section -- {field} must be a `### Requirement: <name>` header"
++        )
++    })
++}
++
++fn block_text(content: &str, block: &RequirementBlock) -> String {
++    content[block.start..block.end].trim_end().to_string()
++}
++
++fn requirement_blocks(content: &str) -> Vec<RequirementBlock> {
++    REQUIREMENT_HEADER_RE
++        .find_iter(content)
++        .filter_map(|m| {
++            let line_end = content[m.start()..]
++                .find('\n')
++                .map_or(content.len(), |offset| m.start() + offset);
++            let header = &content[m.start()..line_end];
++            let name = requirement_name_from_header(header)?;
++            let after_header = &content[line_end..];
++            let next_requirement = REQUIREMENT_HEADER_RE
++                .find(after_header)
++                .map(|next| line_end + next.start());
++            let next_section = SECTION_HEADER_RE
++                .find(after_header)
++                .map(|next| line_end + next.start());
++            let end = match (next_requirement, next_section) {
++                (Some(req), Some(section)) => req.min(section),
++                (Some(req), None) => req,
++                (None, Some(section)) => section,
++                (None, None) => content.len(),
++            };
++            Some(RequirementBlock {
++                name: name.clone(),
++                normalized_name: normalize_requirement_name(&name),
++                start: m.start(),
++                end,
++                header_end: line_end,
++            })
++        })
++        .collect()
++}
++
++fn find_requirement_block(content: &str, name: &str) -> Option<RequirementBlock> {
++    let needle = normalize_requirement_name(name);
++    requirement_blocks(content)
++        .into_iter()
++        .find(|block| block.normalized_name == needle)
++}
++
++fn requirement_name(block: &str) -> &str {
++    let line_end = block.find('\n').unwrap_or(block.len());
++    block[..line_end]
++        .strip_prefix("### Requirement:")
++        .expect("requirement block starts with a requirement header")
++        .trim()
++}
++
++fn requirement_name_from_header(header: &str) -> Option<String> {
++    header
++        .strip_prefix("### Requirement:")
++        .map(|name| name.trim().to_string())
++}
++
++fn normalize_requirement_name(name: &str) -> String {
++    name.split_whitespace().collect::<Vec<_>>().join(" ")
++}
++
++fn missing_requirement_error(
++    capability: &str,
++    kind: &str,
++    name: &str,
++    spec_path: &Path,
++) -> anyhow::Error {
++    anyhow!(
++        "capability '{capability}': cannot {kind} requirement '{}' -- it does not exist in {}",
++        normalize_requirement_name(name),
++        spec_path.display()
++    )
++}
++
+ /// Where new requirement blocks belong in the canonical spec's existing
+ /// content: right after the `## Requirements` header, before whatever `##`
+ /// section (if any) follows it -- never blindly at the very end of the file,
+@@ -311,63 +619,20 @@ fn requirements_insertion_point(content: &str) -> usize {
+     content.len()
+ }
+ 
+-/// Extract every `### Requirement:` block from `delta`'s `## ADDED
+-/// Requirements` section (if present) and insert each, verbatim, into
+-/// `<spec_dir>/specs/<capability>/spec.md`'s own `## Requirements` section
+-/// (creating the file with a placeholder Purpose if it doesn't exist yet),
+-/// followed by a `<!-- @trace ... -->` footer recording
+-/// `source`/`updated`/`code` (the latter from this change's
+-/// `.spectra/touched/<name>.json`, if any). New blocks are inserted via
+-/// [`requirements_insertion_point`], not blindly appended to the end of the
+-/// file. Returns the number of requirements appended — 0 both when the delta
+-/// has no `## ADDED Requirements` section at all, and when that section is
+-/// present but empty (no `### Requirement:` blocks).
+-///
+-/// Assumes `delta` already passed [`validate_spec_deltas`] (called by
+-/// `archive` before the change directory is moved) and so has no
+-/// `MODIFIED`/`REMOVED`/`RENAMED Requirements` section.
+-fn apply_added_requirements(
++/// Append ADDED requirement blocks to `content` using the original
++/// reverse-engineered placement and trace-footer rules. The earlier
++/// RENAMED/REMOVED/MODIFIED operations mutate `content` first, so ADDED's
++/// duplicate checks and insertion point see the post-merge canonical spec.
++fn append_added_requirements(
++    content: &mut String,
++    blocks: &[String],
+     cfg: &Config,
+-    capability: &str,
+-    delta: &str,
+     source: &str,
+     today: chrono::NaiveDate,
+-) -> Result<usize> {
+-    let Some(added_match) = ADDED_HEADER_RE.find(delta) else {
+-        return Ok(0);
+-    };
+-    let after_header = &delta[added_match.end()..];
+-    let section_end = SECTION_HEADER_RE
+-        .find(after_header)
+-        .map_or(after_header.len(), |m| m.start());
+-    let section = &after_header[..section_end];
+-
+-    let boundaries: Vec<usize> = REQUIREMENT_HEADER_RE
+-        .find_iter(section)
+-        .map(|m| m.start())
+-        .collect();
+-    if boundaries.is_empty() {
+-        return Ok(0);
++) {
++    if blocks.is_empty() {
++        return;
+     }
+-    let blocks: Vec<String> = boundaries
+-        .iter()
+-        .enumerate()
+-        .map(|(i, &start)| {
+-            let end = boundaries.get(i + 1).copied().unwrap_or(section.len());
+-            section[start..end].trim_end().to_string()
+-        })
+-        .collect();
+-
+-    let spec_path = cfg.specs_dir().join(capability).join("spec.md");
+-    let mut content = read_optional(&spec_path)?.unwrap_or_else(|| {
+-        format!(
+-            "# {capability} Specification\n\n\
+-             ## Purpose\n\n\
+-             TBD - created by archiving change '{source}'. Update Purpose after archive.\n\n\
+-             ## Requirements\n"
+-        )
+-    });
+-
+     let mut code_files: Vec<String> = touched::already_recorded(cfg, source).into_iter().collect();
+     code_files.sort();
+     let code_yaml = if code_files.is_empty() {
+@@ -382,7 +647,7 @@ fn apply_added_requirements(
+ 
+     let mut has_existing_requirement = content.contains("### Requirement:");
+     let mut insertion = String::new();
+-    for block in &blocks {
++    for block in blocks {
+         insertion.push_str(if has_existing_requirement {
+             "\n---\n"
+         } else {
+@@ -394,7 +659,7 @@ fn apply_added_requirements(
+         has_existing_requirement = true;
+     }
+ 
+-    let mut point = requirements_insertion_point(&content);
++    let mut point = requirements_insertion_point(content);
+     if point == content.len() {
+         if !content.ends_with('\n') {
+             content.push('\n');
+@@ -407,13 +672,6 @@ fn apply_added_requirements(
+         insertion.push('\n');
+     }
+     content.insert_str(point, &insertion);
+-
+-    let parent = spec_path.parent().expect("spec path always has a parent");
+-    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+-    std::fs::write(&spec_path, content)
+-        .with_context(|| format!("writing {}", spec_path.display()))?;
+-
+-    Ok(blocks.len())
+ }
+ 
+ #[cfg(test)]
+@@ -494,6 +752,16 @@ mod tests {
+         - **WHEN** <!-- condition -->\n\
+         - **THEN** <!-- expected outcome -->\n";
+ 
++    const CANONICAL_SPEC: &str = "# my-cap Specification\n\n\
++        ## Purpose\n\nExisting.\n\n\
++        ## Requirements\n\n\
++        ### Requirement: First\n\nfirst text\n\n\
++        #### Scenario: First scenario\n\n\
++        - **WHEN** first happens\n\
++        - **THEN** first works\n\n\
++        ### Requirement: Second\n\nsecond text\n\n\
++        ### Requirement: Third\n\nthird text\n";
++
+     #[test]
+     fn archive_moves_the_change_dir_to_dated_archive_subdir() {
+         let tmp = TempDir::new();
+@@ -911,9 +1179,13 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn archive_errors_on_a_modified_requirements_delta_without_skip_specs() {
++    fn archive_applies_a_modified_requirements_delta() {
+         let tmp = TempDir::new();
+         let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            CANONICAL_SPEC,
++        );
+         change::create(&c, "my-feature").unwrap();
+         write(
+             &c.changes_dir()
+@@ -921,11 +1193,278 @@ mod tests {
+                 .join("specs")
+                 .join("my-cap")
+                 .join("spec.md"),
+-            "## MODIFIED Requirements\n\n### Requirement: First\n\nnew text\n",
++            "## MODIFIED Requirements\n\n\
++             ### Requirement: Second\n\n\
++             modified text\n\
++             (Previously: second text)\n\n\
++             #### Scenario: Modified scenario\n\n\
++             - **WHEN** second changes\n\
++             - **THEN** modified behavior applies\n",
++        );
++
++        let outcome = archive(&c, "my-feature", false, false).unwrap();
++
++        assert_eq!(outcome.specs_applied[0].modified, 1);
++        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
++        assert!(spec.contains("### Requirement: First"));
++        assert!(spec.contains("first text"));
++        assert!(spec.contains("### Requirement: Second\n\nmodified text"));
++        assert!(spec.contains("(Previously: second text)"));
++        assert!(!spec.contains("second text\n\n### Requirement: Third"));
++        assert!(spec.contains("### Requirement: Third"));
++    }
++
++    #[test]
++    fn archive_applies_a_removed_requirements_delta() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            CANONICAL_SPEC,
++        );
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## REMOVED Requirements\n\n### Requirement: Second\n\nDeprecated.\n",
++        );
++
++        let outcome = archive(&c, "my-feature", false, false).unwrap();
++
++        assert_eq!(outcome.specs_applied[0].removed, 1);
++        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
++        assert!(spec.contains("### Requirement: First"));
++        assert!(!spec.contains("### Requirement: Second"));
++        assert!(spec.contains("### Requirement: Third"));
++    }
++
++    #[test]
++    fn archive_applies_rename_before_modify_on_the_new_name() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            CANONICAL_SPEC,
++        );
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## RENAMED Requirements\n\
++             - FROM: `### Requirement: Second`\n\
++             - TO: `### Requirement: Better Second`\n\n\
++             ## MODIFIED Requirements\n\n\
++             ### Requirement: Better Second\n\n\
++             renamed and modified text\n",
++        );
++
++        let outcome = archive(&c, "my-feature", false, false).unwrap();
++
++        assert_eq!(outcome.specs_applied[0].renamed, 1);
++        assert_eq!(outcome.specs_applied[0].modified, 1);
++        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
++        assert!(!spec.contains("### Requirement: Second"));
++        assert!(spec.contains("### Requirement: Better Second\n\nrenamed and modified text"));
++    }
++
++    #[test]
++    fn archive_applies_all_delta_kinds_in_openspec_order() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            CANONICAL_SPEC,
++        );
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## ADDED Requirements\n\n\
++             ### Requirement: Fourth\n\nfourth text\n\n\
++             ## MODIFIED Requirements\n\n\
++             ### Requirement: Renamed First\n\nrenamed first modified text\n\n\
++             ## REMOVED Requirements\n\n\
++             ### Requirement: Third\n\nremove it\n\n\
++             ## RENAMED Requirements\n\
++             - FROM: `### Requirement: First`\n\
++             - TO: `### Requirement: Renamed First`\n",
++        );
++
++        let outcome = archive(&c, "my-feature", false, false).unwrap();
++
++        assert_eq!(outcome.specs_applied[0].added, 1);
++        assert_eq!(outcome.specs_applied[0].modified, 1);
++        assert_eq!(outcome.specs_applied[0].removed, 1);
++        assert_eq!(outcome.specs_applied[0].renamed, 1);
++        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
++        assert!(!spec.contains("### Requirement: First"));
++        assert!(spec.contains("### Requirement: Renamed First\n\nrenamed first modified text"));
++        assert!(spec.contains("### Requirement: Second"));
++        assert!(!spec.contains("### Requirement: Third"));
++        assert!(spec.contains("### Requirement: Fourth"));
++        assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
++    }
++
++    #[test]
++    fn archive_errors_on_a_modified_delta_for_a_nonexistent_requirement() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            CANONICAL_SPEC,
++        );
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## MODIFIED Requirements\n\n### Requirement: Missing\n\nnew text\n",
++        );
++
++        let err = archive(&c, "my-feature", false, false).unwrap_err();
++        assert!(err
++            .to_string()
++            .contains("capability 'my-cap': cannot MODIFY requirement 'Missing'"));
++        assert!(
++            c.changes_dir().join("my-feature").is_dir(),
++            "change directory must still be active"
++        );
++        assert!(
++            !c.changes_dir().join("archive").exists(),
++            "nothing should have been moved"
++        );
++    }
++
++    #[test]
++    fn archive_errors_on_a_renamed_delta_for_an_existing_target_requirement() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        let spec_path = c.specs_dir().join("my-cap").join("spec.md");
++        write(&spec_path, CANONICAL_SPEC);
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## RENAMED Requirements\n- FROM: `### Requirement: First`\n- TO: `### Requirement: Second`\n",
++        );
++
++        let err = archive(&c, "my-feature", false, false).unwrap_err();
++        assert!(err
++            .to_string()
++            .contains("capability 'my-cap': cannot RENAME requirement to 'Second'"));
++        assert!(
++            c.changes_dir().join("my-feature").is_dir(),
++            "change directory must still be active"
++        );
++        assert!(
++            !c.changes_dir().join("archive").exists(),
++            "nothing should have been moved"
++        );
++        assert_eq!(std::fs::read_to_string(spec_path).unwrap(), CANONICAL_SPEC);
++    }
++
++    #[test]
++    fn archive_errors_on_removed_and_renamed_missing_requirements() {
++        for (kind, delta, expected) in [
++            (
++                "removed",
++                "## REMOVED Requirements\n\n### Requirement: Missing\n\nold\n",
++                "cannot REMOVE requirement 'Missing'",
++            ),
++            (
++                "renamed",
++                "## RENAMED Requirements\n- FROM: `### Requirement: Missing`\n- TO: `### Requirement: New`\n",
++                "cannot RENAME requirement 'Missing'",
++            ),
++        ] {
++            let tmp = TempDir::new();
++            let c = cfg(&tmp);
++            write(&c.specs_dir().join("my-cap").join("spec.md"), CANONICAL_SPEC);
++            change::create(&c, "my-feature").unwrap();
++            write(
++                &c.changes_dir()
++                    .join("my-feature")
++                    .join("specs")
++                    .join("my-cap")
++                    .join("spec.md"),
++                delta,
++            );
++
++            let err = archive(&c, "my-feature", false, false).unwrap_err();
++
++            assert!(
++                err.to_string().contains(expected),
++                "{kind} conflict should name the missing requirement, got: {err}"
++            );
++            assert!(c.changes_dir().join("my-feature").is_dir());
++            assert!(!c.changes_dir().join("archive").exists());
++        }
++    }
++
++    #[test]
++    fn archive_errors_on_an_added_requirement_that_already_exists() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            CANONICAL_SPEC,
++        );
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## ADDED Requirements\n\n### Requirement: Second\n\nnew duplicate\n",
+         );
+ 
+         let err = archive(&c, "my-feature", false, false).unwrap_err();
+-        assert!(err.to_string().contains("--skip-specs"));
++
++        assert!(err
++            .to_string()
++            .contains("capability 'my-cap': cannot ADD requirement 'Second'"));
++        assert!(c.changes_dir().join("my-feature").is_dir());
++        assert!(!c.changes_dir().join("archive").exists());
++    }
++
++    #[test]
++    fn archive_matches_requirement_headers_with_collapsed_whitespace() {
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        write(
++            &c.specs_dir().join("my-cap").join("spec.md"),
++            "# my-cap Specification\n\n## Requirements\n\n### Requirement: Session Expiration\n\nold\n",
++        );
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            "## MODIFIED Requirements\n\n### Requirement:   Session    Expiration  \n\nnew\n",
++        );
++
++        archive(&c, "my-feature", false, false).unwrap();
++
++        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
++        assert!(spec.contains("### Requirement:   Session    Expiration  \n\nnew"));
++        assert!(!spec.contains("\nold\n"));
+     }
+ 
+     #[test]
+diff --git a/crates/spectra-core/src/init.rs b/crates/spectra-core/src/init.rs
+index 1ce8e7c..1fef211 100644
+--- a/crates/spectra-core/src/init.rs
++++ b/crates/spectra-core/src/init.rs
+@@ -17,6 +17,7 @@ const GITIGNORE_ENTRY: &str = ".spectra/";
+ pub struct InitOutcome {
+     pub root: PathBuf,
+     pub spec_dir: String,
++    pub adopted: bool,
+     /// Whether `.gitignore` was created or appended to. `false` when the
+     /// entry was already present (e.g. a hand-written `.gitignore`).
+     pub gitignore_updated: bool,
+@@ -38,6 +39,18 @@ pub struct InitOutcome {
+ /// no way to retry — every subsequent `init` would immediately bail with
+ /// "already initialized" instead of finishing the interrupted work.
+ pub fn init(root: &Path) -> Result<InitOutcome> {
++    init_with_options(root, false)
++}
++
++/// Variant of [`init`] that can adopt an existing OpenSpec-style project.
++///
++/// Plain `init` keeps its original "fresh project" contract. `adopt` is the
++/// explicit compatibility path for a root that already has OpenSpec content:
++/// it only creates the two required directories if missing, ensures
++/// `.spectra/` is ignored, and writes `.spectra.yaml` last. It deliberately
++/// does not touch `project.md`, `AGENTS.md`, `config.yaml`, or any existing
++/// change/spec content under the spec directory.
++pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
+     if Config::is_initialized(root) {
+         anyhow::bail!(
+             "already initialized ({} exists)",
+@@ -45,10 +58,14 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
+         );
+     }
+ 
+-    let spec_dir = DEFAULT_SPEC_DIR;
+-    std::fs::create_dir_all(root.join(spec_dir).join("changes"))
++    let spec_dir = if adopt {
++        detect_adopt_spec_dir(root)?
++    } else {
++        DEFAULT_SPEC_DIR.to_string()
++    };
++    std::fs::create_dir_all(root.join(&spec_dir).join("changes"))
+         .with_context(|| format!("creating {spec_dir}/changes"))?;
+-    std::fs::create_dir_all(root.join(spec_dir).join("specs"))
++    std::fs::create_dir_all(root.join(&spec_dir).join("specs"))
+         .with_context(|| format!("creating {spec_dir}/specs"))?;
+ 
+     let gitignore_updated = ensure_gitignore_entry(root)?;
+@@ -61,11 +78,32 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
+ 
+     Ok(InitOutcome {
+         root: root.to_path_buf(),
+-        spec_dir: spec_dir.to_string(),
++        spec_dir,
++        adopted: adopt,
+         gitignore_updated,
+     })
+ }
+ 
++fn detect_adopt_spec_dir(root: &Path) -> Result<String> {
++    let candidate = root.join(DEFAULT_SPEC_DIR);
++    // Only the default `openspec` directory name is probed today. The probes
++    // still matter because they surface real I/O errors (for example,
++    // permission denied) before adoption scaffolding proceeds; configurable
++    // spec-dir discovery is future work.
++    let _ = is_dir(&candidate)?;
++    let _ = is_dir(&candidate.join("changes"))?;
++    let _ = is_dir(&candidate.join("specs"))?;
++    Ok(DEFAULT_SPEC_DIR.to_string())
++}
++
++fn is_dir(path: &Path) -> Result<bool> {
++    match std::fs::metadata(path) {
++        Ok(m) => Ok(m.is_dir()),
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
++        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
++    }
++}
++
+ /// Append [`GITIGNORE_ENTRY`] to `.gitignore` as its own line, unless a line
+ /// already matches it (ignoring surrounding whitespace). Creates the file if
+ /// it doesn't exist. Returns whether a write happened.
+@@ -334,6 +372,7 @@ mod tests {
+         let outcome = init(&tmp).unwrap();
+ 
+         assert_eq!(outcome.spec_dir, "openspec");
++        assert!(!outcome.adopted);
+         assert!(tmp.join(".spectra.yaml").is_file());
+         assert!(tmp.join("openspec/changes").is_dir());
+         assert!(tmp.join("openspec/specs").is_dir());
+@@ -351,6 +390,60 @@ mod tests {
+         assert!(err.to_string().contains("already initialized"));
+     }
+ 
++    #[test]
++    fn init_adopt_preserves_existing_openspec_content() {
++        let tmp = TempDir::new();
++        let project = tmp.join("openspec/project.md");
++        let spec = tmp.join("openspec/specs/search/spec.md");
++        std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
++        std::fs::write(&project, "# Existing project\n\nDo not touch.\n").unwrap();
++        std::fs::write(
++            &spec,
++            "# Search Specification\n\n## Requirements\n\n### Requirement: Search\n\nExisting.\n",
++        )
++        .unwrap();
++
++        let outcome = init_with_options(&tmp, true).unwrap();
++
++        assert!(outcome.adopted);
++        assert_eq!(outcome.spec_dir, "openspec");
++        assert_eq!(
++            std::fs::read_to_string(&project).unwrap(),
++            "# Existing project\n\nDo not touch.\n"
++        );
++        assert_eq!(
++            std::fs::read_to_string(&spec).unwrap(),
++            "# Search Specification\n\n## Requirements\n\n### Requirement: Search\n\nExisting.\n"
++        );
++        assert_eq!(
++            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
++            "spec_dir: openspec\n"
++        );
++    }
++
++    #[test]
++    fn init_adopt_errors_when_already_initialized() {
++        let tmp = TempDir::new();
++        init(&tmp).unwrap();
++
++        let err = init_with_options(&tmp, true).unwrap_err();
++
++        assert!(err.to_string().contains("already initialized"));
++    }
++
++    #[test]
++    fn init_adopt_on_empty_dir_creates_the_default_skeleton() {
++        let tmp = TempDir::new();
++
++        let outcome = init_with_options(&tmp, true).unwrap();
++
++        assert!(outcome.adopted);
++        assert_eq!(outcome.spec_dir, "openspec");
++        assert!(tmp.join("openspec/changes").is_dir());
++        assert!(tmp.join("openspec/specs").is_dir());
++        assert!(tmp.join(".spectra.yaml").is_file());
++    }
++
+     #[test]
+     fn init_creates_gitignore_with_spectra_entry_when_missing() {
+         let tmp = TempDir::new();
+diff --git a/crates/spectra-core/tests/init_integration.rs b/crates/spectra-core/tests/init_integration.rs
+index 9fe55a3..9e41b8c 100644
+--- a/crates/spectra-core/tests/init_integration.rs
++++ b/crates/spectra-core/tests/init_integration.rs
+@@ -87,3 +87,20 @@ fn init_is_idempotent_refusal_not_silent_reinit() {
+     let err = init::init(&root).unwrap_err();
+     assert!(err.to_string().contains("already initialized"));
+ }
++
++#[test]
++fn init_adopt_then_list_specs_sees_preexisting_capability() {
++    let root = TempDir::new("adopt-list");
++    std::fs::create_dir_all(root.join("openspec/specs/search")).unwrap();
++    std::fs::write(
++        root.join("openspec/specs/search/spec.md"),
++        "# Search Specification\n\n## Purpose\n\nExisting.\n",
++    )
++    .unwrap();
++
++    let outcome = init::init_with_options(&root, true).unwrap();
++
++    assert!(outcome.adopted);
++    let cfg = Config::load(&root).unwrap();
++    assert_eq!(spectra_core::spec::list(&cfg).unwrap(), vec!["search"]);
++}
+diff --git a/docs/openspec-compat.md b/docs/openspec-compat.md
+new file mode 100644
+index 0000000..d702c56
+--- /dev/null
++++ b/docs/openspec-compat.md
+@@ -0,0 +1,192 @@
++# OpenSpec ecosystem compatibility
++
++Can OpenSpectra run **directly** on a real [Fission-AI
++OpenSpec](https://github.com/Fission-AI/OpenSpec) project? This is the
++"format difference investigation" deliverable of Phase 2 (issue #26): a
++difference matrix between OpenSpec's on-disk conventions and OpenSpectra's
++model, plus the concrete compatibility work that matrix implies.
++
++> **Sources.** OpenSpec conventions are quoted from the OpenSpec repo's own
++> canonical spec (`openspec/specs/openspec-conventions/spec.md`) and
++> `docs/concepts.md` at `Fission-AI/OpenSpec@main` (fetched 2026-07). Where a
++> detail could not be confirmed from those, it's marked *unconfirmed*.
++> OpenSpectra behavior is from this repo's source and the
++> `docs/reverse-engineering/` write-ups.
++
++## OpenSpec's on-disk layout (canonical)
++
++From `openspec-conventions/spec.md`, "Requirement: Project Structure":
++
++```
++openspec/
++├── project.md              # Project-specific context
++├── AGENTS.md               # AI assistant instructions
++├── config.yaml             # OpenSpec CLI config (newer versions)
++├── specs/                  # Current deployed capabilities
++│   └── [capability]/
++│       ├── spec.md         # WHAT and WHY
++│       └── design.md       # HOW (optional)
++└── changes/                # Proposed changes
++    ├── [change-name]/
++    │   ├── proposal.md
++    │   ├── tasks.md
++    │   ├── design.md       # optional
++    │   └── specs/
++    │       └── [capability]/
++    │           └── spec.md # delta against the canonical spec
++    └── archive/
++        └── YYYY-MM-DD-[change-name]/
++```
++
++Change directories may also carry a `.openspec.yaml` metadata file — it
++appears in real OpenSpec change dirs but is **optional** (not every change
++has one).
++
++## Difference matrix
++
++Legend: **✅ compatible** (works as-is), **🔧 adapt** (OpenSpectra needs a
++small change), **➕ spectra-only** (OpenSpectra adds this; OpenSpec projects
++won't have it).
++
++| Concern | OpenSpec | OpenSpectra (before #26) | Verdict |
++|---|---|---|---|
++| Spec dir name | `openspec/` | `spec_dir`, defaults to `openspec` | ✅ compatible |
++| Root config | `openspec/config.yaml`, `project.md`, `AGENTS.md` — **no `.spectra.yaml`** | requires `.spectra.yaml` at root; every command bails `Not initialized` without it | 🔧 adapt — `init --adopt` |
++| Change layout | `changes/<name>/{proposal,tasks,design?,specs/<cap>/spec.md}` | identical | ✅ compatible |
++| Change metadata | optional `.openspec.yaml` | read via `ChangeMetadata` (`serde(flatten)` keeps unknown keys; absence → default) | ✅ compatible |
++| Canonical spec | `specs/<cap>/spec.md` with `## Purpose` / `## Requirements` / `### Requirement:` / `#### Scenario:` | same headers parsed by `archive`/`spec` | ✅ compatible |
++| Scenario bullets | `- **WHEN**` / `- **THEN**` (conventions spec) — also plain `- GIVEN/WHEN/THEN` in some docs | not parsed by `archive` (ADDED copies blocks verbatim); `drift` anchor extraction reads prose | ✅ compatible for archive |
++| Delta: `## ADDED Requirements` | append new requirement blocks | implemented (append into `## Requirements`, trace footer) | ✅ compatible |
++| Delta: `## MODIFIED Requirements` | replace existing requirement by header match | **rejected with an error**, asks for `--skip-specs` | 🔧 adapt — implement |
++| Delta: `## REMOVED Requirements` | delete existing requirement by header match | **rejected with an error** | 🔧 adapt — implement |
++| Delta: `## RENAMED Requirements` | `- FROM:`/`- TO:` header rename | **rejected with an error** | 🔧 adapt — implement |
++| Archive destination | `changes/archive/YYYY-MM-DD-<name>/` | identical | ✅ compatible |
++| Per-change sidecar state | none | `.spectra/changes/<name>.{started,parked}`, `.spectra/touched/<name>.json` | ➕ spectra-only |
++| `.spectra/` in `.gitignore` | n/a | `init` ensures the entry | ➕ spectra-only |
++
++### Key finding
++
++The only *blocking* incompatibilities are two, both in this matrix as 🔧:
++
++1. **No root `.spectra.yaml`.** An OpenSpec project has `openspec/` but no
++   `.spectra.yaml`, so `find_root`/`Config::is_initialized` never recognize
++   it and every command bails with `Not initialized`. Fixed by
++   **`spectra init --adopt`** (below).
++2. **Only `## ADDED Requirements` deltas archive.** OpenSpec's normal
++   workflow produces MODIFIED/REMOVED/RENAMED deltas, which `archive`
++   currently rejects outright. This is a compatibility *necessity*, not a
++   nice-to-have — an OpenSpec user archiving a real change will hit it
++   immediately. Fixed by **delta application** (below).
++
++Everything else is either already compatible or additive state OpenSpectra
++writes under `.spectra/` (git-ignored, invisible to OpenSpec tooling).
++
++## Compatibility work implied
++
++### 1. `spectra init --adopt`
++
++`init --adopt` recognizes an existing `openspec/` (or other) spec directory
++and makes OpenSpectra usable on it **without touching any OpenSpec content**:
++
++- Auto-detect the spec dir: prefer an existing `openspec/` that already
++  contains `changes/` and/or `specs/`; otherwise fall back to the default.
++- Write `.spectra.yaml` (`spec_dir: <detected>`) — the one file OpenSpectra
++  needs and OpenSpec doesn't have.
++- Ensure `.spectra/` is in `.gitignore` (same as plain `init`).
++- **Non-destructive:** never create/overwrite `project.md`, `AGENTS.md`,
++  `config.yaml`, or any `changes/`/`specs/` content. Unlike plain `init`
++  (which errors if the spec dirs are absent-then-created), `--adopt` succeeds
++  precisely *because* the directories already exist.
++
++Plain `init` on a directory that already has `openspec/` content still errors
++(unchanged); `--adopt` is the explicit "I know there's existing content,
++wire OpenSpectra into it" path.
++
++### 2. Archive: MODIFIED / REMOVED / RENAMED delta application
++
++The authoritative algorithm, verbatim from `openspec-conventions/spec.md`
++("Requirement: Archive Process Enhancement"):
++
++> the archive command SHALL:
++> 1. Parse RENAMED sections first and apply renames
++> 2. Parse REMOVED sections and remove by normalized header match
++> 3. Parse MODIFIED sections and replace by normalized header match (using new names if renamed)
++> 4. Parse ADDED sections and append new requirements
++> - AND validate that all MODIFIED/REMOVED headers exist in current spec
++> - AND validate that ADDED headers don't already exist
++
++Delta section formats (from `docs/concepts.md` and the conventions spec):
++
++```markdown
++## MODIFIED Requirements
++
++### Requirement: Session Expiration
++The system MUST expire sessions after 15 minutes of inactivity.
++(Previously: 30 minutes)
++
++#### Scenario: Idle timeout
++- **WHEN** 15 minutes pass without activity
++- **THEN** the session is invalidated
++
++## REMOVED Requirements
++
++### Requirement: Remember Me
++(Deprecated in favor of 2FA.)
++
++## RENAMED Requirements
++- FROM: `### Requirement: Old Name`
++- TO: `### Requirement: New Name`
++```
++
++Semantics OpenSpectra adopts:
++
++- **Requirement block** = from a `### Requirement: <name>` line up to (but
++  not including) the next `### Requirement:` or the next `## ` section header
++  (or end of file) — the same block-boundary rule ADDED already uses.
++- **Normalized header match:** compare requirement names trimmed of
++  surrounding whitespace and collapsed internal whitespace, so
++  `### Requirement:  Session   Expiration ` matches
++  `### Requirement: Session Expiration`.
++- **RENAMED** rewrites the matched block's header from the FROM name to the
++  TO name (content untouched); subsequent MODIFIED referencing the TO name
++  then applies.
++- **MODIFIED** replaces the entire matched block with the delta's block
++  (verbatim, including any `(Previously: …)` line — OpenSpec keeps it as
++  human-facing provenance).
++- **REMOVED** deletes the matched block.
++- **Validation before any move** (mirrors the existing ADDED pre-move
++  validation): a MODIFIED/REMOVED/RENAMED-FROM header that doesn't exist in
++  the canonical spec, or an ADDED header that already does, is a conflict —
++  error out naming the capability and requirement, leaving the change
++  active and untouched. This matches OpenSpec's "report specific conflicts,
++  require manual resolution" behavior.
++
++`--skip-specs` remains the escape hatch for anything the user wants to apply
++by hand.
++
++#### Divergence from the reverse-engineered oracle
++
++`docs/reverse-engineering/archive.md` records that the **closed-source
++`Spectra.app` oracle's** exact MODIFIED/REMOVED/RENAMED behavior was never
++captured (no golden samples), which is why OpenSpectra originally *rejected*
++those deltas rather than guess. This change implements them against the
++**OpenSpec published convention** instead — the right source of truth for the
++Phase 2 goal ("run on a real OpenSpec project"). The two may differ in
++edge-case wording or the `code:`/trace-footer treatment of
++modified/renamed blocks; where they do, OpenSpec compatibility wins and the
++divergence is noted in `archive.md`. If an oracle sample ever surfaces that
++contradicts this, `archive.md` is the place to reconcile it.
++
++## Verification
++
++- `crates/spectra-cli/tests/openspec_compat.rs` runs the full
++  `init --adopt → list → drift → archive` flow against a **vendored fixture**
++  that mirrors a real OpenSpec project (root `openspec/` with `project.md`,
++  no `.spectra.yaml`, canonical specs, and a change carrying ADDED +
++  MODIFIED + REMOVED + RENAMED deltas), asserting no panic and that the
++  canonical specs end up correctly merged.
++- Optional future CI job: install the OpenSpec CLI (npm), scaffold a real
++  project with it, and run every OpenSpectra command against it. Deferred —
++  the vendored fixture covers the format contract without a Node toolchain in
++  CI.
++```
+diff --git a/docs/reverse-engineering/archive.md b/docs/reverse-engineering/archive.md
+index a211187..c782d6c 100644
+--- a/docs/reverse-engineering/archive.md
++++ b/docs/reverse-engineering/archive.md
+@@ -70,12 +70,9 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
+ 5. Unless `--skip-specs`: for each `specs/<capability>/spec.md` under the
+    (now-moved) change, merge its delta into
+    `<spec_dir>/specs/<capability>/spec.md`, then print
+-   `Specs applied: <capability> (added: N, modified: 0, removed: 0, renamed: 0)`
+-   per capability — `modified`/`removed`/`renamed` are always `0` since
+-   those delta kinds are rejected before archiving reaches this point (see
+-   validation below), not a claim they're supported. The oracle also prints
+-   "Snapshot created for unarchive support." — **not implemented**; see
+-   "Known limitations" below.
++   `Specs applied: <capability> (added: N, modified: N, removed: N, renamed: N)`
++   per capability. The oracle also prints "Snapshot created for unarchive
++   support." — **not implemented**; see "Known limitations" below.
+ 6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
+    markers **and** its `.spectra/touched/<name>.json` tracking file, if any
+    (best-effort; a failure here only warns, since archiving itself already
+@@ -89,7 +86,7 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
+    its trace footer to files touched by the *previous*, already-archived
+    change of the same name.
+ 
+-## Spec delta format (and OpenSpectra's narrowed scope)
++## Spec delta format
+ 
+ A change's own `specs/<cap>/spec.md` is a *delta* against the canonical
+ `<spec_dir>/specs/<cap>/spec.md`, using section headers to mean:
+@@ -157,28 +154,42 @@ sorted — a reasonable, self-consistent choice given the infrastructure
+ already exists for exactly this purpose, but **not verified against the
+ oracle**. `code: []` when no touched-file data exists for the change.
+ 
+-**MODIFIED/REMOVED/RENAMED are not implemented.** Applying those correctly
+-means locating a specific existing requirement in the canonical spec by name
+-and replacing/deleting/renaming it — a materially different, more complex
+-operation than ADDED's pure append, and genuinely under-observed (only one
+-golden sample per header would be needed to nail down the exact behavior,
+-but doing so for all three, plus their interaction with the same-named
+-duplicate-append quirk ADDED itself has, was out of scope for this pass).
+-`spectra archive` errors when the delta contains any of these three headers,
+-naming the offending capability and instructing the user to re-run with
+-`--skip-specs` and apply that spec change by hand:
++OpenSpectra Phase 2 implements `MODIFIED`, `REMOVED`, and `RENAMED` against
++the **OpenSpec published convention** recorded in `docs/openspec-compat.md`,
++not against a golden oracle sample. No oracle samples were captured for
++these delta kinds, so the closed-source reference could still diverge in edge
++cases such as trace-footer handling or conflict wording. For Phase 2, the
++OpenSpec convention is the compatibility target.
+ 
+-```
+-capability '<cap>': <MODIFIED|REMOVED|RENAMED> requirement deltas aren't supported yet -- re-run with --skip-specs and apply this spec change by hand
+-```
++Application order is:
+ 
+-This validation runs **before** the change directory is moved (a
+-self-caught bug during manual E2E testing: the original implementation
+-validated *after* the move, so a MODIFIED-delta error left the change
+-stuck half-archived — directory already gone from the active list, but
+-never actually fully archived, with no easy way back short of manually
+-moving the directory back). Validating first means the change is left
+-exactly as it was on any spec-format error.
++1. `RENAMED Requirements`: parse `- FROM: ` / `- TO: ` bullet pairs whose
++   values are backticked full `### Requirement: <name>` headers. The matched
++   canonical requirement block's header line is rewritten to the TO name;
++   the block body is otherwise untouched. A FROM without a following TO, or
++   a TO without a preceding FROM, is an error naming the capability.
++2. `REMOVED Requirements`: delete each matching canonical requirement block.
++3. `MODIFIED Requirements`: replace each matching canonical requirement block
++   with the delta's block verbatim, including any `(Previously: ...)` line.
++4. `ADDED Requirements`: append new requirement blocks using the existing
++   insertion-point and trace-footer behavior described above.
++
++A requirement block runs from a `### Requirement:` header up to, but not
++including, the next `### Requirement:` header, the next `## ` section header,
++or EOF. Requirement names are matched case-sensitively after trimming
++leading/trailing whitespace and collapsing internal whitespace runs to a
++single space. This keeps OpenSpectra's existing case-sensitive section and
++requirement-header behavior while tolerating hand-written spacing differences.
++
++Spec validation still runs **before** the change directory is moved. During
++validation OpenSpectra computes the full merged result in memory using the
++same RENAMED → REMOVED → MODIFIED → ADDED order that archive later writes.
++A missing MODIFIED/REMOVED/RENAMED-FROM target, a RENAMED-TO name that already
++exists in the canonical spec, or an ADDED requirement that already exists after
++the earlier operations, is a conflict and leaves the change active and unmoved.
++ADDED-only deltas may create a previously missing canonical
++`specs/<cap>/spec.md`; MODIFIED/REMOVED/RENAMED against a missing canonical spec
++are conflicts because there is nothing to match.
+ 
+ ## Known limitations
+ 
+@@ -193,13 +204,11 @@ Tasks-collision detection.
+   archive today means manually moving the directory back and reverting
+   `.openspec.yaml`/the canonical spec by hand (or via `git revert`, since
+   archiving isn't its own commit).
+-- **MODIFIED/REMOVED/RENAMED spec deltas** — see above.
+ - **`code:` trace provenance** — see above.
+ - **Section-header matching is case-sensitive.** `## ADDED Requirements`,
+   `## MODIFIED Requirements`, `## Requirements`, and `## Purpose` are matched
+   with their exact reference casing. A hand-written delta using different
+-  casing (e.g. `## modified requirements`) matches none of these patterns,
+-  so it's silently treated as a no-op section rather than either being
+-  applied or hitting the `--skip-specs` error path the correctly-cased
+-  header would trigger — no oracle sample exists to confirm the reference
+-  CLI's actual casing sensitivity, so this wasn't changed speculatively.
++  casing (e.g. `## modified requirements`) matches none of these patterns
++  and is treated as a no-op section — no oracle sample exists to confirm the
++  reference CLI's actual casing sensitivity, so this wasn't changed
++  speculatively.
+diff --git a/docs/reverse-engineering/init.md b/docs/reverse-engineering/init.md
+index e33d38e..35c5714 100644
+--- a/docs/reverse-engineering/init.md
++++ b/docs/reverse-engineering/init.md
+@@ -23,7 +23,7 @@ against the closed-source reference.
+ ## CLI shape
+ 
+ ```
+-spectra init [--json]
++spectra init [--adopt] [--json]
+ ```
+ 
+ `init` is the only command that does **not** require
+@@ -56,9 +56,32 @@ init' first.` if `.spectra.yaml` is missing.
+      is currently always the `config::DEFAULT_SPEC_DIR` constant — there's no
+      `--spec-dir` flag yet)
+ 3. `--json` output: `{"root": "<absolute path>", "spec_dir": "openspec",
+-   "gitignore_updated": <bool>}`. `gitignore_updated` reflects whether step 2
++   "adopted": <bool>, "gitignore_updated": <bool>}`. `adopted` is `false`
++   for this plain init path. `gitignore_updated` reflects whether step 2
+    actually wrote to `.gitignore` (`false` when an entry was already present).
+ 
++## OpenSpectra Phase 2 addition: `--adopt`
++
++`spectra init --adopt` is an OpenSpectra compatibility addition for real
++OpenSpec projects, documented in `docs/openspec-compat.md`. It is still not
++oracle-verified against `Spectra.app`; it exists because OpenSpec projects
++have `openspec/` content but no root `.spectra.yaml`, while every
++OpenSpectra command uses `.spectra.yaml` to find and load the project.
++
++Adopt mode keeps the same already-initialized refusal: if `.spectra.yaml`
++exists, it fails with an error containing `already initialized` and touches
++nothing else. Otherwise it detects the spec dir by probing only the default
++`openspec/` name: if that directory exists and contains `changes/` and/or
++`specs/`, `spec_dir` is `openspec`; otherwise it falls back to the default
++`openspec` name and creates the normal directory skeleton.
++
++Adopt mode is deliberately non-destructive. It creates
++`openspec/changes/` and `openspec/specs/` with `create_dir_all`, ensures the
++`.spectra/` `.gitignore` entry, and writes `.spectra.yaml` last with
++`spec_dir: openspec\n`. It never creates or overwrites OpenSpec-owned
++`project.md`, `AGENTS.md`, `config.yaml`, existing changes, or existing
++canonical specs. Plain `spectra init` remains the fresh-project path.
++
+ ## Files produced (for future oracle comparison)
+ 
+ If a golden-oracle session for `init` ever becomes possible, compare against
+@@ -75,7 +98,5 @@ Open questions an oracle session would need to answer:
+ 
+ - Does the reference CLI print a human-readable confirmation message, and if
+   so, what's its exact wording?
+-- Does it support adopting an existing (non-Spectra) project layout, or is
+-  that purely an OpenSpectra Phase 2 addition (`init --adopt`)?
+ - Is `spec_dir` ever anything other than `openspec` by default, or
+   configurable via a flag?

@@ -126,9 +126,31 @@ fn adopt_list_drift_and_archive_a_vendored_openspec_project() {
     .unwrap();
     assert!(spec.contains("### Requirement: Device Trust"));
     assert!(spec.contains("The system MUST expire sessions after 15 minutes of inactivity."));
+    // MODIFIED replaces the whole block: the superseded requirement statement
+    // and its old scenario must be gone. (The delta's own `(Previously: 30
+    // minutes)` provenance line legitimately survives -- that's OpenSpec's
+    // human-facing record of what changed, not stale requirement text.)
+    assert!(
+        !spec.contains("MUST expire sessions after 30 minutes"),
+        "superseded requirement statement must be gone, got:\n{spec}"
+    );
+    assert!(
+        !spec.contains("30 minutes pass without user activity"),
+        "superseded scenario must be gone, got:\n{spec}"
+    );
     assert!(!spec.contains("### Requirement: Remember Me"));
     assert!(spec.contains("### Requirement: Session Audit Trail"));
     assert!(!spec.contains("### Requirement: Legacy Audit Log"));
+    // Every surviving requirement header must remain at the start of its own
+    // line. The MODIFIED-glue regression would otherwise concatenate the header
+    // following the modified "Session Expiration" block onto its last line,
+    // silently dropping it from `^### Requirement:` parsing.
+    for header in ["Device Trust", "Session Expiration", "Session Audit Trail"] {
+        assert!(
+            spec.contains(&format!("\n### Requirement: {header}")),
+            "{header} must remain line-anchored after the merge, got:\n{spec}"
+        );
+    }
 
     assert!(!root
         .join("openspec")

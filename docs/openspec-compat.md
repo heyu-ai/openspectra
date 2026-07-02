@@ -85,22 +85,28 @@ writes under `.spectra/` (git-ignored, invisible to OpenSpec tooling).
 
 ### 1. `spectra init --adopt`
 
-`init --adopt` recognizes an existing `openspec/` (or other) spec directory
-and makes OpenSpectra usable on it **without touching any OpenSpec content**:
+`init --adopt` makes OpenSpectra usable on an existing `openspec/` project
+**without touching any OpenSpec content**:
 
-- Auto-detect the spec dir: prefer an existing `openspec/` that already
-  contains `changes/` and/or `specs/`; otherwise fall back to the default.
-- Write `.spectra.yaml` (`spec_dir: <detected>`) — the one file OpenSpectra
-  needs and OpenSpec doesn't have.
+- Spec dir is `openspec` (the default). `--adopt` does **not** inspect the
+  directory's contents to pick a different name — configurable spec-dir
+  discovery is future work. The one content check it does make is a guard: if
+  `openspec` already exists as a *file* (not a directory), adoption fails with a
+  clear message instead of a generic downstream `create_dir_all` error.
+- Write `.spectra.yaml` (`spec_dir: openspec`) — the one file OpenSpectra needs
+  and an OpenSpec project doesn't have.
 - Ensure `.spectra/` is in `.gitignore` (same as plain `init`).
-- **Non-destructive:** never create/overwrite `project.md`, `AGENTS.md`,
-  `config.yaml`, or any `changes/`/`specs/` content. Unlike plain `init`
-  (which errors if the spec dirs are absent-then-created), `--adopt` succeeds
-  precisely *because* the directories already exist.
+- **Non-destructive:** create `openspec/{changes,specs}/` only if missing
+  (idempotent `create_dir_all`), and never create or overwrite `project.md`,
+  `AGENTS.md`, `config.yaml`, or any existing `changes/`/`specs/` content.
 
-Plain `init` on a directory that already has `openspec/` content still errors
-(unchanged); `--adopt` is the explicit "I know there's existing content,
-wire OpenSpectra into it" path.
+Mechanically, plain `init` and `--adopt` do the same filesystem work — both
+create the two directories idempotently and both refuse only when
+`.spectra.yaml` already exists. `--adopt` differs in **intent and messaging**:
+it signals "wire OpenSpectra into a project that already has OpenSpec content"
+and reports `Adopted …` rather than `Initialized …`. (Plain `init` on a dir
+that already has `openspec/` content but no `.spectra.yaml` therefore also
+succeeds; `--adopt` is the explicit, self-documenting way to do it.)
 
 ### 2. Archive: MODIFIED / REMOVED / RENAMED delta application
 
