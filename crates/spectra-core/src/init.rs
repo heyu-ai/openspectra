@@ -116,6 +116,17 @@ fn read_gitignore(path: &Path) -> Result<String> {
 /// disproportionate for a few bytes of config) -- but a `.spectra.yaml`
 /// corrupted by that rarer case is still a clean two-step recovery: delete
 /// it and re-run `spectra init` (see [`Config::load`]'s parse-error hint).
+///
+/// If `path` is a symlink, the rename replaces the link itself with a
+/// regular file rather than writing through to its target -- not handled
+/// specially, since this CLI has no evidence of needing to support a
+/// symlinked `.gitignore`/`.spectra.yaml` (e.g. a dotfile manager) and doing
+/// so isn't a data-loss risk (the correct content still lands, just not at
+/// the symlink's target).
+///
+/// On failure, the temp file is removed on a best-effort basis; if that
+/// cleanup itself also fails, the original error is still what's returned,
+/// with the cleanup failure logged to stderr rather than silently dropped.
 fn write_atomically(path: &Path, contents: &str) -> Result<()> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -127,14 +138,27 @@ fn write_atomically(path: &Path, contents: &str) -> Result<()> {
     let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
 
     if let Err(e) = std::fs::write(&tmp_path, contents) {
-        let _ = std::fs::remove_file(&tmp_path);
+        cleanup_temp_file(&tmp_path);
         return Err(e).with_context(|| format!("writing {}", tmp_path.display()));
     }
     if let Err(e) = std::fs::rename(&tmp_path, path) {
-        let _ = std::fs::remove_file(&tmp_path);
+        cleanup_temp_file(&tmp_path);
         return Err(e).with_context(|| format!("renaming {} into place", tmp_path.display()));
     }
     Ok(())
+}
+
+/// Best-effort removal of a `write_atomically` temp file after its write or
+/// rename step failed. The primary error is always what the caller returns;
+/// this only logs (rather than silently dropping) a secondary failure here,
+/// so a double-fault doesn't vanish without a trace.
+fn cleanup_temp_file(tmp_path: &Path) {
+    if let Err(e) = std::fs::remove_file(tmp_path) {
+        eprintln!(
+            "warning: failed to clean up temp file {}: {e}",
+            tmp_path.display()
+        );
+    }
 }
 
 #[cfg(test)]

@@ -64,5 +64,5 @@
 - [x] T051 [P] README 檢視：補 `init`、`list --changes`，移除過期的 "not yet implemented" 提示 — target: `README.md`
 - [x] T052 全量驗證四指令全綠（C2）：`cargo fmt --all -- --check` / `cargo clippy --all-targets -- -D warnings` / `cargo build --release --locked` / `cargo test --all`
 - [x] T053 手動 e2e（SMK-001）：release binary 空 git repo `init → new change → task done → drift → archive` 全流程，severity light、exit 0
-- [x] T054 Commit 拆分（C3）：`docs(openspec)` / `feat(init)` / `feat(list)` / `fix(tests)` / `style` / `ci` / `docs(init)` 獨立 commit；多行 commit message 用 `git commit -F <file>`；author email `2318485+howie@users.noreply.github.com`
+- [x] T054 Commit 拆分（C3）：commit type 包含但不限於 `docs(openspec)` / `feat(init)` / `feat(list)` / `fix(tests)` / `style` / `ci` / `docs(init)`（後續 mob review 修復輪次另加數個 `fix(init)` commit：`78a655a`、`d773318`、`d4255b8`，見 PR #23 review 留言）；多行 commit message 用 `git commit -F <file>`；author email `2318485+howie@users.noreply.github.com`
 - [ ] T055 Push（explicit refspec：`git push origin worktree-phase1-usability:worktree-phase1-usability`）+ 更新既有 draft PR #23（PR body 對照 US-001~004 逐項說明 + 驗證結果）；勿 merge

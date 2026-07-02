@@ -16,6 +16,8 @@
 | INIT-EP-001 | 已初始化回錯且不覆蓋 | EP | High (I5×L2) | `.spectra.yaml` 已存在 | Rust `init::tests::init_errors_when_already_initialized` + integration `init_is_idempotent_refusal_not_silent_reinit` | 既有 `.spectra.yaml` | 非零 exit；錯誤含 `already initialized`；既有檔內容 byte 不變 |
 | INIT-VL-004 | `--json` 輸出 shape 精確、無雜訊 | VL | Medium (I3×L3) | 空目錄 | Rust `tests::init_json_shape_matches_the_documented_contract`（spectra-cli）；解析 stdout 為 JSON | `spectra init --json` | stdout 為合法 JSON，key 恰為 `{root, spec_dir, gitignore_updated}`；`root` 為絕對路徑、`spec_dir="openspec"`、`gitignore_updated` 為 bool；無額外文字/多餘 key |
 | SMK-001 | init → new change → task done → drift 全流程 | ST | High (I5×L3) | 空 git repo，已 init | Rust integration `init_then_new_change_then_drift_runs_end_to_end` + 手動 release binary 全流程（→ archive） | 單一 change，全 task 完成 | 三（四）指令皆 exit 0；drift severity = `light` |
+| INIT-RB-001 | `write_atomically` rename 失敗時清理 temp 檔 | RB | Medium (I3×L2) | mob review round 3 發現的 orphaned temp file 風險 | Rust `init::tests::write_atomically_cleans_up_the_temp_file_when_rename_fails`：target 預先建為目錄，使 rename 失敗 | tmp 目錄含一個同名子目錄 | rename 失敗；目錄下不留 `<file>.tmp-<pid>-<seq>` 殘留 |
+| INIT-RB-002 | `init()`/`ensure_gitignore_entry` 的 call site 真的走 `write_atomically`，非退化成 plain write | RB | High (I4×L2) | mob review round 3 發現「revert call site 全測試仍綠」的漏測 | Rust `init::tests::init_gitignore_update_routes_through_write_atomically_not_a_plain_write`：root chmod `0o555`、`.gitignore` 已存在，區分 plain write（只需檔案自身寫入權限，會成功改內容）與 atomic write（需 root 目錄寫入權限建 temp 檔，會失敗且不動內容） | 既有 `.gitignore` 內容 `"target/\n"`，root 唯讀 | `init()` 回錯；`.spectra.yaml` 不存在；`.gitignore` 內容 byte 不變（若走 plain write 內容會被改掉，測試會抓到） |
 
 ### capability: list-changes-flag（US-002，已實作）
 

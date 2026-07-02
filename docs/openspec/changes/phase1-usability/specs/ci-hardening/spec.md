@@ -53,17 +53,14 @@ pre-existing 格式 diff 檔案（`anchors.rs`、`calibration.rs`、`config.rs`�
 **WHEN** PR 觸發 CI 執行 `cargo build --release --locked` 與
 `cargo test --all`
 **THEN** 系統 MUST 在 `ubuntu-latest` runner 上執行完整測試套件並回報全數
-通過（含 2 個 `#[cfg(target_os = "linux")]` 專屬測試，總數 131+）
+通過（含 2 個 `#[cfg(target_os = "linux")]` 專屬測試）
   AND 系統 MUST 在 `macos-latest` runner 上執行測試套件並回報全數通過
-（排除 2 個 linux-only 測試後，總數 129+，此差異視為預期行為）
-  AND 系統 MUST NOT 因平台間測試數量差異（129 vs 131）而將 macOS job
-標記為失敗
+（排除 2 個 linux-only 測試，此差異視為預期行為）
+  AND 系統 MUST NOT 因平台間測試數量差異而將 macOS job 標記為失敗
 
-**邊界值**（medium effort）：
-- macOS 測試通過數 = 128（少於預期 129）→ THEN 系統 SHALL 判定為失敗（非預期的測試流失）
-- macOS 測試通過數 = 129（linux-only 測試已正確排除）→ THEN 系統 SHALL 判定為通過
-- ubuntu 測試通過數 = 131（含 linux-only 測試）→ THEN 系統 SHALL 判定為通過
-- ubuntu 測試通過數 = 130（少於預期，遺漏 linux-only 測試被誤排除）→ THEN 系統 SHALL 判定為失敗
+**邊界值**（medium effort，用相對關係而非硬編絕對數字——絕對測試數會隨新增測試持續變動，見 testplan.md「Partially Covered」對此風險的說明）：
+- ubuntu 測試通過數 = macOS 測試通過數 + 2（linux-only 測試差額）→ THEN 系統 SHALL 判定為通過
+- ubuntu 測試通過數 ≠ macOS 測試通過數 + 2（差額不是預期的 2，代表某平台有非預期的測試流失）→ THEN 系統 SHALL 判定為失敗
 
 #### Scenario: macos-matrix-build-failure -- macOS 專屬編譯錯誤 MUST 阻擋合併
 

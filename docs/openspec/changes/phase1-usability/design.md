@@ -61,7 +61,7 @@ if !permission_denied_is_constructible(&path) {
 ```
 
 - **選 read-probe 而非 euid 檢查**：不需新增 `libc` dependency，且同時涵蓋 CAP_DAC_OVERRIDE 容器情境（euid != 0 但權限仍不 enforce）
-- helper 兩份小重複分住 touched.rs / archive.rs 測試模組（repo 慣例：測試住模組內，不為測試 helper 開共用模組）
+- helper 三份小重複分住 touched.rs / archive.rs / init.rs 測試模組（repo 慣例：測試住模組內，不為測試 helper 開共用模組）——touched.rs、archive.rs 兩份是本節描述的檔案級 read-probe（`std::fs::read(path).is_err()`）；`init.rs` 測試模組另有一份同名但語意不同的版本（探測*目錄*在 `chmod 0o555` 下是否仍接受新檔案寫入，用於驗證 `write_atomically` 的 call site 真的走了 temp-file+rename，而非探測單一檔案的讀取權限），該版本的 doc comment 已明確標註與此二份的差異，見 mob review round 4 finding
 - `archive.rs:1083`（`archive_preserves_the_underlying_error_cause_after_a_post_rename_failure`）chmod 的是 `.openspec.yaml`，探測同一檔案即可
 
 ## US-004 — `ci.yml` 目標結構（已實作）

@@ -610,7 +610,7 @@ fn run() -> Result<i32> {
             // already rejects it alongside --specs/--parked, so whenever it's
             // true the other two are false and cmd_list's default branch
             // (active changes) already produces the same output -- see
-            // design.md's list-changes-flag section.
+            // design.md's US-002 section.
             changes: _,
             specs,
             parked,
