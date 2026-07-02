@@ -1,5 +1,5 @@
-//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`,
-//! `task done`, `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `list`, `show`, `park`, `unpark`,
+//! `new change`, `task done`, `archive`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -11,7 +11,7 @@ use serde_json::json;
 
 use spectra_core::{change, config::Config, drift, spec};
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(
     name = "spectra",
     version,
@@ -25,8 +25,15 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Command {
+    /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/{changes,specs}/`,
+    /// and a `.spectra/` entry in `.gitignore`. Every other command requires
+    /// this to have run first.
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
     /// Detect drift between a change and the current codebase state.
     Drift {
         /// Change name (auto-detects if only one exists).
@@ -37,8 +44,9 @@ enum Command {
     },
     /// List active changes (or specs with --specs, or parked changes with --parked).
     List {
-        /// (not yet implemented) Filter to changes only.
-        #[arg(long)]
+        /// List active changes explicitly (the default when no filter flag
+        /// is given; mutually exclusive with --specs/--parked).
+        #[arg(long, conflicts_with_all = ["specs", "parked"])]
         changes: bool,
         /// List specs instead of changes.
         #[arg(long, conflicts_with = "parked")]
@@ -94,7 +102,7 @@ enum Command {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum NewTarget {
     /// Scaffold a new change directory (.openspec.yaml, proposal.md,
     /// design.md, tasks.md, and, when run inside a git repo with at least
@@ -107,7 +115,7 @@ enum NewTarget {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum TaskTarget {
     /// Mark a task as done and record touched files.
     Done {
@@ -139,6 +147,33 @@ fn require_initialized(root: &Path) -> Result<Config> {
         anyhow::bail!("Not initialized. Run 'spectra init' first.");
     }
     Config::load(root)
+}
+
+/// `--json` shape for `init`: pinned here (rather than inlined in
+/// `cmd_init`), matching `show_json`/`park_status_json`/`new_change_json`.
+fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
+    json!({
+        "root": outcome.root.to_string_lossy(),
+        "spec_dir": outcome.spec_dir,
+        "gitignore_updated": outcome.gitignore_updated,
+    })
+}
+
+fn cmd_init(root: &Path, as_json: bool) -> Result<i32> {
+    let outcome = spectra_core::init::init(root)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
+    } else {
+        println!(
+            "Initialized spectra project in {} (spec_dir: {}).",
+            outcome.root.display(),
+            outcome.spec_dir
+        );
+        if outcome.gitignore_updated {
+            println!("Added '.spectra/' to .gitignore.");
+        }
+    }
+    Ok(0)
 }
 
 fn cmd_drift(
@@ -565,15 +600,21 @@ fn run() -> Result<i32> {
     let root = find_root(&cwd);
 
     match &cli.command {
+        Command::Init { json } => cmd_init(&root, *json),
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
         }
         Command::List {
+            // `changes` is unused here on purpose: clap's `conflicts_with_all`
+            // already rejects it alongside --specs/--parked, so whenever it's
+            // true the other two are false and cmd_list's default branch
+            // (active changes) already produces the same output -- see
+            // design.md's US-002 section.
+            changes: _,
             specs,
             parked,
             json,
-            ..
         } => {
             let cfg = require_initialized(&root)?;
             cmd_list(&cfg, *specs, *parked, *json)
@@ -713,6 +754,58 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn list_changes_flag_conflicts_with_specs() {
+        let err = Cli::try_parse_from(["spectra", "list", "--changes", "--specs"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "expected --changes/--specs to be rejected as conflicting, got: {err}"
+        );
+    }
+
+    #[test]
+    fn list_changes_flag_conflicts_with_parked() {
+        let err = Cli::try_parse_from(["spectra", "list", "--changes", "--parked"]).unwrap_err();
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "expected --changes/--parked to be rejected as conflicting, got: {err}"
+        );
+    }
+
+    #[test]
+    fn list_changes_flag_parses_alone() {
+        let cli = Cli::try_parse_from(["spectra", "list", "--changes"]).unwrap();
+        match cli.command {
+            Command::List {
+                changes,
+                specs,
+                parked,
+                json,
+            } => {
+                assert!(changes);
+                assert!(!specs);
+                assert!(!parked);
+                assert!(!json);
+            }
+            _ => panic!("expected Command::List"),
+        }
+    }
+
+    #[test]
+    fn init_json_shape_matches_the_documented_contract() {
+        let outcome = spectra_core::init::InitOutcome {
+            root: PathBuf::from("/tmp/proj"),
+            spec_dir: "openspec".to_string(),
+            gitignore_updated: true,
+        };
+        let value = init_json(&outcome);
+        assert_eq!(value["root"], "/tmp/proj");
+        assert_eq!(value["spec_dir"], "openspec");
+        assert_eq!(value["gitignore_updated"], true);
     }
 
     #[test]

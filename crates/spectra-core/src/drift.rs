@@ -60,7 +60,12 @@ fn time_dimension(created: Option<&str>) -> Dimension {
             }
         },
     };
-    Dimension { kind: DimensionKind::Time, status, score, contributes_to_total: true }
+    Dimension {
+        kind: DimensionKind::Time,
+        status,
+        score,
+        contributes_to_total: true,
+    }
 }
 
 /// Run drift for an already-loaded change.
@@ -77,16 +82,28 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
         let anchors = anchors::extract(&design);
         let total = anchors.len();
         let tracked = git::ls_files(&cfg.root);
-        let resolver = Resolver { root: &cfg.root, tracked: &tracked };
+        let resolver = Resolver {
+            root: &cfg.root,
+            tracked: &tracked,
+        };
         let broken = resolver.broken(&anchors);
-        let decay = if total == 0 { 0.0 } else { broken.len() as f64 / total as f64 };
+        let decay = if total == 0 {
+            0.0
+        } else {
+            broken.len() as f64 / total as f64
+        };
         let status = format!("{}/{} anchors broken", broken.len(), total);
         // Structure score is category-weighted: broken CliFlags raise the score,
         // broken FilePaths only raise the decay band. See calibration::structure_score.
         let broken_cliflags = broken.iter().filter(|b| b.category == "CliFlag").count();
         let score = calibration::structure_score(broken.len(), broken_cliflags, total);
         (
-            Dimension { kind: DimensionKind::Structure, status, score, contributes_to_total: true },
+            Dimension {
+                kind: DimensionKind::Structure,
+                status,
+                score,
+                contributes_to_total: true,
+            },
             broken,
             decay,
         )

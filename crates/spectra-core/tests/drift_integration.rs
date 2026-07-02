@@ -37,13 +37,19 @@ fn drift_over_synthetic_repo_matches_recovered_rules() {
     git(&root, &["config", "user.email", "t@t.co"]);
     git(&root, &["config", "user.name", "t"]);
 
-    write(&root.join(".spectra.yaml"), "spec_dir: openspec\nlocale: tw\n");
+    write(
+        &root.join(".spectra.yaml"),
+        "spec_dir: openspec\nlocale: tw\n",
+    );
     // helper_fn is defined here so the Function anchor resolves; src/gone.rs is
     // referenced by the design but never created, so its FilePath anchor breaks.
     write(&root.join("src/lib.rs"), "pub fn helper_fn() {}\n");
 
     let cd = root.join("openspec/changes/synthetic-change");
-    write(&cd.join(".openspec.yaml"), "schema: spec-driven\ncreated: 2026-01-01\n");
+    write(
+        &cd.join(".openspec.yaml"),
+        "schema: spec-driven\ncreated: 2026-01-01\n",
+    );
     write(&cd.join("proposal.md"), "# proposal\n");
     write(&cd.join("tasks.md"), "- [x] 1.1 done\n");
     write(
@@ -58,7 +64,11 @@ fn drift_over_synthetic_repo_matches_recovered_rules() {
     let report = drift::analyze(&cfg, &ch).unwrap();
 
     // Broken anchors: the missing file plus both CLI flags (always "not in --help").
-    let mut broken: Vec<_> = report.broken_anchors.iter().map(|b| b.anchor.clone()).collect();
+    let mut broken: Vec<_> = report
+        .broken_anchors
+        .iter()
+        .map(|b| b.anchor.clone())
+        .collect();
     broken.sort();
     assert_eq!(broken, vec!["--json", "--verbose", "src/gone.rs"]);
 
@@ -75,7 +85,10 @@ fn drift_over_synthetic_repo_matches_recovered_rules() {
 
     // 60% decay exceeds the 30% threshold => heavy, regardless of run date.
     assert_eq!(report.severity, "heavy");
-    assert_eq!(report.primary_recommendation, "spectra archive synthetic-change --skip-specs");
+    assert_eq!(
+        report.primary_recommendation,
+        "spectra archive synthetic-change --skip-specs"
+    );
     assert_eq!(report.last_commit, None);
 
     let _ = std::fs::remove_dir_all(&root);

@@ -50,8 +50,10 @@ static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
 });
 static CLI_FLAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"--[a-z][a-z0-9-]+").unwrap());
-static SNAKE_FN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*_[a-z0-9_]+)\(").unwrap());
-static CAMEL_FN_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(").unwrap());
+static SNAKE_FN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*_[a-z0-9_]+)\(").unwrap());
+static CAMEL_FN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(").unwrap());
 static SYMBOL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[A-Z][a-zA-Z0-9]+\b").unwrap());
 
 /// Common Rust types / framework words excluded from Symbol anchors so the
@@ -74,18 +76,29 @@ pub fn extract(design: &str) -> Vec<Anchor> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<Anchor> = Vec::new();
 
-    let push = |text: String, kind: AnchorKind, seen: &mut HashSet<String>, out: &mut Vec<Anchor>| {
-        if seen.insert(text.clone()) {
-            out.push(Anchor { text, kind });
-        }
-    };
+    let push =
+        |text: String, kind: AnchorKind, seen: &mut HashSet<String>, out: &mut Vec<Anchor>| {
+            if seen.insert(text.clone()) {
+                out.push(Anchor { text, kind });
+            }
+        };
 
     // Most specific categories first so a string is claimed once.
     for m in FILE_PATH_RE.find_iter(design) {
-        push(m.as_str().to_string(), AnchorKind::FilePath, &mut seen, &mut out);
+        push(
+            m.as_str().to_string(),
+            AnchorKind::FilePath,
+            &mut seen,
+            &mut out,
+        );
     }
     for m in CLI_FLAG_RE.find_iter(design) {
-        push(m.as_str().to_string(), AnchorKind::CliFlag, &mut seen, &mut out);
+        push(
+            m.as_str().to_string(),
+            AnchorKind::CliFlag,
+            &mut seen,
+            &mut out,
+        );
     }
     for c in SNAKE_FN_RE.captures_iter(design) {
         push(c[1].to_string(), AnchorKind::Function, &mut seen, &mut out);
@@ -202,13 +215,19 @@ mod tests {
     #[test]
     fn extracts_cli_flags_anywhere() {
         let d = "prose --alpha and `--beta` and a fence has --gamma-flag too";
-        assert_eq!(kinds(d, AnchorKind::CliFlag), vec!["--alpha", "--beta", "--gamma-flag"]);
+        assert_eq!(
+            kinds(d, AnchorKind::CliFlag),
+            vec!["--alpha", "--beta", "--gamma-flag"]
+        );
     }
 
     #[test]
     fn extracts_functions_snake_and_camel() {
         let d = "calls compute_effective_weight() and doThing() but not bare_word";
-        assert_eq!(kinds(d, AnchorKind::Function), vec!["compute_effective_weight", "doThing"]);
+        assert_eq!(
+            kinds(d, AnchorKind::Function),
+            vec!["compute_effective_weight", "doThing"]
+        );
     }
 
     #[test]
@@ -221,7 +240,10 @@ mod tests {
     fn dedup_and_cap() {
         let d = "--flag --flag --flag";
         assert_eq!(extract(d).len(), 1);
-        let many = (0..80).map(|i| format!("--flag{i}")).collect::<Vec<_>>().join(" ");
+        let many = (0..80)
+            .map(|i| format!("--flag{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         assert_eq!(extract(&many).len(), ANCHOR_CAP);
     }
 
@@ -230,7 +252,10 @@ mod tests {
         use std::collections::HashSet;
         let tracked: HashSet<String> = HashSet::new();
         let root = std::path::Path::new(".");
-        let r = Resolver { root, tracked: &tracked };
+        let r = Resolver {
+            root,
+            tracked: &tracked,
+        };
         let anchors = extract("uses --some-flag");
         let broken = r.broken(&anchors);
         assert_eq!(broken.len(), 1);

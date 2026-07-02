@@ -357,6 +357,16 @@ mod tests {
         );
     }
 
+    /// After chmod(0o000), root (or a container with CAP_DAC_OVERRIDE) can
+    /// still read the file, so the permission-denied scenario this test needs
+    /// is unconstructible; skip rather than fail in that case.
+    ///
+    /// Kept in sync with the identical helper in `archive.rs`'s test module.
+    #[cfg(unix)]
+    fn permission_denied_is_constructible(path: &std::path::Path) -> bool {
+        std::fs::read(path).is_err()
+    }
+
     #[cfg(unix)]
     #[test]
     fn load_warns_but_does_not_panic_on_a_permission_denied_read() {
@@ -368,6 +378,15 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "{}").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        if !permission_denied_is_constructible(&path) {
+            eprintln!(
+                "skipping load_warns_but_does_not_panic_on_a_permission_denied_read: \
+                 running as root (chmod 0o000 not enforced)"
+            );
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            return;
+        }
 
         let tracking = load(&c, "my-change");
 

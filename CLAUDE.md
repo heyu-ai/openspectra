@@ -28,14 +28,13 @@ cargo build --release --locked
 cargo test --all
 ```
 
-`fmt`/`clippy` are `continue-on-error` in CI (see the comment in `ci.yml`),
-but `build` + `test` are the only checks CI actually enforces — treat `fmt`
-and `clippy` as hard gates locally regardless. In practice `cargo clippy`
-currently passes clean, and `cargo fmt --check` failures are real formatting
-diffs, not a toolchain gap — run `cargo fmt --all` rather than ignoring the
-check. If a clippy finding is a false positive, suppress it narrowly with a
-comment explaining why; never add a blanket `#[allow]` just to make the
-check pass.
+`fmt` and `clippy` are hard gates in CI too (the `lint` job in `ci.yml`, no
+`continue-on-error`), so a local fmt/clippy failure will also fail the PR.
+`build` + `test` run on a `[ubuntu-latest, macos-latest]` matrix in the
+`build-and-test` job (macOS runs 2 fewer tests — the `#[cfg(target_os =
+"linux")]`-gated ones — which is expected, not a failure). If a clippy
+finding is a false positive, suppress it narrowly with a comment explaining
+why; never add a blanket `#[allow]` just to make the check pass.
 
 ## Testing conventions
 
