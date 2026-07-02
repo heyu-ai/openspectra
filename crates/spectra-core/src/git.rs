@@ -161,24 +161,30 @@ pub fn grep_existing(root: &Path, needles: &[&str]) -> HashSet<String> {
     let mut all: HashSet<String> = HashSet::with_capacity(needles.len());
     all.extend(needles.iter().map(|needle| (*needle).to_string()));
 
-    let mut args = Vec::with_capacity(4 + needles.len() * 2);
+    let mut args = Vec::with_capacity(5 + needles.len() * 2);
     args.push("grep".to_string());
     args.push("-F".to_string());
     args.push("-I".to_string());
     args.push("-h".to_string());
+    // --no-color, not `-c color.ui=never`: a user gitconfig with
+    // `color.grep=always` forces ANSI escapes into the piped output even for a
+    // non-tty, and `color.grep` takes precedence over the generic `color.ui`, so
+    // `-c color.ui=never` does NOT suppress it (verified empirically). The
+    // `--no-color` grep flag overrides any color config unconditionally. This
+    // matters because git colorizes each -e match separately, so the escapes
+    // can land between adjacent matched substrings and break the
+    // `line.contains(needle)` check below, producing a false "not found".
+    args.push("--no-color".to_string());
     for needle in needles {
         args.push("-e".to_string());
         args.push((*needle).to_string());
     }
 
-    // -c color.ui=never: a user gitconfig with color.ui=always / color.grep=always
-    // forces ANSI escapes into the piped output even for a non-tty; git colorizes
-    // each -e match separately, so the escapes can split adjacent matched
-    // substrings and break the `line.contains(needle)` check below, producing a
-    // false "not found". -c grep.lineNumber=false keeps -h output as pure content
-    // (no `N:` prefix) regardless of a user's grep.lineNumber setting.
+    // -c grep.lineNumber=false / grep.column=false: both are real git config
+    // keys that, when set true in a user's gitconfig, prefix -h output lines
+    // with `N:` / `col:`; neutralize them so the parsed lines are pure content.
     let out = Command::new("git")
-        .args(["-c", "grep.lineNumber=false", "-c", "color.ui=never"])
+        .args(["-c", "grep.lineNumber=false", "-c", "grep.column=false"])
         .arg("-C")
         .arg(root)
         .args(args)
@@ -366,6 +372,36 @@ mod tests {
         // discriminate, since `abc` is a substring of `abcde`.
         let dir = TempDir::new("grep-overlap");
         init_repo(&dir);
+        commit_file(&dir, "code.txt", "abcde\n");
+
+        let resolved = grep_existing(&dir, &["abc", "cde"]);
+
+        assert_eq!(
+            resolved,
+            ["abc", "cde"].into_iter().map(str::to_string).collect()
+        );
+    }
+
+    #[test]
+    fn grep_existing_ignores_user_color_grep_always() {
+        // Regression: `color.grep=always` forces ANSI escapes into piped output
+        // and takes precedence over `color.ui` (so `-c color.ui=never` alone does
+        // NOT suppress it). git highlights matches left-to-right, so for
+        // `abc`/`cde` on `abcde` it colors only `abc` and inserts a reset escape
+        // after it (`\e[..abc\e[..de`); then `contains("cde")` is false because
+        // the escape splits `c` from `de`, producing a false "not found in repo".
+        // grep_existing passes `--no-color`, which overrides any color config
+        // unconditionally. Without `--no-color` this test fails (cde is lost).
+        let dir = TempDir::new("grep-color");
+        init_repo(&dir);
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&*dir)
+            .args(["config", "color.grep", "always"])
+            .output()
+            .unwrap()
+            .status
+            .success());
         commit_file(&dir, "code.txt", "abcde\n");
 
         let resolved = grep_existing(&dir, &["abc", "cde"]);
