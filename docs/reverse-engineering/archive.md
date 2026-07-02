@@ -191,6 +191,22 @@ ADDED-only deltas may create a previously missing canonical
 `specs/<cap>/spec.md`; MODIFIED/REMOVED/RENAMED against a missing canonical spec
 are conflicts because there is nothing to match.
 
+Several **malformed-delta** shapes are also rejected loudly at validation
+(rather than silently dropping the author's intent, which would be worse than
+the pre-Phase-2 unsupported-header reject this replaced): a recognized
+`## MODIFIED/REMOVED/RENAMED Requirements` header that parses to zero entries;
+a duplicate section header of the same kind (only the first is parsed, so the
+second would be dropped); the same requirement ADDED twice within one delta
+(the canonical-spec exists check can't see an intra-delta duplicate); and a
+malformed `## RENAMED Requirements` FROM/TO pair (a FROM without a TO, a
+missing/unbalanced backtick, or backtick content that isn't a
+`### Requirement:` header). RENAMED accepts either `-` or `*` list bullets. To
+keep validation genuinely side-effect-free, the in-memory validation pass skips
+the ADDED trace-footer step (it reads this change's `.spectra/touched/` sidecar
+and would rename a corrupt one aside) -- that only happens during the real
+write, so a validation that fails on a later capability leaves the sidecar
+untouched.
+
 ## Known limitations
 
 Deferred, matching the project's existing "conservative implementation,

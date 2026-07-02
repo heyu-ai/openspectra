@@ -187,7 +187,7 @@ fn validate_spec_deltas(cfg: &Config, change_dir: &Path, source: &str) -> Result
             .into_string()
             .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
         let today = chrono::Local::now().date_naive();
-        merge_spec_delta(cfg, &capability, &delta, source, today)?;
+        merge_spec_delta(cfg, &capability, &delta, source, today, true)?;
     }
     Ok(())
 }
@@ -272,7 +272,7 @@ fn apply_spec_deltas(
             .file_name()
             .into_string()
             .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
-        let (content, result) = merge_spec_delta(cfg, &capability, &delta, source, today)?;
+        let (content, result) = merge_spec_delta(cfg, &capability, &delta, source, today, false)?;
         if let Some(content) = content {
             let spec_path = cfg.specs_dir().join(&capability).join("spec.md");
             let parent = spec_path.parent().expect("spec path always has a parent");
@@ -321,6 +321,7 @@ fn merge_spec_delta(
     delta: &str,
     source: &str,
     today: chrono::NaiveDate,
+    dry_run: bool,
 ) -> Result<(Option<String>, SpecApplyResult)> {
     let parsed = parse_requirement_delta(capability, delta)?;
     let result = SpecApplyResult {
@@ -411,6 +412,7 @@ fn merge_spec_delta(
         content.replace_range(block.start..block.end, &format!("{modified}{trailing}"));
     }
 
+    let mut added_names: std::collections::HashSet<String> = std::collections::HashSet::new();
     for added in &parsed.added {
         let name = requirement_name(added);
         if find_requirement_block(&content, name).is_some() {
@@ -419,14 +421,51 @@ fn merge_spec_delta(
                 spec_path.display()
             ));
         }
+        // The exists check above only compares against the canonical spec, not
+        // the delta's own ADDED list -- so two same-named `### Requirement:`
+        // blocks in one ADDED section would both append (a duplicate header).
+        // Reject the second loudly instead.
+        if !added_names.insert(normalize_requirement_name(name)) {
+            return Err(anyhow!(
+                "capability '{capability}': delta ADDs requirement '{}' more than once",
+                normalize_requirement_name(name)
+            ));
+        }
     }
 
-    append_added_requirements(&mut content, &parsed.added, cfg, source, today);
+    // Only application writes; validation (`dry_run`) discards `content`, so it
+    // must skip the append -- `append_added_requirements` loads this change's
+    // touched-file sidecar, which renames a *corrupt* sidecar aside. Doing that
+    // during validation would be a side effect on a run that may still fail on a
+    // later capability, breaking the "validation failure leaves the change
+    // untouched" guarantee. The conflict checks above are what validation needs;
+    // they've all run by this point.
+    if !dry_run {
+        append_added_requirements(&mut content, &parsed.added, cfg, source, today);
+    }
 
     Ok((Some(content), result))
 }
 
 fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
+    // Each delta kind is parsed from its *first* matching header, with the
+    // section bounded by the next `## ` header -- so a second same-kind header
+    // (e.g. from a bad merge) would have its body silently dropped. Reject a
+    // duplicate loudly instead, consistent with the empty-section guard below.
+    for (header_re, kind) in [
+        (&*ADDED_HEADER_RE, "ADDED"),
+        (&*MODIFIED_HEADER_RE, "MODIFIED"),
+        (&*REMOVED_HEADER_RE, "REMOVED"),
+        (&*RENAMED_HEADER_RE, "RENAMED"),
+    ] {
+        if header_re.find_iter(delta).count() > 1 {
+            return Err(anyhow!(
+                "capability '{capability}': delta has more than one \
+                 `## {kind} Requirements` section -- merge them into one"
+            ));
+        }
+    }
+
     let added: Vec<String> = requirement_blocks_in_section(delta, &ADDED_HEADER_RE)?
         .into_iter()
         .map(|b| block_text(delta, &b))
@@ -1655,6 +1694,100 @@ mod tests {
             assert!(c.changes_dir().join("my-feature").is_dir());
             assert!(!c.changes_dir().join("archive").exists());
         }
+    }
+
+    #[test]
+    fn archive_errors_on_duplicate_section_headers() {
+        // Two `## MODIFIED Requirements` sections: only the first is parsed, so
+        // the second would be silently dropped -- reject loudly instead.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: First\n\na\n\n\
+             ## MODIFIED Requirements\n\n### Requirement: Second\n\nb\n",
+        );
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("more than one `## MODIFIED Requirements` section"),
+            "got: {err}"
+        );
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c.changes_dir().join("archive").exists());
+    }
+
+    #[test]
+    fn archive_errors_on_a_delta_that_adds_the_same_requirement_twice() {
+        // The canonical-spec exists check can't catch an intra-delta duplicate
+        // (neither block is in the canonical spec yet), so a dedicated guard
+        // must reject it rather than append a duplicate header.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## ADDED Requirements\n\n\
+             ### Requirement: Dup\n\na\n\n\
+             ### Requirement: Dup\n\nb\n",
+        );
+
+        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("delta ADDs requirement 'Dup' more than once"),
+            "got: {err}"
+        );
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c.changes_dir().join("archive").exists());
+    }
+
+    #[test]
+    fn merge_validation_is_side_effect_free_on_the_touched_sidecar() {
+        // Regression: pre-move validation runs `merge_spec_delta` in `dry_run`
+        // mode, which must NOT run the ADDED append -- the append loads this
+        // change's touched sidecar and renames a *corrupt* one aside. Doing that
+        // during validation would mutate `.spectra/touched/` even on a run that
+        // later fails another capability, breaking the "validation failure
+        // leaves the change untouched" guarantee.
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let touched = crate::touched::touched_path(&c, "my-feature");
+        write(&touched, "not valid json");
+        let corrupt_backup = touched.with_extension("json.corrupt");
+        let today = chrono::Local::now().date_naive();
+        let added_delta = "## ADDED Requirements\n\n### Requirement: New\n\ntext\n";
+
+        // dry_run (validation): no append, so the corrupt sidecar is untouched.
+        merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, true).unwrap();
+        assert!(
+            touched.is_file() && !corrupt_backup.exists(),
+            "validation must not read or rename the touched sidecar"
+        );
+
+        // application (dry_run = false) is where the sidecar is read, so a
+        // corrupt one is renamed aside there -- confirming the load lives only
+        // in the apply path, not validation.
+        merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, false).unwrap();
+        assert!(
+            corrupt_backup.is_file(),
+            "application should have read and backed up the corrupt sidecar"
+        );
     }
 
     #[test]
