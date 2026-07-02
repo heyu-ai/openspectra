@@ -122,7 +122,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 | 層級 | 現況 | 計畫 |
 |---|---|---|
-| 單元測試 | 131 個，模組內 `#[cfg(test)]` | 維持慣例；root 環境 3 個誤判修掉（Phase 1） |
+| 單元測試 | 131 個（Linux）/ 129 個（macOS），模組內 `#[cfg(test)]` | 維持慣例；root 環境 3 個誤判修掉（Phase 1） |
 | 整合測試 | 1 個（synthetic repo drift） | 加 init 全流程、OpenSpec fixture、golden 回歸（Phase 1/2/4） |
 | Golden 校準 | 4 個 JSON，值手抄進測試 | fixture 機器可讀化 + calibrate-time/tasks 腳本（Phase 4） |
 | CI | ubuntu build+test；fmt/clippy 僅提示 | fmt/clippy 硬門檻、+macOS matrix（Phase 1）；release workflow + 容器 smoke（Phase 3） |
