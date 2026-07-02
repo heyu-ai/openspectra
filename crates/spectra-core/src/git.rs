@@ -133,23 +133,111 @@ pub fn dirty_files(root: &Path) -> Option<Vec<String>> {
     Some(files)
 }
 
-/// True if `needle` appears in any tracked file (`git grep -F -l`),
-/// i.e. the symbol/function is referenced or defined somewhere in the repo.
-pub fn grep_exists(root: &Path, needle: &str) -> bool {
-    // -F fixed string, -l names only, -I skip binary. Word boundaries are not
-    // used so a definition like `fn foo(` or a struct `Foo` both match.
+/// For each needle, whether it appears in any tracked file, computed with a
+/// single `git grep` invocation. Returns the set of needles that resolve.
+///
+/// This intentionally uses `git grep -F -I -h` and then checks whether each
+/// needle is a substring of any matching output line. `-l` is wrong for batched
+/// checks because it reports only matching files under OR semantics, losing
+/// which needle matched. `-o` is also wrong because `git grep` prints only the
+/// matched substrings and scans each line left-to-right without re-scanning
+/// consumed characters: with needles `abc` and `cde` against a line `abcde`,
+/// `-o` prints only `abc`, so a substring check would miss `cde` even though it
+/// is present. With `-h`, the whole matching line is printed, so a needle
+/// appears in tracked content iff it is a substring of at least one printed
+/// line, preserving the old per-needle `git grep -F` behavior even for
+/// overlapping text.
+///
+/// Exit codes preserve the previous `grep_exists` contract: `0` means parse
+/// stdout; `1` is a clean no-match for all needles; every other status,
+/// including signal termination (`code() == None`) or spawn failure, is a real
+/// error where we cannot tell, so all input needles are treated as resolved to
+/// avoid over-reporting drift.
+pub fn grep_existing(root: &Path, needles: &[&str]) -> HashSet<String> {
+    if needles.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut all: HashSet<String> = HashSet::with_capacity(needles.len());
+    all.extend(needles.iter().map(|needle| (*needle).to_string()));
+
+    let mut args = Vec::with_capacity(5 + needles.len() * 2);
+    args.push("grep".to_string());
+    args.push("-F".to_string());
+    args.push("-I".to_string());
+    args.push("-h".to_string());
+    // --no-color, not `-c color.ui=never`: a user gitconfig with
+    // `color.grep=always` forces ANSI escapes into the piped output even for a
+    // non-tty, and `color.grep` takes precedence over the generic `color.ui`, so
+    // `-c color.ui=never` does NOT suppress it (verified empirically). The
+    // `--no-color` grep flag overrides any color config unconditionally. This
+    // matters because git colorizes each -e match separately, so the escapes
+    // can land between adjacent matched substrings and break the
+    // `line.contains(needle)` check below, producing a false "not found".
+    args.push("--no-color".to_string());
+    // Iterate the deduped `all` set (not `needles`) so a caller passing repeated
+    // needles does not append redundant `-e <needle>` pairs; -e order does not
+    // affect results.
+    for needle in &all {
+        args.push("-e".to_string());
+        args.push(needle.clone());
+    }
+
+    // -c grep.lineNumber=false / grep.column=false: both are real git config
+    // keys that, when set true in a user's gitconfig, prefix -h output lines
+    // with `N:` / `col:`; neutralize them so the parsed lines are pure content.
     let out = Command::new("git")
+        .args(["-c", "grep.lineNumber=false", "-c", "grep.column=false"])
         .arg("-C")
         .arg(root)
-        .args(["grep", "-F", "-I", "-l", "-e", needle])
+        .args(args)
         .output();
+
     match out {
-        // `git grep` exits 0 on a match, 1 on a clean "no match", and >1 on a
-        // real error (not a repo, bad pathspec, ...). Only a clean no-match
-        // means the anchor is broken; on any error we cannot tell, so we do
-        // NOT over-report drift — treat it as resolved.
-        Ok(o) => o.status.code() != Some(1),
-        Err(_) => true,
+        Ok(o) => match o.status.code() {
+            Some(0) => {
+                let mut pending = all.clone();
+                let mut resolved = HashSet::new();
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                for line in stdout.lines() {
+                    pending.retain(|needle| {
+                        if line.contains(needle.as_str()) {
+                            resolved.insert(needle.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    if pending.is_empty() {
+                        break;
+                    }
+                }
+                resolved
+            }
+            Some(1) => HashSet::new(),
+            other => {
+                // exit >1 (not a repo, corrupt index, bad pathspec) or signal
+                // termination (code() == None). We cannot tell which anchors
+                // resolve, so we treat them all as resolved to avoid
+                // over-reporting drift -- but surface a diagnostic so a broken
+                // git environment is not silently indistinguishable from a
+                // healthy clean check.
+                eprintln!(
+                    "spectra: `git grep` exited with status {other:?}; \
+                     treating all {} anchor(s) as resolved to avoid over-reporting drift",
+                    all.len()
+                );
+                all
+            }
+        },
+        Err(e) => {
+            eprintln!(
+                "spectra: could not spawn `git grep` ({e}); \
+                 treating all {} anchor(s) as resolved to avoid over-reporting drift",
+                all.len()
+            );
+            all
+        }
     }
 }
 
@@ -221,6 +309,131 @@ mod tests {
         run(&["add", "f.txt"]);
         run(&["commit", "-q", "-m", "init"]);
         git(dir, &["rev-parse", "HEAD"]).unwrap().trim().to_string()
+    }
+
+    fn commit_file(dir: &Path, name: &str, contents: &str) {
+        let run = |args: &[&str]| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        std::fs::write(dir.join(name), contents).unwrap();
+        run(&["add", name]);
+        run(&["commit", "-q", "-m", name]);
+    }
+
+    #[test]
+    fn grep_existing_empty_needles_returns_empty_set() {
+        let dir = TempDir::new("grep-empty");
+
+        assert_eq!(grep_existing(&dir, &[]), HashSet::new());
+    }
+
+    #[test]
+    fn grep_existing_returns_present_needles() {
+        let dir = TempDir::new("grep-present");
+        init_repo(&dir);
+        commit_file(
+            &dir,
+            "code.rs",
+            "fn alpha_fn_0() {}\nstruct PresentSymbol;\n",
+        );
+
+        let resolved = grep_existing(
+            &dir,
+            &[
+                "alpha_fn_0",
+                "missing_fn_1",
+                "PresentSymbol",
+                "MissingSymbol",
+            ],
+        );
+
+        assert_eq!(
+            resolved,
+            ["alpha_fn_0", "PresentSymbol"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
+    }
+
+    #[test]
+    fn grep_existing_resolves_partially_overlapping_needles() {
+        // Regression guard for the `-h`-over-`-o` decision. The needles `abc`
+        // and `cde` partially overlap in the line `abcde`. `-h` prints the whole
+        // line, so both resolve. The rejected `-o` would print only the
+        // leftmost match `abc` (scanning continues past the consumed `abc`, so
+        // `cde` is never emitted), and a substring check over that output would
+        // miss `cde` -- so this test FAILS under `-o` and passes only under the
+        // shipped `-h`. A nested example (e.g. `abc`/`abcde`) would not
+        // discriminate, since `abc` is a substring of `abcde`.
+        let dir = TempDir::new("grep-overlap");
+        init_repo(&dir);
+        commit_file(&dir, "code.txt", "abcde\n");
+
+        let resolved = grep_existing(&dir, &["abc", "cde"]);
+
+        assert_eq!(
+            resolved,
+            ["abc", "cde"].into_iter().map(str::to_string).collect()
+        );
+    }
+
+    #[test]
+    fn grep_existing_ignores_user_color_grep_always() {
+        // Regression: `color.grep=always` forces ANSI escapes into piped output
+        // and takes precedence over `color.ui` (so `-c color.ui=never` alone does
+        // NOT suppress it). git highlights matches left-to-right, so for
+        // `abc`/`cde` on `abcde` it colors only `abc` and inserts a reset escape
+        // after it (`\e[..abc\e[..de`); then `contains("cde")` is false because
+        // the escape splits `c` from `de`, producing a false "not found in repo".
+        // grep_existing passes `--no-color`, which overrides any color config
+        // unconditionally. Without `--no-color` this test fails (cde is lost).
+        let dir = TempDir::new("grep-color");
+        init_repo(&dir);
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&*dir)
+            .args(["config", "color.grep", "always"])
+            .output()
+            .unwrap()
+            .status
+            .success());
+        commit_file(&dir, "code.txt", "abcde\n");
+
+        let resolved = grep_existing(&dir, &["abc", "cde"]);
+
+        assert_eq!(
+            resolved,
+            ["abc", "cde"].into_iter().map(str::to_string).collect()
+        );
+    }
+
+    #[test]
+    fn grep_existing_treats_non_repo_errors_as_resolved() {
+        // A guaranteed-nonexistent path makes `git -C <path>` fail to chdir and
+        // exit 128 (>1), deterministically exercising the "cannot tell -> treat
+        // all as resolved" arm with no filesystem dependency. (A real temp dir
+        // could sit inside a git checkout in some CI/sandbox setups, where git
+        // grep would instead exit 1 and this test would exercise the wrong
+        // branch.)
+        let root = Path::new("/nonexistent/spectra-grep-existing-not-a-repo-xyz");
+
+        let resolved = grep_existing(root, &["alpha_fn_0", "PresentSymbol"]);
+
+        assert_eq!(
+            resolved,
+            ["alpha_fn_0", "PresentSymbol"]
+                .into_iter()
+                .map(str::to_string)
+                .collect()
+        );
     }
 
     #[test]
