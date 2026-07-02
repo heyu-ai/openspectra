@@ -9,7 +9,7 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
 use std::path::PathBuf;
 
@@ -22,16 +22,34 @@ static CHANGE_NAME_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[a-z0-9]+(-+[a-z0-9]+)*$").unwrap());
 static ARCHIVED_PREFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}-").unwrap());
 
-/// Parsed `<change>/.openspec.yaml`.
-#[derive(Debug, Clone, Deserialize, Default)]
+/// Parsed `<change>/.openspec.yaml`. `Serialize` skips `None` fields (rather
+/// than emitting `key: null`) so a round-trip through `archive::
+/// stamp_archived_metadata` reproduces the sparse-field shape the reference
+/// CLI itself writes (e.g. a plain `new change` scaffold has no
+/// `created_by`/`archived_by`/`archived_at` lines at all).
+///
+/// `extra` catches any YAML key this struct doesn't otherwise model (a field
+/// from a newer reference-CLI version, or one a human added by hand) via
+/// `#[serde(flatten)]`, so `stamp_archived_metadata`'s deserialize-then-
+/// reserialize round trip doesn't silently drop it -- only the 6 known
+/// fields above are ever read or written by name.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ChangeMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     /// `YYYY-MM-DD` creation date, or `None` when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub created_with: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub archived_at: Option<String>,
+    #[serde(flatten)]
+    pub extra: serde_yaml::Mapping,
 }
 
 #[derive(Debug, Clone)]
@@ -81,12 +99,23 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
     parked_marker_path(cfg, name).exists()
 }
 
-/// Remove any `.parked`/`.started` sidecar files left behind by a change
-/// directory of the same `name` that was deleted by hand (rather than via
-/// `spectra archive`), so a freshly `create`d change never silently inherits
-/// stale parked/baseline state. A missing file is not an error.
-fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
-    for path in [parked_marker_path(cfg, name), started_sha_path(cfg, name)] {
+/// Remove any `.parked`/`.started`/`.spectra/touched/<name>.json` sidecar
+/// files for `name`. Used by `create` (a change directory of the same name
+/// deleted by hand, rather than via `spectra archive`, may have left these
+/// behind — clearing them stops a freshly created change from silently
+/// inheriting stale parked/baseline/touched-file state) and by
+/// `archive::archive` itself (an archived change is no longer active, so
+/// its sidecar state is cruft once the move succeeds — and, for
+/// `touched.json` specifically, leaving it around would make a
+/// *future* change of the same name inherit a prior change's touched-file
+/// history). A missing file is not an error.
+pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
+    let sidecars = [
+        parked_marker_path(cfg, name),
+        started_sha_path(cfg, name),
+        crate::touched::touched_path(cfg, name),
+    ];
+    for path in sidecars {
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => {}
@@ -226,11 +255,13 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
             cfg.changes_dir().display()
         ));
     }
-    // A prior change with the same name may have been removed by hand,
-    // leaving its `.parked`/`.started` sidecar files behind; clear them so
-    // this fresh change doesn't silently inherit stale parked/baseline state.
-    // Best-effort: a failure here is unrelated to whether the scaffold itself
-    // can succeed, so it's logged rather than blocking `create`.
+    // A prior change with the same name may have been removed by hand (or
+    // archived), leaving its sidecar files behind; clear them so this fresh
+    // change doesn't silently inherit stale state -- see
+    // `clear_stale_sidecar_state`'s own doc comment for exactly what that
+    // covers. Best-effort: a failure here is unrelated to whether the
+    // scaffold itself can succeed, so it's logged rather than blocking
+    // `create`.
     if let Err(e) = clear_stale_sidecar_state(cfg, name) {
         eprintln!("warning: failed to clear stale sidecar state for '{name}': {e}");
     }
