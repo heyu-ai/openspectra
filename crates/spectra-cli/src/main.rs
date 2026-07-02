@@ -1,5 +1,5 @@
-//! OpenSpectra CLI: `drift`, `list`, `show`, `park`, `unpark`, `new change`,
-//! `task done`, `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `list`, `show`, `park`, `unpark`,
+//! `new change`, `task done`, `archive`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -27,6 +27,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/{changes,specs}/`,
+    /// and a `.spectra/` entry in `.gitignore`. Every other command requires
+    /// this to have run first.
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
     /// Detect drift between a change and the current codebase state.
     Drift {
         /// Change name (auto-detects if only one exists).
@@ -139,6 +146,33 @@ fn require_initialized(root: &Path) -> Result<Config> {
         anyhow::bail!("Not initialized. Run 'spectra init' first.");
     }
     Config::load(root)
+}
+
+/// `--json` shape for `init`: pinned here (rather than inlined in
+/// `cmd_init`), matching `show_json`/`park_status_json`/`new_change_json`.
+fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
+    json!({
+        "root": outcome.root.to_string_lossy(),
+        "spec_dir": outcome.spec_dir,
+        "gitignore_updated": outcome.gitignore_updated,
+    })
+}
+
+fn cmd_init(root: &Path, as_json: bool) -> Result<i32> {
+    let outcome = spectra_core::init::init(root)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
+    } else {
+        println!(
+            "Initialized spectra project in {} (spec_dir: {}).",
+            outcome.root.display(),
+            outcome.spec_dir
+        );
+        if outcome.gitignore_updated {
+            println!("Added '.spectra/' to .gitignore.");
+        }
+    }
+    Ok(0)
 }
 
 fn cmd_drift(
@@ -565,6 +599,7 @@ fn run() -> Result<i32> {
     let root = find_root(&cwd);
 
     match &cli.command {
+        Command::Init { json } => cmd_init(&root, *json),
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
@@ -713,6 +748,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn init_json_shape_matches_the_documented_contract() {
+        let outcome = spectra_core::init::InitOutcome {
+            root: PathBuf::from("/tmp/proj"),
+            spec_dir: "openspec".to_string(),
+            gitignore_updated: true,
+        };
+        let value = init_json(&outcome);
+        assert_eq!(value["root"], "/tmp/proj");
+        assert_eq!(value["spec_dir"], "openspec");
+        assert_eq!(value["gitignore_updated"], true);
     }
 
     #[test]
