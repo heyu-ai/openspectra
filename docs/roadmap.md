@@ -10,7 +10,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 ### 現況摘要（2026-07-02）
 
-**已完成（皆經 oracle 驗證，PR #1–#21 已合併）**：`drift`（四維度評分、JSON schema 逐欄位吻合、exit code gate）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。131 個單元測試 + 1 個整合測試，release build 乾淨。
+**已完成（皆經 oracle 驗證，已合併 PR：#1、#2、#13–#21，共 11 個）**：`drift`（四維度評分、JSON schema 逐欄位吻合、exit code gate）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。131 個單元測試（Linux；macOS 因 2 個 `#[cfg(target_os = "linux")]` 測試被排除，實際跑 129 個）+ 1 個整合測試，release build 乾淨。
 
 **Open issues**：
 
@@ -24,7 +24,6 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 - `spectra init` 不存在——所有指令的錯誤訊息都叫使用者跑 `spectra init`，但沒有這個子指令，Linux 新使用者無法 bootstrap
 - `list --changes` flag 收下但無作用（`scripts/capture-golden.sh` 依賴這個指令）
-- `apply`/`ingest` 未實作（`drift` 的 primary_recommendation 會建議使用者執行它們）
 - archive 不支援 MODIFIED/REMOVED/RENAMED spec delta；無 `unarchive`
 - 以 root 執行 `cargo test` 時 3 個 chmod-權限測試誤判失敗（remote/container CI 常見情境）
 - 無 release 流程、無跨平台 CI matrix、無 OpenSpec 生態相容性驗證
@@ -53,7 +52,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
    - 測試：unit + `--json` shape
 3. **root 環境測試修正**（新 issue）
    - 三個 chmod(0o000) 測試在 root 下跳過（執行期偵測 euid==0 即 skip，並印出 skip 原因），或改用其他機制製造 IO error
-   - 檔案：`crates/spectra-core/src/touched.rs:362`、`archive.rs` 兩處
+   - 檔案：`crates/spectra-core/src/touched.rs:370`（`set_permissions(..., 0o000)` 呼叫處）、`archive.rs` 兩處
 4. **CI 強化**
    - `fmt`/`clippy` 從 `continue-on-error: true` 改為硬性檢查（CLAUDE.md 已當硬門檻，CI 應一致）
    - 加 macOS runner 到 build+test matrix（本專案宣稱跨平台，需雙平台驗證）
@@ -113,8 +112,8 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 ## Phase 5 — 品質、效能與改進（忠實期之後）
 
 1. **#12 批次化 `git grep`**：`Resolver::broken` 從 O(anchors) 子程序降到 O(1)（或改用已載入的 `tracked` 內容做 in-memory 比對）；回歸測試：40+ anchor 的合成 design.md，批次前後 `broken_anchors` byte-identical。**排在 #8 之後或確認獨立**（issue 中已記載兩者共處 resolver，需避免混淆歸因）
-2. **#11 CliFlag 決策落地**：建議「預設忠實（永遠 broken），`.spectra.yaml` 新增 opt-in 設定」——(a) 只從 fenced code block 抽 flag，或 (b) 指定目標 CLI 的 `--help` 做真實比對。決策記入 drift.md 的 decision note，實作帶測試
-3. **剩餘指令**：`apply`/`ingest`（drift 的建議文字會引導使用者執行，屬 UX 缺口；若原版是 AI 依賴指令則明確標 out-of-scope 並改寫建議文字）、`unarchive`（如有需求）
+2. **#11 CliFlag 決策**（待人類裁決，尚未選定方向）：選項 (a) 預設忠實（永遠 broken），`.spectra.yaml` 新增 opt-in 設定；(b) 只從 fenced code block 抽 flag；(c) 指定目標 CLI 的 `--help` 做真實比對。決策記入 drift.md 的 decision note 後才開始實作與測試
+3. **`drift` 建議文字 UX**：`/spectra-apply`/`/spectra-ingest` 是 Claude Code slash-command skill，非 `spectra` 二進位子指令（issue #7 已用 oracle 證據確認並關閉）；現有建議文字若措辭不夠清楚可改寫，`unarchive`（如有需求）另計
 4. **改進項統一原則**：任何偏離 oracle 的行為改進一律 opt-in + CHANGELOG + drift.md「Deliberate divergences」章節記錄
 
 ---
@@ -148,6 +147,5 @@ Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Pha
 6. archive：MODIFIED/REMOVED/RENAMED delta 支援（Phase 2）
 7. Release workflow + crates.io 發佈（Phase 3）
 8. golden fixture 機器可讀回歸測試（Phase 4）
-9. `apply`/`ingest` 缺口處置（Phase 5）
 
-（#8/#9/#10/#11/#12 沿用既有 issues。）
+（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8/#9/#10/#11/#12 沿用既有 issues。）
