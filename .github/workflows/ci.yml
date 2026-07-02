@@ -10,7 +10,14 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    name: build+test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # OpenSpectra claims cross-platform support (Linux musl + macOS); build
+        # and test on both so a platform-specific regression can't hide.
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -18,20 +25,23 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # Style checks are advisory for now (the dev toolchain that produced this
-      # tree lacks rustfmt/clippy components); build + test are the hard gate.
+      # Style checks are platform-independent, so run them once (on Linux) as
+      # hard gates. CLAUDE.md treats fmt/clippy as hard gates locally; CI now
+      # matches. If a clippy finding is a false positive, suppress it narrowly
+      # in code rather than reverting this to advisory.
       - name: Format check
+        if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check
-        continue-on-error: true
       - name: Clippy
+        if: matrix.os == 'ubuntu-latest'
         run: cargo clippy --all-targets -- -D warnings
-        continue-on-error: true
       - name: Build
         run: cargo build --release --locked
       - name: Test
         run: cargo test --all
       - name: Smoke-test the CLI on this repo
         run: |
-          # The drift binary must at least run and print help on Linux.
+          # The drift binary must at least run and print help.
           ./target/release/spectra --help
           ./target/release/spectra drift --help
+          ./target/release/spectra init --help

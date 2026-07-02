@@ -1022,6 +1022,15 @@ mod tests {
     fn archive_fails_loudly_on_an_unreadable_spec_delta_instead_of_silently_dropping_it() {
         use std::os::unix::fs::PermissionsExt;
 
+        if !crate::testutil::permissions_enforced() {
+            eprintln!(
+                "skipping archive_fails_loudly_on_an_unreadable_spec_delta_instead_of_silently_dropping_it: \
+                 running as root or on a permission-ignoring filesystem, so a 0o000 read \
+                 wouldn't be denied"
+            );
+            return;
+        }
+
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
@@ -1075,6 +1084,15 @@ mod tests {
     #[test]
     fn archive_preserves_the_underlying_error_cause_after_a_post_rename_failure() {
         use std::os::unix::fs::PermissionsExt;
+
+        if !crate::testutil::permissions_enforced() {
+            eprintln!(
+                "skipping archive_preserves_the_underlying_error_cause_after_a_post_rename_failure: \
+                 running as root or on a permission-ignoring filesystem, so a 0o000 read \
+                 wouldn't be denied"
+            );
+            return;
+        }
 
         let tmp = TempDir::new();
         let c = cfg(&tmp);

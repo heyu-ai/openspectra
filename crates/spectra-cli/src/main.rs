@@ -27,6 +27,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Initialize a spectra project in the current directory (writes
+    /// `.spectra.yaml`, scaffolds `<spec_dir>/changes` and `<spec_dir>/specs`,
+    /// and adds `.spectra/` to `.gitignore`).
+    Init {
+        #[arg(long)]
+        json: bool,
+    },
     /// Detect drift between a change and the current codebase state.
     Drift {
         /// Change name (auto-detects if only one exists).
@@ -37,8 +44,9 @@ enum Command {
     },
     /// List active changes (or specs with --specs, or parked changes with --parked).
     List {
-        /// (not yet implemented) Filter to changes only.
-        #[arg(long)]
+        /// List active changes (the default; explicit form used by tooling
+        /// such as `capture-golden.sh`).
+        #[arg(long, conflicts_with_all = ["specs", "parked"])]
         changes: bool,
         /// List specs instead of changes.
         #[arg(long, conflicts_with = "parked")]
@@ -139,6 +147,41 @@ fn require_initialized(root: &Path) -> Result<Config> {
         anyhow::bail!("Not initialized. Run 'spectra init' first.");
     }
     Config::load(root)
+}
+
+/// `--json` shape for `init`: pinned in its own function (like `show_json`/
+/// `new_change_json`) so a rename or key typo fails a test rather than
+/// shipping a silently-changed contract. `PathBuf`s are rendered via
+/// `to_string_lossy` for the same non-UTF-8-safety reason documented on
+/// `new_change_json`.
+fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
+    json!({
+        "spec_dir": outcome.spec_dir,
+        "config": outcome.config_path.to_string_lossy(),
+        "changes_dir": outcome.changes_dir.to_string_lossy(),
+        "specs_dir": outcome.specs_dir.to_string_lossy(),
+        "gitignore_updated": outcome.gitignore_updated,
+    })
+}
+
+fn cmd_init(root: &Path, as_json: bool) -> Result<i32> {
+    let outcome = spectra_core::init::init(root)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
+    } else {
+        println!("Initialized spectra project in {}.", root.display());
+        println!("  config:  {}", outcome.config_path.display());
+        println!("  changes: {}", outcome.changes_dir.display());
+        println!("  specs:   {}", outcome.specs_dir.display());
+        if outcome.gitignore_updated {
+            println!(
+                "  gitignore: added '{}'",
+                spectra_core::init::GITIGNORE_PATTERN
+            );
+        }
+        println!("\nNext: spectra new change <name>");
+    }
+    Ok(0)
 }
 
 fn cmd_drift(
@@ -565,6 +608,11 @@ fn run() -> Result<i32> {
     let root = find_root(&cwd);
 
     match &cli.command {
+        // `init` bootstraps the *current* directory: unlike every other
+        // command it must not walk up to an ancestor `.spectra.yaml` (that
+        // would refuse-as-already-initialized from inside an unrelated parent
+        // project) and must not require prior initialization.
+        Command::Init { json } => cmd_init(&cwd, *json),
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
@@ -984,6 +1032,23 @@ mod tests {
             serialized,
             r#"{"change":"my-change","status":"done","task_desc":"do the thing","task_id":"3"}"#
         );
+    }
+
+    #[test]
+    fn init_json_shape_matches_the_documented_contract() {
+        let outcome = spectra_core::init::InitOutcome {
+            config_path: PathBuf::from("/proj/.spectra.yaml"),
+            spec_dir: "openspec".to_string(),
+            changes_dir: PathBuf::from("/proj/openspec/changes"),
+            specs_dir: PathBuf::from("/proj/openspec/specs"),
+            gitignore_updated: true,
+        };
+        let value = init_json(&outcome);
+        assert_eq!(value["spec_dir"], "openspec");
+        assert_eq!(value["config"], "/proj/.spectra.yaml");
+        assert_eq!(value["changes_dir"], "/proj/openspec/changes");
+        assert_eq!(value["specs_dir"], "/proj/openspec/specs");
+        assert_eq!(value["gitignore_updated"], true);
     }
 
     #[test]

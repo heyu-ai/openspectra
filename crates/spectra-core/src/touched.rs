@@ -362,6 +362,15 @@ mod tests {
     fn load_warns_but_does_not_panic_on_a_permission_denied_read() {
         use std::os::unix::fs::PermissionsExt;
 
+        if !crate::testutil::permissions_enforced() {
+            eprintln!(
+                "skipping load_warns_but_does_not_panic_on_a_permission_denied_read: \
+                 running as root or on a permission-ignoring filesystem, so a 0o000 read \
+                 wouldn't be denied"
+            );
+            return;
+        }
+
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         let path = touched_path(&c, "my-change");
