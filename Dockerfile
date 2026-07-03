@@ -7,6 +7,6 @@ RUN cargo build --release --locked -p spectra-cli
 
 FROM alpine:3
 
-RUN apk add --no-cache git
+RUN apk add --no-cache git ca-certificates
 COPY --from=builder /app/target/release/spectra /usr/local/bin/spectra
 ENTRYPOINT ["spectra"]
