@@ -62,8 +62,13 @@ jobs:
           # binary and would false-fail the pipeline under `bash -eo pipefail`).
           info="$(file "$binary")"
           echo "$info"
+          # Rust musl targets differ by arch: aarch64 links non-PIE ("statically
+          # linked"), x86_64 links static-PIE ("static-pie linked"). Both are fully
+          # static (no dynamic deps); accept either. (Note: `ldd` on the static-PIE
+          # x86_64 binary misleadingly prints a musl loader line, which is exactly
+          # why `file` is the authoritative check here.)
           case "$info" in
-            *"statically linked"*) ;;
+            *"statically linked"*|*"static-pie linked"*) ;;
             *) echo "Expected a fully static musl binary"; exit 1 ;;
           esac
 
