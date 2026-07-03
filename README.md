@@ -60,13 +60,57 @@ Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
 (green/yellow/red) when stdout is a terminal; `--no-color` or the
 [`NO_COLOR`](https://no-color.org) env var disables it.
 
+## Install
+
+Once published to crates.io:
+
+```sh
+cargo install spectra-cli
+```
+
+Release tarballs are attached to GitHub releases for Linux and macOS:
+
+```sh
+curl -L https://github.com/howie/openspectra/releases/download/v0.1.0/spectra-v0.1.0-x86_64-unknown-linux-musl.tar.gz \
+  | tar xz
+sudo mv spectra-v0.1.0-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
+```
+
+Substitute the latest release tag from https://github.com/howie/openspectra/releases.
+
+Docker images are published as `ghcr.io/howie/openspectra:<tag>` and
+`ghcr.io/howie/openspectra:latest` (linux/amd64 only; on other platforms use
+the release tarballs).
+
 ### CI gate example
 
 ```yaml
 # .github/workflows/spec-drift.yml
-- run: cargo install --git https://github.com/howie/openspectra spectra-cli
-- run: spectra drift --json   # non-zero exit fails the job on medium/heavy drift
+name: Spec Drift
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install spectra
+        run: |
+          curl -L https://github.com/howie/openspectra/releases/download/v0.1.0/spectra-v0.1.0-x86_64-unknown-linux-musl.tar.gz \
+            | tar xz
+          sudo mv spectra-v0.1.0-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
+      - name: Check spec drift
+        run: spectra drift --json
 ```
+
+`spectra drift --json` exits non-zero on medium or heavy drift, so the job
+fails when a change has drifted far enough to require attention.
 
 ## Build
 

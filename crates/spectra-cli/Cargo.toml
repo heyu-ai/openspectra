@@ -4,14 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
 description = "OpenSpectra command-line interface."
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "spectra"
 path = "src/main.rs"
 
 [dependencies]
-spectra-core = { path = "../spectra-core" }
+spectra-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

@@ -4,7 +4,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
 description = "Core library for OpenSpectra: change discovery, drift detection, anchors."
+categories = ["development-tools"]
 
 [dependencies]
 serde.workspace = true
