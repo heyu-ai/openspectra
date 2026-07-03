@@ -42,3 +42,18 @@ jobs:
           # The drift binary must at least run and print help.
           ./target/release/spectra --help
           ./target/release/spectra drift --help
+
+  publish-dry-run:
+    name: crates.io publish dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Dry-run publish (both crates, in dependency order)
+        # Catches crates.io metadata regressions (bad category, missing readme,
+        # version-pin mismatch) before an actual release. --workspace resolves the
+        # in-workspace dependency order and verifies spectra-cli against the
+        # locally packaged spectra-core, which is not yet on crates.io.
+        run: cargo publish --workspace --dry-run --locked
