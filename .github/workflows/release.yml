@@ -53,14 +53,29 @@ jobs:
 
       - name: Verify static musl binary
         if: matrix.static-check
+        shell: bash
         run: |
+          set -euo pipefail
           binary="target/${{ matrix.target }}/release/spectra"
-          file "$binary"
-          if ! ldd "$binary" 2>&1 | tee ldd.txt | grep -q "not a dynamic executable"; then
-            echo "Expected a fully static musl binary"
-            cat ldd.txt
-            exit 1
-          fi
+          # `file` exits 0 on success, so its exit code is authoritative and does
+          # not depend on pipefail (unlike glibc `ldd`, which exits 1 on a static
+          # binary and would false-fail the pipeline under `bash -eo pipefail`).
+          info="$(file "$binary")"
+          echo "$info"
+          case "$info" in
+            *"statically linked"*) ;;
+            *) echo "Expected a fully static musl binary"; exit 1 ;;
+          esac
+
+      - name: Smoke-test the binary
+        # Every build leg runs on a runner matching its target arch, so the
+        # freshly built binary executes natively here.
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="target/${{ matrix.target }}/release/spectra"
+          "$binary" --help
+          "$binary" drift --help
 
       - name: Package
         shell: bash
@@ -98,12 +113,22 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c ./*.sha256
+
       - name: Attach release assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/*.tar.gz
             dist/*.sha256
+          fail_on_unmatched_files: true
+          # Mark pre-release tags (e.g. v0.1.0-rc1) as GitHub pre-releases.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
 
   docker:
@@ -123,13 +148,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build image (load locally for smoke test)
         uses: docker/build-push-action@v6
         with:
           context: .
           # amd64-only by design: aarch64 Linux users should use the aarch64-unknown-linux-musl release tarball.
           platforms: linux/amd64
-          push: true
-          tags: |
-            ghcr.io/howie/openspectra:${{ github.ref_name }}
-            ghcr.io/howie/openspectra:latest
+          load: true
+          push: false
+          tags: ghcr.io/howie/openspectra:${{ github.ref_name }}
+
+      - name: Smoke-test the image
+        env:
+          IMAGE: ghcr.io/howie/openspectra:${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # ENTRYPOINT is `spectra`, so args are passed straight through.
+          docker run --rm "$IMAGE" --help
+          docker run --rm "$IMAGE" drift --help
+
+      - name: Push image
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/howie/openspectra"
+          docker push "${image}:${REF_NAME}"
+          # Only advance :latest for stable tags (skip pre-releases like v0.1.0-rc1).
+          case "$REF_NAME" in
+            *-*) echo "Pre-release ${REF_NAME}; not updating :latest." ;;
+            *)
+              docker tag "${image}:${REF_NAME}" "${image}:latest"
+              docker push "${image}:latest"
+              ;;
+          esac

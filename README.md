@@ -102,9 +102,11 @@ jobs:
           fetch-depth: 0
       - name: Install spectra
         run: |
-          curl -L https://github.com/howie/openspectra/releases/download/v0.1.0/spectra-v0.1.0-x86_64-unknown-linux-musl.tar.gz \
+          # Pin to a release tag; see https://github.com/howie/openspectra/releases for the latest.
+          SPECTRA_VERSION=v0.1.0
+          curl -L "https://github.com/howie/openspectra/releases/download/${SPECTRA_VERSION}/spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar xz
-          sudo mv spectra-v0.1.0-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
+          sudo mv "spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl/spectra" /usr/local/bin/spectra
       - name: Check spec drift
         run: spectra drift --json
 ```

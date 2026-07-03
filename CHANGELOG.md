@@ -25,6 +25,10 @@ changes.
   and `3` for command errors.
 - OpenSpec ecosystem compatibility for the `.spectra.yaml`, changes, specs,
   tasks, and archive layout.
+- Distribution: prebuilt static Linux (`x86_64`/`aarch64` musl) and macOS
+  (`x86_64`/`aarch64`) release tarballs with SHA-256 checksums, a
+  `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
+  publishing (`cargo install spectra-cli`).
 
 [Unreleased]: https://github.com/howie/openspectra/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/howie/openspectra/releases/tag/v0.1.0
