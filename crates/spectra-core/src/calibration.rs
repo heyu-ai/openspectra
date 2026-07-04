@@ -29,19 +29,23 @@
 //! (Function/Symbol self-match the tracked design.md), so "non-CliFlag broken"
 //! == FilePath here.
 //!
-//! Time (score is a function of days since `created`):
+//! Time (score is a function of days since `created`) — boundaries now pinned
+//! exactly (previously interpolated from sparse field samples):
 //! ```text
-//!   days   status        score
-//!   0..=5  fresh          0
-//!   7..=19 aging          1
-//!  25..=36 stale          2
-//!   (none) no created     0
+//!   days     status        score
+//!   0..=6    fresh          0
+//!   7..=21   aging          1
+//!  22..=60   stale          2
+//!  61..      abandoned      4   (score ladder skips 3)
+//!   (none)   no created     0
 //! ```
 //!
-//! NOTE: Several boundaries are interpolated between sparse samples and are
-//! marked `CALIBRATE`. A controlled calibration harness (synthetic changes fed
-//! to the oracle) is the way to pin them exactly; the architecture does not
-//! depend on the precise values.
+//! Every boundary and the abandoned score above were pinned exactly by sweeping
+//! synthetic changes with controlled `created` dates through the oracle
+//! (`scripts/calibrate-time.py --mode boundaries`): transitions at 7, 22, and
+//! 61 days. Two off-by-one guesses and a wrong `abandoned` score were corrected
+//! this way (the old table read `<21`/`<60` and scored abandoned `3`). See the
+//! Time section of `docs/reverse-engineering/drift.md`.
 
 /// Maximum number of design anchors checked, per `ANCHOR_CAP` in
 /// `spectra_core::drift` (recovered verbatim from the binary).
@@ -92,16 +96,18 @@ pub const HEAVY_DECAY_THRESHOLD: f64 = 0.30;
 /// Time dimension: classify days-since-`created` into the oracle's status word
 /// and contributing score. `None` days (no/invalid created date) handled by caller.
 pub fn time_bucket(days: i64) -> (&'static str, i64) {
-    // CALIBRATE: fresh/aging boundary observed between 5 and 7 days;
-    // aging/stale between 19 and 25; stale/abandoned unobserved (guess 60).
+    // Boundaries pinned exactly against the v2.3.1 oracle via
+    // scripts/calibrate-time.py: transitions at 7 (fresh|aging), 22
+    // (aging|stale), and 61 (stale|abandoned). The score ladder skips 3 —
+    // abandoned scores 4, not 3.
     if days < 7 {
         ("fresh", 0)
-    } else if days < 21 {
+    } else if days < 22 {
         ("aging", 1)
-    } else if days < 60 {
+    } else if days < 61 {
         ("stale", 2)
     } else {
-        ("abandoned", 3)
+        ("abandoned", 4)
     }
 }
 
@@ -175,13 +181,23 @@ mod tests {
     }
 
     #[test]
-    fn time_bucket_reproduces_field_samples() {
+    fn time_bucket_boundaries_pinned_against_oracle() {
+        // Every edge below is the exact transition day recovered by
+        // scripts/calibrate-time.py --mode boundaries against the v2.3.1 oracle.
+        // fresh: 0..=6
         assert_eq!(time_bucket(0), ("fresh", 0));
-        assert_eq!(time_bucket(5), ("fresh", 0));
+        assert_eq!(time_bucket(6), ("fresh", 0));
+        // fresh|aging edge at 7
         assert_eq!(time_bucket(7), ("aging", 1));
-        assert_eq!(time_bucket(19), ("aging", 1));
-        assert_eq!(time_bucket(25), ("stale", 2));
-        assert_eq!(time_bucket(36), ("stale", 2));
+        // aging: 7..=21 (old code wrongly flipped 21 to stale)
+        assert_eq!(time_bucket(21), ("aging", 1));
+        // aging|stale edge at 22
+        assert_eq!(time_bucket(22), ("stale", 2));
+        // stale: 22..=60 (old code wrongly flipped 60 to abandoned)
+        assert_eq!(time_bucket(60), ("stale", 2));
+        // stale|abandoned edge at 61; abandoned scores 4, not 3 (ladder skips 3)
+        assert_eq!(time_bucket(61), ("abandoned", 4));
+        assert_eq!(time_bucket(365), ("abandoned", 4));
     }
 
     #[test]

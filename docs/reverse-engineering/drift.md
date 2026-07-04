@@ -55,14 +55,20 @@ against the oracle:
 | days | status | score |
 |------|--------|-------|
 | 0–6 | `fresh (Nd)` | 0 |
-| 7–20 | `aging (Nd)` | 1 |
-| 21–59 | `stale (Nd)` | 2 |
-| ≥60 (unobserved) | `abandoned (Nd)` | 3 |
+| 7–21 | `aging (Nd)` | 1 |
+| 22–60 | `stale (Nd)` | 2 |
+| ≥61 | `abandoned (Nd)` | 4 |
 | — | `no created date` / `invalid created date` | 0 |
 
-`fresh|aging` boundary lies in 5↔7; `aging|stale` in 19↔25; `stale|abandoned`
-is unobserved (60 is a guess). Source line numbers do not matter; only the
-constants are uncertain — see `calibration::time_bucket`.
+All three boundaries and the `abandoned` score are now **pinned exactly** (not
+interpolated) by sweeping synthetic changes with controlled `created` dates
+through the oracle — `scripts/calibrate-time.py --mode boundaries` reproduces
+the transitions at days **7, 22, and 61**. This corrected three earlier guesses:
+the `aging|stale` edge was coded `<21` (should be `<22`; day 21 is still
+`aging`), the `stale|abandoned` edge was coded `<60` (should be `<61`; day 60 is
+still `stale`), and `abandoned` was scored `3` when the oracle actually scores it
+**`4`** — the score ladder jumps `2 → 4`, skipping 3. Source line numbers do not
+matter; see `calibration::time_bucket`.
 
 ### 2. Structure — broken design anchors
 Anchors are references in `design.md` to code artifacts, extracted by four
@@ -151,7 +157,7 @@ a positive sample is captured.
 | JSON schema, dimension model, `total_score` rule | ✅ exact |
 | FilePath / CliFlag / Function extraction & resolution | ✅ exact (byte-for-byte on golden runs) |
 | Structure score formula (category-weighted), severity bands, recommendation map | ✅ exact — harness-recovered + golden-verified |
-| Time score curve | ✅ matches all samples; outer day boundaries `CALIBRATE` |
+| Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4) |
 | `commits_since_created`, git commands | ✅ exact |
 | **Symbol extraction narrowing** | ⚠️ **open** — see below |
 | Tasks positive-case predicates | ⚠️ uncalibrated (no positive sample); detection gated off |
