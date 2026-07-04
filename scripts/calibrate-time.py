@@ -55,8 +55,9 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-# The pinned transitions `--mode boundaries` verifies against:
-# first day of each new state -> (status word, score).
+# The pinned values `--mode boundaries` verifies against: the day-0 baseline
+# state, and the first day of each new state -> (status word, score).
+EXPECTED_BASELINE = ("fresh", 0)
 EXPECTED_TRANSITIONS = {7: ("aging", 1), 22: ("stale", 2), 61: ("abandoned", 4)}
 
 
@@ -135,7 +136,7 @@ def oracle_time_once(oracle, repo, days):
                     f"(exit {out.returncode})"
                 )
             echoed = int(m.group(1))
-            word = status.split(" ", 1)[0]
+            word = status.split(maxsplit=1)[0]
             return word, d.get("score"), echoed
     raise RuntimeError(
         f"no Time dimension in oracle output (exit {out.returncode}): "
@@ -175,16 +176,25 @@ def mode_boundaries(oracle, repo, max_days):
     non-zero when the oracle's boundaries drifted from the pinned values."""
     print(f"== Time boundaries (scanning days 0..{max_days}) ==")
     prev = None
+    baseline = None
     transitions = {}
     for n in range(max_days + 1):
         word, score = oracle_time(oracle, repo, n)
         cur = (word, score)
+        if baseline is None:
+            baseline = cur
         if prev is not None and cur != prev:
             transitions[n] = cur
             print(f"  day {n}: {prev[0]}({prev[1]}) -> {cur[0]}({cur[1]})")
         prev = cur
     if prev is None:
         print("  (no days probed)")
+        return 1
+    # Transitions alone can't catch a renamed/re-scored day-0 bucket, so the
+    # starting state is verified explicitly against the pinned table.
+    if baseline != EXPECTED_BASELINE:
+        print(f"  [MISMATCH] day-0 state {baseline} != expected {EXPECTED_BASELINE} "
+              "— oracle baseline bucket drifted from calibration.rs; recalibrate")
         return 1
     print(f"  {len(transitions)} transition(s) found; final state at "
           f"day {max_days}: {prev[0]}(score {prev[1]})")
