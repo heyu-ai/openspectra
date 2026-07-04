@@ -91,7 +91,8 @@ def oracle_structure_score(oracle, repo, resolved_fp, broken_fp, broken_cf):
         ["git", "config", "user.email", "p@e.com"],
         ["git", "config", "user.name", "p"],
         ["git", "add", "-A"],
-        ["git", "commit", "-q", "-m", "x"],
+        # --no-gpg-sign: a global commit.gpgsign=true must not break the sweep
+        ["git", "commit", "-q", "--no-gpg-sign", "-m", "x"],
     ):
         sh(c, repo)
     # A successful `spectra drift` always exits 0 regardless of severity

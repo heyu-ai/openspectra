@@ -98,7 +98,8 @@ def build_repo(repo, days):
         ["git", "config", "user.email", "p@e.com"],
         ["git", "config", "user.name", "p"],
         ["git", "add", "-A"],
-        ["git", "commit", "-q", "-m", "x"],
+        # --no-gpg-sign: a global commit.gpgsign=true must not break the sweep
+        ["git", "commit", "-q", "--no-gpg-sign", "-m", "x"],
     ):
         sh(c, repo)
 
@@ -144,10 +145,12 @@ def oracle_time_once(oracle, repo, days):
 
 def oracle_time(oracle, repo, days):
     """Probe with the echoed-day assertion, retrying once so a local-midnight
-    rollover between repo build and oracle run aborts nothing."""
+    rollover between repo build and oracle run aborts nothing. The oracle
+    clamps future dates to 0d, so a (hypothetical) negative-days probe expects
+    an echo of 0, not the negative N — the CLI itself only sweeps 0..max_days."""
     for attempt in (1, 2):
         word, score, echoed = oracle_time_once(oracle, repo, days)
-        if echoed == days:
+        if echoed == max(0, days):
             return word, score
         if attempt == 1:
             continue  # rebuild against the (possibly new) current date
