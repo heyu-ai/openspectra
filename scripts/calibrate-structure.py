@@ -91,11 +91,14 @@ def oracle_structure_score(oracle, repo, resolved_fp, broken_fp, broken_cf):
         ["git", "config", "user.email", "p@e.com"],
         ["git", "config", "user.name", "p"],
         ["git", "add", "-A"],
-        ["git", "commit", "-q", "-m", "x"],
+        # --no-gpg-sign: a global commit.gpgsign=true must not break the sweep
+        ["git", "commit", "-q", "--no-gpg-sign", "-m", "x"],
     ):
         sh(c, repo)
-    # `spectra drift` exits non-zero on medium/heavy drift, so don't use sh()'s
-    # returncode guard here; instead fail loudly only if stdout isn't JSON.
+    # A successful `spectra drift` always exits 0 regardless of severity
+    # (probed 2026-07-04; the earlier "non-zero on medium/heavy" note here was
+    # wrong), but errors exit 1 with a non-JSON message — so skip sh()'s
+    # returncode guard and fail loudly only if stdout isn't JSON.
     out = subprocess.run([oracle, "drift", "c", "--json"], cwd=repo,
                          capture_output=True, text=True)
     try:

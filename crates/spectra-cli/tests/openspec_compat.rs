@@ -105,8 +105,8 @@ fn adopt_list_drift_and_archive_a_vendored_openspec_project() {
         .output()
         .unwrap();
     assert!(
-        matches!(drift.status.code(), Some(0..=2)),
-        "drift should exit with a drift code, got: {drift:?}"
+        matches!(drift.status.code(), Some(0)),
+        "successful drift always exits 0 (oracle-pinned), got: {drift:?}"
     );
     let _: serde_json::Value = serde_json::from_slice(&drift.stdout).unwrap();
 

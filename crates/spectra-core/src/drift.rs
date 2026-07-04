@@ -54,7 +54,10 @@ fn time_dimension(created: Option<&str>) -> Dimension {
         Some(raw) => match NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
             Err(_) => ("invalid created date".to_string(), 0),
             Ok(date) => {
-                let days = (Local::now().date_naive() - date).num_days();
+                // The oracle clamps future `created` dates to 0 days (probed:
+                // created = today+1/+30/+365 all report "fresh (0d)"), so the
+                // display and the bucket both use the clamped value.
+                let days = (Local::now().date_naive() - date).num_days().max(0);
                 let (word, score) = calibration::time_bucket(days);
                 (format!("{word} ({days}d)"), score)
             }
@@ -181,12 +184,38 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
 }
 
 impl DriftReport {
-    /// CI exit code: 0 for light, non-zero otherwise (gate on medium/heavy).
+    /// Exit code for a successful drift analysis: always 0, matching the
+    /// oracle. Probed across the severity space (light/medium/heavy, JSON and
+    /// human modes): the reference binary never maps severity to the exit
+    /// code. The earlier 0/1/2 severity mapping here was an undocumented guess
+    /// that diverged once `abandoned` alone could reach `medium`.
     pub fn exit_code(&self) -> i32 {
-        match self.severity.as_str() {
-            "light" => 0,
-            "medium" => 1,
-            _ => 2,
-        }
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn time_dimension_error_words_score_zero() {
+        let none = time_dimension(None);
+        assert_eq!(none.status, "no created date");
+        assert_eq!(none.score, 0);
+        assert!(none.contributes_to_total);
+
+        let bad = time_dimension(Some("not-a-date"));
+        assert_eq!(bad.status, "invalid created date");
+        assert_eq!(bad.score, 0);
+    }
+
+    #[test]
+    fn time_dimension_clamps_future_created_to_zero_days() {
+        // Oracle-pinned: a future `created` reports "fresh (0d)", never a
+        // negative day count (probed with created = today+1/+30/+365).
+        let future = time_dimension(Some("9999-01-01"));
+        assert_eq!(future.status, "fresh (0d)");
+        assert_eq!(future.score, 0);
     }
 }

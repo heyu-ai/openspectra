@@ -34,8 +34,9 @@ dimensions and prints a single recommended next step:
   off pending calibration — see the RE doc)*.
 * **Environment** — commit volume since creation (display only).
 
-It outputs a human-readable, conclusion-first report or `--json` for tooling,
-and exits non-zero on medium/heavy drift so CI can gate on it.
+It outputs a human-readable, conclusion-first report or `--json` for tooling.
+Like the reference binary, a successful run always exits `0` regardless of
+severity — CI gates on the `severity` field of the JSON output (see below).
 
 ## Usage
 
@@ -54,7 +55,9 @@ spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md check
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
 ```
 
-Exit codes: `0` light · `1` medium · `2` heavy · `3` error.
+Exit codes (pinned against the reference binary): `0` on any successful run —
+severity does **not** map to the exit code — and `1` on errors (e.g. change
+not found). To gate CI on drift severity, check the JSON `severity` field.
 
 `spectra drift`'s human-readable conclusion line is colored by severity
 (green/yellow/red) when stdout is a terminal; `--no-color` or the
@@ -108,11 +111,15 @@ jobs:
             | tar xz
           sudo mv "spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl/spectra" /usr/local/bin/spectra
       - name: Check spec drift
-        run: spectra drift --json
+        run: |
+          spectra drift --json | tee drift.json
+          jq -e '.severity == "light"' drift.json > /dev/null
 ```
 
-`spectra drift --json` exits non-zero on medium or heavy drift, so the job
-fails when a change has drifted far enough to require attention.
+`spectra drift` itself always exits `0` on a successful run (matching the
+reference binary), so the gate is the explicit `jq` check on the JSON
+`severity` field — the job fails when a change has drifted to `medium` or
+`heavy`.
 
 ## Build
 
