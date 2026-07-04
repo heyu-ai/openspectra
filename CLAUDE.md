@@ -45,6 +45,15 @@ why; never add a blanket `#[allow]` just to make the check pass.
 - Golden-fixture comparisons calibrate against the closed-source binary's
   actual output — see `docs/reverse-engineering/drift.md` ("Reproducing the
   oracle") before changing scoring constants.
+- When pinning an RE'd constant against the oracle, also probe its downstream
+  observable chain (score → severity → exit code → CI gate), not just the
+  constant itself: a locally-correct fix can widen a latent divergence in a
+  behavior that consumes it (PR #35: the abandoned score fix exposed the
+  severity-mapped exit codes as an unverified guess).
+- Calibration scripts are verification contracts, not printers: compare the
+  recovered values against the pinned expectations, exit non-zero on drift or
+  on a scan too short to cover them, and preserve the failing synthetic repo
+  for inspection (see `scripts/calibrate-time.py --mode boundaries`).
 
 ## Applicable skills for this repo
 
