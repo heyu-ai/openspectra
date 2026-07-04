@@ -75,6 +75,11 @@ out to 3650 days — all `abandoned`, score 4), and a **future `created` date is
 clamped to 0** (created = today+1/+30/+365 all report `fresh (0d)`, never a
 negative day count).
 
+`today` is derived from the **process-local timezone**, not UTC: running the
+oracle with a shifted `TZ` env var (e.g. `TZ=Etc/GMT+11`) moves its reported
+day count accordingly, and OpenSpectra's `Local::now()` moves identically in
+every probed zone.
+
 ### 2. Structure — broken design anchors
 Anchors are references in `design.md` to code artifacts, extracted by four
 regexes recovered verbatim from `.rodata`:

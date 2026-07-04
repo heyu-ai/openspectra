@@ -19,7 +19,8 @@ built with:
 
 Sweeping `N` and reading the oracle's Time dimension pins every transition.
 
-## Recovered boundaries (`--mode boundaries` verifies these; exit 1 on drift)
+## Recovered boundaries (`--mode boundaries` verifies these; exits non-zero on
+## drift from the pinned values or when the scan does not cover all of them)
 
     days        status          score
     0..=6       fresh            0
@@ -124,7 +125,7 @@ def oracle_time_once(oracle, repo, days):
             f"{out.stderr.strip() or json.dumps(rep)[:200]!r}"
         )
     for d in dims:
-        if d.get("kind") == "Time":
+        if isinstance(d, dict) and d.get("kind") == "Time":
             status = d.get("status", "")
             m = re.search(r"\((-?\d+)d\)", status)
             if not m:
@@ -186,20 +187,27 @@ def mode_boundaries(oracle, repo, max_days):
           f"day {max_days}: {prev[0]}(score {prev[1]})")
 
     expected_in_range = {d: s for d, s in EXPECTED_TRANSITIONS.items() if d <= max_days}
+    if transitions != expected_in_range:
+        print(f"  [MISMATCH] expected {expected_in_range}, got {transitions} "
+              "— oracle boundaries drifted from calibration.rs; recalibrate")
+        return 1
     if len(expected_in_range) < len(EXPECTED_TRANSITIONS):
-        print(f"  [WARN] scan truncated: --max-days {max_days} covers only "
-              f"{len(expected_in_range)}/{len(EXPECTED_TRANSITIONS)} pinned transitions")
-    if transitions == expected_in_range:
-        print(f"  [OK] transitions match the pinned values ({sorted(expected_in_range)})")
-        return 0
-    print(f"  [MISMATCH] expected {expected_in_range}, got {transitions} "
-          "— oracle boundaries drifted from calibration.rs; recalibrate")
-    return 1
+        # A truncated scan must not read as "verified": exit non-zero so a
+        # scripted run can't mistake partial coverage for a full verification.
+        print(f"  [FAIL] scan truncated: --max-days {max_days} covers only "
+              f"{len(expected_in_range)}/{len(EXPECTED_TRANSITIONS)} pinned transitions; "
+              f"use --max-days >= {max(EXPECTED_TRANSITIONS)} for a full verification")
+        return 1
+    print(f"  [OK] transitions match the pinned values ({sorted(expected_in_range)})")
+    return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--oracle", required=True, help="path to the reference spectra binary")
+    # Resolved to an absolute path because probes run with cwd=<synthetic repo>,
+    # where a relative path like target/release/spectra would no longer resolve.
+    ap.add_argument("--oracle", required=True, type=lambda p: str(Path(p).resolve()),
+                    help="path to the reference spectra binary")
     ap.add_argument("--mode", choices=["boundaries", "sweep"], default="boundaries")
     ap.add_argument("--max-days", type=nonnegative_int, default=90,
                     help="highest day count to probe (default 90; abandoned starts at 61)")
@@ -219,6 +227,11 @@ def main():
         # to today, so a later manual rebuild would not reproduce it exactly.
         print(f"[FAIL] scratch preserved for inspection: {scratch}")
         raise
+    if code != 0:
+        # Verification failures (mismatch / truncated scan) preserve the
+        # scratch too — the docstring promises inspectability on any failure.
+        print(f"[FAIL] scratch preserved for inspection: {scratch}")
+        raise SystemExit(code)
     cleanup = scratch if auto_scratch else repo
     if cleanup.exists():
         shutil.rmtree(cleanup)
