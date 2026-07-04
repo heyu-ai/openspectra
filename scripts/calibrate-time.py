@@ -137,7 +137,7 @@ def oracle_time_once(oracle, repo, days):
         )
     for d in dims:
         if isinstance(d, dict) and d.get("kind") == "Time":
-            status = d.get("status", "")
+            status = d.get("status") or ""  # `or`: an explicit JSON null must not reach re.search
             m = re.search(r"\((-?\d+)d\)", status)
             if not m:
                 raise RuntimeError(
