@@ -230,6 +230,12 @@ unknowns:
    every anchor is reported broken and thus listed.
 3. Vary one input at a time (a symbol in prose vs. backtick vs. fence; a flag in
    each context) and diff the oracle's `broken_anchors` to isolate each rule.
+4. To settle **timezone questions** ("does the binary derive `today` from local
+   time or UTC?"), run the oracle under a shifted `TZ` env var (e.g.
+   `TZ=Etc/GMT+11`) and watch whether its reported day count moves: it moves →
+   process-local time; it stays → UTC or a cached value. One run is decisive —
+   this refuted the UTC theory for v2.3.1 (it is local-time, matching
+   `Local::now()`).
 
 The `scripts/` probes and the per-change golden JSON used for calibration live
 alongside this doc's git history.
