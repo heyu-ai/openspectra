@@ -19,8 +19,11 @@ built with:
 
 Sweeping `N` and reading the oracle's Time dimension pins every transition.
 
-## Recovered boundaries (`--mode boundaries` verifies these; exits non-zero on
-## drift from the pinned values or when the scan does not cover all of them)
+## Recovered boundaries
+
+`--mode boundaries` verifies these (day-0 baseline + every transition) and
+exits non-zero on drift from the pinned values or on a scan too short to
+cover all of them.
 
     days        status          score
     0..=6       fresh            0
