@@ -666,10 +666,11 @@ fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {
-            // Distinct from drift severities (0 light / 1 medium / 2 heavy) so
-            // CI can tell a tool failure apart from a heavy-drift gate.
+            // The oracle exits 1 on operational errors (probed: "Change 'x'
+            // not found." exits 1); successful drift always exits 0 regardless
+            // of severity, so 1 is unambiguously "tool error".
             eprintln!("Error: {e:#}");
-            ExitCode::from(3)
+            ExitCode::from(1)
         }
     }
 }

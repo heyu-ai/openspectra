@@ -184,20 +184,30 @@ mod tests {
     fn time_bucket_boundaries_pinned_against_oracle() {
         // Every edge below is the exact transition day recovered by
         // scripts/calibrate-time.py --mode boundaries against the v2.3.1 oracle.
+        // Defensive floor: negative days never reach here in production
+        // (time_dimension clamps at 0, matching the oracle's "fresh (0d)" for
+        // future created dates), but the bucket itself is total over i64.
+        assert_eq!(time_bucket(-1), ("fresh", 0));
         // fresh: 0..=6
         assert_eq!(time_bucket(0), ("fresh", 0));
+        assert_eq!(time_bucket(5), ("fresh", 0)); // field sample
         assert_eq!(time_bucket(6), ("fresh", 0));
         // fresh|aging edge at 7
         assert_eq!(time_bucket(7), ("aging", 1));
         // aging: 7..=21 (old code wrongly flipped 21 to stale)
+        assert_eq!(time_bucket(19), ("aging", 1)); // field sample
         assert_eq!(time_bucket(21), ("aging", 1));
         // aging|stale edge at 22
         assert_eq!(time_bucket(22), ("stale", 2));
         // stale: 22..=60 (old code wrongly flipped 60 to abandoned)
+        assert_eq!(time_bucket(25), ("stale", 2)); // field sample
+        assert_eq!(time_bucket(36), ("stale", 2)); // field sample
         assert_eq!(time_bucket(60), ("stale", 2));
         // stale|abandoned edge at 61; abandoned scores 4, not 3 (ladder skips 3)
         assert_eq!(time_bucket(61), ("abandoned", 4));
+        // no further transition: probed out to 3650d, all abandoned score 4
         assert_eq!(time_bucket(365), ("abandoned", 4));
+        assert_eq!(time_bucket(3650), ("abandoned", 4));
     }
 
     #[test]
