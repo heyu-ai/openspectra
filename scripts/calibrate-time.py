@@ -78,6 +78,15 @@ def nonnegative_int(value):
     return n
 
 
+def oracle_path(value):
+    """Resolve --oracle to an absolute path (probes run with cwd=<synthetic
+    repo>, where a relative path would not resolve) and require it to exist."""
+    p = Path(value).resolve()
+    if not p.is_file():
+        raise argparse.ArgumentTypeError(f"oracle binary not found: {p}")
+    return str(p)
+
+
 def build_repo(repo, days):
     """(Re)build a one-change repo whose only drift signal is age `days`."""
     if repo.exists():
@@ -217,9 +226,7 @@ def mode_boundaries(oracle, repo, max_days):
 
 def main():
     ap = argparse.ArgumentParser()
-    # Resolved to an absolute path because probes run with cwd=<synthetic repo>,
-    # where a relative path like target/release/spectra would no longer resolve.
-    ap.add_argument("--oracle", required=True, type=lambda p: str(Path(p).resolve()),
+    ap.add_argument("--oracle", required=True, type=oracle_path,
                     help="path to the reference spectra binary")
     ap.add_argument("--mode", choices=["boundaries", "sweep"], default="boundaries")
     ap.add_argument("--max-days", type=nonnegative_int, default=90,
