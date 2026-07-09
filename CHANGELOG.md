@@ -10,6 +10,29 @@ changes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-10
+
+### Added
+
+- `spectra validate [CHANGE] [--changes] [--strict] [--json]` — an OpenSpec
+  structural gate. Unlike the OSS `@fission-ai/openspec` validator, it
+  traverses nested-capability layouts (`specs/<Epic>/<Feature>/spec.md`)
+  instead of reporting them as "no deltas found". A change needs at least one
+  requirement delta; with `--strict`, each ADDED/MODIFIED requirement also
+  needs a normative `SHALL`/`MUST` and a `#### Scenario:` block. It is a
+  pass/fail gate: exit `0` when every change is valid, `1` otherwise (gate on
+  the JSON `summary.totals.failed`). The delta parser is fenced-code-block
+  aware and its directory walk is symlink-cycle safe.
+
+### Changed
+
+- **`spectra drift` now always exits `0` on a successful run**, regardless of
+  severity (matching the reference binary and the documented contract). The
+  previous `0`/`1`/`2` severity-to-exit-code mapping (shipped in 0.1.0)
+  reddened downstream CI on the `spectra` process itself before callers could
+  gate on the JSON `severity` field. Gate on the `severity` field, not the
+  exit code. (#37)
+
 ## [0.1.0] - 2026-07-03
 
 ### Added
@@ -30,5 +53,6 @@ changes.
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/howie/openspectra/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/howie/openspectra/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/howie/openspectra/releases/tag/v0.2.0
 [0.1.0]: https://github.com/howie/openspectra/releases/tag/v0.1.0
