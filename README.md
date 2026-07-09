@@ -4,15 +4,18 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** early. `spectra init` / `drift` (+ minimal `list` / `show` /
-> `park` / `unpark` / `new change` / `task done` / `archive`) is implemented
-> in Rust and runs on Linux/macOS with zero runtime dependencies (just `git`
-> on `PATH`). The reverse-engineering write-ups are in
+> **Status:** early. `spectra init` / `drift` / `validate` (+ minimal `list` /
+> `show` / `park` / `unpark` / `new change` / `task done` / `archive`) is
+> implemented in Rust and runs on Linux/macOS with zero runtime dependencies
+> (just `git` on `PATH`). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
 > [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
 > [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
 > and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
-> (the last one is **not** oracle-verified — see that doc).
+> (the last one is **not** oracle-verified — see that doc). `validate` is
+> likewise **not** oracle-verified: it matches the OSS `openspec validate`
+> contract, not the macOS binary — see
+> [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md).
 
 ## Why
 
@@ -43,6 +46,7 @@ severity — CI gates on the `severity` field of the JSON output (see below).
 ```sh
 spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/{changes,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
+spectra validate [CHANGE] [--changes] [--strict] [--json]  # OpenSpec structural gate; exits non-zero when any change is invalid
 spectra list  [--json]            # lists active changes
 spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
 spectra list  --specs [--json]    # lists capability specs instead of changes
@@ -55,9 +59,18 @@ spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md check
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
 ```
 
-Exit codes (pinned against the reference binary): `0` on any successful run —
-severity does **not** map to the exit code — and `1` on errors (e.g. change
-not found). To gate CI on drift severity, check the JSON `severity` field.
+Exit codes for `drift` (pinned against the reference binary): `0` on any
+successful run — severity does **not** map to the exit code — and `1` on errors
+(e.g. change not found). To gate CI on drift severity, check the JSON
+`severity` field.
+
+`validate` is the deliberate exception: it is a pass/fail gate, so it exits
+`0` when every validated change is valid and `1` when any is invalid (also
+`1` on an operational error, e.g. not initialized). The JSON is still
+authoritative — gate on `summary.totals.failed`. See
+[`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md)
+for the rule set (it matches the OSS `openspec validate` contract, not the
+macOS Spectra binary, which can't be probed for `validate` from Linux CI).
 
 `spectra drift`'s human-readable conclusion line is colored by severity
 (green/yellow/red) when stdout is a terminal; `--no-color` or the
@@ -121,6 +134,20 @@ reference binary), so the gate is the explicit `jq` check on the JSON
 `severity` field — the job fails when a change has drifted to `medium` or
 `heavy`.
 
+For a structural gate, `spectra validate --changes --strict` fails the job
+directly on its own exit code (no `jq` needed) — it exits non-zero when any
+change lacks a delta, or (under `--strict`) has a requirement missing a
+normative `SHALL`/`MUST` or a `#### Scenario:` block:
+
+```yaml
+      - name: Validate OpenSpec changes
+        run: spectra validate --changes --strict
+```
+
+Unlike the OSS `@fission-ai/openspec` validator, this traverses nested
+`specs/<Epic>/<Feature>/spec.md` layouts, so nested-capability changes are
+validated instead of skipped as "no deltas found".
+
 ## Build
 
 ```sh
@@ -141,7 +168,7 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / list / show / park / unpark / new change / task done / archive
+crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / archive
 docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
 scripts/               # oracle calibration probes
 ```

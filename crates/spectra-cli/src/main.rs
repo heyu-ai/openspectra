@@ -1,5 +1,5 @@
-//! OpenSpectra CLI: `init`, `drift`, `list`, `show`, `park`, `unpark`,
-//! `new change`, `task done`, `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `validate`, `list`, `show`, `park`,
+//! `unpark`, `new change`, `task done`, `archive`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -41,6 +41,25 @@ enum Command {
         /// Change name (auto-detects if only one exists).
         change: Option<String>,
         /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate changes against the OpenSpec structural rules (a change needs
+    /// at least one requirement delta; with --strict, each ADDED/MODIFIED
+    /// requirement also needs a normative SHALL/MUST and a `#### Scenario:`).
+    /// Unlike `drift`, this is a pass/fail gate: it exits non-zero when any
+    /// change is invalid.
+    Validate {
+        /// Change name to validate (auto-detects if only one active change
+        /// exists). Ignored when --changes is given.
+        change: Option<String>,
+        /// Validate every active change instead of a single one.
+        #[arg(long, conflicts_with = "change")]
+        changes: bool,
+        /// Escalate content-quality findings (missing SHALL/MUST or missing
+        /// scenario) from ignored to hard errors.
+        #[arg(long)]
+        strict: bool,
         #[arg(long)]
         json: bool,
     },
@@ -201,6 +220,60 @@ fn cmd_drift(
         print_human(&report, use_color);
     }
     Ok(report.exit_code())
+}
+
+fn cmd_validate(
+    cfg: &Config,
+    change_name: Option<&str>,
+    all_changes: bool,
+    strict: bool,
+    as_json: bool,
+) -> Result<i32> {
+    let report = if all_changes {
+        spectra_core::validate::validate_all_active(cfg, strict)?
+    } else {
+        // A single named (or auto-detected) change. `resolve` yields the
+        // reference CLI's "no active changes" / "multiple changes" errors on
+        // the auto-detect (None) path, but passes an explicit name through
+        // verbatim -- so verify it actually exists here, otherwise a typo'd,
+        // parked, or archived name would be silently reported as a bogus "no
+        // delta" validation failure instead of "Change '<name>' not found."
+        // (matching `archive`).
+        let name = change::resolve(cfg, change_name)?;
+        if change::try_load(cfg, &name)?.is_none() {
+            anyhow::bail!("Change '{name}' not found.");
+        }
+        spectra_core::validate::build_report(cfg, std::slice::from_ref(&name), strict)?
+    };
+
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print_validate_human(&report);
+    }
+    // Gate semantics (distinct from `drift`, which always exits 0): a failed
+    // validation exits non-zero so `validate` can back a CI check directly.
+    Ok(i32::from(report.any_failed()))
+}
+
+fn print_validate_human(report: &spectra_core::validate::ValidateReport) {
+    for item in &report.items {
+        if item.valid {
+            println!("{:<45} OK", item.id);
+        } else {
+            let n = item.issues.len();
+            let noun = if n == 1 { "issue" } else { "issues" };
+            println!("{:<45} FAIL ({n} {noun})", item.id);
+            for issue in &item.issues {
+                println!("  {} {}: {}", issue.level, issue.path, issue.message);
+            }
+        }
+    }
+    let t = &report.summary.totals;
+    println!(
+        "\n{} passed, {} failed ({} total).",
+        t.passed, t.failed, t.total
+    );
 }
 
 /// Whether to emit ANSI color codes: the `--no-color` flag and the `NO_COLOR`
@@ -608,6 +681,15 @@ fn run() -> Result<i32> {
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
+        }
+        Command::Validate {
+            change,
+            changes,
+            strict,
+            json,
+        } => {
+            let cfg = require_initialized(&root)?;
+            cmd_validate(&cfg, change.as_deref(), *changes, *strict, *json)
         }
         Command::List {
             // `changes` is unused here on purpose: clap's `conflicts_with_all`

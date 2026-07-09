@@ -16,6 +16,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::config::Config;
+use crate::fsutil::{read_dir_optional, read_optional};
 use crate::{change, touched};
 
 static ADDED_HEADER_RE: Lazy<Regex> =
@@ -49,29 +50,6 @@ pub struct ArchiveOutcome {
     pub name: String,
     pub archived_name: String,
     pub specs_applied: Vec<SpecApplyResult>,
-}
-
-/// Read `path` as UTF-8 text: `Ok(None)` when it's genuinely absent, `Err`
-/// for any other I/O failure (permission denied, invalid UTF-8, etc.) —
-/// callers must not fold a real read failure into "doesn't exist yet",
-/// since doing so before a subsequent write (as this module's several
-/// create-if-absent spots do) would silently clobber unreadable content.
-fn read_optional(path: &Path) -> Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(s) => Ok(Some(s)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
-/// `Ok(None)` when `path` is genuinely absent; `Err` for any other failure
-/// (mirrors [`read_optional`]'s NotFound-only collapse).
-fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>> {
-    match std::fs::read_dir(path) {
-        Ok(entries) => Ok(Some(entries)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
 }
 
 /// Whether `path` is a directory, via `fs::metadata` (not the boolean
