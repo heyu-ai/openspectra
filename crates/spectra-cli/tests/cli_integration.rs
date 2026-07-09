@@ -157,6 +157,204 @@ fn init_json_output_matches_the_documented_shape() {
 }
 
 #[test]
+fn drift_exits_zero_even_when_severity_is_medium_or_higher() {
+    // Regression for issue #37: a successful drift analysis must always exit 0
+    // regardless of severity (matching the reference binary and the README's
+    // documented contract). v0.1.0 mapped severity to the exit code (light->0,
+    // medium->1, heavy->2), which reddened downstream CI on the `spectra`
+    // process itself before the caller could gate on the JSON `severity` field.
+    let tmp = TempDir::new("drift-exit-zero");
+    git(&tmp, &["init", "-q"]);
+    git(&tmp, &["config", "user.email", "t@t.co"]);
+    git(&tmp, &["config", "user.name", "t"]);
+
+    let init = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    assert!(init.status.success(), "init failed: {init:?}");
+    let new_change = spectra()
+        .args(["new", "change", "aged-out"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(
+        new_change.status.success(),
+        "new change failed: {new_change:?}"
+    );
+
+    // A `created` date far in the past lands the Time dimension in the
+    // "abandoned" bucket (score 4), which alone reaches `medium` severity.
+    std::fs::write(
+        tmp.join("openspec")
+            .join("changes")
+            .join("aged-out")
+            .join(".openspec.yaml"),
+        "schema: spec-driven\ncreated: 2020-01-01\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["drift", "aged-out", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        report["severity"], "medium",
+        "test setup must actually produce a medium severity, got:\n{stdout}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "drift must exit 0 on a medium-severity change, got {:?}; stderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Init a git repo + spectra project in `tmp` and scaffold change `name`.
+fn init_project_with_change(tmp: &Path, name: &str) {
+    git(tmp, &["init", "-q"]);
+    git(tmp, &["config", "user.email", "t@t.co"]);
+    git(tmp, &["config", "user.name", "t"]);
+    let init = spectra().arg("init").current_dir(tmp).output().unwrap();
+    assert!(init.status.success(), "init failed: {init:?}");
+    let nc = spectra()
+        .args(["new", "change", name])
+        .current_dir(tmp)
+        .output()
+        .unwrap();
+    assert!(nc.status.success(), "new change failed: {nc:?}");
+}
+
+#[test]
+fn validate_accepts_a_well_formed_nested_capability_delta() {
+    // The nested `specs/<Epic>/<Feature>/spec.md` layout OSS reports as "no
+    // deltas found"; validate must traverse it and pass a good delta -- exit 0.
+    let tmp = TempDir::new("validate-nested-ok");
+    init_project_with_change(&tmp, "billing");
+    let cap = tmp
+        .join("openspec")
+        .join("changes")
+        .join("billing")
+        .join("specs")
+        .join("Billing")
+        .join("Invoices");
+    std::fs::create_dir_all(&cap).unwrap();
+    std::fs::write(
+        cap.join("spec.md"),
+        "## ADDED Requirements\n\n\
+         ### Requirement: Invoice export\n\n\
+         The system SHALL export invoices as PDF.\n\n\
+         #### Scenario: Export succeeds\n\n\
+         - **WHEN** a user requests a PDF\n\
+         - **THEN** a PDF is produced\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "--changes", "--strict", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["summary"]["totals"]["failed"], 0, "got:\n{stdout}");
+    assert_eq!(report["items"][0]["id"], "billing");
+    assert_eq!(report["items"][0]["valid"], true);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a valid change must exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn validate_strict_fails_and_exits_nonzero_on_a_bad_delta() {
+    let tmp = TempDir::new("validate-bad");
+    init_project_with_change(&tmp, "feat");
+    let cap = tmp
+        .join("openspec")
+        .join("changes")
+        .join("feat")
+        .join("specs")
+        .join("auth");
+    std::fs::create_dir_all(&cap).unwrap();
+    // A requirement with neither a normative keyword nor a scenario.
+    std::fs::write(
+        cap.join("spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Login\n\nUsers can log in.\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat", "--strict", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(report["summary"]["totals"]["failed"], 1, "got:\n{stdout}");
+    assert_eq!(report["items"][0]["valid"], false);
+    assert_eq!(report["items"][0]["issues"][0]["level"], "ERROR");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "an invalid change must exit 1 (gate semantics); stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn validate_nonstrict_passes_a_structurally_present_delta() {
+    // The same bad delta as above (no SHALL, no scenario) is structurally a
+    // delta, so a non-strict run gates only on structure and exits 0.
+    let tmp = TempDir::new("validate-nonstrict");
+    init_project_with_change(&tmp, "feat");
+    let cap = tmp
+        .join("openspec")
+        .join("changes")
+        .join("feat")
+        .join("specs")
+        .join("auth");
+    std::fs::create_dir_all(&cap).unwrap();
+    std::fs::write(
+        cap.join("spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Login\n\nUsers can log in.\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let report: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(report["items"][0]["valid"], true);
+}
+
+#[test]
+fn validate_errors_when_change_has_no_delta() {
+    let tmp = TempDir::new("validate-nodelta");
+    init_project_with_change(&tmp, "feat");
+    // `new change` scaffolds proposal/design/tasks but no specs/ deltas.
+
+    let out = spectra()
+        .args(["validate", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let report: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(report["items"][0]["valid"], false);
+    let msg = report["items"][0]["issues"][0]["message"].as_str().unwrap();
+    assert!(msg.contains("at least one delta"), "got: {msg}");
+}
+
+#[test]
 fn list_help_does_not_mention_changes_as_unimplemented() {
     let out = spectra().args(["list", "--help"]).output().unwrap();
     assert!(out.status.success());
