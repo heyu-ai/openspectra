@@ -355,6 +355,37 @@ fn validate_errors_when_change_has_no_delta() {
 }
 
 #[test]
+fn validate_errors_change_not_found_for_a_nonexistent_explicit_name() {
+    // Regression (mob review): an explicit typo'd / archived name must report
+    // "Change '<name>' not found." (like `archive`), not a misleading
+    // "must contain at least one delta" validation failure.
+    let tmp = TempDir::new("validate-notfound");
+    init_project_with_change(&tmp, "real-change");
+
+    let out = spectra()
+        .args(["validate", "does-not-exist", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "a missing change must exit 1 via the error path"
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Change 'does-not-exist' not found."),
+        "expected not-found error, got stderr:\n{stderr}\nstdout:\n{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    // Must be the error path, not a JSON validation report.
+    assert!(
+        String::from_utf8(out.stdout).unwrap().trim().is_empty(),
+        "no JSON report should be emitted for a not-found change"
+    );
+}
+
+#[test]
 fn list_help_does_not_mention_changes_as_unimplemented() {
     let out = spectra().args(["list", "--help"]).output().unwrap();
     assert!(out.status.success());

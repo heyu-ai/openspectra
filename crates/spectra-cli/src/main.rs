@@ -232,9 +232,17 @@ fn cmd_validate(
     let report = if all_changes {
         spectra_core::validate::validate_all_active(cfg, strict)?
     } else {
-        // A single named (or auto-detected) change; `resolve` produces the
-        // reference CLI's "no active changes" / "multiple changes" errors.
+        // A single named (or auto-detected) change. `resolve` yields the
+        // reference CLI's "no active changes" / "multiple changes" errors on
+        // the auto-detect (None) path, but passes an explicit name through
+        // verbatim -- so verify it actually exists here, otherwise a typo'd,
+        // parked, or archived name would be silently reported as a bogus "no
+        // delta" validation failure instead of "Change '<name>' not found."
+        // (matching `archive`).
         let name = change::resolve(cfg, change_name)?;
+        if change::try_load(cfg, &name)?.is_none() {
+            anyhow::bail!("Change '{name}' not found.");
+        }
         spectra_core::validate::build_report(cfg, std::slice::from_ref(&name), strict)?
     };
 

@@ -7,6 +7,7 @@ pub mod calibration;
 pub mod change;
 pub mod config;
 pub mod drift;
+mod fsutil;
 pub mod git;
 pub mod init;
 mod names;

@@ -43,7 +43,12 @@ spectra validate [CHANGE] [--changes] [--strict] [--json]
 A change's deltas live in `changes/<name>/specs/**/spec.md`. `validate`
 recursively collects **every** `spec.md` beneath that `specs/` root — this is
 the nested-layout fix; the capability id reported in issues is the `/`-joined
-path from `specs/` to the file's parent (e.g. `Billing/Invoices`).
+path from `specs/` to the file's parent (e.g. `Billing/Invoices`). The descent
+does **not** follow directory symlinks (it decides recursion with
+`symlink_metadata`, not `metadata`): a checked-in cyclic directory symlink
+would otherwise recurse without bound and stack-overflow the gate. A `spec.md`
+that is itself a symlink is still read — only directory *traversal* stops at
+links.
 
 1. **Structural (always an `ERROR`).** A change must contain at least one
    requirement delta: an `### Requirement:` header under an `## ADDED`,

@@ -205,7 +205,7 @@ fn collect_into(specs_root: &Path, dir: &Path, out: &mut Vec<(String, String)>) 
     // whether or not the dir also has subdirectories, so mixed flat/nested
     // layouts (a capability spec alongside sub-capability dirs) are all seen.
     let spec_md = dir.join("spec.md");
-    if let Some(content) = read_optional(&spec_md)? {
+    if let Some(content) = crate::fsutil::read_optional(&spec_md)? {
         let rel = dir.strip_prefix(specs_root).unwrap_or(dir);
         let cap = rel
             .components()
@@ -218,26 +218,25 @@ fn collect_into(specs_root: &Path, dir: &Path, out: &mut Vec<(String, String)>) 
     for entry in entries {
         let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
         let path = entry.path();
-        if is_dir(&path)? {
+        if is_real_dir(&path)? {
             collect_into(specs_root, &path, out)?;
         }
     }
     Ok(())
 }
 
-/// Read `path` as UTF-8, treating only a genuine NotFound as absent (`Ok(None)`).
-fn read_optional(path: &Path) -> Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(s) => Ok(Some(s)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
-/// Whether `path` is a directory via `fs::metadata` (not `Path::is_dir`, which
-/// silently returns `false` on a permission error instead of surfacing it).
-fn is_dir(path: &Path) -> Result<bool> {
-    match std::fs::metadata(path) {
+/// Whether `path` is a real directory to descend into, via `symlink_metadata`
+/// (which does **not** follow symlinks) rather than `fs::metadata` (which
+/// does). This is load-bearing, not cosmetic: the walk recurses, so following
+/// a directory symlink lets a checked-in cycle (`specs/loop -> .`, or two dirs
+/// pointing at each other) recurse without bound → stack overflow, crashing the
+/// gate instead of erroring cleanly. Not following symlinked subdirectories
+/// bounds traversal to the real tree. `symlink_metadata` (like `fs::metadata`)
+/// still surfaces a permission error instead of silently returning `false` the
+/// way `Path::is_dir` would. A `spec.md` that is itself a symlink is still read
+/// — only directory *descent* stops following links.
+fn is_real_dir(path: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(path) {
         Ok(m) => Ok(m.is_dir()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
@@ -467,6 +466,32 @@ mod tests {
         }
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("spec.md"), content).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_change_does_not_follow_a_symlink_cycle_under_specs() {
+        // Regression (mob review, all 3 voices): the recursive walk must not
+        // follow directory symlinks, or a checked-in cycle (`specs/loop -> .`)
+        // recurses without bound -> stack overflow, crashing the gate. With
+        // symlink-not-following descent this terminates cleanly and still finds
+        // the real `auth` delta. (If this ever regresses it stack-overflows the
+        // test process rather than failing an assertion -- which is exactly the
+        // crash we are guarding against.)
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(&c, "feat", "auth", GOOD_ADDED);
+        let specs_root = c.changes_dir().join("feat").join("specs");
+        // A directory symlink pointing back at its own parent: the classic
+        // walk cycle.
+        std::os::unix::fs::symlink(&specs_root, specs_root.join("loop")).unwrap();
+
+        let result = validate_change(&c, "feat", true).unwrap();
+        assert!(
+            result.valid,
+            "the real delta must still be found; got: {:?}",
+            result.issues
+        );
     }
 
     #[test]
