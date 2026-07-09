@@ -291,7 +291,7 @@ impl PendingReq {
 }
 
 /// Whether `line` opens or closes a fenced code block (```` ``` ```` or `~~~`,
-/// with up to leading indentation). Used to suppress markdown-structure
+/// possibly indented under a list item). Used to suppress markdown-structure
 /// matching inside code fences.
 fn is_code_fence(line: &str) -> bool {
     let t = line.trim_start();
@@ -299,12 +299,13 @@ fn is_code_fence(line: &str) -> bool {
 }
 
 /// Classify a `## ` header line into a delta section, or `None` if it isn't a
-/// level-2 header at all. Surrounding whitespace is tolerated (matching
-/// archive's `^## ADDED Requirements\s*$` regex, plus up to 3 leading spaces of
-/// valid-markdown indentation); an unrecognized `## ` header is
+/// level-2 header at all. Trailing whitespace is tolerated (matching archive's
+/// `^## ADDED Requirements\s*$` regex); the header must start at column 0, as
+/// all archive/OpenSpec structural headers do — a leading-indented `## ` is
+/// treated as body, not a section boundary. An unrecognized `## ` header is
 /// `Section::Other`, which ends any requirement block without counting.
 fn parse_section_header(line: &str) -> Option<Section> {
-    let trimmed = line.trim();
+    let trimmed = line.trim_end();
     if !trimmed.starts_with("## ") {
         return None;
     }
@@ -347,11 +348,11 @@ fn parse_delta(content: &str) -> DeltaParse {
                 continue;
             }
 
-            // trim_start tolerates up to 3 spaces of valid-markdown heading
-            // indentation on the structural headers.
-            let trimmed = line.trim_start();
-
-            if let Some(rest) = trimmed.strip_prefix("### Requirement:") {
+            // Structural headers are matched at column 0 (like archive.rs's
+            // `^### Requirement:` / `^#### ...` anchored regexes and the
+            // OpenSpec convention). Only list bullets under RENAMED are
+            // trim_start'd, since those are legitimately indented list items.
+            if let Some(rest) = line.strip_prefix("### Requirement:") {
                 if let Some(req) = pending.take() {
                     body_reqs.push(req.finish());
                 }
@@ -370,9 +371,10 @@ fn parse_delta(content: &str) -> DeltaParse {
             }
 
             if section == Section::Renamed {
-                if let Some(rest) = trimmed
+                let bullet = line.trim_start();
+                if let Some(rest) = bullet
                     .strip_prefix('-')
-                    .or_else(|| trimmed.strip_prefix('*'))
+                    .or_else(|| bullet.strip_prefix('*'))
                 {
                     if rest.trim_start().starts_with("TO:") {
                         operations += 1;
@@ -380,7 +382,7 @@ fn parse_delta(content: &str) -> DeltaParse {
                 }
             }
 
-            if trimmed.starts_with("#### Scenario:") {
+            if line.starts_with("#### Scenario:") {
                 if let Some(req) = pending.as_mut() {
                     req.has_scenario = true;
                 }
@@ -483,14 +485,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_delta_tolerates_leading_whitespace_on_headers() {
-        // Up to 3 spaces of indentation is valid markdown for an ATX heading.
+    fn parse_delta_matches_structural_headers_at_column_zero_only() {
+        // Structural headers are matched at column 0, consistent with
+        // archive.rs's anchored `^### Requirement:` regex and the OpenSpec
+        // convention -- an indented `### Requirement:` is body text (e.g. an
+        // example inside a scenario), not a new requirement.
         let delta = "## ADDED Requirements\n\n\
-              ### Requirement: Indented\n\n\
-            The system MUST cope.\n\n\
-             #### Scenario: Indented scenario\n\n- **WHEN** x\n";
+            ### Requirement: Real\n\n\
+            The system MUST work.\n\n\
+            #### Scenario: Real scenario\n\n\
+            - **WHEN** x\n\
+            - **THEN** y, e.g.\n    \
+            ### Requirement: Not A Real One\n";
         let parsed = parse_delta(delta);
-        assert_eq!(parsed.operations, 1);
+        assert_eq!(
+            parsed.operations, 1,
+            "the indented `### Requirement:` must not count as a second delta"
+        );
         assert_eq!(parsed.body_reqs.len(), 1);
         assert!(parsed.body_reqs[0].has_scenario);
         assert!(parsed.body_reqs[0].has_shall_or_must);
