@@ -21,3 +21,14 @@ pub(crate) fn read_optional(path: &Path) -> Result<Option<String>> {
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
     }
 }
+
+/// `Ok(None)` when `path` is genuinely absent; `Err` for any other failure
+/// (mirrors [`read_optional`]'s NotFound-only collapse). Shared by the
+/// `archive` merge walk and the `validate` recursive spec walk.
+pub(crate) fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>> {
+    match std::fs::read_dir(path) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}

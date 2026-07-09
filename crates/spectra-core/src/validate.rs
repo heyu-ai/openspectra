@@ -195,10 +195,8 @@ fn collect_delta_specs(specs_root: &Path) -> Result<Vec<(String, String)>> {
 }
 
 fn collect_into(specs_root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> Result<()> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
+    let Some(entries) = crate::fsutil::read_dir_optional(dir)? else {
+        return Ok(());
     };
 
     // A `spec.md` directly at this level is one capability's delta. Record it
@@ -268,28 +266,45 @@ struct DeltaParse {
 }
 
 /// A requirement block being accumulated line-by-line until its terminator
-/// (the next `### Requirement:` or `## ` header).
+/// (the next `### Requirement:` or `## ` header). `has_scenario` is tracked
+/// during the scan (not derived from `body` afterwards) so it can be made
+/// fenced-code-block aware — a `#### Scenario:` line inside a ``` fence is code,
+/// not a real scenario heading.
 struct PendingReq {
     name: String,
     body: String,
+    has_scenario: bool,
 }
 
 impl PendingReq {
     fn finish(self) -> BodyRequirement {
         BodyRequirement {
+            // A normative keyword inside a fenced code block is an unusual but
+            // harmless false-*pass* (it only relaxes the gate), so SHALL/MUST
+            // stays a whole-body scan; only the false-*fail* case (a scenario
+            // hidden by a fence) is made fence-aware via `has_scenario`.
             has_shall_or_must: SHALL_OR_MUST_RE.is_match(&self.body),
-            has_scenario: self.body.lines().any(|l| l.starts_with("#### Scenario:")),
+            has_scenario: self.has_scenario,
             name: self.name,
         }
     }
 }
 
+/// Whether `line` opens or closes a fenced code block (```` ``` ```` or `~~~`,
+/// with up to leading indentation). Used to suppress markdown-structure
+/// matching inside code fences.
+fn is_code_fence(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with("```") || t.starts_with("~~~")
+}
+
 /// Classify a `## ` header line into a delta section, or `None` if it isn't a
-/// level-2 header at all. Trailing whitespace is tolerated (matching archive's
-/// `^## ADDED Requirements\s*$` regex); an unrecognized `## ` header is
+/// level-2 header at all. Surrounding whitespace is tolerated (matching
+/// archive's `^## ADDED Requirements\s*$` regex, plus up to 3 leading spaces of
+/// valid-markdown indentation); an unrecognized `## ` header is
 /// `Section::Other`, which ends any requirement block without counting.
 fn parse_section_header(line: &str) -> Option<Section> {
-    let trimmed = line.trim_end();
+    let trimmed = line.trim();
     if !trimmed.starts_with("## ") {
         return None;
     }
@@ -307,38 +322,67 @@ fn parse_delta(content: &str) -> DeltaParse {
     let mut body_reqs = Vec::new();
     let mut section = Section::Other;
     let mut pending: Option<PendingReq> = None;
+    let mut in_fence = false;
 
     for line in content.lines() {
-        if let Some(sec) = parse_section_header(line) {
-            if let Some(req) = pending.take() {
-                body_reqs.push(req.finish());
-            }
-            section = sec;
-            continue;
-        }
-
-        if let Some(rest) = line.strip_prefix("### Requirement:") {
-            if let Some(req) = pending.take() {
-                body_reqs.push(req.finish());
-            }
-            match section {
-                Section::Added | Section::Modified | Section::Removed => operations += 1,
-                Section::Renamed | Section::Other => {}
-            }
-            if matches!(section, Section::Added | Section::Modified) {
-                pending = Some(PendingReq {
-                    name: rest.trim().to_string(),
-                    body: String::new(),
-                });
+        // Fenced code inside a requirement body must not be parsed as markdown
+        // structure: a `## foo` bash comment or a `#### Scenario:` in an example
+        // is code, not a heading. The fence delimiter and its contents are still
+        // accumulated into `body`, just never classified.
+        if is_code_fence(line) {
+            in_fence = !in_fence;
+            if let Some(req) = pending.as_mut() {
+                req.body.push_str(line);
+                req.body.push('\n');
             }
             continue;
         }
 
-        if section == Section::Renamed {
-            let item = line.trim_start();
-            if let Some(rest) = item.strip_prefix('-').or_else(|| item.strip_prefix('*')) {
-                if rest.trim_start().starts_with("TO:") {
-                    operations += 1;
+        if !in_fence {
+            if let Some(sec) = parse_section_header(line) {
+                if let Some(req) = pending.take() {
+                    body_reqs.push(req.finish());
+                }
+                section = sec;
+                continue;
+            }
+
+            // trim_start tolerates up to 3 spaces of valid-markdown heading
+            // indentation on the structural headers.
+            let trimmed = line.trim_start();
+
+            if let Some(rest) = trimmed.strip_prefix("### Requirement:") {
+                if let Some(req) = pending.take() {
+                    body_reqs.push(req.finish());
+                }
+                match section {
+                    Section::Added | Section::Modified | Section::Removed => operations += 1,
+                    Section::Renamed | Section::Other => {}
+                }
+                if matches!(section, Section::Added | Section::Modified) {
+                    pending = Some(PendingReq {
+                        name: rest.trim().to_string(),
+                        body: String::new(),
+                        has_scenario: false,
+                    });
+                }
+                continue;
+            }
+
+            if section == Section::Renamed {
+                if let Some(rest) = trimmed
+                    .strip_prefix('-')
+                    .or_else(|| trimmed.strip_prefix('*'))
+                {
+                    if rest.trim_start().starts_with("TO:") {
+                        operations += 1;
+                    }
+                }
+            }
+
+            if trimmed.starts_with("#### Scenario:") {
+                if let Some(req) = pending.as_mut() {
+                    req.has_scenario = true;
                 }
             }
         }
@@ -406,6 +450,50 @@ mod tests {
         assert_eq!(parsed.body_reqs.len(), 1);
         assert!(!parsed.body_reqs[0].has_shall_or_must);
         assert!(!parsed.body_reqs[0].has_scenario);
+    }
+
+    #[test]
+    fn parse_delta_ignores_markdown_structure_inside_a_fenced_code_block() {
+        // Regression (mob review): a `## ` bash comment and a `#### Scenario:`
+        // line inside a fenced code block are code, not markdown structure. The
+        // requirement's real scenario (after the fence) must still be detected,
+        // and the in-fence `## Run migrations` must NOT flush the requirement.
+        let delta = "## ADDED Requirements\n\n\
+            ### Requirement: Deploy\n\n\
+            The system SHALL run migrations on deploy.\n\n\
+            ```bash\n\
+            ## Run migrations\n\
+            #### Scenario: not-a-real-heading\n\
+            ./migrate.sh\n\
+            ```\n\n\
+            #### Scenario: Migrations run\n\n\
+            - **WHEN** deploy starts\n\
+            - **THEN** migrations run\n";
+        let parsed = parse_delta(delta);
+        assert_eq!(
+            parsed.operations, 1,
+            "the fenced `## ` must not split the delta"
+        );
+        assert_eq!(parsed.body_reqs.len(), 1);
+        assert!(
+            parsed.body_reqs[0].has_scenario,
+            "the real post-fence scenario must be detected"
+        );
+        assert!(parsed.body_reqs[0].has_shall_or_must);
+    }
+
+    #[test]
+    fn parse_delta_tolerates_leading_whitespace_on_headers() {
+        // Up to 3 spaces of indentation is valid markdown for an ATX heading.
+        let delta = "## ADDED Requirements\n\n\
+              ### Requirement: Indented\n\n\
+            The system MUST cope.\n\n\
+             #### Scenario: Indented scenario\n\n- **WHEN** x\n";
+        let parsed = parse_delta(delta);
+        assert_eq!(parsed.operations, 1);
+        assert_eq!(parsed.body_reqs.len(), 1);
+        assert!(parsed.body_reqs[0].has_scenario);
+        assert!(parsed.body_reqs[0].has_shall_or_must);
     }
 
     #[test]

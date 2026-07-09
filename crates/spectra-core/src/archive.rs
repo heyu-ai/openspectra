@@ -16,7 +16,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use crate::config::Config;
-use crate::fsutil::read_optional;
+use crate::fsutil::{read_dir_optional, read_optional};
 use crate::{change, touched};
 
 static ADDED_HEADER_RE: Lazy<Regex> =
@@ -50,16 +50,6 @@ pub struct ArchiveOutcome {
     pub name: String,
     pub archived_name: String,
     pub specs_applied: Vec<SpecApplyResult>,
-}
-
-/// `Ok(None)` when `path` is genuinely absent; `Err` for any other failure
-/// (mirrors [`read_optional`]'s NotFound-only collapse).
-fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>> {
-    match std::fs::read_dir(path) {
-        Ok(entries) => Ok(Some(entries)),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
 }
 
 /// Whether `path` is a directory, via `fs::metadata` (not the boolean
