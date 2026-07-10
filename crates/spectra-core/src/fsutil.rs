@@ -97,9 +97,15 @@ fn collect_delta_specs_into(
         // crashing the caller. A symlinked capability dir is therefore skipped --
         // but announced on stderr (old `archive` followed it via `fs::metadata`),
         // never dropped silently.
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("reading {}", path.display()))?;
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            // An entry that vanished between `read_dir` and here (a concurrent
+            // remove) is treated as absent and skipped, matching the
+            // NotFound-tolerance of `read_optional`/`read_dir_optional` and the
+            // removed `is_real_dir` -- not a reason to abort the whole walk.
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        };
         if file_type.is_dir() {
             collect_delta_specs_into(specs_root, &path, out)?;
         } else if file_type.is_symlink() && symlink_target_is_dir(&path)? {
