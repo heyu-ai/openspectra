@@ -41,9 +41,9 @@ pub(crate) fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>>
 ///
 /// A missing `specs_root` yields an empty vec — the caller decides what "no
 /// deltas" means (a validation failure, or nothing to archive). Descent uses
-/// [`is_real_dir`] (via `symlink_metadata`) so a checked-in directory-symlink
-/// cycle (`specs/loop -> specs`) can't recurse without bound and crash the
-/// caller. A capability directory name that isn't valid UTF-8 is a hard error
+/// `DirEntry::file_type` (which does not follow symlinks) so a checked-in
+/// directory-symlink cycle (`specs/loop -> specs`) can't recurse without bound
+/// and crash the caller. A capability directory name that isn't valid UTF-8 is a hard error
 /// rather than a lossy conversion: `archive` turns this id into a *write*
 /// target (`specs/<cap>/spec.md`), so a silent `U+FFFD` substitution would
 /// merge into the wrong path.
@@ -89,12 +89,20 @@ fn collect_delta_specs_into(
     for entry in entries {
         let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
         let path = entry.path();
-        if is_real_dir(&path)? {
+        // `DirEntry::file_type` does not follow symlinks (like `symlink_metadata`)
+        // and is usually served from the `readdir` `d_type` without an extra
+        // stat. Following a directory symlink is deliberately avoided: the walk
+        // recurses, so a checked-in cycle (`specs/loop -> specs`, or two dirs
+        // pointing at each other) would recurse without bound -> stack overflow,
+        // crashing the caller. A symlinked capability dir is therefore skipped --
+        // but announced on stderr (old `archive` followed it via `fs::metadata`),
+        // never dropped silently.
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("reading {}", path.display()))?;
+        if file_type.is_dir() {
             collect_delta_specs_into(specs_root, &path, out)?;
-        } else if is_symlink_to_dir(&path)? {
-            // A symlinked capability dir is intentionally not descended (cycle
-            // guard), but old `archive` followed it via `fs::metadata`, so
-            // announce the skip rather than dropping its delta silently.
+        } else if file_type.is_symlink() && symlink_target_is_dir(&path)? {
             eprintln!(
                 "warning: skipping symlinked capability directory {} -- its spec \
                  delta will not be collected (symlinked directories are not \
@@ -130,40 +138,17 @@ fn capability_id(specs_root: &Path, dir: &Path) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-/// Whether `path` is a symlink whose target is a directory — the case
-/// [`collect_delta_specs_into`] warns about before skipping. A dangling
-/// symlink (target missing) resolves to "not a dir" and is skipped quietly:
-/// there's no capability delta behind it to lose.
-fn is_symlink_to_dir(path: &Path) -> Result<bool> {
-    let is_symlink = match std::fs::symlink_metadata(path) {
-        Ok(m) => m.is_symlink(),
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    if !is_symlink {
-        return Ok(false);
-    }
-    // Follows the link; a dangling target errors NotFound -> not a dir.
+/// Whether a symlink's target is a directory — the case
+/// [`collect_delta_specs_into`] warns about before skipping. The caller has
+/// already confirmed `path` is a symlink (via `DirEntry::file_type`), so this
+/// only follows the link: a dangling target errors `NotFound` -> `false`, so a
+/// broken link is skipped quietly (there's no capability delta behind it to
+/// lose). A non-`NotFound` error (permission denied, or an `ELOOP` symlink
+/// loop) is surfaced rather than swallowed, matching the walk's fail-loud
+/// stance — a `spec.md` that is itself a symlink is still read; only directory
+/// *descent* stops following links.
+fn symlink_target_is_dir(path: &Path) -> Result<bool> {
     match std::fs::metadata(path) {
-        Ok(m) => Ok(m.is_dir()),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
-/// Whether `path` is a real directory to descend into, via `symlink_metadata`
-/// (which does **not** follow symlinks) rather than `fs::metadata` (which
-/// does). This is load-bearing, not cosmetic: the walk in
-/// [`collect_delta_specs`] recurses, so following a directory symlink lets a
-/// checked-in cycle (`specs/loop -> specs`, or two dirs pointing at each other)
-/// recurse without bound -> stack overflow, crashing the caller instead of
-/// erroring cleanly. Not following symlinked subdirectories bounds traversal
-/// to the real tree. `symlink_metadata` (like `fs::metadata`) still surfaces a
-/// permission error instead of silently returning `false` the way
-/// `Path::is_dir` would. A `spec.md` that is itself a symlink is still read —
-/// only directory *descent* stops following links.
-fn is_real_dir(path: &Path) -> Result<bool> {
-    match std::fs::symlink_metadata(path) {
         Ok(m) => Ok(m.is_dir()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),

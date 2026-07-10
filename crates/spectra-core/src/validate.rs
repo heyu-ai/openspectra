@@ -169,14 +169,11 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 
 /// Human-readable relative path to a capability's delta spec, used in issue
 /// `path` fields. `cap` is the capability id relative to the change's `specs/`
-/// dir (e.g. `auth` or `Epic/Feature`); an empty id (a stray `specs/spec.md`)
-/// degrades gracefully rather than emitting a doubled separator.
+/// dir (e.g. `auth` or `Epic/Feature`); it is never empty, because
+/// `fsutil::collect_delta_specs` rejects a stray `specs/spec.md` (no capability
+/// directory) with a hard error upstream rather than yielding an empty id here.
 fn spec_rel_path(cap: &str) -> String {
-    if cap.is_empty() {
-        "specs/spec.md".to_string()
-    } else {
-        format!("specs/{cap}/spec.md")
-    }
+    format!("specs/{cap}/spec.md")
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
