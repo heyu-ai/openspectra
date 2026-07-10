@@ -8,9 +8,9 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 2. **支援 openspec** 格式的 spec-driven-development 工作流
 3. 對原版行為**先忠實重現、再漸進改進**（校準期與 oracle 一致以便驗證，之後以 opt-in 方式修正已知缺陷）
 
-### 現況摘要（2026-07-03）
+### 現況摘要（2026-07-11）
 
-**Phase 進度以 GitHub issue 追蹤（每個 Phase 一個 epic issue，與本文件雙向連結）**：Phase 1 ✅ [#30](https://github.com/howie/openspectra/issues/30)（已完成）；Phase 2 [#26](https://github.com/howie/openspectra/issues/26)、Phase 3 [#27](https://github.com/howie/openspectra/issues/27)、Phase 4 [#28](https://github.com/howie/openspectra/issues/28)、Phase 5 [#29](https://github.com/howie/openspectra/issues/29) 皆 open。
+**Phase 進度以 GitHub issue 追蹤（每個 Phase 一個 epic issue，與本文件雙向連結）**：Phase 1 ✅ [#30](https://github.com/howie/openspectra/issues/30)、Phase 2 ✅ [#26](https://github.com/howie/openspectra/issues/26)、Phase 3 ✅ [#27](https://github.com/howie/openspectra/issues/27)（v0.2.1 發佈）皆已完成；Phase 4 [#28](https://github.com/howie/openspectra/issues/28)、Phase 5 [#29](https://github.com/howie/openspectra/issues/29) open。
 
 **已完成（drift 核心經 oracle 驗證，已合併 PR：#1、#2、#13–#21）**：`drift`（四維度評分、JSON schema 逐欄位吻合、exit code gate）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。
 
@@ -26,11 +26,13 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **Phase 1 已消除的缺口（PR #23）**：~~`spectra init` 不存在~~、~~`list --changes` 收下但無作用~~、~~root 下 3 個 chmod 權限測試誤判~~、~~無跨平台 CI matrix~~。
 
+**Phase 2/3 已消除的缺口**：~~archive 不支援 MODIFIED/REMOVED/RENAMED spec delta~~（PR #32 已補）、~~無 release 流程~~（Phase 3 / v0.2.1）、~~無 OpenSpec 生態相容性驗證~~（PR #32）。
+
 **尚存缺口（對應後續 Phase）**：
 
-- archive 不支援 MODIFIED/REMOVED/RENAMED spec delta；無 `unarchive`（Phase 2，[#26](https://github.com/howie/openspectra/issues/26)）
-- 無 release 流程（Phase 3，[#27](https://github.com/howie/openspectra/issues/27)）
-- 無 OpenSpec 生態相容性驗證（Phase 2，[#26](https://github.com/howie/openspectra/issues/26)）
+- 無 `unarchive`（快照/還原；已知限制，見 [`docs/reverse-engineering/archive.md`](reverse-engineering/archive.md)）
+- oracle 校準未收尾（Phase 4，[#28](https://github.com/howie/openspectra/issues/28)，子項 #8/#9）
+- CliFlag resolution 決策待定（Phase 5，[#11](https://github.com/howie/openspectra/issues/11)）
 
 ### 計畫假設
 
@@ -148,8 +150,8 @@ Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Pha
 | Phase | Tracking issue | 狀態 | 子項 issues |
 |---|---|---|---|
 | Phase 1 — 基礎修補與可用性 | [#30](https://github.com/howie/openspectra/issues/30) | ✅ 完成（PR #23） | — |
-| Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | open | （調查後可能拆多個：格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta） |
-| Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | open | （release workflow、crates.io、Docker） |
+| Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | ✅ 完成（PR #32） | 格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta |
+| Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | ✅ 完成（v0.2.1） | release workflow、crates.io publish、Docker/GHCR image |
 | Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、#8 Symbol 過濾、golden 回歸自動化 |
 | Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | #12 批次 git grep、#11 CliFlag 決策 |
 
