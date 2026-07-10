@@ -10,6 +10,23 @@ changes.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-10
+
+### Fixed
+
+- **`spectra archive` now traverses nested-capability specs like `spectra
+  validate` does.** Previously `archive` walked only the immediate children of
+  a change's `specs/`, so a nested-capability delta
+  (`specs/<Epic>/<Feature>/spec.md`) that `validate` accepts was **silently
+  ignored** — the change was archived with the requirement never merged into
+  the canonical spec and no error reported. Both commands now share one
+  recursive collector (`fsutil::collect_delta_specs`), so their traversal and
+  its symlink-cycle safety can't drift apart. As part of the shared walk, a
+  `spec.md` placed directly under `specs/` (no capability directory) and a
+  non-UTF-8 capability directory name are now hard errors, and a symlinked
+  capability directory is skipped with a stderr warning rather than silently
+  dropped. (#39)
+
 ## [0.2.0] - 2026-07-10
 
 ### Added

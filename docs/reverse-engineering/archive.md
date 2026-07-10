@@ -67,12 +67,23 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    `ChangeMetadata`). If git identity isn't configured, only `archived_at`
    is written — OpenSpectra warns on stderr when this happens rather than
    silently omitting the field with no signal.
-5. Unless `--skip-specs`: for each `specs/<capability>/spec.md` under the
-   (now-moved) change, merge its delta into
+5. Unless `--skip-specs`: for each `specs/**/spec.md` under the (now-moved)
+   change, merge its delta into the matching canonical
    `<spec_dir>/specs/<capability>/spec.md`, then print
    `Specs applied: <capability> (added: N, modified: N, removed: N, renamed: N)`
-   per capability. The oracle also prints "Snapshot created for unarchive
-   support." — **not implemented**; see "Known limitations" below.
+   per capability. The `specs/` tree is walked **recursively**, so a
+   nested-capability layout `specs/<Epic>/<Feature>/spec.md` merges into
+   `<spec_dir>/specs/<Epic>/<Feature>/spec.md` (capability id `<Epic>/<Feature>`)
+   rather than being silently skipped — `archive` and `validate` share one
+   recursive collector (`fsutil::collect_delta_specs`) so their traversal, and
+   its symlink-cycle safety, can't drift apart (issue #39). Two malformed
+   layouts fail loud instead of mis-writing or vanishing: a `spec.md` placed
+   directly under `specs/` (no capability directory) is a hard error, and a
+   capability directory that is itself a **symlink** is not descended (a change
+   from the pre-#39 walk, which used `fs::metadata` and followed such symlinks)
+   — its delta is skipped with a stderr warning, not dropped silently. The
+   oracle also prints "Snapshot created for unarchive support." — **not
+   implemented**; see "Known limitations" below.
 6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
    markers **and** its `.spectra/touched/<name>.json` tracking file, if any
    (best-effort; a failure here only warns, since archiving itself already
