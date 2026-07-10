@@ -155,24 +155,28 @@ validated instead of skipped as "no deltas found".
 
 #### Using the Docker image
 
-Instead of installing the tarball, run the job inside the published image — it
-already bundles `git` and `spectra`. This pairs naturally with the `validate`
-exit-code gate (no `jq` needed; the image is intentionally minimal and does not
-ship `jq`):
+Instead of installing the tarball, invoke `spectra` through the published image
+(it bundles `git` + the binary). Run it as a `docker run` step **after** a
+normal checkout — do **not** use it as a job-level `container:`. The image is
+Alpine/musl, and GitHub's container-job runtime injects a glibc Node.js to run
+JavaScript actions, which `actions/checkout` can't execute on musl:
 
 ```yaml
 jobs:
   validate:
     runs-on: ubuntu-latest
-    # Pin to a release tag; :latest tracks the newest stable release.
-    container: ghcr.io/howie/openspectra:v0.2.1
     steps:
       - uses: actions/checkout@v4
-      - run: spectra validate --changes --strict
+      - name: Validate OpenSpec changes
+        # Pin to a release tag; :latest tracks the newest stable release.
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/howie/openspectra:v0.2.1 validate --changes --strict
 ```
 
-For the `drift` + `jq` severity gate, keep the tarball job above (which runs on
-the runner, where `jq` is preinstalled), or add `jq` to the container step.
+`spectra validate` gates on its own exit code, so no `jq` is needed. For the
+`drift` + `jq` severity gate, use the tarball job above (the runner has `jq`
+preinstalled; the minimal image does not ship it).
 
 ## Build
 
