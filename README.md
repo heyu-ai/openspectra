@@ -78,7 +78,7 @@ macOS Spectra binary, which can't be probed for `validate` from Linux CI).
 
 ## Install
 
-Once published to crates.io:
+From crates.io:
 
 ```sh
 cargo install spectra-cli
@@ -87,16 +87,21 @@ cargo install spectra-cli
 Release tarballs are attached to GitHub releases for Linux and macOS:
 
 ```sh
-curl -L https://github.com/howie/openspectra/releases/download/v0.1.0/spectra-v0.1.0-x86_64-unknown-linux-musl.tar.gz \
+curl -L https://github.com/howie/openspectra/releases/download/v0.2.1/spectra-v0.2.1-x86_64-unknown-linux-musl.tar.gz \
   | tar xz
-sudo mv spectra-v0.1.0-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
+sudo mv spectra-v0.2.1-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
 ```
 
 Substitute the latest release tag from https://github.com/howie/openspectra/releases.
 
 Docker images are published as `ghcr.io/howie/openspectra:<tag>` and
 `ghcr.io/howie/openspectra:latest` (linux/amd64 only; on other platforms use
-the release tarballs).
+the release tarballs). The image bundles `git` and the `spectra` binary, with
+`spectra` as its entrypoint:
+
+```sh
+docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/howie/openspectra:latest drift --json
+```
 
 ### CI gate example
 
@@ -119,7 +124,7 @@ jobs:
       - name: Install spectra
         run: |
           # Pin to a release tag; see https://github.com/howie/openspectra/releases for the latest.
-          SPECTRA_VERSION=v0.1.0
+          SPECTRA_VERSION=v0.2.1
           curl -L "https://github.com/howie/openspectra/releases/download/${SPECTRA_VERSION}/spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar xz
           sudo mv "spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl/spectra" /usr/local/bin/spectra
@@ -147,6 +152,27 @@ normative `SHALL`/`MUST` or a `#### Scenario:` block:
 Unlike the OSS `@fission-ai/openspec` validator, this traverses nested
 `specs/<Epic>/<Feature>/spec.md` layouts, so nested-capability changes are
 validated instead of skipped as "no deltas found".
+
+#### Using the Docker image
+
+Instead of installing the tarball, run the job inside the published image — it
+already bundles `git` and `spectra`. This pairs naturally with the `validate`
+exit-code gate (no `jq` needed; the image is intentionally minimal and does not
+ship `jq`):
+
+```yaml
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    # Pin to a release tag; :latest tracks the newest stable release.
+    container: ghcr.io/howie/openspectra:v0.2.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: spectra validate --changes --strict
+```
+
+For the `drift` + `jq` severity gate, keep the tarball job above (which runs on
+the runner, where `jq` is preinstalled), or add `jq` to the container step.
 
 ## Build
 
