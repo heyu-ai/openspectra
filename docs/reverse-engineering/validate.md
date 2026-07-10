@@ -48,10 +48,12 @@ does **not** follow directory symlinks (it decides recursion with
 `symlink_metadata`, not `metadata`): a checked-in cyclic directory symlink
 would otherwise recurse without bound and stack-overflow the gate. A `spec.md`
 that is itself a symlink is still read — only directory *traversal* stops at
-links. A capability directory name that isn't valid UTF-8 is a hard error, not
-a lossy `U+FFFD` substitution — the same collector feeds `archive`, which turns
-the id into a *write* target, so a lossy id there would merge into the wrong
-path.
+links. A symlinked capability *directory* is skipped (with a stderr warning)
+rather than descended, for the same cycle-bounding reason. A capability
+directory name that isn't valid UTF-8, or a `spec.md` placed directly under
+`specs/` with no capability directory, is a hard error — the same collector
+feeds `archive`, which turns the id into a *write* target, so a lossy or empty
+id there would merge into the wrong path.
 
 This walk is `fsutil::collect_delta_specs`, shared verbatim with `archive`'s
 spec-delta merge (issue #39): the two commands must see the identical delta set

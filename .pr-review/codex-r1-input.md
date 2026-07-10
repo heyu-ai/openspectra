@@ -1,0 +1,478 @@
+IMPORTANT: Do NOT read or execute any files under ~/.claude/, ~/.agents/, .claude/skills/, or agents/. These are Claude Code / gstack skill definitions meant for a different AI system. Ignore them completely. Review ONLY the diff provided below; do not explore the repository.
+
+You are a senior code reviewer. Review the following PR diff independently.
+
+Output ONLY the review in the format below. Do not narrate your actions or write any
+preamble (no "I will...", "Let me...", "I'm going to...", "I have written..."), and do
+not announce file reads. Your first line must be the "## Summary" heading.
+
+Base branch: main
+PR #: 41
+Diff: see /Users/howie/Workspace/github/side-project/openspectra/.claude/worktrees/fix-39-archive-nested-specs/.pr-review/diff.patch
+Changed files: see /Users/howie/Workspace/github/side-project/openspectra/.claude/worktrees/fix-39-archive-nested-specs/.pr-review/changed-files.txt
+
+Context: this is a Rust reimplementation of a closed-source `spectra` CLI (spec-driven-development
+tooling). The PR fixes issue #39: `spectra archive` iterated only the immediate children of a
+change's `specs/` dir, so a nested-capability delta (`specs/<Epic>/<Feature>/spec.md`) that
+`spectra validate` accepts was silently ignored during archive. The fix lifts a recursive
+`collect_delta_specs` walk into `fsutil.rs` and has both `archive` and `validate` call it, so
+their traversal (and its symlink-cycle safety) cannot drift. The shared collector unifies on
+strict-UTF-8 capability ids (error, not lossy) because `archive` turns the id into a write target.
+
+Output format (strictly follow, for downstream aggregation):
+
+## Summary
+<1-2 sentence overall assessment>
+
+## Findings
+
+### [Critical] <short title>
+- File: <path:line>
+- Issue: <description>
+- Suggested fix: <how to fix>
+
+### [Important] <short title>
+...
+
+### [Actionable NIT] <short title>
+- Must be a concrete, actionable small fix (naming, comment error, import order, etc.), not subjective preference
+
+## Verdict
+- LGTM / NEEDS_CHANGES
+
+Severity (RFC 2119 — grade by merge consequence, not by how bad it feels):
+- [Critical] = MUST fix, blocks merge: logic / functional error, security hole, secret or PII in logs, data loss, explicit baseline violation
+- [Important] = SHOULD fix (defer only with a documented reason): test gap on a changed critical path, silent failure / swallowed exception, naming / structure inconsistency, misleading doc or comment
+- [Actionable NIT] = MAY fix: a concrete, actionable small fix (naming, comment typo, import order) — never a subjective preference
+
+Focus on:
+- Logic errors, race conditions, security holes, silent failures, resource leaks
+- Behavior changes vs the removed single-level walk (e.g. symlink-following, capability-id derivation, empty/edge capability ids)
+- Test coverage gaps (critical paths not tested)
+- Documentation / comment inconsistency with implementation
+- Do NOT list "code style preferences" or "subjective aesthetics" — non-actionable items only
+- Be skeptical, be terse, no compliments
+
+
+--- DIFF UNDER REVIEW ---
+diff --git a/crates/spectra-core/src/archive.rs b/crates/spectra-core/src/archive.rs
+index b09bd9e..a8181b8 100644
+--- a/crates/spectra-core/src/archive.rs
++++ b/crates/spectra-core/src/archive.rs
+@@ -12,11 +12,10 @@
+ use anyhow::{anyhow, Context, Result};
+ use once_cell::sync::Lazy;
+ use regex::Regex;
+-use std::io::ErrorKind;
+ use std::path::Path;
+ 
+ use crate::config::Config;
+-use crate::fsutil::{read_dir_optional, read_optional};
++use crate::fsutil::read_optional;
+ use crate::{change, touched};
+ 
+ static ADDED_HEADER_RE: Lazy<Regex> =
+@@ -52,17 +51,6 @@ pub struct ArchiveOutcome {
+     pub specs_applied: Vec<SpecApplyResult>,
+ }
+ 
+-/// Whether `path` is a directory, via `fs::metadata` (not the boolean
+-/// `Path::is_dir()`, which returns `false` on *any* stat error including
+-/// permission-denied — indistinguishable from "genuinely absent").
+-fn is_dir(path: &Path) -> Result<bool> {
+-    match std::fs::metadata(path) {
+-        Ok(m) => Ok(m.is_dir()),
+-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+-    }
+-}
+-
+ /// Archive `name`: move its directory to
+ /// `<spec_dir>/changes/archive/<today>-<name>/`, then (in order) optionally
+ /// mark all pending tasks done, stamp `.openspec.yaml` with
+@@ -148,23 +136,13 @@ pub fn archive(
+ /// guarantee the earlier unsupported-header gate provided.
+ fn validate_spec_deltas(cfg: &Config, change_dir: &Path, source: &str) -> Result<()> {
+     let specs_dir = change_dir.join("specs");
+-    let Some(entries) = read_dir_optional(&specs_dir)? else {
+-        return Ok(());
+-    };
+-    for entry in entries {
+-        let entry = entry.with_context(|| format!("reading {}", specs_dir.display()))?;
+-        let path = entry.path();
+-        if !is_dir(&path)? {
+-            continue;
+-        }
+-        let Some(delta) = read_optional(&path.join("spec.md"))? else {
+-            continue;
+-        };
+-        let capability = entry
+-            .file_name()
+-            .into_string()
+-            .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
+-        let today = chrono::Local::now().date_naive();
++    let today = chrono::Local::now().date_naive();
++    // Traverses `specs/**/spec.md` recursively via the shared collector, so a
++    // nested-capability delta (`specs/<Epic>/<Feature>/spec.md`) is validated
++    // here exactly as `apply_spec_deltas` will merge it below -- the two must
++    // see the identical delta set, or a change could validate cleanly yet
++    // archive with a nested delta silently ignored (issue #39).
++    for (capability, delta) in crate::fsutil::collect_delta_specs(&specs_dir)? {
+         merge_spec_delta(cfg, &capability, &delta, source, today, true)?;
+     }
+     Ok(())
+@@ -234,22 +212,12 @@ fn apply_spec_deltas(
+ ) -> Result<Vec<SpecApplyResult>> {
+     let specs_dir = archived_dir.join("specs");
+     let mut results = Vec::new();
+-    let Some(entries) = read_dir_optional(&specs_dir)? else {
+-        return Ok(results);
+-    };
+-    for entry in entries {
+-        let entry = entry.with_context(|| format!("reading {}", specs_dir.display()))?;
+-        let path = entry.path();
+-        if !is_dir(&path)? {
+-            continue;
+-        }
+-        let Some(delta) = read_optional(&path.join("spec.md"))? else {
+-            continue;
+-        };
+-        let capability = entry
+-            .file_name()
+-            .into_string()
+-            .map_err(|raw| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
++    // Same recursive collector `validate_spec_deltas` used pre-move, so the
++    // applied set is exactly the validated set. The capability id may be a
++    // `/`-joined nested path (e.g. `Billing/Invoices`); `join`ing it produces
++    // the matching nested canonical `specs/<Epic>/<Feature>/spec.md`, and
++    // `create_dir_all` below makes the intermediate dirs.
++    for (capability, delta) in crate::fsutil::collect_delta_specs(&specs_dir)? {
+         let (content, result) = merge_spec_delta(cfg, &capability, &delta, source, today, false)?;
+         if let Some(content) = content {
+             let spec_path = cfg.specs_dir().join(&capability).join("spec.md");
+@@ -1087,6 +1055,74 @@ mod tests {
+         assert!(!spec.contains("---"));
+     }
+ 
++    #[test]
++    fn archive_applies_a_nested_capability_delta() {
++        // Regression (#39): `archive` must traverse nested-capability layouts
++        // (`specs/<Epic>/<Feature>/spec.md`) the same way `validate` does.
++        // Before the shared recursive collector, archive's single-level walk
++        // silently ignored the nested delta -- the change moved to the archive
++        // with the requirement never merged into any canonical spec, and no
++        // error reported.
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("Billing")
++                .join("Invoices")
++                .join("spec.md"),
++            DELTA_TEMPLATE,
++        );
++
++        let outcome = archive(&c, "my-feature", false, false).unwrap();
++
++        assert_eq!(outcome.specs_applied.len(), 1);
++        assert_eq!(outcome.specs_applied[0].capability, "Billing/Invoices");
++        assert_eq!(outcome.specs_applied[0].added, 1);
++        // The nested capability id maps to the matching nested canonical path.
++        let spec = std::fs::read_to_string(
++            c.specs_dir()
++                .join("Billing")
++                .join("Invoices")
++                .join("spec.md"),
++        )
++        .unwrap();
++        assert!(spec.starts_with("# Billing/Invoices Specification"));
++        assert!(spec.contains("### Requirement: <!-- requirement name -->"));
++        assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn archive_does_not_follow_a_symlink_cycle_under_specs() {
++        // Regression (#39): archive's recursive spec walk must not follow
++        // directory symlinks, or a checked-in cycle (`specs/loop -> specs`)
++        // recurses without bound -> stack overflow, crashing archive instead of
++        // completing. Mirrors validate's symlink guard. (If this regresses it
++        // stack-overflows the test process rather than failing an assertion --
++        // which is exactly the crash we are guarding against.)
++        let tmp = TempDir::new();
++        let c = cfg(&tmp);
++        change::create(&c, "my-feature").unwrap();
++        write(
++            &c.changes_dir()
++                .join("my-feature")
++                .join("specs")
++                .join("my-cap")
++                .join("spec.md"),
++            DELTA_TEMPLATE,
++        );
++        let specs_root = c.changes_dir().join("my-feature").join("specs");
++        std::os::unix::fs::symlink(&specs_root, specs_root.join("loop")).unwrap();
++
++        let outcome = archive(&c, "my-feature", false, false).unwrap();
++
++        assert_eq!(outcome.specs_applied.len(), 1);
++        assert_eq!(outcome.specs_applied[0].capability, "my-cap");
++    }
++
+     #[test]
+     fn archive_appends_to_an_existing_capability_spec_with_a_separator() {
+         let tmp = TempDir::new();
+diff --git a/crates/spectra-core/src/fsutil.rs b/crates/spectra-core/src/fsutil.rs
+index 24c7ebf..37e7d93 100644
+--- a/crates/spectra-core/src/fsutil.rs
++++ b/crates/spectra-core/src/fsutil.rs
+@@ -7,7 +7,7 @@
+ use std::io::ErrorKind;
+ use std::path::Path;
+ 
+-use anyhow::{Context, Result};
++use anyhow::{anyhow, Context, Result};
+ 
+ /// Read `path` as UTF-8 text: `Ok(None)` when it's genuinely absent, `Err`
+ /// for any other I/O failure (permission denied, invalid UTF-8, etc.).
+@@ -32,3 +32,89 @@ pub(crate) fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>>
+         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+     }
+ }
++
++/// Recursively collect every `spec.md` beneath `specs_root`, paired with its
++/// capability id: the `/`-joined path from `specs_root` down to the file's
++/// parent directory (e.g. `auth`, or `Billing/Invoices` for a nested
++/// `<Epic>/<Feature>` layout; the empty string for a stray `specs/spec.md`).
++/// Returned sorted by capability id for deterministic ordering.
++///
++/// A missing `specs_root` yields an empty vec — the caller decides what "no
++/// deltas" means (a validation failure, or nothing to archive). Descent uses
++/// [`is_real_dir`] (via `symlink_metadata`) so a checked-in directory-symlink
++/// cycle (`specs/loop -> specs`) can't recurse without bound and crash the
++/// caller. A capability directory name that isn't valid UTF-8 is a hard error
++/// rather than a lossy conversion: `archive` turns this id into a *write*
++/// target (`specs/<cap>/spec.md`), so a silent `U+FFFD` substitution would
++/// merge into the wrong path.
++///
++/// Shared by the `archive` merge walk and the `validate` structural walk so
++/// their traversal (and its symlink-cycle safety) can't drift apart — the
++/// asymmetry that let a nested delta validate cleanly yet archive silently
++/// (issue #39).
++pub(crate) fn collect_delta_specs(specs_root: &Path) -> Result<Vec<(String, String)>> {
++    let mut out = Vec::new();
++    collect_delta_specs_into(specs_root, specs_root, &mut out)?;
++    out.sort_by(|a, b| a.0.cmp(&b.0));
++    Ok(out)
++}
++
++fn collect_delta_specs_into(
++    specs_root: &Path,
++    dir: &Path,
++    out: &mut Vec<(String, String)>,
++) -> Result<()> {
++    let Some(entries) = read_dir_optional(dir)? else {
++        return Ok(());
++    };
++
++    // A `spec.md` directly at this level is one capability's delta. Record it
++    // whether or not the dir also has subdirectories, so mixed flat/nested
++    // layouts (a capability spec alongside sub-capability dirs) are all seen.
++    if let Some(content) = read_optional(&dir.join("spec.md"))? {
++        out.push((capability_id(specs_root, dir)?, content));
++    }
++
++    for entry in entries {
++        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
++        let path = entry.path();
++        if is_real_dir(&path)? {
++            collect_delta_specs_into(specs_root, &path, out)?;
++        }
++    }
++    Ok(())
++}
++
++/// The `/`-joined capability id for `dir` relative to `specs_root`, erroring
++/// on any path component that isn't valid UTF-8 (see [`collect_delta_specs`]).
++fn capability_id(specs_root: &Path, dir: &Path) -> Result<String> {
++    let rel = dir.strip_prefix(specs_root).unwrap_or(dir);
++    let mut parts = Vec::new();
++    for component in rel.components() {
++        let raw = component.as_os_str();
++        let part = raw
++            .to_str()
++            .ok_or_else(|| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
++        parts.push(part);
++    }
++    Ok(parts.join("/"))
++}
++
++/// Whether `path` is a real directory to descend into, via `symlink_metadata`
++/// (which does **not** follow symlinks) rather than `fs::metadata` (which
++/// does). This is load-bearing, not cosmetic: the walk in
++/// [`collect_delta_specs`] recurses, so following a directory symlink lets a
++/// checked-in cycle (`specs/loop -> .`, or two dirs pointing at each other)
++/// recurse without bound -> stack overflow, crashing the caller instead of
++/// erroring cleanly. Not following symlinked subdirectories bounds traversal
++/// to the real tree. `symlink_metadata` (like `fs::metadata`) still surfaces a
++/// permission error instead of silently returning `false` the way
++/// `Path::is_dir` would. A `spec.md` that is itself a symlink is still read —
++/// only directory *descent* stops following links.
++fn is_real_dir(path: &Path) -> Result<bool> {
++    match std::fs::symlink_metadata(path) {
++        Ok(m) => Ok(m.is_dir()),
++        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
++        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
++    }
++}
+diff --git a/crates/spectra-core/src/validate.rs b/crates/spectra-core/src/validate.rs
+index 82a343c..01d32a2 100644
+--- a/crates/spectra-core/src/validate.rs
++++ b/crates/spectra-core/src/validate.rs
+@@ -20,10 +20,7 @@
+ //!    non-strict run gates purely on structure (matching OSS, where `--strict`
+ //!    is what turns content-quality findings into hard failures).
+ 
+-use std::io::ErrorKind;
+-use std::path::Path;
+-
+-use anyhow::{Context, Result};
++use anyhow::Result;
+ use once_cell::sync::Lazy;
+ use regex::Regex;
+ use serde::Serialize;
+@@ -124,7 +121,7 @@ pub fn build_report(cfg: &Config, names: &[String], strict: bool) -> Result<Vali
+ /// structural rule always and the content-quality rules only under `strict`.
+ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
+     let specs_root = cfg.changes_dir().join(name).join("specs");
+-    let files = collect_delta_specs(&specs_root)?;
++    let files = crate::fsutil::collect_delta_specs(&specs_root)?;
+ 
+     let mut issues = Vec::new();
+     let mut total_operations = 0usize;
+@@ -182,65 +179,6 @@ fn spec_rel_path(cap: &str) -> String {
+     }
+ }
+ 
+-/// Recursively collect every `spec.md` beneath `specs_root`, paired with its
+-/// capability id (the `/`-joined path from `specs_root` to the file's parent).
+-/// A missing `specs_root` is not an error — it means the change has no deltas,
+-/// which the caller reports as the structural "at least one delta" failure.
+-/// Returned sorted by capability id for deterministic issue ordering.
+-fn collect_delta_specs(specs_root: &Path) -> Result<Vec<(String, String)>> {
+-    let mut out = Vec::new();
+-    collect_into(specs_root, specs_root, &mut out)?;
+-    out.sort_by(|a, b| a.0.cmp(&b.0));
+-    Ok(out)
+-}
+-
+-fn collect_into(specs_root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> Result<()> {
+-    let Some(entries) = crate::fsutil::read_dir_optional(dir)? else {
+-        return Ok(());
+-    };
+-
+-    // A `spec.md` directly at this level is one capability's delta. Record it
+-    // whether or not the dir also has subdirectories, so mixed flat/nested
+-    // layouts (a capability spec alongside sub-capability dirs) are all seen.
+-    let spec_md = dir.join("spec.md");
+-    if let Some(content) = crate::fsutil::read_optional(&spec_md)? {
+-        let rel = dir.strip_prefix(specs_root).unwrap_or(dir);
+-        let cap = rel
+-            .components()
+-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+-            .collect::<Vec<_>>()
+-            .join("/");
+-        out.push((cap, content));
+-    }
+-
+-    for entry in entries {
+-        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
+-        let path = entry.path();
+-        if is_real_dir(&path)? {
+-            collect_into(specs_root, &path, out)?;
+-        }
+-    }
+-    Ok(())
+-}
+-
+-/// Whether `path` is a real directory to descend into, via `symlink_metadata`
+-/// (which does **not** follow symlinks) rather than `fs::metadata` (which
+-/// does). This is load-bearing, not cosmetic: the walk recurses, so following
+-/// a directory symlink lets a checked-in cycle (`specs/loop -> .`, or two dirs
+-/// pointing at each other) recurse without bound → stack overflow, crashing the
+-/// gate instead of erroring cleanly. Not following symlinked subdirectories
+-/// bounds traversal to the real tree. `symlink_metadata` (like `fs::metadata`)
+-/// still surfaces a permission error instead of silently returning `false` the
+-/// way `Path::is_dir` would. A `spec.md` that is itself a symlink is still read
+-/// — only directory *descent* stops following links.
+-fn is_real_dir(path: &Path) -> Result<bool> {
+-    match std::fs::symlink_metadata(path) {
+-        Ok(m) => Ok(m.is_dir()),
+-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+-    }
+-}
+-
+ #[derive(Clone, Copy, PartialEq, Eq)]
+ enum Section {
+     Added,
+@@ -408,7 +346,7 @@ fn parse_delta(content: &str) -> DeltaParse {
+ mod tests {
+     use super::*;
+     use std::fs;
+-    use std::path::PathBuf;
++    use std::path::{Path, PathBuf};
+ 
+     const GOOD_ADDED: &str = "## ADDED Requirements\n\n\
+         ### Requirement: Login\n\n\
+diff --git a/docs/reverse-engineering/archive.md b/docs/reverse-engineering/archive.md
+index d95bce8..7f8cd5f 100644
+--- a/docs/reverse-engineering/archive.md
++++ b/docs/reverse-engineering/archive.md
+@@ -67,12 +67,18 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
+    `ChangeMetadata`). If git identity isn't configured, only `archived_at`
+    is written — OpenSpectra warns on stderr when this happens rather than
+    silently omitting the field with no signal.
+-5. Unless `--skip-specs`: for each `specs/<capability>/spec.md` under the
+-   (now-moved) change, merge its delta into
++5. Unless `--skip-specs`: for each `specs/**/spec.md` under the (now-moved)
++   change, merge its delta into the matching canonical
+    `<spec_dir>/specs/<capability>/spec.md`, then print
+    `Specs applied: <capability> (added: N, modified: N, removed: N, renamed: N)`
+-   per capability. The oracle also prints "Snapshot created for unarchive
+-   support." — **not implemented**; see "Known limitations" below.
++   per capability. The `specs/` tree is walked **recursively**, so a
++   nested-capability layout `specs/<Epic>/<Feature>/spec.md` merges into
++   `<spec_dir>/specs/<Epic>/<Feature>/spec.md` (capability id `<Epic>/<Feature>`)
++   rather than being silently skipped — `archive` and `validate` share one
++   recursive collector (`fsutil::collect_delta_specs`) so their traversal, and
++   its symlink-cycle safety, can't drift apart (issue #39). The oracle also
++   prints "Snapshot created for unarchive support." — **not implemented**; see
++   "Known limitations" below.
+ 6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
+    markers **and** its `.spectra/touched/<name>.json` tracking file, if any
+    (best-effort; a failure here only warns, since archiving itself already
+diff --git a/docs/reverse-engineering/validate.md b/docs/reverse-engineering/validate.md
+index ca104d9..31e1fff 100644
+--- a/docs/reverse-engineering/validate.md
++++ b/docs/reverse-engineering/validate.md
+@@ -48,7 +48,15 @@ does **not** follow directory symlinks (it decides recursion with
+ `symlink_metadata`, not `metadata`): a checked-in cyclic directory symlink
+ would otherwise recurse without bound and stack-overflow the gate. A `spec.md`
+ that is itself a symlink is still read — only directory *traversal* stops at
+-links.
++links. A capability directory name that isn't valid UTF-8 is a hard error, not
++a lossy `U+FFFD` substitution — the same collector feeds `archive`, which turns
++the id into a *write* target, so a lossy id there would merge into the wrong
++path.
++
++This walk is `fsutil::collect_delta_specs`, shared verbatim with `archive`'s
++spec-delta merge (issue #39): the two commands must see the identical delta set
++from the identical traversal, or a change could validate cleanly yet archive
++with a nested delta silently ignored.
+ 
+ 1. **Structural (always an `ERROR`).** A change must contain at least one
+    requirement delta: an `### Requirement:` header under an `## ADDED`,

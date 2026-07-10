@@ -1,0 +1,5 @@
+crates/spectra-core/src/archive.rs
+crates/spectra-core/src/fsutil.rs
+crates/spectra-core/src/validate.rs
+docs/reverse-engineering/archive.md
+docs/reverse-engineering/validate.md

@@ -36,8 +36,8 @@ pub(crate) fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>>
 /// Recursively collect every `spec.md` beneath `specs_root`, paired with its
 /// capability id: the `/`-joined path from `specs_root` down to the file's
 /// parent directory (e.g. `auth`, or `Billing/Invoices` for a nested
-/// `<Epic>/<Feature>` layout; the empty string for a stray `specs/spec.md`).
-/// Returned sorted by capability id for deterministic ordering.
+/// `<Epic>/<Feature>` layout). Returned sorted by capability id for
+/// deterministic ordering.
 ///
 /// A missing `specs_root` yields an empty vec — the caller decides what "no
 /// deltas" means (a validation failure, or nothing to archive). Descent uses
@@ -47,6 +47,17 @@ pub(crate) fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>>
 /// rather than a lossy conversion: `archive` turns this id into a *write*
 /// target (`specs/<cap>/spec.md`), so a silent `U+FFFD` substitution would
 /// merge into the wrong path.
+///
+/// Two malformed layouts fail loud rather than mis-writing or vanishing:
+/// - A `spec.md` sitting **directly** under `specs_root` (no capability
+///   directory) is a hard error — its capability id would be empty, and
+///   `archive` would otherwise write a nameless `specs/spec.md` with a
+///   `#  Specification` header.
+/// - A capability directory that is a **symlink** is not descended (the
+///   cycle guard bounds the walk to the real tree), so its delta is skipped;
+///   because old `archive` followed such symlinks, the skip is announced on
+///   stderr rather than dropped silently. Following symlinked capability dirs
+///   (with visited-set cycle tracking) is a deliberate non-goal here.
 ///
 /// Shared by the `archive` merge walk and the `validate` structural walk so
 /// their traversal (and its symlink-cycle safety) can't drift apart — the
@@ -80,13 +91,25 @@ fn collect_delta_specs_into(
         let path = entry.path();
         if is_real_dir(&path)? {
             collect_delta_specs_into(specs_root, &path, out)?;
+        } else if is_symlink_to_dir(&path)? {
+            // A symlinked capability dir is intentionally not descended (cycle
+            // guard), but old `archive` followed it via `fs::metadata`, so
+            // announce the skip rather than dropping its delta silently.
+            eprintln!(
+                "warning: skipping symlinked capability directory {} -- its spec \
+                 delta will not be collected (symlinked directories are not \
+                 traversed, to bound the walk against cycles)",
+                path.display()
+            );
         }
     }
     Ok(())
 }
 
 /// The `/`-joined capability id for `dir` relative to `specs_root`, erroring
-/// on any path component that isn't valid UTF-8 (see [`collect_delta_specs`]).
+/// on any path component that isn't valid UTF-8, and on an **empty** id — a
+/// `spec.md` directly under `specs_root`, which names no capability (see
+/// [`collect_delta_specs`]).
 fn capability_id(specs_root: &Path, dir: &Path) -> Result<String> {
     let rel = dir.strip_prefix(specs_root).unwrap_or(dir);
     let mut parts = Vec::new();
@@ -97,14 +120,42 @@ fn capability_id(specs_root: &Path, dir: &Path) -> Result<String> {
             .ok_or_else(|| anyhow!("capability directory name {raw:?} is not valid UTF-8"))?;
         parts.push(part);
     }
+    if parts.is_empty() {
+        return Err(anyhow!(
+            "found spec.md directly under {} -- a delta must live under a capability \
+             directory (specs/<capability>/spec.md)",
+            specs_root.display()
+        ));
+    }
     Ok(parts.join("/"))
+}
+
+/// Whether `path` is a symlink whose target is a directory — the case
+/// [`collect_delta_specs_into`] warns about before skipping. A dangling
+/// symlink (target missing) resolves to "not a dir" and is skipped quietly:
+/// there's no capability delta behind it to lose.
+fn is_symlink_to_dir(path: &Path) -> Result<bool> {
+    let is_symlink = match std::fs::symlink_metadata(path) {
+        Ok(m) => m.is_symlink(),
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    if !is_symlink {
+        return Ok(false);
+    }
+    // Follows the link; a dangling target errors NotFound -> not a dir.
+    match std::fs::metadata(path) {
+        Ok(m) => Ok(m.is_dir()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
 }
 
 /// Whether `path` is a real directory to descend into, via `symlink_metadata`
 /// (which does **not** follow symlinks) rather than `fs::metadata` (which
 /// does). This is load-bearing, not cosmetic: the walk in
 /// [`collect_delta_specs`] recurses, so following a directory symlink lets a
-/// checked-in cycle (`specs/loop -> .`, or two dirs pointing at each other)
+/// checked-in cycle (`specs/loop -> specs`, or two dirs pointing at each other)
 /// recurse without bound -> stack overflow, crashing the caller instead of
 /// erroring cleanly. Not following symlinked subdirectories bounds traversal
 /// to the real tree. `symlink_metadata` (like `fs::metadata`) still surfaces a
@@ -116,5 +167,122 @@ fn is_real_dir(path: &Path) -> Result<bool> {
         Ok(m) => Ok(m.is_dir()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let dir = std::env::temp_dir().join(format!(
+                "spectra-fsutil-test-{}-{seq}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl std::ops::Deref for TempDir {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_spec(specs_root: &Path, cap_path: &str, content: &str) {
+        let mut dir = specs_root.to_path_buf();
+        for part in cap_path.split('/').filter(|p| !p.is_empty()) {
+            dir = dir.join(part);
+        }
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("spec.md"), content).unwrap();
+    }
+
+    #[test]
+    fn missing_specs_root_yields_empty() {
+        let tmp = TempDir::new();
+        let out = collect_delta_specs(&tmp.join("does-not-exist")).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn collects_a_mixed_flat_and_nested_layout_sorted_by_capability_id() {
+        // A parent capability with its own spec.md *and* a nested sub-capability:
+        // both must be collected (the walk records a dir's spec.md and still
+        // descends), and the result must be deterministically sorted so the
+        // `apply_spec_deltas` sort could be dropped. Sort is byte-wise, so the
+        // uppercase-`B` capabilities precede the lowercase `auth`.
+        let tmp = TempDir::new();
+        let specs_root = tmp.join("specs");
+        write_spec(&specs_root, "auth", "auth delta");
+        write_spec(&specs_root, "Billing", "billing delta");
+        write_spec(&specs_root, "Billing/Invoices", "invoices delta");
+
+        let out = collect_delta_specs(&specs_root).unwrap();
+
+        let caps: Vec<&str> = out.iter().map(|(c, _)| c.as_str()).collect();
+        assert_eq!(caps, ["Billing", "Billing/Invoices", "auth"]);
+        // Content travels with its own capability, not another's.
+        assert_eq!(out[1].1, "invoices delta");
+    }
+
+    #[test]
+    fn errors_on_a_spec_md_directly_under_specs_root() {
+        // A stray `specs/spec.md` names no capability; collecting it with an
+        // empty id would make `archive` write a nameless `specs/spec.md`. It
+        // must fail loud instead.
+        let tmp = TempDir::new();
+        let specs_root = tmp.join("specs");
+        fs::create_dir_all(&specs_root).unwrap();
+        fs::write(specs_root.join("spec.md"), "orphan delta").unwrap();
+
+        let err = collect_delta_specs(&specs_root).unwrap_err();
+        assert!(
+            err.to_string().contains("directly under"),
+            "expected an orphan-spec error, got: {err}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_a_symlinked_capability_directory() {
+        // A capability dir that is a directory symlink is not descended (cycle
+        // guard) -- so `alias`'s delta is skipped and only the real `auth`
+        // capability is collected. (Old `archive` followed such symlinks; the
+        // collector now warns on stderr, asserted here only by the skip.)
+        let tmp = TempDir::new();
+        let specs_root = tmp.join("specs");
+        write_spec(&specs_root, "auth", "auth delta");
+        let target = tmp.join("elsewhere");
+        write_spec(&target, "", "aliased delta");
+        std::os::unix::fs::symlink(&target, specs_root.join("alias")).unwrap();
+
+        let out = collect_delta_specs(&specs_root).unwrap();
+
+        let caps: Vec<&str> = out.iter().map(|(c, _)| c.as_str()).collect();
+        assert_eq!(
+            caps,
+            ["auth"],
+            "the symlinked capability dir must be skipped"
+        );
     }
 }

@@ -229,7 +229,9 @@ fn apply_spec_deltas(
         }
         results.push(result);
     }
-    results.sort_by(|a, b| a.capability.cmp(&b.capability));
+    // No explicit sort: `collect_delta_specs` already yields entries sorted by
+    // capability id (pinned by `fsutil`'s `collect_delta_specs_*` unit tests),
+    // and results are pushed in that order.
     Ok(results)
 }
 

@@ -1,0 +1,1 @@
+{"verdict":"LGTM","summary":"The change correctly centralizes recursive delta collection for validate and archive. No merge-blocking issues were found.","findings":[]}
