@@ -20,10 +20,7 @@
 //!    non-strict run gates purely on structure (matching OSS, where `--strict`
 //!    is what turns content-quality findings into hard failures).
 
-use std::io::ErrorKind;
-use std::path::Path;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
@@ -124,7 +121,7 @@ pub fn build_report(cfg: &Config, names: &[String], strict: bool) -> Result<Vali
 /// structural rule always and the content-quality rules only under `strict`.
 pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
     let specs_root = cfg.changes_dir().join(name).join("specs");
-    let files = collect_delta_specs(&specs_root)?;
+    let files = crate::fsutil::collect_delta_specs(&specs_root)?;
 
     let mut issues = Vec::new();
     let mut total_operations = 0usize;
@@ -179,65 +176,6 @@ fn spec_rel_path(cap: &str) -> String {
         "specs/spec.md".to_string()
     } else {
         format!("specs/{cap}/spec.md")
-    }
-}
-
-/// Recursively collect every `spec.md` beneath `specs_root`, paired with its
-/// capability id (the `/`-joined path from `specs_root` to the file's parent).
-/// A missing `specs_root` is not an error — it means the change has no deltas,
-/// which the caller reports as the structural "at least one delta" failure.
-/// Returned sorted by capability id for deterministic issue ordering.
-fn collect_delta_specs(specs_root: &Path) -> Result<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    collect_into(specs_root, specs_root, &mut out)?;
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(out)
-}
-
-fn collect_into(specs_root: &Path, dir: &Path, out: &mut Vec<(String, String)>) -> Result<()> {
-    let Some(entries) = crate::fsutil::read_dir_optional(dir)? else {
-        return Ok(());
-    };
-
-    // A `spec.md` directly at this level is one capability's delta. Record it
-    // whether or not the dir also has subdirectories, so mixed flat/nested
-    // layouts (a capability spec alongside sub-capability dirs) are all seen.
-    let spec_md = dir.join("spec.md");
-    if let Some(content) = crate::fsutil::read_optional(&spec_md)? {
-        let rel = dir.strip_prefix(specs_root).unwrap_or(dir);
-        let cap = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join("/");
-        out.push((cap, content));
-    }
-
-    for entry in entries {
-        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
-        let path = entry.path();
-        if is_real_dir(&path)? {
-            collect_into(specs_root, &path, out)?;
-        }
-    }
-    Ok(())
-}
-
-/// Whether `path` is a real directory to descend into, via `symlink_metadata`
-/// (which does **not** follow symlinks) rather than `fs::metadata` (which
-/// does). This is load-bearing, not cosmetic: the walk recurses, so following
-/// a directory symlink lets a checked-in cycle (`specs/loop -> .`, or two dirs
-/// pointing at each other) recurse without bound → stack overflow, crashing the
-/// gate instead of erroring cleanly. Not following symlinked subdirectories
-/// bounds traversal to the real tree. `symlink_metadata` (like `fs::metadata`)
-/// still surfaces a permission error instead of silently returning `false` the
-/// way `Path::is_dir` would. A `spec.md` that is itself a symlink is still read
-/// — only directory *descent* stops following links.
-fn is_real_dir(path: &Path) -> Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Ok(m) => Ok(m.is_dir()),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
     }
 }
 
@@ -408,7 +346,7 @@ fn parse_delta(content: &str) -> DeltaParse {
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     const GOOD_ADDED: &str = "## ADDED Requirements\n\n\
         ### Requirement: Login\n\n\

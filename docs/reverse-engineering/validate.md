@@ -48,7 +48,15 @@ does **not** follow directory symlinks (it decides recursion with
 `symlink_metadata`, not `metadata`): a checked-in cyclic directory symlink
 would otherwise recurse without bound and stack-overflow the gate. A `spec.md`
 that is itself a symlink is still read — only directory *traversal* stops at
-links.
+links. A capability directory name that isn't valid UTF-8 is a hard error, not
+a lossy `U+FFFD` substitution — the same collector feeds `archive`, which turns
+the id into a *write* target, so a lossy id there would merge into the wrong
+path.
+
+This walk is `fsutil::collect_delta_specs`, shared verbatim with `archive`'s
+spec-delta merge (issue #39): the two commands must see the identical delta set
+from the identical traversal, or a change could validate cleanly yet archive
+with a nested delta silently ignored.
 
 1. **Structural (always an `ERROR`).** A change must contain at least one
    requirement delta: an `### Requirement:` header under an `## ADDED`,
