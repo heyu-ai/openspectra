@@ -29,13 +29,14 @@
 
 ## WP3 — `spectra instructions`（capability: `artifact-instructions`）
 
-- [ ] 3.1 probe 補齊：`unlocks` 語義、apply 模式 `state` 值域、`parallel`
+- [x] 3.1 probe 補齊：`unlocks` 語義、apply 模式 `state` 值域、`parallel`
       標記、preflight 判準、`--skill` 處置，回填 design.md
-- [ ] 3.2 `spectra-core::instructions`：artifact 模式（模板組裝 +
+- [x] 3.2 `spectra-core::instructions`：artifact 模式（模板組裝 +
       dependencies/unlocks）與 apply 模式（contextFiles/progress/tasks/
-      preflight，複用 tasks.rs）
-- [ ] 3.3 CLI `instructions [ARTIFACT] [--change] [--json]`：human + JSON
-- [ ] 3.4 整合測試：4 artifacts × JSON keys、apply 模式進度／preflight
+      preflight，使用 apply 專用的寬鬆 checkbox parser）
+- [x] 3.3 CLI `instructions [ARTIFACT] [--change] [--schema] [--json]
+      [--skill]`：human + JSON
+- [x] 3.4 整合測試：4 artifacts × JSON keys、apply 模式進度／preflight
 
 ## WP4 — `spectra analyze`（capability: `change-analyze`）
 

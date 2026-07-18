@@ -1,7 +1,8 @@
-//! OpenSpectra CLI: `init`, `drift`, `status`, `validate`, `list`, `show`,
-//! `park`, `unpark`, `new change`, `new artifact`, `task done`, `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `status`, `instructions`, `validate`,
+//! `list`, `show`, `park`, `unpark`, `new change`, `new artifact`, `task done`,
+//! `archive`.
 
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -9,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{artifact, change, config::Config, drift, schema, spec};
+use spectra_core::{artifact, change, config::Config, drift, instructions, schema, spec};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -55,6 +56,23 @@ enum Command {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Get instructions for an artifact.
+    Instructions {
+        /// Artifact ID (proposal|design|specs|tasks) or "apply".
+        artifact: Option<String>,
+        /// Change name (auto-detects if only one exists).
+        #[arg(long)]
+        change: Option<String>,
+        /// Workflow schema name (only `spec-driven` is built in).
+        #[arg(long)]
+        schema: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Embedded skill name (not supported in openspectra).
+        #[arg(long)]
+        skill: Option<String>,
     },
     /// Validate changes against the OpenSpec structural rules (a change needs
     /// at least one requirement delta; with --strict, each ADDED/MODIFIED
@@ -616,6 +634,96 @@ fn cmd_status(
     Ok(0)
 }
 
+fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> String {
+    let mut output = format!(
+        "Artifact: {}\nOutput: {}\nDescription: {}\n\nInstruction:\n{}\n\n",
+        report.artifact_id, report.output_path, report.description, report.instruction
+    );
+    if !report.dependencies.is_empty() {
+        output.push_str("Dependencies:\n");
+        for dependency in &report.dependencies {
+            let glyph = if dependency.done { "✓" } else { "○" };
+            output.push_str(&format!(
+                "  {glyph} {} ({})\n",
+                dependency.id, dependency.path
+            ));
+        }
+        output.push('\n');
+    }
+    if !report.unlocks.is_empty() {
+        output.push_str("Unlocks:\n");
+        for artifact_id in &report.unlocks {
+            output.push_str(&format!("  - {artifact_id}\n"));
+        }
+        output.push('\n');
+    }
+    output.push_str("Template:\n");
+    output.push_str(report.template);
+    output.push('\n');
+    output
+}
+
+fn apply_instructions_human(report: &instructions::ApplyInstructions) -> String {
+    let mut output = format!(
+        "Change: {}\nSchema: {}\nState: {}\nProgress: {}/{} complete\n\n",
+        report.change_name,
+        report.schema_name,
+        match report.state {
+            instructions::ApplyState::Blocked => "blocked",
+            instructions::ApplyState::AllDone => "all_done",
+            instructions::ApplyState::Ready => "ready",
+        },
+        report.progress.complete,
+        report.progress.total
+    );
+    if !report.missing_artifacts.is_empty() {
+        output.push_str("Missing artifacts:\n");
+        for artifact in &report.missing_artifacts {
+            output.push_str(&format!("  - {artifact}\n"));
+        }
+        output.push('\n');
+    } else if !report.tasks.is_empty() {
+        output.push_str("Tasks:\n");
+        for task in &report.tasks {
+            let glyph = if task.done { "✓" } else { "○" };
+            output.push_str(&format!("  {glyph} {}\n", task.description));
+        }
+        output.push('\n');
+    }
+    // The oracle's zero-checkbox human layout was not probed. Keep both
+    // optional sections absent when neither parsed tasks nor artifacts exist.
+    output.push_str("Instruction:\n");
+    output.push_str(report.instruction);
+    output.push('\n');
+    output
+}
+
+fn cmd_instructions(
+    cfg: &Config,
+    artifact_id: Option<&str>,
+    change_name: Option<&str>,
+    schema_name: Option<&str>,
+    as_json: bool,
+) -> Result<i32> {
+    let report = instructions::get(cfg, change_name, schema_name, artifact_id)?;
+    let output = if as_json {
+        format!("{}\n", serde_json::to_string_pretty(&report)?)
+    } else {
+        match &report {
+            instructions::InstructionOutput::Artifact(report) => {
+                artifact_instructions_human(report)
+            }
+            instructions::InstructionOutput::Apply(report) => apply_instructions_human(report),
+        }
+    };
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    stdout
+        .write_all(output.as_bytes())
+        .context("writing instructions output")?;
+    Ok(0)
+}
+
 /// `--json` shape for `new change`: pinned here (rather than inlined in
 /// `cmd_new_change`) so a rename/typo doesn't ship silently, matching
 /// `show_json`/`park_status_json`. Renders `dir` via `to_string_lossy`
@@ -801,6 +909,28 @@ fn run() -> Result<i32> {
         } => {
             let cfg = require_initialized(&root)?;
             cmd_status(&cfg, change.as_deref(), schema.as_deref(), *json)
+        }
+        Command::Instructions {
+            artifact,
+            change,
+            schema,
+            json,
+            skill,
+        } => {
+            // Skill bodies are proprietary oracle resources and are not
+            // embedded in openspectra. This check intentionally precedes all
+            // project/change/schema work so --skill always wins.
+            if let Some(skill) = skill {
+                anyhow::bail!("Unknown skill: {skill}");
+            }
+            let cfg = require_initialized(&root)?;
+            cmd_instructions(
+                &cfg,
+                artifact.as_deref(),
+                change.as_deref(),
+                schema.as_deref(),
+                *json,
+            )
         }
         Command::Validate {
             change,

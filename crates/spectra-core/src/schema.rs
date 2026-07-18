@@ -436,7 +436,7 @@ fn artifact_status(
     }
 }
 
-fn artifact_done(artifact: &ArtifactDefinition, change_dir: &std::path::Path) -> bool {
+pub fn artifact_done(artifact: &ArtifactDefinition, change_dir: &std::path::Path) -> bool {
     if artifact.id == "specs" {
         return contains_markdown_file(&change_dir.join("specs"));
     }

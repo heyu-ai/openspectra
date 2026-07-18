@@ -15,7 +15,9 @@ spectra-cli/main.rs  # 各 WP 各自加一個子指令 arm
 ```
 
 依賴方向：WP2/WP3/WP4 都依賴 WP1 的 schema 模組；WP2–WP4 彼此獨立。
-apply 模式（WP3）另複用既有 `tasks.rs`（checkbox 解析）與 `git.rs`（preflight）。
+apply 模式（WP3）另在 `instructions.rs` 實作 oracle 較寬鬆的 checkbox 解析，
+並複用 `git.rs` 執行 preflight 的每檔最後 commit 日期查詢；既有
+`tasks.rs` 的嚴格 parser 不變。
 
 ## 關鍵決策
 
@@ -178,32 +180,163 @@ spec type 路徑為 `specs/<capability>/spec.md`。
 
 ### `instructions <artifact> --json`（pretty、camelCase）
 
-keys：`changeName, artifactId, schemaName, changeDir, outputPath, description,
-instruction, locale, template, dependencies, unlocks`。
+JSON 為 2-space pretty 格式並保留結尾換行，top-level keys 固定依序為
+`changeName, artifactId, schemaName, changeDir, outputPath, description,
+instruction, locale, template, dependencies, unlocks`。`changeDir` 為 change
+目錄的絕對路徑；`outputPath` 保留 schema 內的相對路徑（例如
+`specs/**/*.md`）；`locale` 固定為 `English`；`instruction`/`template` 逐字
+使用 `schema.rs` 內已由 goldens 釘住的常數。
 
-- `dependencies`：物件陣列 `{id, done, path, description}`（path 為相對）。
-- `unlocks`：字串陣列；實測 proposal（全空專案）為 `["design","specs"]`，
-  specs（tasks 已 done 時）為 `[]` ——**待 probe**：unlocks 是否只列「尚未
-  done」的下游（用 tasks 未建時的 specs 重測）。
-- `instruction`/`template`：逐字模板，goldens 已採集
-  （`oracle-instructions-{proposal,design,specs,tasks}.json`）。
+- `dependencies` 依 artifact 的 deps/schema 順序輸出，每個物件 key 依序為
+  `{id, done, path, description}`。`done` 採 WP1 的檔案存在規則：specs 只要
+  `specs/` 下遞迴存在任一 `.md` 即完成，其餘 artifact 以檔案是否存在判定；
+  `path` 與 `description` 取自 dependency 本身的 schema 定義。
+- `unlocks` 只列 direct dependents，且必須同時符合：目前 artifact 尚未
+  done、dependent 亦尚未 done。順序固定為 schema 順序。實測矩陣：空 change
+  的 proposal → `["design","specs"]`、空 change 的 specs → `["tasks"]`；
+  proposal 已完成後再查 proposal → `[]`；proposal/design/tasks 已完成但 specs
+  未完成時，specs → `[]`；proposal 缺少但 specs/design 已完成時，proposal →
+  `[]`；只有 specs 完成時，proposal → `["design"]`。
+
+human 輸出不顯示 preflight；只有 artifact 有 deps 時才出現 `Dependencies:`，
+完成用 `✓`，未完成用 `○`。`unlocks` 非空時另顯示 `Unlocks:`，每項格式為
+`  - <id>`；此區段位於 `Dependencies:` 之後、`Template:` 之前，空陣列時整段
+省略。兩區段彼此獨立，可只出現其中一個：
+
+```text
+Artifact: specs
+Output: specs/**/*.md
+Description: Detailed specifications for the change
+
+Instruction:
+<instruction 原文>
+
+Dependencies:
+  ○ proposal (proposal.md)
+
+Unlocks:
+  - tasks
+
+Template:
+<template 原文>
+```
+
+操作性錯誤逐字如下（CLI 另加 `Error: ` 並 exit 1）：
+
+- 未知 artifact：`Artifact '<id>' not found in schema`（無句尾句點）
+- change 不存在：`Change '<name>' not found.`（有句尾句點）
+- 未知 schema：`Schema not found: Schema '<s>' not found in project, user, or built-in locations`
+- `--skill <name>`：`Unknown skill: <name>`。oracle 對其內建有效名稱會輸出
+  proprietary embedded skill bodies；openspectra 刻意不移植，所有名稱皆視為
+  unknown。這是已記錄的產品差異；`--skill` 的錯誤優先於其他參數檢查。
 
 ### `instructions`（無參數）／`instructions apply` —— apply 模式
 
-keys：`changeName, changeDir, schemaName, contextFiles{proposal,design,specs,tasks
-→ 絕對路徑/glob}, progress{total,complete,remaining}, tasks[{id,description,done,
-parallel}], state, locale, instruction, preflight{status,missingFiles,driftedFiles,
-staleness{daysOld,isStale}}`。
+無 artifact 參數時，不是一律進 apply：若四個 artifacts 皆 done 才選 apply；
+否則依 schema 順序 `proposal, design, specs, tasks` 選第一個未 done artifact，
+並輸出上一節的 artifact mode。
 
-- `tasks` 複用 `tasks.rs` 解析；`id` 為字串序號、`description` 含 `1.1` 前綴、
-  `parallel` **待 probe**（推測對應 `[P]` 標記）。
-- `state`：實測 `ready`；其他值（如全完成後）**待 probe**。
-- `preflight`：drift-lite。`staleness.daysOld` 以 `.openspec.yaml` `created`
-  計；`missingFiles`/`driftedFiles` 判準**待 probe**（推測 = 缺 artifact 檔
-  與 anchors 檢查的輕量版）。
-- `--skill <SKILL>` 旗標：oracle help 有（「outputs skill body directly」），
-  sdd plugin 未用——收下但回「not supported」錯誤或直接不實作此旗標，
-  由 WP3 實作者依 probe 成本決定並記錄於 RE 文件。
+apply JSON 的 top-level keys 固定依序為 `changeName, changeDir, schemaName,
+contextFiles, progress, tasks, state, missingArtifacts, locale, instruction,
+preflight`；其中 `missingArtifacts` 為空時省略，`preflight` 只在 `state ==
+"ready"` 時出現。`instruction` 固定為：
+
+```text
+Read context files, work through pending tasks, mark complete as you go.
+Pause if you hit blockers or need clarification.
+```
+
+`contextFiles` 只含已 done 的 artifact，值為絕對路徑；specs 使用絕對 glob
+`<changeDir>/specs/**/*.md`。oracle 以 hash map 輸出，key order 不穩定；
+openspectra 刻意固定為 `proposal, design, specs, tasks` 的 schema 順序，以提供
+可重現輸出，這是 determinism 選擇而非語義差異。
+
+apply 使用獨立的寬鬆 parser（不得改動 `tasks.rs`）：
+
+```regex
+^\s*[-*+]\s*\[(.)\]\s*(.+)$
+```
+
+- `-`、`*`、`+` 均可作 bullet；checkbox 內任一單一字元（包括 `z`、`?`、
+  `P`）都算 task，只有 `x`/`X` 是 done。
+- `id` 是依檔案順序產生的 1-based 字串（`"1"`, `"2"`, ...），
+  `description` 為 checkbox 後內容 trim 後的原文。
+- checkbox 後緊接（中間可有零個以上空白）的 uppercase literal `[P]` 會被
+  從 description 移除並設 `parallel: true`；`[p]` 不算，description 中較後方
+  才出現的 `[P]` 也不算。例如 `- [ ][P] x` 為 parallel，而
+  `- [ ] 1.1 [P] x` 不是。
+- `progress` 為 `{total, complete, remaining}`。`total == 0` 時 state 為
+  `blocked`；有 tasks 且 `remaining == 0` 時為 `all_done`；其餘為 `ready`。
+- `missingArtifacts` 列 `applyRequires` 中尚未 done 的 artifact，目前即
+  `["tasks"]`，且只在非空時輸出。因此 tasks.md 缺少時為 `blocked` 並帶
+  `missingArtifacts: ["tasks"]`；tasks.md 存在但沒有 checkbox 時同為
+  `blocked`，卻不輸出 `missingArtifacts`。
+
+`preflight` 只在 `ready` 出現，key 順序為 `status, missingFiles,
+driftedFiles, staleness`：
+
+- `staleness.daysOld` = 本地日曆日 `Local::now().date_naive()` 減去
+  `.openspec.yaml` 的 `created: YYYY-MM-DD`；`daysOld > 7` 才設
+  `isStale: true`（7 天為 false、8 天為 true）。未來日期保留負數、不 clamp；
+  缺少或無法解析 created 時，整個 `staleness` key 省略，且不做 drift 比對。
+- `missingFiles` 僅來自 proposal 的 refs；`root.join(path)` 不存在即輸出
+  `{path, referencedIn: "proposal"}`，不依賴 git。
+- `driftedFiles` 合併 proposal、design、tasks 的 refs；檔案存在、位於 git
+  repo、且 `git log -1 --format=%cs -- <path>` 的日期嚴格晚於 change created
+  才輸出 `{path, lastCommit, changeCreated}`。日期相等不算 drift；非 git repo、
+  無 commits 或無合法 created 時略過。
+- refs 依 proposal → design → tasks 的 first-seen 順序去重。`status` 優先序：
+  `missingFiles` 非空為 `critical`；否則 drift 非空或 stale 為 `warnings`；
+  其餘為 `clean`。
+
+proposal refs 先將全文 lowercased，再從最早出現的第一個 marker 開始掃描；
+marker 為 `affected code:`、
+`主要檔案`、`影響檔案`、`變更檔案`、`受影響檔案`。marker 同一行的剩餘內容
+先移除 backticks，再用 loose path pattern 搜尋所有含 slash 的允許副檔名 token：
+
+```regex
+([A-Za-z0-9_\-./]+/[A-Za-z0-9_\-./]+\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))
+```
+
+後續行掃到第一個 trim 後以 `#` 開頭的 heading 為止；空白行不中止。含
+backticks 的行以 oracle 的 `BACKTICK_PATH_RE` search-all：
+
+```regex
+`([^`]*?/[^`]*?\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))`
+```
+
+不含 backticks 的行先移除 bullet，再只移除結尾 ASCII parenthetical
+annotation `\s*\([^)]*\)\s*$`，trim 後必須完整符合 prefix whitelist 的
+`BARE_PATH_RE`：
+
+```regex
+\b((?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))\b
+```
+
+design.md 與 tasks.md 不做 section 限制，全文只跑 `BACKTICK_PATH_RE`，且只會
+成為 drift candidates，不會進 `missingFiles`。允許副檔名精確為
+`rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js`；`py, txt, go, yml, sh,
+sql, vue, mjs` 皆不接受。
+
+apply human 輸出不顯示 preflight；有 tasks 時列 `Tasks:`，done 用 `✓`，pending
+用 `○`，parallel 沒有特殊 glyph；blocked 且 `missingArtifacts` 非空則改列
+`Missing artifacts:`。tasks.md 存在但零 checkbox 的 human edge 尚未由 oracle
+probe，openspectra 選擇兩個 optional section 都不顯示。其餘格式如下：
+
+```text
+Change: demo
+Schema: spec-driven
+State: ready
+Progress: 1/3 complete
+
+Tasks:
+  ✓ 1.1 done one
+  ○ 1.2 pending two
+
+Instruction:
+Read context files, work through pending tasks, mark complete as you go.
+Pause if you hit blockers or need clarification.
+```
 
 ### `analyze [CHANGE] --json`（pretty、snake_case、恆 exit 0）
 

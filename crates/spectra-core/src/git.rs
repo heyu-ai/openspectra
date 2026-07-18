@@ -45,6 +45,14 @@ pub fn head_sha(root: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Last commit date for `path` in `YYYY-MM-DD` form. Returns `None` when the
+/// repository has no commit for the file or git is unavailable.
+pub fn last_commit_date(root: &Path, path: &str) -> Option<String> {
+    git(root, &["log", "-1", "--format=%cs", "--", path])
+        .map(|date| date.trim().to_string())
+        .filter(|date| !date.is_empty())
+}
+
 /// The configured committer identity in git's own "Name <email>" format, via
 /// `git config user.name`/`user.email`. `None` if either is unset (or not a
 /// git repo) — best-effort, matching every other identity/state lookup in

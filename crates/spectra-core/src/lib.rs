@@ -11,6 +11,7 @@ pub mod drift;
 mod fsutil;
 pub mod git;
 pub mod init;
+pub mod instructions;
 mod names;
 pub mod schema;
 pub mod spec;
