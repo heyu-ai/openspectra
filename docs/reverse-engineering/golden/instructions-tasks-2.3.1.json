@@ -1,0 +1,20 @@
+{
+  "changeName": "demo-feature",
+  "artifactId": "tasks",
+  "schemaName": "spec-driven",
+  "changeDir": "/Users/howie/.claude/jobs/bec524d5/tmp/oracle-probe/openspec/changes/demo-feature",
+  "outputPath": "tasks.md",
+  "description": "Implementation checklist with trackable tasks",
+  "instruction": "Create the task list that breaks down the implementation work.\n\n**IMPORTANT: Follow the template below exactly.** The apply phase parses\ncheckbox format to track progress. Tasks not using `- [ ]` won't be tracked.\n\nGuidelines:\n- Group related tasks under ## numbered headings\n- Each task MUST be a checkbox: `- [ ] X.Y Task description`\n- Use the instructions JSON `locale` for human-readable task group headings\n  and task descriptions.\n- Preserve machine-readable syntax and technical tokens exactly: markdown\n  headings, checkbox markers, task numbers, `[P]` markers, file paths,\n  symbol names, commands, API names, and code identifiers MUST NOT be\n  translated or localized.\n- Tasks should be small enough to complete in one session\n- Order tasks by dependency (what must be done first?)\n- **Behavior + verification (REQUIRED for every non-trivial task):**\n  - Each task MUST state the behavior or contract being delivered — what is\n    observably true when the task is complete (user-visible behavior, generated\n    artifact contract, CLI/IPC output, or tool behavior). \"Edit file X\" is\n    NOT a behavior; it is supporting context for locating the work.\n  - Each task MUST also state how completion is verified — a test name, a\n    CLI invocation, an analyzer check, a manual assertion, or a content\n    review on a generated artifact. A task without a verification target\n    is not a valid task.\n  - File paths MAY appear in a task description, but only as locator\n    context. The task SHALL still state the behavior or contract on top\n    of any file path it mentions.\n  - File-edit-only tasks (e.g. \"Update file X to handle Y\") are invalid\n    unless they also describe the resulting behavior and how it is\n    verified.\n- Cross-referencing (analyzer checks these):\n  - Every `### Requirement:` name from specs MUST appear as a case-insensitive substring in at least one task description\n  - If design.md exists, every `###` heading from design.md should be referenced in at least one task description\n\nExample:\n```\n## 1. Setup\n\n- [ ] 1.1 Create new module structure\n- [ ] 1.2 Add dependencies to package.json\n\n## 2. Core Implementation\n\n- [ ] 2.1 Implement data export function\n- [ ] 2.2 Add CSV formatting utilities\n```\n\nReference specs for what needs to be built. If design.md exists, reference it for how to build it.\nEach task should be verifiable - you know when it's done.\n",
+  "locale": "English",
+  "template": "<!--\nEach task description MUST state:\n- the behavior or contract being delivered (what is observably true when the\n  task is complete), and\n- the verification target that proves completion (test, CLI invocation,\n  analyzer check, manual assertion, or content review).\n\nFile paths are supporting context for locating the work, never the task\nitself. \"Edit file X\" is not a valid task — it is missing both behavior and\nverification.\n-->\n\n## 1. <!-- Task Group Name -->\n\n- [ ] 1.1 <!-- Behavior/contract delivered + verification target -->\n- [ ] 1.2 <!-- Behavior/contract delivered + verification target -->\n\n## 2. <!-- Task Group Name -->\n\n- [ ] 2.1 <!-- Behavior/contract delivered + verification target -->\n- [ ] 2.2 <!-- Behavior/contract delivered + verification target -->\n",
+  "dependencies": [
+    {
+      "id": "specs",
+      "done": true,
+      "path": "specs/**/*.md",
+      "description": "Detailed specifications for the change"
+    }
+  ],
+  "unlocks": []
+}
