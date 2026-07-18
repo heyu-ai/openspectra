@@ -68,20 +68,20 @@ struct ArtifactPresence {
 }
 
 impl ArtifactPresence {
-    fn from_change_dir(change_dir: &Path) -> Self {
-        let present = |id| {
+    fn from_change_dir(change_dir: &Path) -> Result<Self> {
+        let present = |id| -> Result<bool> {
             let artifact = schema::artifacts()
                 .iter()
                 .find(|artifact| artifact.id == id)
                 .expect("all analyze artifacts exist in the built-in schema");
             schema::artifact_done(artifact, change_dir)
         };
-        Self {
-            proposal: present("proposal"),
-            specs: present("specs"),
-            design: present("design"),
-            tasks: present("tasks"),
-        }
+        Ok(Self {
+            proposal: present("proposal")?,
+            specs: present("specs")?,
+            design: present("design")?,
+            tasks: present("tasks")?,
+        })
     }
 
     fn gates(self) -> [bool; 4] {
@@ -763,7 +763,7 @@ fn dimension_report(dimension: &str, ran: bool, finding_count: usize) -> Dimensi
 pub fn analyze(cfg: &Config, change_name: &str) -> Result<AnalyzeReport> {
     let change = change::try_load(cfg, change_name)?
         .ok_or_else(|| anyhow!("Change '{change_name}' not found."))?;
-    let presence = ArtifactPresence::from_change_dir(&change.dir);
+    let presence = ArtifactPresence::from_change_dir(&change.dir)?;
     let gates = presence.gates();
     let spec_files = if presence.specs {
         collect_spec_files(&change.dir)?

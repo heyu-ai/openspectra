@@ -37,6 +37,24 @@ changes.
   the workflow advances. The old scaffold made `status` report everything
   done up front and forced `--force` on every `new artifact`.
 
+### Fixed (PR #48 mob review)
+
+- `.openspec.yaml` is serialized through `serde_yaml`, so a git identity
+  containing YAML-special characters (`:`, ` #`, …) round-trips instead of
+  producing an unparseable file that silently degraded metadata to defaults.
+- `spectra new artifact` writes are race-safe: content goes to a
+  uniquely-named temp file, then installs atomically — no-clobber
+  `hard_link` without `--force` (a concurrent creator gets the
+  oracle-aligned "already exists" error instead of silently overwriting),
+  temp-file + atomic `rename` with `--force`. A failed write can no longer
+  leave a partial artifact that `status` misreads as done.
+- The `specs` done-check now follows directory symlinks (matching the
+  oracle's `specs/**/*.md` glob, probed 2026-07-18), is symlink-cycle-safe,
+  and — order-independently — propagates I/O errors (e.g. permission
+  denied) instead of silently reporting "not done".
+- Docs and golden fixtures no longer embed a private email address or
+  machine-specific home-directory paths.
+
 ### Divergences from the v2.3.1 oracle (deliberate, documented)
 
 - `spectra instructions --skill` always answers `Unknown skill` — the
@@ -44,6 +62,9 @@ changes.
 - `instructions` apply-mode `contextFiles` key order and `analyze` spec-file
   / params ordering are fixed (schema/path order) where the oracle is
   hash-map/readdir nondeterministic between its own runs.
+- Multiple-active-changes error wording/ordering (issue #50, ruling
+  pending) and fresh-design-scaffold drift anchors (issue #51) are known,
+  tracked divergences — see `docs/reverse-engineering/artifact-workflow.md`.
 
 ## [0.2.1] - 2026-07-10
 
