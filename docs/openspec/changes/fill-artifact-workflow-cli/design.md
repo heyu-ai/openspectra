@@ -46,6 +46,17 @@ created: 2026-07-18
 created_by: howie <howie.yu@gmail.com>   # git user.name <user.email>
 ```
 
+`created_by` 永遠不省略，fallback matrix 實測如下：
+
+- `user.name` 與 `user.email` 皆有值：`"name <email>"`
+- 僅 `user.name` 有值：`"name"`
+- 僅 `user.email` 有值：`"<email>"`
+- `created_by` 取自 git config（優先使用 repo-local 設定，未設定時回退至
+  使用者層級的 global 設定；即使不在 git repo 內亦同）；只有在所有層級都無法
+  取得 `user.name` 與 `user.email` 時，才寫入 `"unknown"`
+
+oracle 不會寫入 `created_with` key。
+
 openspectra 現行 scaffold proposal.md/design.md/tasks.md 會讓 status 一開始
 全 `done`、`new artifact` 永遠撞 already-exists。對齊 oracle：移除 scaffold，
 `.openspec.yaml` 增寫 `schema`/`created`/`created_by`（保留 openspectra 既有的
@@ -103,6 +114,18 @@ Schema: spec-driven
   ✗ tasks (tasks.md)           # blocked
     blocked by: specs
 ```
+
+status 的依賴探測亦確認 `tasks.deps = ["specs"]`，`design` 不是 tasks 的
+dependency；空 change 時 tasks 的 `missingDeps` 只有 `["specs"]`。
+
+操作性錯誤沿用 oracle 的逐字訊息（stderr 由 CLI 再加上 `Error: `）：
+
+- change 不存在：`Change 'nope' not found.`
+- schema 不存在：`Schema not found: Schema 'bogus' not found in project, user, or built-in locations`
+
+human 輸出的結尾也已補 probe：尚未完成時 artifact 清單後保留一個空白行，
+因此最後兩個 bytes 為 `\n\n`；全部完成時則在該空白行後追加最後一行
+`  ✓ All artifacts complete`，並以單一換行結束。
 
 ### `new artifact --json`（單行 compact）
 

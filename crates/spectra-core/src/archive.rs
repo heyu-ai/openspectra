@@ -994,7 +994,6 @@ mod tests {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
-        std::fs::remove_file(c.changes_dir().join("my-feature").join("tasks.md")).unwrap();
 
         let outcome = archive(&c, "my-feature", true, true).unwrap();
 

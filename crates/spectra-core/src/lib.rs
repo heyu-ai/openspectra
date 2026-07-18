@@ -11,6 +11,7 @@ mod fsutil;
 pub mod git;
 pub mod init;
 mod names;
+pub mod schema;
 pub mod spec;
 pub mod tasks;
 pub mod touched;

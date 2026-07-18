@@ -211,7 +211,7 @@ fn drift_exits_zero_even_when_severity_is_medium_or_higher() {
     );
 }
 
-/// Init a git repo + spectra project in `tmp` and scaffold change `name`.
+/// Init a git repo + spectra project in `tmp` and create change `name`.
 fn init_project_with_change(tmp: &Path, name: &str) {
     git(tmp, &["init", "-q"]);
     git(tmp, &["config", "user.email", "t@t.co"]);
@@ -339,7 +339,7 @@ fn validate_nonstrict_passes_a_structurally_present_delta() {
 fn validate_errors_when_change_has_no_delta() {
     let tmp = TempDir::new("validate-nodelta");
     init_project_with_change(&tmp, "feat");
-    // `new change` scaffolds proposal/design/tasks but no specs/ deltas.
+    // `new change` creates metadata only, so there are no specs/ deltas.
 
     let out = spectra()
         .args(["validate", "feat", "--json"])

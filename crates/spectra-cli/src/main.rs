@@ -1,5 +1,5 @@
-//! OpenSpectra CLI: `init`, `drift`, `validate`, `list`, `show`, `park`,
-//! `unpark`, `new change`, `task done`, `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `status`, `validate`, `list`, `show`,
+//! `park`, `unpark`, `new change`, `task done`, `archive`.
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{change, config::Config, drift, spec};
+use spectra_core::{change, config::Config, drift, schema, spec};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -40,6 +40,18 @@ enum Command {
     Drift {
         /// Change name (auto-detects if only one exists).
         change: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show workflow artifact status for a change.
+    Status {
+        /// Change name (auto-detects if only one exists).
+        #[arg(long)]
+        change: Option<String>,
+        /// Workflow schema name (only `spec-driven` is built in).
+        #[arg(long)]
+        schema: Option<String>,
         /// Output as JSON.
         #[arg(long)]
         json: bool,
@@ -99,7 +111,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Scaffold a new change (currently the only `new` target).
+    /// Create a new change (currently the only `new` target).
     New {
         #[command(subcommand)]
         target: NewTarget,
@@ -125,9 +137,9 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum NewTarget {
-    /// Scaffold a new change directory (.openspec.yaml, proposal.md,
-    /// design.md, tasks.md, and, when run inside a git repo with at least
-    /// one commit, a baseline git SHA).
+    /// Create a change directory with .openspec.yaml and, when run inside a
+    /// git repo with at least one commit, a baseline git SHA. Artifact files
+    /// are created later by the workflow.
     Change {
         /// Name for the new change (kebab-case, e.g. 'add-search-filter').
         name: String,
@@ -553,6 +565,39 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn cmd_status(
+    cfg: &Config,
+    change_name: Option<&str>,
+    schema_name: Option<&str>,
+    as_json: bool,
+) -> Result<i32> {
+    let report = schema::status(cfg, change_name, schema_name)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(0);
+    }
+
+    println!("Change: {}", report.change_name);
+    println!("Schema: {}", report.schema_name);
+    println!();
+    for artifact in &report.artifacts {
+        let marker = match artifact.status {
+            schema::ArtifactState::Done => "✓",
+            schema::ArtifactState::Ready => "○",
+            schema::ArtifactState::Blocked => "✗",
+        };
+        println!("  {marker} {} ({})", artifact.id, artifact.output_path);
+        if let Some(missing_deps) = &artifact.missing_deps {
+            println!("    blocked by: {}", missing_deps.join(", "));
+        }
+    }
+    println!();
+    if report.is_complete {
+        println!("  ✓ All artifacts complete");
+    }
+    Ok(0)
+}
+
 /// `--json` shape for `new change`: pinned here (rather than inlined in
 /// `cmd_new_change`) so a rename/typo doesn't ship silently, matching
 /// `show_json`/`park_status_json`. Renders `dir` via `to_string_lossy`
@@ -681,6 +726,14 @@ fn run() -> Result<i32> {
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
+        }
+        Command::Status {
+            change,
+            schema,
+            json,
+        } => {
+            let cfg = require_initialized(&root)?;
+            cmd_status(&cfg, change.as_deref(), schema.as_deref(), *json)
         }
         Command::Validate {
             change,
