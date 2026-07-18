@@ -1,6 +1,7 @@
 //! Workflow artifact scaffolding and stdin-content validation.
 
 use anyhow::{anyhow, Context, Result};
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -64,15 +65,6 @@ impl ArtifactType {
     }
 }
 
-fn is_valid_capability(capability: &str) -> bool {
-    !capability.is_empty()
-        && !capability.starts_with('-')
-        && !capability.ends_with('-')
-        && capability
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-}
-
 fn validate_content(artifact_type: ArtifactType, content: &str) -> Result<()> {
     match artifact_type {
         ArtifactType::Proposal => {
@@ -106,13 +98,10 @@ fn validate_content(artifact_type: ArtifactType, content: &str) -> Result<()> {
             }
         }
         ArtifactType::Spec => {
-            const HEADINGS: [&str; 4] = [
-                "## ADDED Requirements",
-                "## MODIFIED Requirements",
-                "## REMOVED Requirements",
-                "## RENAMED Requirements",
-            ];
-            if content.lines().any(|line| HEADINGS.contains(&line.trim())) {
+            if content
+                .lines()
+                .any(|line| crate::schema::DELTA_REQUIREMENT_HEADINGS.contains(&line.trim()))
+            {
                 Ok(())
             } else {
                 Err(anyhow!(
@@ -144,7 +133,7 @@ pub fn create(
                 "Capability name is required for spec type. Usage: spectra new artifact spec <capability> --change <name>"
             )
         })?;
-        if !is_valid_capability(capability) {
+        if !crate::names::is_kebab_case(capability) {
             return Err(anyhow!(
                 "Invalid capability name '{capability}'. Must be kebab-case (e.g., user-auth, data-export)"
             ));
@@ -167,6 +156,19 @@ pub fn create(
     }
 
     let content = stdin_content.unwrap_or_else(|| artifact_type.template());
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(anyhow!(
+                "refusing to write through a symlink: {}",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("reading artifact {}", path.display()))
+        }
+    }
     let parent = path.parent().expect("artifact paths always have a parent");
     std::fs::create_dir_all(parent)
         .with_context(|| format!("creating artifact directory {}", parent.display()))?;
@@ -244,11 +246,14 @@ mod tests {
     #[test]
     fn capability_names_follow_the_probed_kebab_rule() {
         for valid in ["user-auth", "a--b", "cap2-v3", "a", "1"] {
-            assert!(is_valid_capability(valid), "expected {valid:?} to be valid");
+            assert!(
+                crate::names::is_kebab_case(valid),
+                "expected {valid:?} to be valid"
+            );
         }
         for invalid in ["", "Bad_Name", "bad-", "-bad", "has space"] {
             assert!(
-                !is_valid_capability(invalid),
+                !crate::names::is_kebab_case(invalid),
                 "expected {invalid:?} to be invalid"
             );
         }

@@ -281,11 +281,12 @@ fn cmd_drift(
 fn cmd_analyze(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
     let name = change::resolve(cfg, change_name)?;
     let report = analyze::analyze(cfg, &name)?;
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+    let output = if as_json {
+        format!("{}\n", serde_json::to_string_pretty(&report)?)
     } else {
-        print!("{}", analyze::format_human(&report));
-    }
+        analyze::format_human(&report)
+    };
+    write_stdout(&output, "writing analyze output")?;
     Ok(0)
 }
 
@@ -627,30 +628,41 @@ fn cmd_status(
     as_json: bool,
 ) -> Result<i32> {
     let report = schema::status(cfg, change_name, schema_name)?;
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
-        return Ok(0);
-    }
-
-    println!("Change: {}", report.change_name);
-    println!("Schema: {}", report.schema_name);
-    println!();
-    for artifact in &report.artifacts {
-        let marker = match artifact.status {
-            schema::ArtifactState::Done => "✓",
-            schema::ArtifactState::Ready => "○",
-            schema::ArtifactState::Blocked => "✗",
-        };
-        println!("  {marker} {} ({})", artifact.id, artifact.output_path);
-        if let Some(missing_deps) = &artifact.missing_deps {
-            println!("    blocked by: {}", missing_deps.join(", "));
+    let output = if as_json {
+        format!("{}\n", serde_json::to_string_pretty(&report)?)
+    } else {
+        let mut output = format!(
+            "Change: {}\nSchema: {}\n\n",
+            report.change_name, report.schema_name
+        );
+        for artifact in &report.artifacts {
+            let marker = match artifact.status {
+                schema::ArtifactState::Done => "✓",
+                schema::ArtifactState::Ready => "○",
+                schema::ArtifactState::Blocked => "✗",
+            };
+            output.push_str(&format!(
+                "  {marker} {} ({})\n",
+                artifact.id, artifact.output_path
+            ));
+            if let Some(missing_deps) = &artifact.missing_deps {
+                output.push_str(&format!("    blocked by: {}\n", missing_deps.join(", ")));
+            }
         }
-    }
-    println!();
-    if report.is_complete {
-        println!("  ✓ All artifacts complete");
-    }
+        output.push('\n');
+        if report.is_complete {
+            output.push_str("  ✓ All artifacts complete\n");
+        }
+        output
+    };
+    write_stdout(&output, "writing status output")?;
     Ok(0)
+}
+
+fn write_stdout(output: &str, error_context: &'static str) -> Result<()> {
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    stdout.write_all(output.as_bytes()).context(error_context)
 }
 
 fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> String {
@@ -735,11 +747,7 @@ fn cmd_instructions(
             instructions::InstructionOutput::Apply(report) => apply_instructions_human(report),
         }
     };
-    let stdout = std::io::stdout();
-    let mut stdout = stdout.lock();
-    stdout
-        .write_all(output.as_bytes())
-        .context("writing instructions output")?;
+    write_stdout(&output, "writing instructions output")?;
     Ok(0)
 }
 

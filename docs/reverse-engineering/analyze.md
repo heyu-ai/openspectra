@@ -59,8 +59,9 @@ With no artifacts at all, every dimension is skipped and `findings` is empty.
 
 Notes pinned by fixtures:
 
-- Weak-word rule: delta specs only; the list `should`, `may`, `might`,
-  `TBD`, `???` is checked in that priority order per line,
+- Weak-word rule: literal `spec.md` delta files only (sidecar Markdown such
+  as `notes.md` is ignored); the list `should`, `may`, `might`, `consider`,
+  `possibly`, `TBD`, `TODO`, `???`, `TKTK` is checked in that priority order per line,
   case-insensitive **plain substring** (`mayhem` hits `may`), max one
   finding per line, reporting the list's canonical spelling.
 - Capabilities extraction takes only the first backtick token per bullet

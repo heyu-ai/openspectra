@@ -497,6 +497,170 @@ fn amb_weak_language_positive_and_negative_contract() {
 }
 
 #[test]
+fn analyze_ignores_markdown_sidecars_and_reads_only_literal_spec_md_files() {
+    let root = TempDir::new("ignore-sidecars");
+    init_project(&root);
+    add_change(&root, "demo");
+    write_change_file(&root, "demo", "proposal.md", "# Proposal\n");
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/spec.md",
+        "The system should use the real spec.\n",
+    );
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/notes.md",
+        "This may be a sidecar note with no scenario.\n",
+    );
+
+    let (_, report) = json_report(&root, "demo");
+    let findings = report["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "unexpected findings: {report:#}");
+    assert_eq!(findings[0]["location"], "specs/alpha/spec.md:1");
+    assert_eq!(findings[0]["summary_msg"]["key"], "ambWeakLanguage.summary");
+}
+
+#[test]
+fn added_weak_terms_report_canonical_spellings_and_line_order() {
+    let root = TempDir::new("all-weak-terms");
+    init_project(&root);
+    add_change(&root, "demo");
+    write_change_file(&root, "demo", "proposal.md", "# Proposal\n");
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/spec.md",
+        "CONSIDER this\nPossibly later\ntodo item\nTkTk marker\n",
+    );
+
+    let (_, report) = json_report(&root, "demo");
+    let weak = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["summary_msg"]["key"] == "ambWeakLanguage.summary")
+        .collect::<Vec<_>>();
+
+    assert_eq!(weak.len(), 4);
+    assert_eq!(
+        weak.iter()
+            .map(|finding| finding["summary_msg"]["params"]["pattern"]
+                .as_str()
+                .unwrap())
+            .collect::<Vec<_>>(),
+        ["consider", "possibly", "TODO", "TKTK"]
+    );
+    assert_eq!(
+        weak.iter()
+            .map(|finding| finding["location"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "specs/alpha/spec.md:1",
+            "specs/alpha/spec.md:2",
+            "specs/alpha/spec.md:3",
+            "specs/alpha/spec.md:4",
+        ]
+    );
+}
+
+#[test]
+fn coverage_ids_continue_across_sorted_capability_paths() {
+    let root = TempDir::new("coverage-ids");
+    init_project(&root);
+    add_change(&root, "demo");
+    write_change_file(&root, "demo", "tasks.md", "- [ ] unrelated\n");
+    write_change_file(
+        &root,
+        "demo",
+        "specs/zeta/spec.md",
+        &complete_delta("ADDED", "Zeta one", "zeta scenario"),
+    );
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/spec.md",
+        &format!(
+            "{}\n{}",
+            complete_delta("ADDED", "Alpha one", "alpha one scenario"),
+            complete_delta("ADDED", "Alpha two", "alpha two scenario")
+        ),
+    );
+
+    let (_, report) = json_report(&root, "demo");
+    let coverage = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["dimension"] == "Coverage")
+        .collect::<Vec<_>>();
+
+    assert_eq!(coverage.len(), 3, "unexpected findings: {report:#}");
+    assert_eq!(
+        coverage
+            .iter()
+            .map(|finding| finding["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["COV-1", "COV-2", "COV-3"]
+    );
+    assert_eq!(
+        coverage
+            .iter()
+            .map(|finding| finding["location"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "specs/alpha/spec.md",
+            "specs/alpha/spec.md",
+            "specs/zeta/spec.md",
+        ]
+    );
+}
+
+#[test]
+fn ambiguity_structure_findings_precede_earlier_weak_language_lines() {
+    let root = TempDir::new("ambiguity-order");
+    init_project(&root);
+    add_change(&root, "demo");
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/spec.md",
+        concat!(
+            "This should be precise.\n",
+            "## ADDED Requirements\n",
+            "### Requirement: First\n",
+            "The system SHALL work.\n",
+            "### Requirement: Second\n",
+            "The system SHALL also work.\n",
+        ),
+    );
+
+    let (_, report) = json_report(&root, "demo");
+    let ambiguity = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["dimension"] == "Ambiguity")
+        .collect::<Vec<_>>();
+
+    assert_eq!(ambiguity.len(), 3, "unexpected findings: {report:#}");
+    assert_eq!(
+        ambiguity
+            .iter()
+            .map(|finding| finding["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["AMB-1", "AMB-2", "AMB-3"]
+    );
+    assert_eq!(ambiguity[0]["summary_msg"]["key"], "ambNoScenario.summary");
+    assert_eq!(ambiguity[1]["summary_msg"]["key"], "ambNoScenario.summary");
+    assert_eq!(
+        ambiguity[2]["summary_msg"]["key"],
+        "ambWeakLanguage.summary"
+    );
+}
+
+#[test]
 fn gap_no_proposal_positive_and_negative_contract() {
     let root = TempDir::new("gap-no-proposal");
     init_project(&root);

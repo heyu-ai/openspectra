@@ -260,7 +260,8 @@ apply 使用獨立的寬鬆 parser（不得改動 `tasks.rs`）：
 - `-`、`*`、`+` 均可作 bullet；checkbox 內任一單一字元（包括 `z`、`?`、
   `P`）都算 task，只有 `x`/`X` 是 done。
 - `id` 是依檔案順序產生的 1-based 字串（`"1"`, `"2"`, ...），
-  `description` 為 checkbox 後內容 trim 後的原文。
+  `description` 為 checkbox 後內容 trim 後的原文；trim 後為空的 checkbox
+  整行丟棄，不占 task id 且不計入 progress。
 - checkbox 後緊接（中間可有零個以上空白）的 uppercase literal `[P]` 會被
   從 description 移除並設 `parallel: true`；`[p]` 不算，description 中較後方
   才出現的 `[P]` 也不算。例如 `- [ ][P] x` 為 parallel，而
@@ -310,7 +311,7 @@ annotation `\s*\([^)]*\)\s*$`，trim 後必須完整符合 prefix whitelist 的
 `BARE_PATH_RE`：
 
 ```regex
-\b((?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))\b
+^(?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js)$
 ```
 
 design.md 與 tasks.md 不做 section 限制，全文只跑 `BACKTICK_PATH_RE`，且只會
@@ -393,8 +394,10 @@ Pause if you hit blockers or need clarification.
   Consistency 需 design + tasks；Ambiguity 需 specs；Gaps 需四種 artifact
   至少 1 個。未執行為 `Skipped (insufficient artifacts)`，已執行且無
   finding 為 `Clean`，否則為 `N issue(s) found`。
-- **弱語詞規則**：只掃 delta spec files；依 `should`、`may`、`might`、
-  `TBD`、`???` 的清單優先序做 case-insensitive plain substring 比對，
+- **弱語詞規則**：只掃 capability 目錄下字面 `spec.md` delta files（不掃
+  `notes.md` 等 sidecar）；依 `should`、`may`、`might`、`consider`、
+  `possibly`、`TBD`、`TODO`、`???`、`TKTK` 的清單優先序做
+  case-insensitive plain substring 比對，
   每行最多一筆，回報清單中的 canonical spelling（因此同一行較後面的
   `should` 仍可勝過較前面的 `TBD`）。
 - **Capabilities 擷取**：只取 `## Capabilities` section 內 bullet 的第一組

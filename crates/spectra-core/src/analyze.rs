@@ -5,7 +5,7 @@
 //! regardless of how many Critical, Warning, or Suggestion findings it holds.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
@@ -68,20 +68,20 @@ struct ArtifactPresence {
 }
 
 impl ArtifactPresence {
-    fn from_change_dir(change_dir: &Path) -> Self {
-        let present = |id| {
+    fn from_change_dir(change_dir: &Path) -> Result<Self> {
+        let present = |id| -> Result<bool> {
             let artifact = schema::artifacts()
                 .iter()
                 .find(|artifact| artifact.id == id)
                 .expect("all analyze artifacts exist in the built-in schema");
             schema::artifact_done(artifact, change_dir)
         };
-        Self {
-            proposal: present("proposal"),
-            specs: present("specs"),
-            design: present("design"),
-            tasks: present("tasks"),
-        }
+        Ok(Self {
+            proposal: present("proposal")?,
+            specs: present("specs")?,
+            design: present("design")?,
+            tasks: present("tasks")?,
+        })
     }
 
     fn gates(self) -> [bool; 4] {
@@ -120,10 +120,10 @@ impl DeltaSection {
 
     fn from_heading(line: &str) -> Option<Self> {
         match line.trim() {
-            "## ADDED Requirements" => Some(Self::Added),
-            "## MODIFIED Requirements" => Some(Self::Modified),
-            "## REMOVED Requirements" => Some(Self::Removed),
-            "## RENAMED Requirements" => Some(Self::Renamed),
+            heading if heading == schema::DELTA_REQUIREMENT_HEADINGS[0] => Some(Self::Added),
+            heading if heading == schema::DELTA_REQUIREMENT_HEADINGS[1] => Some(Self::Modified),
+            heading if heading == schema::DELTA_REQUIREMENT_HEADINGS[2] => Some(Self::Removed),
+            heading if heading == schema::DELTA_REQUIREMENT_HEADINGS[3] => Some(Self::Renamed),
             _ => None,
         }
     }
@@ -255,62 +255,12 @@ fn parse_delta(content: &str) -> ParsedDelta {
     }
 }
 
-fn slash_relative(base: &Path, path: &Path) -> Result<String> {
-    let relative = path
-        .strip_prefix(base)
-        .map_err(|_| anyhow!("{} is outside {}", path.display(), base.display()))?;
-    let mut parts = Vec::new();
-    for component in relative.components() {
-        let raw = component.as_os_str();
-        let part = raw
-            .to_str()
-            .ok_or_else(|| anyhow!("path component {raw:?} is not valid UTF-8"))?;
-        parts.push(part);
-    }
-    Ok(parts.join("/"))
-}
-
-fn collect_markdown_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
-    let Some(entries) = crate::fsutil::read_dir_optional(dir)? else {
-        return Ok(());
-    };
-    for entry in entries {
-        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .with_context(|| format!("reading {}", path.display()))?;
-        if file_type.is_dir() {
-            collect_markdown_paths(&path, paths)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-            paths.push(path);
-        }
-    }
-    Ok(())
-}
-
 fn collect_spec_files(change_dir: &Path) -> Result<Vec<SpecFile>> {
     let specs_dir = change_dir.join("specs");
-    let mut paths = Vec::new();
-    collect_markdown_paths(&specs_dir, &mut paths)?;
-
-    let mut keyed_paths = Vec::with_capacity(paths.len());
-    for path in paths {
-        let relative = slash_relative(change_dir, &path)?;
-        keyed_paths.push((relative, path));
-    }
-    // The oracle uses readdir order. Like WP3 contextFiles, OpenSpectra sorts
-    // relative paths so identical trees produce stable reports everywhere.
-    keyed_paths.sort_by(|left, right| left.0.cmp(&right.0));
-
-    let mut files = Vec::with_capacity(keyed_paths.len());
-    for (relative_path, path) in keyed_paths {
-        let parent = path
-            .parent()
-            .expect("a discovered markdown file always has a parent");
-        let capability = slash_relative(&specs_dir, parent)?;
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
+    let deltas = crate::fsutil::collect_delta_specs(&specs_dir)?;
+    let mut files = Vec::with_capacity(deltas.len());
+    for (capability, content) in deltas {
+        let relative_path = format!("specs/{capability}/spec.md");
         let delta = parse_delta(&content);
         files.push(SpecFile {
             relative_path,
@@ -440,8 +390,12 @@ fn weak_language_pattern(line: &str) -> Option<&'static str> {
         ("should", "should"),
         ("may", "may"),
         ("might", "might"),
+        ("consider", "consider"),
+        ("possibly", "possibly"),
         ("tbd", "TBD"),
+        ("todo", "TODO"),
         ("???", "???"),
+        ("tktk", "TKTK"),
     ]
     .into_iter()
     .find_map(|(needle, canonical)| lowercase.contains(needle).then_some(canonical))
@@ -763,7 +717,7 @@ fn dimension_report(dimension: &str, ran: bool, finding_count: usize) -> Dimensi
 pub fn analyze(cfg: &Config, change_name: &str) -> Result<AnalyzeReport> {
     let change = change::try_load(cfg, change_name)?
         .ok_or_else(|| anyhow!("Change '{change_name}' not found."))?;
-    let presence = ArtifactPresence::from_change_dir(&change.dir);
+    let presence = ArtifactPresence::from_change_dir(&change.dir)?;
     let gates = presence.gates();
     let spec_files = if presence.specs {
         collect_spec_files(&change.dir)?
@@ -970,6 +924,25 @@ mod tests {
         );
         assert_eq!(weak_language_pattern("MAYBE this works"), Some("may"));
         assert_eq!(weak_language_pattern("status tbd"), Some("TBD"));
+        assert_eq!(
+            weak_language_pattern("please CONSIDER this"),
+            Some("consider")
+        );
+        assert_eq!(
+            weak_language_pattern("Possibly available"),
+            Some("possibly")
+        );
+        assert_eq!(weak_language_pattern("leave a todo"), Some("TODO"));
+        assert_eq!(weak_language_pattern("finish TktK"), Some("TKTK"));
+        assert_eq!(
+            weak_language_pattern("possibly then consider"),
+            Some("consider")
+        );
+        assert_eq!(
+            weak_language_pattern("todo then possibly"),
+            Some("possibly")
+        );
+        assert_eq!(weak_language_pattern("tktk then TODO"), Some("TODO"));
         assert_eq!(weak_language_pattern("fully specified"), None);
     }
 

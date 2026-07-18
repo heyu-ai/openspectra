@@ -15,12 +15,10 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use crate::config::Config;
-use crate::names::is_valid_name;
+use crate::names::{is_kebab_case, is_valid_name};
 
-/// Active change names are kebab-case; the `YYYY-MM-DD-` prefix is reserved for
-/// archived changes (recovered from the binary).
-static CHANGE_NAME_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[a-z0-9]+(-+[a-z0-9]+)*$").unwrap());
+/// The `YYYY-MM-DD-` prefix is reserved for archived changes (recovered from
+/// the binary).
 static ARCHIVED_PREFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}-").unwrap());
 
 /// Parsed `<change>/.openspec.yaml`. `Serialize` skips `None` fields (rather
@@ -245,7 +243,7 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
 /// change directory is removed so a retry doesn't get a misleading
 /// "already exists" error; cleanup failure itself is logged, not silenced.
 pub fn create(cfg: &Config, name: &str) -> Result<Change> {
-    if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {
+    if !is_kebab_case(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {
         return Err(anyhow!(
             "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
         ));
@@ -297,7 +295,13 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     let today = chrono::Local::now().date_naive();
     let created_by = crate::git::change_creator_identity(&cfg.root);
     let metadata_path = dir.join(".openspec.yaml");
-    let metadata = format!("schema: spec-driven\ncreated: {today}\ncreated_by: {created_by}\n");
+    let metadata = ChangeMetadata {
+        schema: Some("spec-driven".to_string()),
+        created: Some(today.to_string()),
+        created_by: Some(created_by),
+        ..ChangeMetadata::default()
+    };
+    let metadata = serde_yaml::to_string(&metadata).context("serializing change metadata")?;
     std::fs::write(&metadata_path, metadata)
         .with_context(|| format!("writing {}", metadata_path.display()))?;
 
@@ -328,10 +332,7 @@ fn walk_change_names(cfg: &Config) -> Vec<String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "archive"
-            || ARCHIVED_PREFIX_RE.is_match(&name)
-            || !CHANGE_NAME_RE.is_match(&name)
-        {
+        if name == "archive" || ARCHIVED_PREFIX_RE.is_match(&name) || !is_kebab_case(&name) {
             continue;
         }
         names.push(name);
@@ -697,6 +698,53 @@ mod tests {
         assert_eq!(ch.metadata.created_with, None);
         assert_eq!(list_active(&cfg), vec!["add-search-filter".to_string()]);
         assert_eq!(ch.started_sha, None);
+    }
+
+    #[test]
+    fn create_yaml_quotes_special_git_identities_and_load_preserves_created() {
+        for (label, user_name) in [("colon", "Howie: Yu"), ("hash", "Howie #1")] {
+            let tmp = TempDir::new();
+            let cfg = Config {
+                root: tmp.to_path_buf(),
+                spec_dir: "openspec".to_string(),
+                locale: None,
+            };
+            let run = |args: &[&str]| {
+                assert!(std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&*tmp)
+                    .args(args)
+                    .output()
+                    .unwrap()
+                    .status
+                    .success());
+            };
+            run(&["init", "-q"]);
+            run(&["config", "user.name", user_name]);
+            run(&["config", "user.email", "howie@example.com"]);
+
+            let change_name = format!("special-{label}");
+            let created = create(&cfg, &change_name)
+                .unwrap()
+                .metadata
+                .created
+                .expect("new changes carry a creation date");
+            let metadata_path = cfg.changes_dir().join(&change_name).join(".openspec.yaml");
+            let metadata = std::fs::read_to_string(&metadata_path).unwrap();
+
+            assert_eq!(
+                metadata,
+                format!(
+                    "schema: spec-driven\ncreated: {created}\ncreated_by: '{user_name} <howie@example.com>'\n"
+                )
+            );
+            let loaded = load(&cfg, &change_name).unwrap();
+            assert_eq!(loaded.metadata.created.as_deref(), Some(created.as_str()));
+            assert_eq!(
+                loaded.metadata.created_by.as_deref(),
+                Some(format!("{user_name} <howie@example.com>").as_str())
+            );
+        }
     }
 
     #[test]

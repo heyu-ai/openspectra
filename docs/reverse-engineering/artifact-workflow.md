@@ -17,7 +17,7 @@ reproduces them.
 
 The workflow surface is a pure filesystem DAG — **no persistent state**. A
 built-in `spec-driven` schema defines four artifacts with dependencies
-`proposal → {design, specs} → tasks`; every status is derived on the fly from
+`proposal → design; proposal → specs → tasks`; every status is derived on the fly from
 file existence. OpenSpectra implements it in `crates/spectra-core/src/
 {schema,artifact,instructions}.rs`.
 
@@ -107,7 +107,8 @@ instruction, preflight?}`.
 - Apply uses its own loose checkbox parser `^\s*[-*+]\s*\[(.)\]\s*(.+)$`:
   any single-char state counts as a task, only `x`/`X` is done, and an
   uppercase `[P]` immediately after the checkbox is stripped into
-  `parallel: true`.
+  `parallel: true`. A match whose description is empty after trimming is
+  discarded and does not affect task ids or progress.
 - `state`: `blocked` (zero parsed tasks), `all_done`, else `ready`.
   `missingArtifacts` (only when non-empty) lists not-done `applyRequires`;
   `preflight` appears only in `ready`.
@@ -123,7 +124,7 @@ instruction, preflight?}`.
   heading). Backticked refs match
   `` `([^`]*?/[^`]*?\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))` ``;
   bare lines must fully match the prefix-whitelisted
-  `\b((?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:…same extensions…))\b`.
+  `^(?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:…same extensions…)$`.
 - `driftedFiles` (`status: warnings`): backtick refs across
   proposal+design+tasks that exist on disk and whose
   `git log -1 --format=%cs -- <path>` date is strictly later than the
@@ -138,7 +139,11 @@ instruction, preflight?}`.
   bodies**; OpenSpectra does not ship that text and answers
   `Unknown skill: <name>` for every value.
 - `contextFiles` key order fixed to schema order (oracle nondeterministic).
+- `new artifact --force` refuses a final artifact path that is a symlink,
+  instead of following it and overwriting the link target as the oracle does.
+  This is an intentional security divergence following the PR #41 symlink
+  hardening precedent; parent-directory symlinks remain out of scope.
 - The oracle's multiple-active-changes error (`Use --change to specify
   one:`, mtime-ordered) differs from OpenSpectra's pre-existing
   `change::resolve` wording (alphabetical); unification is tracked in
-  issue #43.
+  issue #50.

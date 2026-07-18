@@ -121,33 +121,53 @@ fn proposal_stdin_writes_exact_bytes_and_compact_json() {
 }
 
 #[test]
-fn design_template_uses_schema_constant_and_is_not_validated() {
-    let root = TempDir::new("design-template");
+fn all_template_modes_use_schema_constants_and_are_not_validated() {
+    let root = TempDir::new("all-templates");
     init_project_with_change(&root, "demo-feature");
 
-    let out = spectra()
-        .args([
-            "new",
-            "artifact",
+    let cases = [
+        (
+            "proposal",
+            None,
+            "proposal.md",
+            spectra_core::schema::PROPOSAL_TEMPLATE,
+        ),
+        (
             "design",
-            "--change",
-            "demo-feature",
-            "--json",
-        ])
-        .current_dir(&*root)
-        .output()
-        .unwrap();
+            None,
+            "design.md",
+            spectra_core::schema::DESIGN_TEMPLATE,
+        ),
+        (
+            "tasks",
+            None,
+            "tasks.md",
+            spectra_core::schema::TASKS_TEMPLATE,
+        ),
+        (
+            "spec",
+            Some("user-auth"),
+            "specs/user-auth/spec.md",
+            spectra_core::schema::SPECS_TEMPLATE,
+        ),
+    ];
 
-    assert!(out.status.success(), "new artifact failed: {out:?}");
-    let path = change_dir(&root, "demo-feature").join("design.md");
-    assert_eq!(
-        std::fs::read_to_string(&path).unwrap(),
-        spectra_core::schema::DESIGN_TEMPLATE
-    );
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["artifact"], "design");
-    assert_eq!(report["path"], path.to_string_lossy().as_ref());
-    assert_eq!(report["validated"], false);
+    for (artifact_type, capability, relative_path, template) in cases {
+        let mut args = vec!["new", "artifact", artifact_type];
+        if let Some(capability) = capability {
+            args.push(capability);
+        }
+        args.extend(["--change", "demo-feature", "--json"]);
+        let output = spectra().args(args).current_dir(&*root).output().unwrap();
+
+        assert!(output.status.success(), "new artifact failed: {output:?}");
+        let path = change_dir(&root, "demo-feature").join(relative_path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), template);
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["artifact"], artifact_type);
+        assert_eq!(report["path"], path.to_string_lossy().as_ref());
+        assert_eq!(report["validated"], false);
+    }
 }
 
 #[test]
@@ -306,6 +326,46 @@ fn already_exists_errors_then_force_overwrites() {
     assert_eq!(std::fs::read_to_string(path).unwrap(), "## Why replacement");
 }
 
+#[cfg(unix)]
+#[test]
+fn force_refuses_to_write_through_an_artifact_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempDir::new("symlink");
+    init_project_with_change(&root, "demo-feature");
+    let external = root.join("outside.md");
+    std::fs::write(&external, "outside stays unchanged").unwrap();
+    let artifact = change_dir(&root, "demo-feature").join("proposal.md");
+    symlink(&external, &artifact).unwrap();
+
+    let output = run_with_stdin(
+        &root,
+        &[
+            "new",
+            "artifact",
+            "proposal",
+            "--change",
+            "demo-feature",
+            "--stdin",
+            "--force",
+        ],
+        "## Why replacement",
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "Error: refusing to write through a symlink: {}\n",
+            artifact.display()
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(external).unwrap(),
+        "outside stays unchanged"
+    );
+}
+
 #[test]
 fn proposal_validation_failure_does_not_create_file() {
     let root = TempDir::new("validation-failure");
@@ -331,6 +391,36 @@ fn proposal_validation_failure_does_not_create_file() {
         "Error: Proposal must contain a ## Why, ## Problem, or ## Summary section\n"
     );
     assert!(!path.exists());
+}
+
+#[test]
+fn force_validation_failure_preserves_the_existing_artifact_byte_for_byte() {
+    let root = TempDir::new("force-validation-failure");
+    init_project_with_change(&root, "demo-feature");
+    let path = change_dir(&root, "demo-feature").join("proposal.md");
+    let original = b"original proposal bytes\n\0with sentinel";
+    std::fs::write(&path, original).unwrap();
+
+    let output = run_with_stdin(
+        &root,
+        &[
+            "new",
+            "artifact",
+            "proposal",
+            "--change",
+            "demo-feature",
+            "--stdin",
+            "--force",
+        ],
+        "## Motivation",
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Error: Proposal must contain a ## Why, ## Problem, or ## Summary section\n"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), original);
 }
 
 #[test]

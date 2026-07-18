@@ -1,5 +1,9 @@
 //! Built-in workflow schema definitions and artifact status derivation.
 
+use std::io::ErrorKind;
+
+use anyhow::{Context, Result};
+
 #[derive(Debug, Clone, Copy)]
 pub struct ArtifactDefinition {
     pub id: &'static str,
@@ -263,6 +267,13 @@ pub const SPECS_TEMPLATE: &str = r#"## ADDED Requirements
 -->
 "#;
 
+pub(crate) const DELTA_REQUIREMENT_HEADINGS: [&str; 4] = [
+    "## ADDED Requirements",
+    "## MODIFIED Requirements",
+    "## REMOVED Requirements",
+    "## RENAMED Requirements",
+];
+
 pub const TASKS_DESCRIPTION: &str = r#"Implementation checklist with trackable tasks"#;
 
 pub const TASKS_INSTRUCTION: &str = r#"Create the task list that breaks down the implementation work.
@@ -436,50 +447,64 @@ fn artifact_status(
     }
 }
 
-pub fn artifact_done(artifact: &ArtifactDefinition, change_dir: &std::path::Path) -> bool {
+pub fn artifact_done(artifact: &ArtifactDefinition, change_dir: &std::path::Path) -> Result<bool> {
     if artifact.id == "specs" {
         return contains_markdown_file(&change_dir.join("specs"));
     }
-    change_dir.join(artifact.output_path).is_file()
+    let path = change_dir.join(artifact.output_path);
+    match std::fs::metadata(&path) {
+        Ok(metadata) => Ok(metadata.is_file()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+    }
 }
 
-fn contains_markdown_file(dir: &std::path::Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+fn contains_markdown_file(dir: &std::path::Path) -> Result<bool> {
+    let Some(entries) = crate::fsutil::read_dir_optional(dir)? else {
+        return Ok(false);
     };
 
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).with_context(|| format!("reading {}", dir.display())),
         };
-        if file_type.is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
-            return true;
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).with_context(|| format!("reading {}", path.display())),
+        };
+        if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            return Ok(true);
         }
-        if file_type.is_dir() && contains_markdown_file(&entry.path()) {
-            return true;
+        if file_type.is_dir() && contains_markdown_file(&path)? {
+            return Ok(true);
         }
     }
-    false
+    Ok(false)
 }
 
-pub fn derive_status(change_name: &str, change_dir: &std::path::Path) -> StatusReport {
-    let done_ids: std::collections::HashSet<_> = ARTIFACTS
-        .iter()
-        .filter(|artifact| artifact_done(artifact, change_dir))
-        .map(|artifact| artifact.id)
-        .collect();
+pub fn derive_status(change_name: &str, change_dir: &std::path::Path) -> Result<StatusReport> {
+    let mut done_ids = std::collections::HashSet::new();
+    for artifact in &ARTIFACTS {
+        if artifact_done(artifact, change_dir)? {
+            done_ids.insert(artifact.id);
+        }
+    }
     let artifacts = ARTIFACTS
         .iter()
         .map(|artifact| artifact_status(artifact, &done_ids))
         .collect();
 
-    StatusReport {
+    Ok(StatusReport {
         change_name: change_name.to_string(),
         schema_name: SCHEMA_NAME,
         is_complete: done_ids.len() == ARTIFACTS.len(),
         apply_requires: APPLY_REQUIRES,
         artifacts,
-    }
+    })
 }
 
 pub fn status(
@@ -497,7 +522,7 @@ pub fn status(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    Ok(derive_status(&change.name, &change.dir))
+    derive_status(&change.name, &change.dir)
 }
 
 #[cfg(test)]
@@ -579,7 +604,7 @@ mod tests {
     fn empty_change_has_only_proposal_ready() {
         let change_dir = TempDir::new("empty");
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert!(!report.is_complete);
         assert_eq!(report.apply_requires, &["tasks"]);
@@ -598,7 +623,7 @@ mod tests {
         let change_dir = TempDir::new("partial");
         std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert_eq!(report.artifacts[0].status, ArtifactState::Done);
         assert_eq!(report.artifacts[1].status, ArtifactState::Ready);
@@ -617,7 +642,7 @@ mod tests {
         std::fs::create_dir_all(&nested_specs).unwrap();
         std::fs::write(nested_specs.join("spec.md"), "# Spec\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert!(report.is_complete);
         assert!(report
@@ -641,7 +666,7 @@ mod tests {
         std::fs::write(specs.join("spec.md"), "# Spec\n").unwrap();
         std::fs::remove_dir_all(change_dir.join("specs")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert!(!report.is_complete);
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);

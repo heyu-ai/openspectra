@@ -245,10 +245,10 @@ fn parse_section_header(line: &str) -> Option<Section> {
         return None;
     }
     Some(match trimmed {
-        "## ADDED Requirements" => Section::Added,
-        "## MODIFIED Requirements" => Section::Modified,
-        "## REMOVED Requirements" => Section::Removed,
-        "## RENAMED Requirements" => Section::Renamed,
+        heading if heading == crate::schema::DELTA_REQUIREMENT_HEADINGS[0] => Section::Added,
+        heading if heading == crate::schema::DELTA_REQUIREMENT_HEADINGS[1] => Section::Modified,
+        heading if heading == crate::schema::DELTA_REQUIREMENT_HEADINGS[2] => Section::Removed,
+        heading if heading == crate::schema::DELTA_REQUIREMENT_HEADINGS[3] => Section::Renamed,
         _ => Section::Other,
     })
 }

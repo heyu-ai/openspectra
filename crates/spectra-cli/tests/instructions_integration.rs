@@ -364,6 +364,31 @@ fn apply_all_done_omits_conditional_keys() {
 }
 
 #[test]
+fn apply_discards_empty_checkbox_descriptions_before_progress_and_state() {
+    let root = TempDir::new("empty-description");
+    init_project_with_change(&root, "demo-feature");
+    write_artifacts(&root, "demo-feature", "- [x] done\n- [ ] \n- [ ]\n");
+
+    let (_, value) = json_output(
+        &root,
+        &[
+            "instructions",
+            "apply",
+            "--change",
+            "demo-feature",
+            "--json",
+        ],
+    );
+
+    assert_eq!(
+        value["progress"],
+        serde_json::json!({"total": 1, "complete": 1, "remaining": 0})
+    );
+    assert_eq!(value["state"], "all_done");
+    assert_eq!(value["tasks"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn apply_blocked_distinguishes_a_missing_tasks_artifact_from_zero_checkboxes() {
     let root = TempDir::new("blocked");
     init_project_with_change(&root, "missing-tasks");
@@ -530,6 +555,66 @@ fn preflight_reports_a_file_committed_after_the_change_date_as_drifted() {
 }
 
 #[test]
+fn design_only_backtick_reference_can_drift_without_becoming_missing() {
+    let root = TempDir::new("design-only-drift");
+    init_project_with_change(&root, "demo-feature");
+    let dir = change_dir(&root, "demo-feature");
+    let source = root.join("src");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(source.join("drift.rs"), "before\n").unwrap();
+    std::fs::write(dir.join("proposal.md"), "# Proposal without refs\n").unwrap();
+    std::fs::write(dir.join("design.md"), "Uses `src/drift.rs`.\n").unwrap();
+    std::fs::write(dir.join("tasks.md"), "- [ ] 1.1 pending\n").unwrap();
+    let specs = dir.join("specs").join("cap");
+    std::fs::create_dir_all(&specs).unwrap();
+    std::fs::write(specs.join("spec.md"), "# Spec\n").unwrap();
+    std::fs::write(
+        dir.join(".openspec.yaml"),
+        "schema: spec-driven\ncreated: 2026-07-10\ncreated_by: Test\n",
+    )
+    .unwrap();
+    git(&root, &["add", "."]);
+    git_commit_at(&root, "before", "2026-07-01T12:00:00+0000");
+    std::fs::write(source.join("drift.rs"), "after\n").unwrap();
+    git(&root, &["add", "src/drift.rs"]);
+    git_commit_at(&root, "after", "2026-07-15T12:00:00+0000");
+
+    let (_, value) = json_output(
+        &root,
+        &[
+            "instructions",
+            "apply",
+            "--change",
+            "demo-feature",
+            "--json",
+        ],
+    );
+
+    assert_eq!(value["preflight"]["missingFiles"], serde_json::json!([]));
+    assert_eq!(
+        value["preflight"]["driftedFiles"],
+        serde_json::json!([{
+            "path": "src/drift.rs",
+            "lastCommit": "2026-07-15",
+            "changeCreated": "2026-07-10"
+        }])
+    );
+}
+
+#[test]
+fn uninitialized_skill_error_precedes_project_initialization_error() {
+    let root = TempDir::new("uninitialized-skill");
+
+    let output = run(&root, &["instructions", "--skill", "anything"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "Error: Unknown skill: anything\n"
+    );
+}
+
+#[test]
 fn instructions_errors_match_the_oracle_contract() {
     let root = TempDir::new("errors");
     init_project_with_change(&root, "demo-feature");
@@ -607,6 +692,33 @@ fn human_artifact_and_apply_outputs_are_byte_exact() {
     assert!(
         !tasks_stdout.contains("\nUnlocks:\n"),
         "empty unlocks must omit the section:\n{tasks_stdout}"
+    );
+
+    std::fs::write(
+        change_dir(&root, "demo-feature").join("proposal.md"),
+        "# Proposal\n",
+    )
+    .unwrap();
+    let specs = run_ok(
+        &root,
+        &["instructions", "specs", "--change", "demo-feature"],
+    );
+    assert!(
+        String::from_utf8(specs.stdout)
+            .unwrap()
+            .contains("Dependencies:\n  ✓ proposal (proposal.md)\n"),
+        "specs human output must render the completed proposal dependency byte-exactly"
+    );
+
+    let blocked = run_ok(
+        &root,
+        &["instructions", "apply", "--change", "demo-feature"],
+    );
+    assert!(
+        String::from_utf8(blocked.stdout)
+            .unwrap()
+            .contains("Missing artifacts:\n  - tasks\n"),
+        "blocked apply output must name the missing tasks artifact byte-exactly"
     );
 
     write_artifacts(

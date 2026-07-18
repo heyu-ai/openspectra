@@ -14,13 +14,13 @@ changes.
 
 - **The artifact workflow surface the sdd tooling depends on** (#43, PR #48),
   all pinned against the v2.3.1 oracle with side-by-side captures:
-  - `spectra status [--change] [--schema] [--json]` — artifact DAG status
-    (`proposal → {design, specs} → tasks`, derived purely from file
+  - `spectra status [--change <NAME>] [--schema <NAME>] [--json]` — artifact DAG status
+    (`proposal → design; proposal → specs → tasks`, derived purely from file
     existence). See `docs/reverse-engineering/artifact-workflow.md`.
-  - `spectra new artifact <TYPE> [CAPABILITY] [--stdin] [--force] [--json]`
+  - `spectra new artifact <TYPE> [CAPABILITY] [--change <NAME>] [--stdin] [--force] [--json]`
     — creates one artifact from stdin or its built-in template, with
     per-type content validation and oracle-verbatim error strings.
-  - `spectra instructions [ARTIFACT] [--change] [--json]` — authoring
+  - `spectra instructions [ARTIFACT] [--change <NAME>] [--schema <NAME>] [--json]` — authoring
     instruction + template per artifact; apply mode (tasks progress +
     preflight: missing/drifted file refs, staleness) once all artifacts are
     done.
@@ -44,6 +44,9 @@ changes.
 - `instructions` apply-mode `contextFiles` key order and `analyze` spec-file
   / params ordering are fixed (schema/path order) where the oracle is
   hash-map/readdir nondeterministic between its own runs.
+- `spectra new artifact --force` refuses to write when the final artifact
+  path is a symlink. The oracle follows the link; OpenSpectra deliberately
+  rejects it, following the PR #41 symlink-hardening precedent.
 
 ## [0.2.1] - 2026-07-10
 

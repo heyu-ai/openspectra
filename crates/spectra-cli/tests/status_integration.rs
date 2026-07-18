@@ -134,6 +134,41 @@ fn status_file_existence_does_not_cascade_after_specs_are_deleted() {
     assert_eq!(report["isComplete"], false);
 }
 
+#[cfg(unix)]
+#[test]
+fn status_and_analyze_fail_loudly_on_an_unreadable_spec_directory() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new("unreadable-specs");
+    init_project_with_change(&root, "demo-feature");
+    let specs = change_dir(&root, "demo-feature").join("specs");
+    std::fs::create_dir_all(&specs).unwrap();
+    std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    if std::fs::read_dir(&specs).is_ok() {
+        eprintln!(
+            "skipping status_and_analyze_fail_loudly_on_an_unreadable_spec_directory: \
+             running as root (chmod 0o000 not enforced)"
+        );
+        std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    for (command, args) in [
+        ("status", vec!["status", "--change", "demo-feature"]),
+        ("analyze", vec!["analyze", "demo-feature"]),
+    ] {
+        let output = spectra().args(args).current_dir(&*root).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{command}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("Permission denied"),
+            "{command}: {output:?}"
+        );
+    }
+
+    std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
 #[test]
 fn status_complete_omits_missing_deps_and_prints_completion_line() {
     let root = TempDir::new("complete");

@@ -1,12 +1,11 @@
 //! Instruction payloads for workflow artifacts and the apply phase.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{Local, NaiveDate};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 use std::collections::HashSet;
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 static APPLY_TASK_RE: Lazy<Regex> =
@@ -177,6 +176,9 @@ fn parse_apply_tasks(markdown: &str) -> Vec<ApplyTask> {
         .filter_map(|line| {
             let captures = APPLY_TASK_RE.captures(line)?;
             let raw_description = captures[2].trim();
+            if raw_description.is_empty() {
+                return None;
+            }
             let (parallel, description) = raw_description
                 .strip_prefix("[P]")
                 .map_or((false, raw_description), |description| {
@@ -294,19 +296,23 @@ fn absolute_change_dir(cfg: &crate::Config, change: &crate::Change) -> PathBuf {
     }
 }
 
-fn done_ids(change_dir: &Path) -> HashSet<&'static str> {
-    crate::schema::ARTIFACTS
-        .iter()
-        .filter(|artifact| crate::schema::artifact_done(artifact, change_dir))
-        .map(|artifact| artifact.id)
-        .collect()
+fn done_ids(change_dir: &Path) -> Result<HashSet<&'static str>> {
+    let mut done_ids = HashSet::new();
+    for artifact in &crate::schema::ARTIFACTS {
+        if crate::schema::artifact_done(artifact, change_dir)? {
+            done_ids.insert(artifact.id);
+        }
+    }
+    Ok(done_ids)
 }
 
-pub fn next_artifact(change_dir: &Path) -> Option<&'static str> {
-    crate::schema::ARTIFACTS
-        .iter()
-        .find(|artifact| !crate::schema::artifact_done(artifact, change_dir))
-        .map(|artifact| artifact.id)
+pub fn next_artifact(change_dir: &Path) -> Result<Option<&'static str>> {
+    for artifact in &crate::schema::ARTIFACTS {
+        if !crate::schema::artifact_done(artifact, change_dir)? {
+            return Ok(Some(artifact.id));
+        }
+    }
+    Ok(None)
 }
 
 pub fn artifact_instructions(
@@ -319,7 +325,7 @@ pub fn artifact_instructions(
         .find(|artifact| artifact.id == artifact_id)
         .ok_or_else(|| anyhow::anyhow!("Artifact '{artifact_id}' not found in schema"))?;
     let change_dir = absolute_change_dir(cfg, change);
-    let done_ids = done_ids(&change_dir);
+    let done_ids = done_ids(&change_dir)?;
     let dependencies = artifact
         .deps
         .iter()
@@ -350,14 +356,6 @@ pub fn artifact_instructions(
         dependencies,
         unlocks: derive_unlocks(artifact.id, &done_ids),
     })
-}
-
-fn read_optional(path: &Path) -> Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(text) => Ok(Some(text)),
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
-    }
 }
 
 fn context_files(change_dir: &Path, done_ids: &HashSet<&'static str>) -> ContextFiles {
@@ -469,9 +467,9 @@ pub fn apply_instructions(
     change: &crate::Change,
 ) -> Result<ApplyInstructions> {
     let change_dir = absolute_change_dir(cfg, change);
-    let proposal_text = read_optional(&change_dir.join("proposal.md"))?;
-    let design_text = read_optional(&change_dir.join("design.md"))?;
-    let tasks_text = read_optional(&change_dir.join("tasks.md"))?;
+    let proposal_text = crate::fsutil::read_optional(&change_dir.join("proposal.md"))?;
+    let design_text = crate::fsutil::read_optional(&change_dir.join("design.md"))?;
+    let tasks_text = crate::fsutil::read_optional(&change_dir.join("tasks.md"))?;
     let tasks = tasks_text
         .as_deref()
         .map(parse_apply_tasks)
@@ -480,7 +478,7 @@ pub fn apply_instructions(
     let complete = tasks.iter().filter(|task| task.done).count();
     let remaining = total - complete;
     let state = derive_apply_state(total, remaining);
-    let done_ids = done_ids(&change_dir);
+    let done_ids = done_ids(&change_dir)?;
     let missing_artifacts = crate::schema::APPLY_REQUIRES
         .iter()
         .copied()
@@ -531,7 +529,10 @@ pub fn get(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    let selected = artifact_id.or_else(|| next_artifact(&change.dir));
+    let selected = match artifact_id {
+        Some(artifact_id) => Some(artifact_id),
+        None => next_artifact(&change.dir)?,
+    };
     match selected {
         Some("apply") | None => apply_instructions(cfg, &change).map(InstructionOutput::Apply),
         Some(artifact_id) => {
@@ -575,6 +576,16 @@ mod tests {
         assert!(!tasks[3].parallel);
         assert_eq!(tasks[4].description, "star");
         assert_eq!(tasks[5].description, "plus");
+    }
+
+    #[test]
+    fn apply_parser_discards_checkboxes_with_empty_trimmed_descriptions() {
+        let tasks = parse_apply_tasks("- [x] done\n- [ ] \n- [ ]\n- [ ]   \n");
+
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "1");
+        assert_eq!(tasks[0].description, "done");
+        assert!(tasks[0].done);
     }
 
     #[test]
