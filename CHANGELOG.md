@@ -8,7 +8,7 @@ OpenSpectra reimplements the closed-source `spectra` CLI, deliberate
 divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
-## [Unreleased]
+## [0.3.0] - 2026-07-18
 
 ### Added
 
