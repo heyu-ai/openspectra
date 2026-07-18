@@ -11,7 +11,10 @@ reproduces them.
 > preflight regexes — by disassembly. Golden captures live in
 > `docs/reverse-engineering/golden/instructions-*-2.3.1.json`; the full probe
 > log (with dates) is in
-> `docs/openspec/changes/fill-artifact-workflow-cli/design.md`.
+> `docs/openspec/changes/fill-artifact-workflow-cli/design.md`. Additional
+> dispute-resolution probes from the PR #48 mob review (capability handling,
+> symlink glob semantics, stdin ordering, fresh-scaffold drift) are dated
+> 2026-07-18 below.
 
 ## TL;DR
 
@@ -32,7 +35,15 @@ file existence. OpenSpectra implements it in `crates/spectra-core/src/
 
 Per-artifact `description`, `instruction`, and `template` texts are embedded
 verbatim from the oracle (pinned by a test that byte-compares the constants
-against the golden JSON captures). `applyRequires` is `["tasks"]`.
+against the golden JSON captures, which also covers `outputPath` and
+`dependencies[].id`). `applyRequires` is `["tasks"]`.
+
+Golden-capture provenance: the `instructions-*-2.3.1.json` fixtures were
+captured 2026-07-18 with all four artifacts present, so their
+`dependencies[].done` are all `true` and `unlocks` all `[]` —
+capture-state-dependent fields, not part of the pinned contract. `changeDir`
+values are normalized to `/tmp/oracle-probe/...` (neutralized, not the raw
+capture value).
 
 Status derivation (pure function of the change dir):
 
@@ -43,6 +54,17 @@ Status derivation (pure function of the change dir):
 
 Statuses are independent: deleting `specs/` flips `specs` back to `ready`
 but leaves `tasks` at `done` (file still exists) — no cascade.
+
+**Symlinks (probed 2026-07-18):** the oracle's `specs/**/*.md` glob FOLLOWS
+directory symlinks — a change whose specs live behind a symlink still counts
+as done. OpenSpectra matches (resolving through `fs::metadata`, unlike
+`fsutil::collect_delta_specs`, whose archive/validate domain deliberately
+skips symlinks), adds cycle protection via a canonicalized-visited set
+(cycle behaviour itself is unprobed on the oracle), and — divergence-safe
+hardening — its error semantics are match-wins and order-independent: a
+found `.md` anywhere is deterministically "done" regardless of unreadable
+siblings, while a no-match scan with a traversal error (e.g. permission
+denied) propagates instead of being silently misreported as "not done".
 
 ## `spectra new change` (v2.3.1 alignment, BREAKING in OpenSpectra)
 
@@ -55,6 +77,15 @@ config outside a repo): `name <email>` / `name` / `<email>` / `unknown` —
 the key is never omitted. OpenSpectra keeps writing its own
 `.spectra/changes/<name>.started` baseline (drift needs it; the oracle has
 no equivalent).
+
+**OpenSpectra hardening (not an observed oracle divergence):** the metadata
+is serialized through `serde_yaml` rather than raw string formatting, so a
+git identity containing YAML-special content (`:`, ` #`, leading indicator
+chars) is quoted and round-trips. Plain values serialize byte-identical to
+the oracle's output. The oracle's behaviour for YAML-special identities is
+**unprobed**; if a probe later shows it writes them raw (producing an
+unparseable file), that would be a deliberate, recorded divergence — we keep
+the readable-back behaviour.
 
 ## `spectra status [--change] [--schema] [--json]`
 
@@ -90,6 +121,33 @@ empty stdin → content validation → write. Validation failure writes nothing.
 Error strings are reproduced verbatim — including the oracle's own
 inconsistency: here `Change '<name>' not found` has **no trailing period**,
 while `status`'s variant has one.
+
+Additional probed semantics (2026-07-18):
+
+- **An extra CAPABILITY positional for non-spec types is silently ignored**
+  (`new artifact proposal extra-arg --change X --stdin` exits 0 and creates
+  the file; same for tasks without `--stdin`). Pinned by
+  `extra_capability_positional_is_ignored_for_non_spec_types`; rejecting it
+  would be a divergence.
+- **`--stdin` is drained before precondition checks**: with an open stdin
+  pipe and an invalid invocation (unknown TYPE), the oracle waits for EOF
+  and only then prints the unknown-type error — preconditions do NOT
+  short-circuit the stdin read. OpenSpectra matches; "fixing" the ordering
+  would be a divergence.
+- Errors are identical with and without `--json`: plain `Error: <msg>` on
+  stderr, exit 1, nothing on stdout.
+
+**OpenSpectra hardening (behaviour-compatible):** the target path only ever
+appears as a fully-written file — content is written to a uniquely-named
+sibling temp file (`create_new`; unique per process AND per call), then
+installed atomically: `rename` (replace) for `--force`, `hard_link`
+(no-clobber) otherwise. A concurrent creator surfaces the oracle-aligned
+already-exists error instead of silently clobbering, and a failed write
+leaves no partial artifact for `status` to misread as done. The oracle's own
+race behaviour is unprobed. Residual risk (accepted): the no-clobber install
+requires `link(2)`; a filesystem without hard links (FAT/exFAT) would fail
+loudly on non-force creates — not a real scenario for a git-hosted
+`openspec/` tree.
 
 ## `spectra instructions [ARTIFACT] [--change] [--schema] [--json]`
 
@@ -141,4 +199,10 @@ instruction, preflight?}`.
 - The oracle's multiple-active-changes error (`Use --change to specify
   one:`, mtime-ordered) differs from OpenSpectra's pre-existing
   `change::resolve` wording (alphabetical); unification is tracked in
-  issue #43.
+  issue #50 (operator ruling pending).
+- **Fresh design scaffold vs `drift`** (probed 2026-07-18): after
+  `new artifact design` (template only), the oracle's drift reports
+  `Structure 0/20 anchors broken`, while OpenSpectra's anchor Resolver marks
+  the template's ~20 prose Symbol anchors broken (the known Symbol
+  over-count in anchors.rs). Fix belongs in the Symbol filter/stoplist
+  calibration, not the byte-pinned template; tracked in issue #51.

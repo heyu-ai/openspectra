@@ -50,8 +50,9 @@
 
 ## 收尾
 
-- [x] 5.1 RE 文件：`docs/reverse-engineering/artifact-workflow.md`（WP1–3）
-      與 `analyze.md`（WP4）
+- [x] 5.1 RE 文件：`docs/reverse-engineering/artifact-workflow.md`（WP1–3，
+      含 mob review 修復輪 2026-07-18 的 capability 忽略／symlink glob／
+      drift anchors 三項 probe）與 `analyze.md`（WP4）
 - [x] 5.2 README／CHANGELOG：新指令列表 + `new change` BREAKING 說明
 - [x] 5.3 sdd plugin 端 `--agent` 假設移除：於 yibi-stack 另開 issue（本 repo
       之外，僅記錄連結）

@@ -45,7 +45,7 @@ oracle `new change` 只建 change dir + `.openspec.yaml`：
 ```yaml
 schema: spec-driven
 created: 2026-07-18
-created_by: howie <howie.yu@gmail.com>   # git user.name <user.email>
+created_by: user <user@example.com>   # git user.name <user.email>（範例用中性值）
 ```
 
 `created_by` 永遠不省略，fallback matrix 實測如下：
@@ -113,9 +113,13 @@ Schema: spec-driven
 
   ✓ proposal (proposal.md)     # done
   ○ design (design.md)         # ready
+  ○ specs (specs/**/*.md)      # ready
   ✗ tasks (tasks.md)           # blocked
     blocked by: specs
 ```
+
+（CLI 一律輸出全部四個 artifact，順序同 schema DAG 宣告；
+`status_integration.rs` 斷言四列輸出。）
 
 status 的依賴探測亦確認 `tasks.deps = ["specs"]`，`design` 不是 tasks 的
 dependency；空 change 時 tasks 的 `missingDeps` 只有 `["specs"]`。
@@ -229,6 +233,9 @@ Template:
 - `--skill <name>`：`Unknown skill: <name>`。oracle 對其內建有效名稱會輸出
   proprietary embedded skill bodies；openspectra 刻意不移植，所有名稱皆視為
   unknown。這是已記錄的產品差異；`--skill` 的錯誤優先於其他參數檢查。
+
+（goldens 採集狀態與被釘欄位的 provenance 記錄移至
+`docs/reverse-engineering/artifact-workflow.md`。）
 
 ### `instructions`（無參數）／`instructions apply` —— apply 模式
 

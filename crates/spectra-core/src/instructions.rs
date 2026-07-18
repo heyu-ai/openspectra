@@ -294,19 +294,23 @@ fn absolute_change_dir(cfg: &crate::Config, change: &crate::Change) -> PathBuf {
     }
 }
 
-fn done_ids(change_dir: &Path) -> HashSet<&'static str> {
-    crate::schema::ARTIFACTS
-        .iter()
-        .filter(|artifact| crate::schema::artifact_done(artifact, change_dir))
-        .map(|artifact| artifact.id)
-        .collect()
+fn done_ids(change_dir: &Path) -> Result<HashSet<&'static str>> {
+    let mut ids = HashSet::new();
+    for artifact in crate::schema::ARTIFACTS.iter() {
+        if crate::schema::artifact_done(artifact, change_dir)? {
+            ids.insert(artifact.id);
+        }
+    }
+    Ok(ids)
 }
 
-pub fn next_artifact(change_dir: &Path) -> Option<&'static str> {
-    crate::schema::ARTIFACTS
-        .iter()
-        .find(|artifact| !crate::schema::artifact_done(artifact, change_dir))
-        .map(|artifact| artifact.id)
+pub fn next_artifact(change_dir: &Path) -> Result<Option<&'static str>> {
+    for artifact in crate::schema::ARTIFACTS.iter() {
+        if !crate::schema::artifact_done(artifact, change_dir)? {
+            return Ok(Some(artifact.id));
+        }
+    }
+    Ok(None)
 }
 
 pub fn artifact_instructions(
@@ -319,7 +323,7 @@ pub fn artifact_instructions(
         .find(|artifact| artifact.id == artifact_id)
         .ok_or_else(|| anyhow::anyhow!("Artifact '{artifact_id}' not found in schema"))?;
     let change_dir = absolute_change_dir(cfg, change);
-    let done_ids = done_ids(&change_dir);
+    let done_ids = done_ids(&change_dir)?;
     let dependencies = artifact
         .deps
         .iter()
@@ -480,7 +484,7 @@ pub fn apply_instructions(
     let complete = tasks.iter().filter(|task| task.done).count();
     let remaining = total - complete;
     let state = derive_apply_state(total, remaining);
-    let done_ids = done_ids(&change_dir);
+    let done_ids = done_ids(&change_dir)?;
     let missing_artifacts = crate::schema::APPLY_REQUIRES
         .iter()
         .copied()
@@ -531,7 +535,10 @@ pub fn get(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    let selected = artifact_id.or_else(|| next_artifact(&change.dir));
+    let selected = match artifact_id {
+        Some(artifact_id) => Some(artifact_id),
+        None => next_artifact(&change.dir)?,
+    };
     match selected {
         Some("apply") | None => apply_instructions(cfg, &change).map(InstructionOutput::Apply),
         Some(artifact_id) => {

@@ -17,6 +17,8 @@ mod names;
 pub mod schema;
 pub mod spec;
 pub mod tasks;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod touched;
 pub mod validate;
 
