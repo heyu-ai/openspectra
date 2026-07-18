@@ -161,7 +161,10 @@ locks the order pairwise.
   for `--force`, `hard_link` (no-clobber) otherwise. A concurrent creator
   surfaces the oracle-aligned already-exists error instead of silently
   clobbering, and a failed write leaves no partial artifact for `status` to
-  misread as done. The oracle's own race behavior is unprobed.
+  misread as done. The oracle's own race behavior is unprobed. Residual risk
+  (accepted): the no-clobber install requires `link(2)` support; a filesystem
+  without hard links (FAT/exFAT) would fail loudly on non-force creates —
+  not a real scenario for a git-hosted `openspec/` tree.
 
 ## Instructions goldens provenance
 

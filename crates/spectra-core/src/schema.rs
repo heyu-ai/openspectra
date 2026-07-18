@@ -1,7 +1,5 @@
 //! Built-in workflow schema definitions and artifact status derivation.
 
-use anyhow::Context as _;
-
 #[derive(Debug, Clone, Copy)]
 pub struct ArtifactDefinition {
     pub id: &'static str,
@@ -468,49 +466,104 @@ fn artifact_done(
 /// symlinks via `fs::metadata` (unlike `fsutil::collect_delta_specs`, whose
 /// archive/validate domain deliberately skips them). `visited` holds
 /// canonicalized directories to make symlink cycles terminate instead of
-/// recursing forever. NotFound (specs/ not created yet, or a dangling
-/// symlink) is the normal "not done" case; any other I/O error (e.g.
-/// permission denied) propagates rather than being silently misreported as
-/// "not done" — matching the `change::try_load` convention.
+/// recursing forever.
+///
+/// Error semantics are match-wins and ORDER-INDEPENDENT: a found `.md`
+/// anywhere means done, regardless of unreadable siblings (a glob that finds
+/// a match found it; an unreadable directory can't hide it). Only when NO
+/// match is found does a recorded traversal error propagate — an unreadable
+/// specs tree must not be silently misreported as "not done" (matching the
+/// `change::try_load` convention). NotFound (specs/ not created yet, or a
+/// dangling symlink) is the normal "not done" case, never an error.
 fn contains_markdown_file(
     dir: &std::path::Path,
     visited: &mut std::collections::HashSet<std::path::PathBuf>,
 ) -> anyhow::Result<bool> {
+    let mut first_error = None;
+    if scan_for_markdown(dir, visited, &mut first_error) {
+        return Ok(true);
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(false),
+    }
+}
+
+/// DFS worker for [`contains_markdown_file`]: returns whether a `.md` was
+/// found; traversal errors are recorded into `first_error` (first one wins)
+/// instead of aborting, so the scan visits every reachable entry before the
+/// caller decides between "not done" and error.
+fn scan_for_markdown(
+    dir: &std::path::Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+    first_error: &mut Option<anyhow::Error>,
+) -> bool {
+    fn record(first_error: &mut Option<anyhow::Error>, error: anyhow::Error) {
+        if first_error.is_none() {
+            *first_error = Some(error);
+        }
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
         Err(e) => {
-            return Err(
-                anyhow::Error::new(e).context(format!("reading specs directory {}", dir.display()))
-            )
+            record(
+                first_error,
+                anyhow::Error::new(e).context(format!("reading specs directory {}", dir.display())),
+            );
+            return false;
         }
     };
-    let canonical = std::fs::canonicalize(dir)
-        .with_context(|| format!("resolving specs directory {}", dir.display()))?;
-    if !visited.insert(canonical) {
-        return Ok(false);
+    match std::fs::canonicalize(dir) {
+        Ok(canonical) => {
+            if !visited.insert(canonical) {
+                return false;
+            }
+        }
+        Err(e) => {
+            record(
+                first_error,
+                anyhow::Error::new(e)
+                    .context(format!("resolving specs directory {}", dir.display())),
+            );
+            return false;
+        }
     }
 
     for entry in entries {
-        let entry = entry.with_context(|| format!("reading specs directory {}", dir.display()))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                record(
+                    first_error,
+                    anyhow::Error::new(e)
+                        .context(format!("reading specs directory {}", dir.display())),
+                );
+                continue;
+            }
+        };
         let path = entry.path();
         let metadata = match std::fs::metadata(&path) {
             Ok(metadata) => metadata,
             // Dangling symlink: nothing behind it to count.
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
-                return Err(anyhow::Error::new(e)
-                    .context(format!("reading specs entry {}", path.display())))
+                record(
+                    first_error,
+                    anyhow::Error::new(e)
+                        .context(format!("reading specs entry {}", path.display())),
+                );
+                continue;
             }
         };
         if metadata.is_file() && path.extension().is_some_and(|ext| ext == "md") {
-            return Ok(true);
+            return true;
         }
-        if metadata.is_dir() && contains_markdown_file(&path, visited)? {
-            return Ok(true);
+        if metadata.is_dir() && scan_for_markdown(&path, visited, first_error) {
+            return true;
         }
     }
-    Ok(false)
+    false
 }
 
 pub fn derive_status(
@@ -729,6 +782,31 @@ mod tests {
         let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn found_markdown_wins_over_an_unreadable_sibling_directory() {
+        // Match-wins determinism: with a valid spec.md AND an unreadable
+        // sibling dir in the same specs tree, the result is "done" regardless
+        // of filesystem iteration order (the scan records the error but keeps
+        // walking; a found match discards it).
+        use std::os::unix::fs::PermissionsExt;
+        let change_dir = TempDir::new("specs-mixed");
+        std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
+        let specs = change_dir.join("specs");
+        std::fs::create_dir_all(specs.join("locked")).unwrap();
+        std::fs::create_dir_all(specs.join("open")).unwrap();
+        std::fs::write(specs.join("open").join("spec.md"), "# Spec\n").unwrap();
+        std::fs::set_permissions(specs.join("locked"), std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+
+        let result = derive_status("demo-feature", &change_dir);
+
+        std::fs::set_permissions(specs.join("locked"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let report = result.unwrap();
+        assert_eq!(report.artifacts[2].status, ArtifactState::Done);
     }
 
     #[test]
