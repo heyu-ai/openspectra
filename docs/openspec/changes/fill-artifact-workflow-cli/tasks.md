@@ -6,25 +6,25 @@
 
 ## WP1 — workflow schema 基礎 + `spectra status`（capability: `workflow-status`）
 
-- [ ] 1.1 採集 goldens：oracle `instructions <a> --json` × 4 artifacts 的
+- [x] 1.1 採集 goldens：oracle `instructions <a> --json` × 4 artifacts 的
       instruction/template 逐字擷取，嵌入 `schema.rs` 常數
-- [ ] 1.2 `spectra-core::schema`：spec-driven DAG 定義 + `done/ready/blocked`
+- [x] 1.2 `spectra-core::schema`：spec-driven DAG 定義 + `done/ready/blocked`
       狀態推導純函式（含 `specs/**/*.md` glob 判定）
-- [ ] 1.3 `new change` 對齊 oracle（D3，BREAKING）：移除 artifact scaffold、
+- [x] 1.3 `new change` 對齊 oracle（D3，BREAKING）：移除 artifact scaffold、
       `.openspec.yaml` 增寫 `schema`/`created`/`created_by`；改寫既有測試
-- [ ] 1.4 CLI `status [--change] [--schema] [--json]`：human + JSON 輸出
+- [x] 1.4 CLI `status [--change] [--schema] [--json]`：human + JSON 輸出
       對齊 design.md 合約（camelCase、missingDeps 條件出現）
-- [ ] 1.5 整合測試：DAG 四狀態轉移（空 → proposal → 全建 → 刪 specs）
+- [x] 1.5 整合測試：DAG 四狀態轉移（空 → proposal → 全建 → 刪 specs）
 
 ## WP2 — `spectra new artifact`（capability: `artifact-scaffold`）
 
-- [ ] 2.1 probe 補齊：design/tasks/spec 三型的內容驗證規則（strings mining
+- [x] 2.1 probe 補齊：design/tasks/spec 三型的內容驗證規則（strings mining
       + 實測），回填 design.md
-- [ ] 2.2 `spectra-core::artifact`：路徑解析（spec → `specs/<cap>/spec.md`）、
+- [x] 2.2 `spectra-core::artifact`：路徑解析（spec → `specs/<cap>/spec.md`）、
       `--stdin`/空模板、`--force`、per-type 驗證
-- [ ] 2.3 CLI `new artifact <TYPE> [CAPABILITY] [--change] [--stdin] [--force]
+- [x] 2.3 CLI `new artifact <TYPE> [CAPABILITY] [--change] [--stdin] [--force]
       [--json]`：compact 單行 JSON、錯誤字串逐字對齊
-- [ ] 2.4 整合測試：四型建檔 + 5 個錯誤案例（unknown type / 缺 capability /
+- [x] 2.4 整合測試：四型建檔 + 5 個錯誤案例（unknown type / 缺 capability /
       already exists / 驗證失敗 / change 不存在）
 
 ## WP3 — `spectra instructions`（capability: `artifact-instructions`）

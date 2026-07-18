@@ -139,10 +139,41 @@ human 輸出的結尾也已補 probe：尚未完成時 artifact 清單後保留�
 - `Error: Capability name is required for spec type. Usage: spectra new artifact spec <capability> --change <name>`
 - `Error: Artifact already exists: <abs path>. Use --force to overwrite`
 - `Error: Proposal must contain a ## Why, ## Problem, or ## Summary section`
-  （proposal 驗證；design/tasks/spec 的驗證規則**待 probe**——用 binary
-  strings mining `Must contain` 類訊息 + 實測確認）
+  （content 小寫化後含 `## why`/`## problem`/`## summary` 任一 substring 即通過，
+  行中出現亦可；已實測）
+- `Error: Design must contain a ## Context section`（同上，substring `## context`）
+- `Error: Tasks must contain at least one checkbox (- [ ])`（content 含 `- [ ]`、
+  `* [ ]`、`+ [ ]` 任一 literal 即通過；已實測）
+- `Error: Delta spec parse error: Invalid format: Delta spec must contain at least one operation (ADDED, MODIFIED, REMOVED, or RENAMED)`
+  （需有一行 trim 後**恰等於** `## ADDED/MODIFIED/REMOVED/RENAMED Requirements`；
+  大小寫敏感、可縮排、不可有後綴；requirement 缺 scenario、REMOVED 缺
+  Reason/Migration 都不擋，驗證僅到 operation heading 層級）
+- `Error: Invalid capability name '<cap>'. Must be kebab-case (e.g., user-auth, data-export)`
+  （合法字元 `[a-z0-9-]`、不得以 `-` 開頭或結尾；`a--b`、`cap2-v3` 合法）
+- `Error: No content received from stdin`（`--stdin` 內容為空或僅空白）
+- `Error: Change '<name>' not found`（**無句尾句點**；與 `status` 的
+  `Change 'x' not found.` 不一致，oracle 即如此）
 
-無 `--stdin` 時以該 type 的空模板建檔（模板 = instructions 的 `template` 欄位）。
+實測補充（2026-07-18 probe）：
+
+- 檢查順序：change 自動解析（無 `--change` 時的 no-active/multiple 錯誤）→
+  unknown type → change 存在性 → capability 必填/kebab → already exists
+  （`--force` 跳過）→ 空 stdin → 內容驗證 → 寫檔。已存在錯誤先於空 stdin
+  與內容驗證；驗證失敗不寫任何檔案或目錄。
+- `validated`：`--stdin` 內容通過驗證為 `true`；模板建檔（無 `--stdin`）
+  一律 `false`（模板不跑驗證，即使模板內容本身含必要 section）。
+- `warnings`：所有 probe 情境（`--force` 覆蓋、deps 未 done、requirement 缺
+  scenario 等）皆為 `[]`，未觀察到非空案例。
+- `--force` 不跳過內容驗證：無效內容加 `--force` 仍 exit 1 且不覆蓋原檔。
+- stdin 內容逐位元寫入，不補結尾換行；compact JSON 輸出後有一個換行。
+- human 輸出：`✓ Created <type>: <abs path>`；validated 時追加第二行
+  `  Content validated ✓`（兩格縮排）。
+- oracle 的 multiple-changes 錯誤為 `Multiple changes found. Use --change to
+  specify one: <names>`（依 mtime 新到舊排序）；openspectra `change::resolve`
+  現行為 `Use a change name to specify one:`（字母排序）。WP2 沿用 resolve
+  不改，差異留待主 session 裁決。
+
+無 `--stdin` 時以該 type 的空模板建檔（模板 = instructions 的 `template` 欄位），此時 `validated` 為 `false`。
 spec type 路徑為 `specs/<capability>/spec.md`。
 
 ### `instructions <artifact> --json`（pretty、camelCase）

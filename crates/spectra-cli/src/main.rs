@@ -1,7 +1,7 @@
 //! OpenSpectra CLI: `init`, `drift`, `status`, `validate`, `list`, `show`,
-//! `park`, `unpark`, `new change`, `task done`, `archive`.
+//! `park`, `unpark`, `new change`, `new artifact`, `task done`, `archive`.
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{change, config::Config, drift, schema, spec};
+use spectra_core::{artifact, change, config::Config, drift, schema, spec};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -111,7 +111,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Create a new change (currently the only `new` target).
+    /// Create a new change or workflow artifact.
     New {
         #[command(subcommand)]
         target: NewTarget,
@@ -144,6 +144,24 @@ enum NewTarget {
         /// Name for the new change (kebab-case, e.g. 'add-search-filter').
         name: String,
         #[arg(long)]
+        json: bool,
+    },
+    /// Create a workflow artifact for a change.
+    Artifact {
+        #[arg(
+            value_name = "TYPE",
+            help = "Artifact type: proposal, design, tasks, spec"
+        )]
+        type_name: String,
+        #[arg(help = "Capability name (required for spec type)")]
+        capability: Option<String>,
+        #[arg(long, help = "Change name")]
+        change: Option<String>,
+        #[arg(long, help = "Read content from stdin instead of using empty template")]
+        stdin: bool,
+        #[arg(long, help = "Overwrite existing artifact")]
+        force: bool,
+        #[arg(long, help = "Output as JSON")]
         json: bool,
     },
 }
@@ -628,6 +646,55 @@ fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn new_artifact_json(outcome: &artifact::NewArtifactOutcome) -> serde_json::Value {
+    json!({
+        "artifact": outcome.artifact,
+        "change": outcome.change,
+        "path": outcome.path.to_string_lossy(),
+        "status": "created",
+        "validated": outcome.validated,
+        "warnings": outcome.warnings,
+    })
+}
+
+fn cmd_new_artifact(
+    cfg: &Config,
+    type_name: &str,
+    capability: Option<&str>,
+    change_name: Option<&str>,
+    from_stdin: bool,
+    force: bool,
+    as_json: bool,
+) -> Result<i32> {
+    let stdin_content = if from_stdin {
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .context("reading stdin")?;
+        Some(content)
+    } else {
+        None
+    };
+    let outcome = artifact::create(
+        cfg,
+        type_name,
+        capability,
+        change_name,
+        stdin_content.as_deref(),
+        force,
+    )?;
+
+    if as_json {
+        println!("{}", serde_json::to_string(&new_artifact_json(&outcome))?);
+    } else {
+        println!("✓ Created {}: {}", outcome.artifact, outcome.path.display());
+        if outcome.validated {
+            println!("  Content validated ✓");
+        }
+    }
+    Ok(0)
+}
+
 /// `--json` shape for `task done`, reverse-engineered against
 /// `/Applications/Spectra.app` v2.3.1: `{"change","status","task_desc","task_id"}`,
 /// `task_id` rendered as a string (matching the reference CLI exactly).
@@ -774,6 +841,25 @@ fn run() -> Result<i32> {
             NewTarget::Change { name, json } => {
                 let cfg = require_initialized(&root)?;
                 cmd_new_change(&cfg, name, *json)
+            }
+            NewTarget::Artifact {
+                type_name,
+                capability,
+                change,
+                stdin,
+                force,
+                json,
+            } => {
+                let cfg = require_initialized(&root)?;
+                cmd_new_artifact(
+                    &cfg,
+                    type_name,
+                    capability.as_deref(),
+                    change.as_deref(),
+                    *stdin,
+                    *force,
+                    *json,
+                )
             }
         },
         Command::Task { target } => match target {

@@ -3,6 +3,7 @@
 
 pub mod anchors;
 pub mod archive;
+pub mod artifact;
 pub mod calibration;
 pub mod change;
 pub mod config;
