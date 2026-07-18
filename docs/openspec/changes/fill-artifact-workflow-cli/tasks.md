@@ -40,12 +40,12 @@
 
 ## WP4 — `spectra analyze`（capability: `change-analyze`）
 
-- [ ] 4.1 probe 補齊：10 種 finding 的觸發條件／severity／措辭（每種正反
+- [x] 4.1 probe 補齊：10 種 finding 的觸發條件／severity／措辭（每種正反
       fixture 實測），回填 design.md
-- [ ] 4.2 `spectra-core::analyze`：4 維度 findings engine + snake_case 報告
+- [x] 4.2 `spectra-core::analyze`：4 維度 findings engine + snake_case 報告
       （含 `summary_msg`/`recommendation_msg` i18n key 結構）
-- [ ] 4.3 CLI `analyze [CHANGE] [--json]`：human + JSON，恆 exit 0
-- [ ] 4.4 整合測試：insufficient-artifacts skip 路徑 + 每種 finding 至少
+- [x] 4.3 CLI `analyze [CHANGE] [--json]`：human + JSON，恆 exit 0
+- [x] 4.4 整合測試：insufficient-artifacts skip 路徑 + 每種 finding 至少
       一正一反案例
 
 ## 收尾

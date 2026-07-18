@@ -1,4 +1,4 @@
-//! OpenSpectra CLI: `init`, `drift`, `status`, `instructions`, `validate`,
+//! OpenSpectra CLI: `init`, `drift`, `analyze`, `status`, `instructions`, `validate`,
 //! `list`, `show`, `park`, `unpark`, `new change`, `new artifact`, `task done`,
 //! `archive`.
 
@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{artifact, change, config::Config, drift, instructions, schema, spec};
+use spectra_core::{analyze, artifact, change, config::Config, drift, instructions, schema, spec};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -40,6 +40,14 @@ enum Command {
     /// Detect drift between a change and the current codebase state.
     Drift {
         /// Change name (auto-detects if only one exists).
+        change: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Analyze change artifacts for consistency and gaps.
+    Analyze {
+        #[arg(help = "Change name (auto-detects if only one exists)")]
         change: Option<String>,
         /// Output as JSON.
         #[arg(long)]
@@ -268,6 +276,17 @@ fn cmd_drift(
         print_human(&report, use_color);
     }
     Ok(report.exit_code())
+}
+
+fn cmd_analyze(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
+    let name = change::resolve(cfg, change_name)?;
+    let report = analyze::analyze(cfg, &name)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", analyze::format_human(&report));
+    }
+    Ok(0)
 }
 
 fn cmd_validate(
@@ -901,6 +920,10 @@ fn run() -> Result<i32> {
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
+        }
+        Command::Analyze { change, json } => {
+            let cfg = require_initialized(&root)?;
+            cmd_analyze(&cfg, change.as_deref(), *json)
         }
         Command::Status {
             change,

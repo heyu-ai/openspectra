@@ -373,13 +373,50 @@ Pause if you hit blockers or need clarification.
   - Consistency：`conDesignNotInTasks`
   - Ambiguity：`ambNoScenario`、`ambAbstractScenario`、`ambWeakLanguage`
   - Gaps：`gapNoProposal`、`gapNoMainSpec`、`gapModifiedNotFound`
-- 每種 finding 的觸發條件、severity、summary/recommendation 措辭與 params
-  keys **待 probe**：對每一種構造正反 fixture 實測（已知 2 種：
-  covMissingTask=Warning、ambAbstractScenario=Suggestion；proposal 宣告的
-  capability 無對應 spec 檔應為 covMissingSpec，oracle instructions 文字說
-  它是 Critical）。
-- severity 分級（Critical/Warning/Suggestion）與 human 輸出格式待各 fixture
-  一併採集。
+- **finding 實測契約**：`params` 欄依序為
+  `summary_msg.params / recommendation_msg.params`；空集合仍輸出 `{}`。
+
+  | finding key | severity | 觸發條件 | params keys | location |
+  |---|---|---|---|---|
+  | `covMissingSpec` | Critical | Coverage 有執行且 proposal 的 Capabilities token 缺少 change delta `specs/<cap>/spec.md` | `cap / cap` | `proposal.md → Capabilities` |
+  | `covMissingTask` | Warning | tasks 全文不含 requirement 名稱（case-insensitive substring） | `req / req` | delta spec 相對路徑 |
+  | `covDeltaValidation` | Critical | 同 section 重複 requirement，或同名 requirement 橫跨兩個 operation sections | `error / {}` | delta spec 相對路徑 |
+  | `conDesignNotInTasks` | Warning | design 的 level-3 topic（lowercase）未出現在 tasks 全文 | `keyword / {}` | `design.md` |
+  | `ambNoScenario` | Warning | requirement 在下一個 requirement／operation heading 前沒有 scenario | `req / req` | delta spec 相對路徑 |
+  | `ambAbstractScenario` | Suggestion | scenario 在下一個 scenario／requirement／operation heading 前沒有 example | `scenario / scenario` | delta spec 相對路徑 |
+  | `ambWeakLanguage` | Suggestion | spec 某行命中弱語詞規則 | `pattern / pattern` | `<delta spec>:<line>` |
+  | `gapNoProposal` | Critical | specs 存在但 `proposal.md` 不存在 | `{}` / `{}` | `change directory` |
+  | `gapNoMainSpec` | Warning | delta 有 MODIFIED requirement，但 capability main spec 不存在 | `spec / spec` | delta spec 相對路徑 |
+  | `gapModifiedNotFound` | Warning | delta 的 MODIFIED requirement 在既有 main spec 找不到 | `name / name,spec` | delta spec 相對路徑 |
+
+- **Dimension gating**：Coverage 需 `{proposal, specs, tasks}` 至少 2 個；
+  Consistency 需 design + tasks；Ambiguity 需 specs；Gaps 需四種 artifact
+  至少 1 個。未執行為 `Skipped (insufficient artifacts)`，已執行且無
+  finding 為 `Clean`，否則為 `N issue(s) found`。
+- **弱語詞規則**：只掃 delta spec files；依 `should`、`may`、`might`、
+  `TBD`、`???` 的清單優先序做 case-insensitive plain substring 比對，
+  每行最多一筆，回報清單中的 canonical spelling（因此同一行較後面的
+  `should` 仍可勝過較前面的 `TBD`）。
+- **Capabilities 擷取**：只取 `## Capabilities` section 內 bullet 的第一組
+  backtick token；無 backtick 不擷取，`<name>` placeholder 不過濾，也不查
+  main `openspec/specs/`，只檢查 change delta 路徑。
+- `gapModifiedNotFound` 使用 trimmed requirement name 的 exact equality；
+  substring（如 `Login flow` 對 `Login flow extended`）不算命中。
+- oracle side-by-side 實測顯示，`gapModifiedNotFound` 的
+  `recommendation_msg.params` 兩個 keys（`name`、`spec`）因 oracle 本身的
+  hash-map iteration nondeterminism，跨次執行的序列化順序不穩定；
+  openspectra 固定為 `name` 後 `spec`。這與 spec-file 排序同屬 determinism
+  choice，並非 divergence bug。
+- `covDeltaValidation` 與 `conDesignNotInTasks` 的
+  `recommendation_msg.params` 是實測的不對稱空 `{}`。
+- **Human output**：固定以 `Change: <name>` 開頭，接 4 行
+  `  <✓|●> <dimension:15><status> (<N> findings)`；再列 `Analyzed`／
+  `Missing`，有 findings 時輸出 `Findings (N):` 與每筆三行
+  `[CRITICAL|WARNING|SUGGEST]`、`at:`、`→ recommendation`，否則輸出
+  `✓ No issues found`。全程 plain text，`--no-color` 不改變 bytes。
+- oracle 的 spec-file 跨檔順序來自 readdir，因而非 deterministic；
+  openspectra 依 change-relative path 排序，這是與 WP3 `contextFiles`
+  相同的 determinism choice，且每檔內維持 Coverage／Ambiguity 的實測分組。
 
 ## 驗證策略
 
