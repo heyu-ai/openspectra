@@ -187,44 +187,58 @@ pub fn create(
     let parent = path.parent().expect("artifact paths always have a parent");
     std::fs::create_dir_all(parent)
         .with_context(|| format!("creating artifact directory {}", parent.display()))?;
-    if force {
-        // Replace atomically: write a sibling temp file, then rename over the
-        // target, so a concurrent reader never observes a half-written
-        // artifact and a crash mid-write cannot destroy the previous content.
-        let file_name = path.file_name().expect("artifact paths end in a file name");
-        let tmp = parent.join(format!(
-            ".{}.tmp-{}",
-            file_name.to_string_lossy(),
-            std::process::id()
-        ));
-        if let Err(e) = std::fs::write(&tmp, content).and_then(|()| std::fs::rename(&tmp, &path)) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e).with_context(|| format!("writing artifact {}", path.display()));
-        }
+
+    // The target path only ever appears as a fully-written file: content goes
+    // to a uniquely-named sibling temp file first (`create_new`, so a
+    // concurrent in-process caller can't share it and a pre-planted symlink
+    // can't redirect the write), then is installed atomically — `rename`
+    // (replace) for --force, `hard_link` (no-clobber) otherwise. This closes
+    // the TOCTOU window after the `path.exists()` check above (kept there
+    // because the probed error ORDER places already-exists before the
+    // stdin/content checks): a concurrent creator that wins the race gets the
+    // oracle-aligned error, and a failed write can never leave a partial
+    // artifact at the target for `status` to misread as done.
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let file_name = path.file_name().expect("artifact paths end in a file name");
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        file_name.to_string_lossy(),
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    ));
+    let write_result = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut file| {
+            use std::io::Write as _;
+            file.write_all(content.as_bytes())
+        });
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("writing artifact {}", path.display()));
+    }
+    let install_result = if force {
+        // Success consumes the temp file.
+        std::fs::rename(&tmp, &path)
     } else {
-        // `create_new` closes the TOCTOU window between the `path.exists()`
-        // check above (kept there because the probed error ORDER places
-        // already-exists before the stdin/content checks) and this write: a
-        // concurrent creator that wins the race surfaces the same
-        // oracle-aligned error instead of being silently overwritten.
-        use std::io::Write as _;
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => file
-                .write_all(content.as_bytes())
-                .with_context(|| format!("writing artifact {}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(anyhow!(
-                    "Artifact already exists: {}. Use --force to overwrite",
-                    path.display()
-                ));
-            }
-            Err(e) => {
-                return Err(e).with_context(|| format!("writing artifact {}", path.display()));
-            }
+        // Atomic no-clobber install; the temp file remains and is removed
+        // below in both outcomes.
+        std::fs::hard_link(&tmp, &path)
+    };
+    if !force || install_result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    match install_result {
+        Ok(()) => {}
+        Err(e) if !force && e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(anyhow!(
+                "Artifact already exists: {}. Use --force to overwrite",
+                path.display()
+            ));
+        }
+        Err(e) => {
+            return Err(e).with_context(|| format!("writing artifact {}", path.display()));
         }
     }
 
@@ -254,6 +268,105 @@ mod tests {
         let dir = cfg.changes_dir().join(name);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    fn tmp_residue(change_dir: &std::path::Path) -> Vec<String> {
+        std::fs::read_dir(change_dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".tmp-"))
+            .collect()
+    }
+
+    #[test]
+    fn concurrent_non_force_creates_yield_exactly_one_winner() {
+        // Pins the atomic no-clobber install (hard_link): when N callers race
+        // past the early exists-check, exactly one wins, the rest get the
+        // oracle-aligned already-exists error, the winner's content is intact
+        // (never interleaved), and no temp files are left behind.
+        let tmp = TempDir::new("race-no-force");
+        let cfg = config(&tmp);
+        let change_dir = add_change(&cfg, "demo-feature");
+
+        let root = tmp.to_path_buf();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles: Vec<_> = (0..8u32)
+            .map(|i| {
+                let root = root.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let cfg = config(&root);
+                    barrier.wait();
+                    create(
+                        &cfg,
+                        "proposal",
+                        None,
+                        Some("demo-feature"),
+                        Some(&format!("## Why racer {i}")),
+                        false,
+                    )
+                    .map(|_| i)
+                })
+            })
+            .collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        let winners: Vec<u32> = results
+            .iter()
+            .filter_map(|r| r.as_ref().ok().copied())
+            .collect();
+        assert_eq!(winners.len(), 1, "exactly one racer must win: {results:?}");
+        for err in results.iter().filter_map(|r| r.as_ref().err()) {
+            assert!(err.to_string().contains("Artifact already exists"));
+        }
+        assert_eq!(
+            std::fs::read_to_string(change_dir.join("proposal.md")).unwrap(),
+            format!("## Why racer {}", winners[0])
+        );
+        assert_eq!(tmp_residue(&change_dir), Vec::<String>::new());
+    }
+
+    #[test]
+    fn concurrent_force_creates_do_not_interleave_and_leave_no_temp_files() {
+        // Pins the unique-temp + atomic-rename replace: concurrent in-process
+        // --force writers (same PID — the temp name must not collide) all
+        // succeed, the surviving content is exactly one writer's payload, and
+        // no temp files are left behind.
+        let tmp = TempDir::new("race-force");
+        let cfg = config(&tmp);
+        let change_dir = add_change(&cfg, "demo-feature");
+
+        let root = tmp.to_path_buf();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles: Vec<_> = (0..8u32)
+            .map(|i| {
+                let root = root.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let cfg = config(&root);
+                    barrier.wait();
+                    create(
+                        &cfg,
+                        "proposal",
+                        None,
+                        Some("demo-feature"),
+                        Some(&format!("## Why force-racer {i}")),
+                        true,
+                    )
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let final_content = std::fs::read_to_string(change_dir.join("proposal.md")).unwrap();
+        assert!(
+            (0..8u32).any(|i| final_content == format!("## Why force-racer {i}")),
+            "final content must be exactly one racer's payload, got: {final_content:?}"
+        );
+        assert_eq!(tmp_residue(&change_dir), Vec::<String>::new());
     }
 
     #[test]

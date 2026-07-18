@@ -108,9 +108,11 @@ impl Drop for IsolatedGitConfig {
 
 #[test]
 fn user_identity_is_none_when_no_identity_is_configured_anywhere() {
+    // Acquire the env guard BEFORE the `git init` fork: even inside this
+    // binary, a fork must not race another test's set_var.
     let dir = TempDir::new("identity-unset");
-    init_repo_no_identity(&dir);
     let _isolated = IsolatedGitConfig::new();
+    init_repo_no_identity(&dir);
 
     assert_eq!(user_identity(&dir), None);
 }
@@ -121,8 +123,8 @@ fn change_creator_identity_is_unknown_when_keys_are_truly_absent() {
     // keys at any level, `git config <key>` exits non-zero (absent-key
     // path), not exit-0-with-empty-value. Both paths must land on "unknown".
     let dir = TempDir::new("identity-absent");
-    init_repo_no_identity(&dir);
     let _isolated = IsolatedGitConfig::new();
+    init_repo_no_identity(&dir);
 
     assert_eq!(change_creator_identity(&dir), "unknown");
 }

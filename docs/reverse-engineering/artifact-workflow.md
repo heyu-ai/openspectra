@@ -148,10 +148,20 @@ locks the order pairwise.
   `{"artifact":...,"change":...,"path":...,"status":"created","validated":...,"warnings":[]}`
 - Errors are identical with and without `--json`: plain `Error: <msg>` on
   stderr, exit 1, nothing on stdout.
-- **OpenSpectra hardening (behavior-compatible):** the final write uses
-  `create_new` (no `--force`) / temp-file + atomic rename (`--force`) so a
-  concurrent creator surfaces the oracle-aligned already-exists error instead
-  of silently clobbering. The oracle's own race behavior is unprobed.
+- **`--stdin` is drained before precondition checks** (probed 2026-07-18):
+  with an open stdin pipe and an invalid invocation (unknown TYPE), the
+  oracle waits for EOF and only then prints the unknown-type error —
+  preconditions do NOT short-circuit the stdin read. OpenSpectra matches;
+  "fixing" the ordering would be a divergence.
+- **OpenSpectra hardening (behavior-compatible):** the target path only ever
+  appears as a fully-written file — content is written to a uniquely-named
+  sibling temp file (`create_new`; unique per process AND per call, so
+  concurrent in-process callers can't share it and a pre-planted symlink
+  can't redirect the write), then installed atomically: `rename` (replace)
+  for `--force`, `hard_link` (no-clobber) otherwise. A concurrent creator
+  surfaces the oracle-aligned already-exists error instead of silently
+  clobbering, and a failed write leaves no partial artifact for `status` to
+  misread as done. The oracle's own race behavior is unprobed.
 
 ## Instructions goldens provenance
 
