@@ -1,74 +1,10 @@
+mod common;
+
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
-fn spectra() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spectra"))
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .expect("git runs")
-        .status
-        .success();
-    assert!(ok, "git {args:?} failed");
-}
-
-struct TempDir(std::path::PathBuf);
-
-impl TempDir {
-    fn new(label: &str) -> Self {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "spectra-artifact-it-{label}-{}-{seq}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(std::fs::canonicalize(dir).unwrap())
-    }
-}
-
-impl std::ops::Deref for TempDir {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn init_project_with_change(root: &Path, name: &str) {
-    git(root, &["init", "-q"]);
-    git(root, &["config", "user.name", "Howie"]);
-    git(root, &["config", "user.email", "howie@example.com"]);
-
-    let init = spectra().arg("init").current_dir(root).output().unwrap();
-    assert!(init.status.success(), "init failed: {init:?}");
-    let new_change = spectra()
-        .args(["new", "change", name])
-        .current_dir(root)
-        .output()
-        .unwrap();
-    assert!(
-        new_change.status.success(),
-        "new change failed: {new_change:?}"
-    );
-}
-
-fn change_dir(root: &Path, name: &str) -> std::path::PathBuf {
-    root.join("openspec").join("changes").join(name)
-}
+use common::{change_dir, init_project_with_change, spectra, TempDir};
 
 fn run_with_stdin(root: &Path, args: &[&str], content: &str) -> Output {
     let mut child = spectra()
@@ -378,4 +314,111 @@ fn human_output_includes_validation_line_only_for_stdin() {
             path.display()
         )
     );
+}
+
+#[test]
+fn force_with_invalid_content_exits_1_and_preserves_the_original_file() {
+    // Probed contract (design.md): --force does NOT skip content validation;
+    // invalid stdin + --force exits 1 and the existing artifact is untouched.
+    // Previously true only by the accident of validation-before-write
+    // ordering -- this pins it against refactors that would silently clobber
+    // a valid artifact.
+    let root = TempDir::new("force-no-clobber");
+    init_project_with_change(&root, "demo-feature");
+    let path = change_dir(&root, "demo-feature").join("proposal.md");
+
+    let first = run_with_stdin(
+        &root,
+        &[
+            "new",
+            "artifact",
+            "proposal",
+            "--change",
+            "demo-feature",
+            "--stdin",
+        ],
+        "## Why original",
+    );
+    assert!(first.status.success(), "first create failed: {first:?}");
+
+    let clobber_attempt = run_with_stdin(
+        &root,
+        &[
+            "new",
+            "artifact",
+            "proposal",
+            "--change",
+            "demo-feature",
+            "--stdin",
+            "--force",
+        ],
+        "no required heading here",
+    );
+    assert_eq!(clobber_attempt.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(clobber_attempt.stderr).unwrap(),
+        "Error: Proposal must contain a ## Why, ## Problem, or ## Summary section\n"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "## Why original");
+}
+
+#[test]
+fn extra_capability_positional_is_ignored_for_non_spec_types() {
+    // Probed against Spectra.app 2.3.1 (2026-07-18): the oracle also accepts
+    // and silently ignores a capability positional for non-spec types
+    // (`new artifact proposal extra-arg --change X --stdin` exits 0 and
+    // creates the file). Pinned so a future "reject it" change is a
+    // deliberate divergence, not an accident.
+    let root = TempDir::new("extra-positional");
+    init_project_with_change(&root, "demo-feature");
+
+    let out = run_with_stdin(
+        &root,
+        &[
+            "new",
+            "artifact",
+            "proposal",
+            "extra-arg",
+            "--change",
+            "demo-feature",
+            "--stdin",
+        ],
+        "## Why ignored positional",
+    );
+
+    assert!(out.status.success(), "new artifact failed: {out:?}");
+    let path = change_dir(&root, "demo-feature").join("proposal.md");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "## Why ignored positional"
+    );
+}
+
+#[test]
+fn json_mode_errors_stay_on_stderr_with_no_partial_json() {
+    // Errors must not change shape under --json: same plain-text stderr,
+    // exit 1, and nothing (not even partial JSON) on stdout.
+    let root = TempDir::new("json-error");
+    init_project_with_change(&root, "demo-feature");
+
+    let out = run_with_stdin(
+        &root,
+        &[
+            "new",
+            "artifact",
+            "nonsense",
+            "--change",
+            "demo-feature",
+            "--stdin",
+            "--json",
+        ],
+        "## Why",
+    );
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Error: Unknown artifact type 'nonsense'. Valid types: proposal, design, tasks, spec\n"
+    );
+    assert_eq!(out.stdout, b"");
 }

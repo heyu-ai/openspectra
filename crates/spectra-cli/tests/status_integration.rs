@@ -1,73 +1,8 @@
+mod common;
+
 use std::path::Path;
-use std::process::Command;
 
-fn spectra() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spectra"))
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .expect("git runs")
-        .status
-        .success();
-    assert!(ok, "git {args:?} failed");
-}
-
-struct TempDir(std::path::PathBuf);
-
-impl TempDir {
-    fn new(label: &str) -> Self {
-        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "spectra-status-it-{label}-{}-{seq}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        Self(dir)
-    }
-}
-
-impl std::ops::Deref for TempDir {
-    type Target = Path;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn init_project_with_change(root: &Path, name: &str) {
-    git(root, &["init", "-q"]);
-    git(root, &["config", "user.name", "Howie"]);
-    git(root, &["config", "user.email", "howie@example.com"]);
-
-    let init = spectra().arg("init").current_dir(root).output().unwrap();
-    assert!(init.status.success(), "init failed: {init:?}");
-    let new_change = spectra()
-        .args(["new", "change", name])
-        .current_dir(root)
-        .output()
-        .unwrap();
-    assert!(
-        new_change.status.success(),
-        "new change failed: {new_change:?}"
-    );
-}
-
-fn change_dir(root: &Path, name: &str) -> std::path::PathBuf {
-    root.join("openspec").join("changes").join(name)
-}
+use common::{change_dir, init_project_with_change, spectra, TempDir};
 
 #[test]
 fn status_empty_change_reports_only_proposal_ready() {
@@ -322,4 +257,34 @@ fn new_change_writes_only_the_three_oracle_metadata_keys() {
     assert_eq!(lines[1].len(), "created: YYYY-MM-DD".len());
     assert_eq!(lines[2], "created_by: Howie <howie@example.com>");
     assert!(!metadata.contains("created_with"));
+}
+
+#[test]
+fn status_still_reports_when_openspec_yaml_is_malformed() {
+    // Established policy (change::load): a malformed .openspec.yaml warns
+    // loudly and falls back to defaults instead of failing. Pins that the
+    // new status command inherits that path -- report on stdout, warning on
+    // stderr, exit 0.
+    let root = TempDir::new("malformed-metadata");
+    init_project_with_change(&root, "demo-feature");
+    let meta_path = change_dir(&root, "demo-feature").join(".openspec.yaml");
+    std::fs::write(&meta_path, "schema: [unclosed\n").unwrap();
+
+    let out = spectra()
+        .args(["status", "--change", "demo-feature"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "status failed: {out:?}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("warning: ignoring unparseable"),
+        "expected malformed-metadata warning, got: {stderr}"
+    );
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("proposal"),
+        "status report missing artifacts: {stdout}"
+    );
 }

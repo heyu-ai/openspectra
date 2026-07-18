@@ -54,7 +54,9 @@ spectra list  --parked [--json]   # lists parked changes instead of active ones
 spectra show  <CHANGE|SPEC> [--json]   # prints the change's proposal, or a spec's content
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
-spectra new change <NAME> [--json]  # scaffolds a new change directory (kebab-case name)
+spectra new change <NAME> [--json]  # creates the change dir + .openspec.yaml only (kebab-case name; artifacts come from `new artifact`)
+spectra new artifact <TYPE> [CAPABILITY] [--change <NAME>] [--stdin] [--force] [--json]  # scaffolds proposal/design/tasks/spec from oracle templates, validates stdin content per type
+spectra status [--change <NAME>] [--schema <NAME>] [--json]  # artifact DAG status: done/ready/blocked per artifact, missingDeps when blocked
 spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md checkbox done, records touched files
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
 ```

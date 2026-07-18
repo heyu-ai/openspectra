@@ -43,7 +43,7 @@ oracle `new change` 只建 change dir + `.openspec.yaml`：
 ```yaml
 schema: spec-driven
 created: 2026-07-18
-created_by: howie <howie.yu@gmail.com>   # git user.name <user.email>
+created_by: user <user@example.com>   # git user.name <user.email>（範例用中性值）
 ```
 
 `created_by` 永遠不省略，fallback matrix 實測如下：
@@ -111,9 +111,13 @@ Schema: spec-driven
 
   ✓ proposal (proposal.md)     # done
   ○ design (design.md)         # ready
+  ○ specs (specs/**/*.md)      # ready
   ✗ tasks (tasks.md)           # blocked
     blocked by: specs
 ```
+
+（CLI 一律輸出全部四個 artifact，順序同 schema DAG 宣告；
+`status_integration.rs` 斷言四列輸出。）
 
 status 的依賴探測亦確認 `tasks.deps = ["specs"]`，`design` 不是 tasks 的
 dependency；空 change 時 tasks 的 `missingDeps` 只有 `["specs"]`。
@@ -185,8 +189,14 @@ instruction, locale, template, dependencies, unlocks`。
 - `unlocks`：字串陣列；實測 proposal（全空專案）為 `["design","specs"]`，
   specs（tasks 已 done 時）為 `[]` ——**待 probe**：unlocks 是否只列「尚未
   done」的下游（用 tasks 未建時的 specs 重測）。
-- `instruction`/`template`：逐字模板，goldens 已採集
-  （`oracle-instructions-{proposal,design,specs,tasks}.json`）。
+- `instruction`/`template`：逐字模板，goldens 已採集，落在
+  `docs/reverse-engineering/golden/instructions-{proposal,design,specs,tasks}-2.3.1.json`。
+- goldens 採集狀態（provenance）：2026-07-18 對 Spectra.app 2.3.1，probe 專案
+  四個 artifact 全數已建——故 `dependencies[].done` 皆為 `true`、`unlocks` 皆為
+  `[]`，反映的是「全 done」狀態而非上面「全空專案」的 probe；被釘住的合約僅
+  `description`/`instruction`/`template`/`outputPath`/`dependencies[].id`
+  （見 schema.rs `embedded_instruction_text_matches_oracle_goldens_byte_for_byte`）。
+  `changeDir` 已正規化為 `/tmp/oracle-probe/...`（中性化，非採集原值）。
 
 ### `instructions`（無參數）／`instructions apply` —— apply 模式
 

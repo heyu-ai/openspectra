@@ -14,7 +14,8 @@ openspectra 0.2.1 都不存在：`instructions <artifact> --json`、`new artifac
 ## What Changes
 
 1. **workflow schema 基礎模組**（`spectra-core::schema`）：內建 `spec-driven`
-   schema——artifact DAG（`proposal → {design, specs} → tasks`）、每個 artifact 的
+   schema——artifact DAG（`proposal → design`；`proposal → specs → tasks`，
+   design 不是 tasks 的依賴——實測確認）、每個 artifact 的
    `outputPath`／description／instruction／template 文字（自 oracle 逐字擷取）、
    狀態推導（`done`/`ready`/`blocked`）。
 2. **`spectra status [--change] [--json]`**：顯示 artifact DAG 狀態。

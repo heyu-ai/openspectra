@@ -42,24 +42,41 @@ impl ArtifactType {
         }
     }
 
-    fn template(self) -> &'static str {
+    /// The DAG node id in `schema::ARTIFACTS` for this CLI type. The two
+    /// names differ for specs on purpose: the oracle's CLI subcommand takes
+    /// singular `spec` while its status DAG id is plural `specs` — both
+    /// independently probed, so neither side can be renamed to match the
+    /// other.
+    fn schema_id(self) -> &'static str {
         match self {
-            Self::Proposal => crate::schema::PROPOSAL_TEMPLATE,
-            Self::Design => crate::schema::DESIGN_TEMPLATE,
-            Self::Tasks => crate::schema::TASKS_TEMPLATE,
-            Self::Spec => crate::schema::SPECS_TEMPLATE,
+            Self::Spec => "specs",
+            other => other.as_str(),
         }
+    }
+
+    /// Single source of truth for per-type template/output-path data:
+    /// resolve through `schema::ARTIFACTS` instead of re-hardcoding the
+    /// constants here, so a schema-side change cannot silently desync
+    /// `new artifact` from `status` (`artifact_types_map_onto_schema_artifacts`
+    /// pins the mapping).
+    fn definition(self) -> &'static crate::schema::ArtifactDefinition {
+        crate::schema::artifacts()
+            .iter()
+            .find(|artifact| artifact.id == self.schema_id())
+            .expect("every ArtifactType has a matching schema::ARTIFACTS entry")
+    }
+
+    fn template(self) -> &'static str {
+        self.definition().template
     }
 
     fn path(self, change_dir: &std::path::Path, capability: Option<&str>) -> PathBuf {
         match self {
-            Self::Proposal => change_dir.join("proposal.md"),
-            Self::Design => change_dir.join("design.md"),
-            Self::Tasks => change_dir.join("tasks.md"),
             Self::Spec => change_dir
                 .join("specs")
                 .join(capability.expect("spec capability was validated"))
                 .join("spec.md"),
+            other => change_dir.join(other.definition().output_path),
         }
     }
 }
@@ -170,8 +187,46 @@ pub fn create(
     let parent = path.parent().expect("artifact paths always have a parent");
     std::fs::create_dir_all(parent)
         .with_context(|| format!("creating artifact directory {}", parent.display()))?;
-    std::fs::write(&path, content)
-        .with_context(|| format!("writing artifact {}", path.display()))?;
+    if force {
+        // Replace atomically: write a sibling temp file, then rename over the
+        // target, so a concurrent reader never observes a half-written
+        // artifact and a crash mid-write cannot destroy the previous content.
+        let file_name = path.file_name().expect("artifact paths end in a file name");
+        let tmp = parent.join(format!(
+            ".{}.tmp-{}",
+            file_name.to_string_lossy(),
+            std::process::id()
+        ));
+        if let Err(e) = std::fs::write(&tmp, content).and_then(|()| std::fs::rename(&tmp, &path)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e).with_context(|| format!("writing artifact {}", path.display()));
+        }
+    } else {
+        // `create_new` closes the TOCTOU window between the `path.exists()`
+        // check above (kept there because the probed error ORDER places
+        // already-exists before the stdin/content checks) and this write: a
+        // concurrent creator that wins the race surfaces the same
+        // oracle-aligned error instead of being silently overwritten.
+        use std::io::Write as _;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => file
+                .write_all(content.as_bytes())
+                .with_context(|| format!("writing artifact {}", path.display()))?,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(anyhow!(
+                    "Artifact already exists: {}. Use --force to overwrite",
+                    path.display()
+                ));
+            }
+            Err(e) => {
+                return Err(e).with_context(|| format!("writing artifact {}", path.display()));
+            }
+        }
+    }
 
     Ok(NewArtifactOutcome {
         artifact: artifact_type.as_str(),
@@ -185,36 +240,7 @@ pub fn create(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new(label: &str) -> Self {
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "spectra-artifact-test-{label}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-    }
-
-    impl std::ops::Deref for TempDir {
-        type Target = std::path::Path;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::test_support::TempDir;
 
     fn config(root: &std::path::Path) -> crate::Config {
         crate::Config {
@@ -228,6 +254,29 @@ mod tests {
         let dir = cfg.changes_dir().join(name);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn artifact_types_map_onto_schema_artifacts() {
+        // Locks the CLI-type <-> schema-DAG mapping both ways: every
+        // ArtifactType resolves to a schema::ARTIFACTS entry (definition()
+        // would panic otherwise), and no schema artifact lacks a CLI type --
+        // so adding/renaming on one side without the other fails here instead
+        // of desyncing `new artifact` from `status` at runtime.
+        let types = [
+            ArtifactType::Proposal,
+            ArtifactType::Design,
+            ArtifactType::Tasks,
+            ArtifactType::Spec,
+        ];
+        for artifact_type in types {
+            assert_eq!(artifact_type.definition().id, artifact_type.schema_id());
+        }
+        let mut mapped: Vec<&str> = types.iter().map(|t| t.schema_id()).collect();
+        mapped.sort_unstable();
+        let mut schema_ids: Vec<&str> = crate::schema::artifacts().iter().map(|a| a.id).collect();
+        schema_ids.sort_unstable();
+        assert_eq!(mapped, schema_ids);
     }
 
     #[test]

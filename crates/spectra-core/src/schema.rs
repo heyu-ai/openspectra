@@ -1,5 +1,7 @@
 //! Built-in workflow schema definitions and artifact status derivation.
 
+use anyhow::Context as _;
+
 #[derive(Debug, Clone, Copy)]
 pub struct ArtifactDefinition {
     pub id: &'static str,
@@ -436,50 +438,103 @@ fn artifact_status(
     }
 }
 
-fn artifact_done(artifact: &ArtifactDefinition, change_dir: &std::path::Path) -> bool {
-    if artifact.id == "specs" {
-        return contains_markdown_file(&change_dir.join("specs"));
+fn artifact_done(
+    artifact: &ArtifactDefinition,
+    change_dir: &std::path::Path,
+) -> anyhow::Result<bool> {
+    // A globbed output path ("specs/**/*.md") marks a directory-shaped
+    // artifact: done = at least one .md anywhere under the glob's root
+    // directory. Derived from the data instead of matching a hardcoded id so
+    // a future directory-shaped artifact doesn't have to be named "specs".
+    if artifact.output_path.contains('*') {
+        let root = artifact
+            .output_path
+            .split('/')
+            .next()
+            .expect("split always yields at least one segment");
+        let mut visited = std::collections::HashSet::new();
+        return contains_markdown_file(&change_dir.join(root), &mut visited);
     }
-    change_dir.join(artifact.output_path).is_file()
+    Ok(change_dir.join(artifact.output_path).is_file())
 }
 
-fn contains_markdown_file(dir: &std::path::Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+/// Recursive "any .md file under this directory" scan backing the specs
+/// done-check.
+///
+/// Semantics probed against Spectra.app 2.3.1 (see
+/// docs/reverse-engineering/artifact-workflow.md): the oracle's
+/// `specs/**/*.md` glob FOLLOWS directory symlinks — a change whose specs
+/// live behind a symlink still counts as done — so this walk resolves
+/// symlinks via `fs::metadata` (unlike `fsutil::collect_delta_specs`, whose
+/// archive/validate domain deliberately skips them). `visited` holds
+/// canonicalized directories to make symlink cycles terminate instead of
+/// recursing forever. NotFound (specs/ not created yet, or a dangling
+/// symlink) is the normal "not done" case; any other I/O error (e.g.
+/// permission denied) propagates rather than being silently misreported as
+/// "not done" — matching the `change::try_load` convention.
+fn contains_markdown_file(
+    dir: &std::path::Path,
+    visited: &mut std::collections::HashSet<std::path::PathBuf>,
+) -> anyhow::Result<bool> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(
+                anyhow::Error::new(e).context(format!("reading specs directory {}", dir.display()))
+            )
+        }
     };
+    let canonical = std::fs::canonicalize(dir)
+        .with_context(|| format!("resolving specs directory {}", dir.display()))?;
+    if !visited.insert(canonical) {
+        return Ok(false);
+    }
 
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading specs directory {}", dir.display()))?;
+        let path = entry.path();
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            // Dangling symlink: nothing behind it to count.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => {
+                return Err(anyhow::Error::new(e)
+                    .context(format!("reading specs entry {}", path.display())))
+            }
         };
-        if file_type.is_file() && entry.path().extension().is_some_and(|ext| ext == "md") {
-            return true;
+        if metadata.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            return Ok(true);
         }
-        if file_type.is_dir() && contains_markdown_file(&entry.path()) {
-            return true;
+        if metadata.is_dir() && contains_markdown_file(&path, visited)? {
+            return Ok(true);
         }
     }
-    false
+    Ok(false)
 }
 
-pub fn derive_status(change_name: &str, change_dir: &std::path::Path) -> StatusReport {
-    let done_ids: std::collections::HashSet<_> = ARTIFACTS
-        .iter()
-        .filter(|artifact| artifact_done(artifact, change_dir))
-        .map(|artifact| artifact.id)
-        .collect();
+pub fn derive_status(
+    change_name: &str,
+    change_dir: &std::path::Path,
+) -> anyhow::Result<StatusReport> {
+    let mut done_ids = std::collections::HashSet::new();
+    for artifact in ARTIFACTS.iter() {
+        if artifact_done(artifact, change_dir)? {
+            done_ids.insert(artifact.id);
+        }
+    }
     let artifacts = ARTIFACTS
         .iter()
         .map(|artifact| artifact_status(artifact, &done_ids))
         .collect();
 
-    StatusReport {
+    Ok(StatusReport {
         change_name: change_name.to_string(),
         schema_name: SCHEMA_NAME,
         is_complete: done_ids.len() == ARTIFACTS.len(),
         apply_requires: APPLY_REQUIRES,
         artifacts,
-    }
+    })
 }
 
 pub fn status(
@@ -497,42 +552,13 @@ pub fn status(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    Ok(derive_status(&change.name, &change.dir))
+    derive_status(&change.name, &change.dir)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    struct TempDir(std::path::PathBuf);
-
-    impl TempDir {
-        fn new(label: &str) -> Self {
-            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let dir = std::env::temp_dir().join(format!(
-                "spectra-schema-test-{label}-{}-{seq}",
-                std::process::id()
-            ));
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-    }
-
-    impl std::ops::Deref for TempDir {
-        type Target = std::path::Path;
-
-        fn deref(&self) -> &Self::Target {
-            &self.0
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::test_support::TempDir;
 
     #[test]
     fn spec_driven_artifacts_have_canonical_order_paths_and_dependencies() {
@@ -572,6 +598,17 @@ mod tests {
                 golden["instruction"].as_str().unwrap()
             );
             assert_eq!(artifact.template, golden["template"].as_str().unwrap());
+            // Structural fields, previously pinned only by an inline
+            // re-declaration (self-referential): compare against the oracle
+            // capture directly.
+            assert_eq!(artifact.output_path, golden["outputPath"].as_str().unwrap());
+            let golden_deps: Vec<&str> = golden["dependencies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|dep| dep["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(artifact.deps, golden_deps.as_slice());
         }
     }
 
@@ -579,7 +616,7 @@ mod tests {
     fn empty_change_has_only_proposal_ready() {
         let change_dir = TempDir::new("empty");
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert!(!report.is_complete);
         assert_eq!(report.apply_requires, &["tasks"]);
@@ -598,7 +635,7 @@ mod tests {
         let change_dir = TempDir::new("partial");
         std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert_eq!(report.artifacts[0].status, ArtifactState::Done);
         assert_eq!(report.artifacts[1].status, ArtifactState::Ready);
@@ -617,7 +654,7 @@ mod tests {
         std::fs::create_dir_all(&nested_specs).unwrap();
         std::fs::write(nested_specs.join("spec.md"), "# Spec\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert!(report.is_complete);
         assert!(report
@@ -641,11 +678,76 @@ mod tests {
         std::fs::write(specs.join("spec.md"), "# Spec\n").unwrap();
         std::fs::remove_dir_all(change_dir.join("specs")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir);
+        let report = derive_status("demo-feature", &change_dir).unwrap();
 
         assert!(!report.is_complete);
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[3].status, ArtifactState::Done);
+    }
+
+    #[test]
+    fn non_markdown_files_under_specs_do_not_count_as_done() {
+        let change_dir = TempDir::new("specs-non-md");
+        std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
+        let sub = change_dir.join("specs").join("notes");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("notes.txt"), "scratch\n").unwrap();
+
+        let report = derive_status("demo-feature", &change_dir).unwrap();
+
+        assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn specs_behind_a_directory_symlink_count_as_done() {
+        // Probed against Spectra.app 2.3.1 (2026-07-18): the oracle's
+        // specs/**/*.md glob follows directory symlinks -- status reports
+        // specs "done" when specs/<cap> is a symlink to a directory that
+        // contains a spec.md (see docs/reverse-engineering/artifact-workflow.md).
+        let change_dir = TempDir::new("symlink-specs");
+        let outside = TempDir::new("symlink-specs-target");
+        std::fs::write(outside.join("spec.md"), "# Spec\n").unwrap();
+        let specs = change_dir.join("specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::os::unix::fs::symlink(&*outside, specs.join("cap1")).unwrap();
+
+        let report = derive_status("demo-feature", &change_dir).unwrap();
+
+        assert_eq!(report.artifacts[2].status, ArtifactState::Done);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlink_cycle_in_specs_terminates_without_matches() {
+        let change_dir = TempDir::new("symlink-cycle");
+        std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
+        let specs = change_dir.join("specs");
+        std::fs::create_dir_all(specs.join("sub")).unwrap();
+        std::os::unix::fs::symlink(&specs, specs.join("sub").join("loop")).unwrap();
+
+        let report = derive_status("demo-feature", &change_dir).unwrap();
+
+        assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn unreadable_specs_directory_is_an_error_not_not_done() {
+        use std::os::unix::fs::PermissionsExt;
+        let change_dir = TempDir::new("specs-unreadable");
+        let specs = change_dir.join("specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = derive_status("demo-feature", &change_dir);
+
+        // Restore before asserting so TempDir's Drop can clean up.
+        std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            result.is_err(),
+            "an unreadable specs/ must propagate, not silently read as not-done"
+        );
     }
 
     #[test]

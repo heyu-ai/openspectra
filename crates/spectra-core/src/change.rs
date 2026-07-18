@@ -297,8 +297,21 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     let today = chrono::Local::now().date_naive();
     let created_by = crate::git::change_creator_identity(&cfg.root);
     let metadata_path = dir.join(".openspec.yaml");
-    let metadata = format!("schema: spec-driven\ncreated: {today}\ncreated_by: {created_by}\n");
-    std::fs::write(&metadata_path, metadata)
+    // Serialize through serde_yaml (same as `stamp_archived_metadata`) rather
+    // than raw string formatting: a git identity containing YAML-special
+    // content (`:`, ` #`, leading indicator chars) must be quoted, or the
+    // file we just wrote becomes unparseable and every later command silently
+    // degrades the metadata to defaults. Plain values serialize byte-identical
+    // to the oracle's output (pinned by `create_writes_only_oracle_metadata`).
+    let metadata = ChangeMetadata {
+        schema: Some(crate::schema::SCHEMA_NAME.to_string()),
+        created: Some(today.to_string()),
+        created_by: Some(created_by),
+        ..Default::default()
+    };
+    let yaml = serde_yaml::to_string(&metadata)
+        .with_context(|| format!("serializing metadata for {}", metadata_path.display()))?;
+    std::fs::write(&metadata_path, yaml)
         .with_context(|| format!("writing {}", metadata_path.display()))?;
 
     // Best-effort: a non-git root (or a repo with no commits yet) just means
@@ -697,6 +710,49 @@ mod tests {
         assert_eq!(ch.metadata.created_with, None);
         assert_eq!(list_active(&cfg), vec!["add-search-filter".to_string()]);
         assert_eq!(ch.started_sha, None);
+    }
+
+    #[test]
+    fn create_round_trips_yaml_special_git_identity() {
+        // Regression: `created_by` used to be spliced into the YAML with
+        // `format!`, so an identity containing YAML-special content (": ",
+        // " #") produced a .openspec.yaml that `load` could not parse back --
+        // every later command warned and silently degraded the metadata to
+        // defaults. serde_yaml serialization must quote it instead.
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        let run = |args: &[&str]| {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&*tmp)
+                .args(args)
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.name", "Weird: Name #1"]);
+        run(&["config", "user.email", "weird@example.com"]);
+
+        let ch = create(&cfg, "weird-identity").unwrap();
+        assert_eq!(
+            ch.metadata.created_by.as_deref(),
+            Some("Weird: Name #1 <weird@example.com>")
+        );
+
+        // The file we just wrote must parse back to the same metadata (no
+        // unparseable-yaml fallback-to-defaults path).
+        let reloaded = load(&cfg, "weird-identity").unwrap();
+        assert_eq!(reloaded.metadata.schema.as_deref(), Some("spec-driven"));
+        assert_eq!(
+            reloaded.metadata.created_by.as_deref(),
+            Some("Weird: Name #1 <weird@example.com>")
+        );
     }
 
     #[test]
