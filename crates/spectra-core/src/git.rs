@@ -45,6 +45,14 @@ pub fn head_sha(root: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Last commit date for `path` in `YYYY-MM-DD` form. Returns `None` when the
+/// repository has no commit for the file or git is unavailable.
+pub fn last_commit_date(root: &Path, path: &str) -> Option<String> {
+    git(root, &["log", "-1", "--format=%cs", "--", path])
+        .map(|date| date.trim().to_string())
+        .filter(|date| !date.is_empty())
+}
+
 /// The configured committer identity in git's own "Name <email>" format, via
 /// `git config user.name`/`user.email`. `None` if either is unset (or not a
 /// git repo) — best-effort, matching every other identity/state lookup in
@@ -56,6 +64,23 @@ pub fn user_identity(root: &Path) -> Option<String> {
         return None;
     }
     Some(format!("{name} <{email}>"))
+}
+
+/// The identity format used by `spectra new change`: unlike archive metadata,
+/// partial git configuration is preserved and the key always has a value.
+pub fn change_creator_identity(root: &Path) -> String {
+    // `git config` falls back to user-level config outside a repo, matching the oracle.
+    let configured = |key| {
+        git(root, &["config", key])
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    };
+    match (configured("user.name"), configured("user.email")) {
+        (Some(name), Some(email)) => format!("{name} <{email}>"),
+        (Some(name), None) => name,
+        (None, Some(email)) => format!("<{email}>"),
+        (None, None) => "unknown".to_string(),
+    }
 }
 
 /// Count of commits authored on or after `since` (a `YYYY-MM-DD` date),
@@ -625,6 +650,36 @@ mod tests {
         let _isolated = IsolatedGitConfig::new();
 
         assert_eq!(user_identity(&dir), None);
+    }
+
+    #[test]
+    fn change_creator_identity_preserves_partial_git_configuration() {
+        let dir = TempDir::new("change-creator-matrix");
+        init_repo_no_identity(&dir);
+        let set = |key: &str, value: &str| {
+            assert!(Command::new("git")
+                .arg("-C")
+                .arg(&*dir)
+                .args(["config", key, value])
+                .output()
+                .unwrap()
+                .status
+                .success());
+        };
+
+        set("user.name", "Howie");
+        set("user.email", "howie@example.com");
+        assert_eq!(change_creator_identity(&dir), "Howie <howie@example.com>");
+
+        set("user.email", "");
+        assert_eq!(change_creator_identity(&dir), "Howie");
+
+        set("user.name", "");
+        set("user.email", "howie@example.com");
+        assert_eq!(change_creator_identity(&dir), "<howie@example.com>");
+
+        set("user.email", "");
+        assert_eq!(change_creator_identity(&dir), "unknown");
     }
 
     fn init_repo_no_identity(dir: &Path) {

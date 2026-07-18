@@ -10,6 +10,41 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- **The artifact workflow surface the sdd tooling depends on** (#43, PR #48),
+  all pinned against the v2.3.1 oracle with side-by-side captures:
+  - `spectra status [--change] [--schema] [--json]` — artifact DAG status
+    (`proposal → {design, specs} → tasks`, derived purely from file
+    existence). See `docs/reverse-engineering/artifact-workflow.md`.
+  - `spectra new artifact <TYPE> [CAPABILITY] [--stdin] [--force] [--json]`
+    — creates one artifact from stdin or its built-in template, with
+    per-type content validation and oracle-verbatim error strings.
+  - `spectra instructions [ARTIFACT] [--change] [--json]` — authoring
+    instruction + template per artifact; apply mode (tasks progress +
+    preflight: missing/drifted file refs, staleness) once all artifacts are
+    done.
+  - `spectra analyze [CHANGE] [--json]` — 4-dimension, 10-finding artifact
+    consistency report; always exits `0`. See
+    `docs/reverse-engineering/analyze.md`.
+
+### Changed
+
+- **BREAKING: `spectra new change` no longer scaffolds `proposal.md` /
+  `design.md` / `tasks.md`.** Matching the oracle, it creates only the
+  change directory and `.openspec.yaml` (now with `schema`, `created`,
+  `created_by`); artifact files are created by `spectra new artifact` as
+  the workflow advances. The old scaffold made `status` report everything
+  done up front and forced `--force` on every `new artifact`.
+
+### Divergences from the v2.3.1 oracle (deliberate, documented)
+
+- `spectra instructions --skill` always answers `Unknown skill` — the
+  oracle prints proprietary embedded skill bodies OpenSpectra does not ship.
+- `instructions` apply-mode `contextFiles` key order and `analyze` spec-file
+  / params ordering are fixed (schema/path order) where the oracle is
+  hash-map/readdir nondeterministic between its own runs.
+
 ## [0.2.1] - 2026-07-10
 
 ### Fixed

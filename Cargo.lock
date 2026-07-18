@@ -449,6 +449,7 @@ name = "spectra-cli"
 version = "0.2.1"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "serde",
  "serde_json",

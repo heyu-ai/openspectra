@@ -1,6 +1,5 @@
 //! End-to-end `init` -> `new change` -> `drift` over a synthetic git repo,
-//! proving `init`'s scaffold is sufficient for the rest of the pipeline to
-//! run without any hand-written setup.
+//! proving a metadata-only new change is sufficient for drift to run.
 
 use std::path::Path;
 use std::process::Command;
@@ -73,8 +72,7 @@ fn init_then_new_change_then_drift_runs_end_to_end() {
     git(&root, &["commit", "-qm", "init"]);
 
     let report = drift::analyze(&cfg, &ch).unwrap();
-    // A brand-new change with lowercase-only placeholder prose has no broken
-    // anchors and no pending-task collisions, so drift is minor.
+    // A metadata-only new change has no broken anchors or task collisions.
     assert_eq!(report.severity, "light");
     assert!(report.broken_anchors.is_empty());
 }

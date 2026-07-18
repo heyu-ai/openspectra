@@ -1,7 +1,8 @@
-//! OpenSpectra CLI: `init`, `drift`, `validate`, `list`, `show`, `park`,
-//! `unpark`, `new change`, `task done`, `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `analyze`, `status`, `instructions`, `validate`,
+//! `list`, `show`, `park`, `unpark`, `new change`, `new artifact`, `task done`,
+//! `archive`.
 
-use std::io::IsTerminal;
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -9,7 +10,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{change, config::Config, drift, spec};
+use spectra_core::{analyze, artifact, change, config::Config, drift, instructions, schema, spec};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -43,6 +44,43 @@ enum Command {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Analyze change artifacts for consistency and gaps.
+    Analyze {
+        #[arg(help = "Change name (auto-detects if only one exists)")]
+        change: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show workflow artifact status for a change.
+    Status {
+        /// Change name (auto-detects if only one exists).
+        #[arg(long)]
+        change: Option<String>,
+        /// Workflow schema name (only `spec-driven` is built in).
+        #[arg(long)]
+        schema: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Get instructions for an artifact.
+    Instructions {
+        /// Artifact ID (proposal|design|specs|tasks) or "apply".
+        artifact: Option<String>,
+        /// Change name (auto-detects if only one exists).
+        #[arg(long)]
+        change: Option<String>,
+        /// Workflow schema name (only `spec-driven` is built in).
+        #[arg(long)]
+        schema: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Embedded skill name (not supported in openspectra).
+        #[arg(long)]
+        skill: Option<String>,
     },
     /// Validate changes against the OpenSpec structural rules (a change needs
     /// at least one requirement delta; with --strict, each ADDED/MODIFIED
@@ -99,7 +137,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Scaffold a new change (currently the only `new` target).
+    /// Create a new change or workflow artifact.
     New {
         #[command(subcommand)]
         target: NewTarget,
@@ -125,13 +163,31 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum NewTarget {
-    /// Scaffold a new change directory (.openspec.yaml, proposal.md,
-    /// design.md, tasks.md, and, when run inside a git repo with at least
-    /// one commit, a baseline git SHA).
+    /// Create a change directory with .openspec.yaml and, when run inside a
+    /// git repo with at least one commit, a baseline git SHA. Artifact files
+    /// are created later by the workflow.
     Change {
         /// Name for the new change (kebab-case, e.g. 'add-search-filter').
         name: String,
         #[arg(long)]
+        json: bool,
+    },
+    /// Create a workflow artifact for a change.
+    Artifact {
+        #[arg(
+            value_name = "TYPE",
+            help = "Artifact type: proposal, design, tasks, spec"
+        )]
+        type_name: String,
+        #[arg(help = "Capability name (required for spec type)")]
+        capability: Option<String>,
+        #[arg(long, help = "Change name")]
+        change: Option<String>,
+        #[arg(long, help = "Read content from stdin instead of using empty template")]
+        stdin: bool,
+        #[arg(long, help = "Overwrite existing artifact")]
+        force: bool,
+        #[arg(long, help = "Output as JSON")]
         json: bool,
     },
 }
@@ -220,6 +276,17 @@ fn cmd_drift(
         print_human(&report, use_color);
     }
     Ok(report.exit_code())
+}
+
+fn cmd_analyze(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
+    let name = change::resolve(cfg, change_name)?;
+    let report = analyze::analyze(cfg, &name)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!("{}", analyze::format_human(&report));
+    }
+    Ok(0)
 }
 
 fn cmd_validate(
@@ -553,6 +620,129 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn cmd_status(
+    cfg: &Config,
+    change_name: Option<&str>,
+    schema_name: Option<&str>,
+    as_json: bool,
+) -> Result<i32> {
+    let report = schema::status(cfg, change_name, schema_name)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(0);
+    }
+
+    println!("Change: {}", report.change_name);
+    println!("Schema: {}", report.schema_name);
+    println!();
+    for artifact in &report.artifacts {
+        let marker = match artifact.status {
+            schema::ArtifactState::Done => "✓",
+            schema::ArtifactState::Ready => "○",
+            schema::ArtifactState::Blocked => "✗",
+        };
+        println!("  {marker} {} ({})", artifact.id, artifact.output_path);
+        if let Some(missing_deps) = &artifact.missing_deps {
+            println!("    blocked by: {}", missing_deps.join(", "));
+        }
+    }
+    println!();
+    if report.is_complete {
+        println!("  ✓ All artifacts complete");
+    }
+    Ok(0)
+}
+
+fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> String {
+    let mut output = format!(
+        "Artifact: {}\nOutput: {}\nDescription: {}\n\nInstruction:\n{}\n\n",
+        report.artifact_id, report.output_path, report.description, report.instruction
+    );
+    if !report.dependencies.is_empty() {
+        output.push_str("Dependencies:\n");
+        for dependency in &report.dependencies {
+            let glyph = if dependency.done { "✓" } else { "○" };
+            output.push_str(&format!(
+                "  {glyph} {} ({})\n",
+                dependency.id, dependency.path
+            ));
+        }
+        output.push('\n');
+    }
+    if !report.unlocks.is_empty() {
+        output.push_str("Unlocks:\n");
+        for artifact_id in &report.unlocks {
+            output.push_str(&format!("  - {artifact_id}\n"));
+        }
+        output.push('\n');
+    }
+    output.push_str("Template:\n");
+    output.push_str(report.template);
+    output.push('\n');
+    output
+}
+
+fn apply_instructions_human(report: &instructions::ApplyInstructions) -> String {
+    let mut output = format!(
+        "Change: {}\nSchema: {}\nState: {}\nProgress: {}/{} complete\n\n",
+        report.change_name,
+        report.schema_name,
+        match report.state {
+            instructions::ApplyState::Blocked => "blocked",
+            instructions::ApplyState::AllDone => "all_done",
+            instructions::ApplyState::Ready => "ready",
+        },
+        report.progress.complete,
+        report.progress.total
+    );
+    if !report.missing_artifacts.is_empty() {
+        output.push_str("Missing artifacts:\n");
+        for artifact in &report.missing_artifacts {
+            output.push_str(&format!("  - {artifact}\n"));
+        }
+        output.push('\n');
+    } else if !report.tasks.is_empty() {
+        output.push_str("Tasks:\n");
+        for task in &report.tasks {
+            let glyph = if task.done { "✓" } else { "○" };
+            output.push_str(&format!("  {glyph} {}\n", task.description));
+        }
+        output.push('\n');
+    }
+    // The oracle's zero-checkbox human layout was not probed. Keep both
+    // optional sections absent when neither parsed tasks nor artifacts exist.
+    output.push_str("Instruction:\n");
+    output.push_str(report.instruction);
+    output.push('\n');
+    output
+}
+
+fn cmd_instructions(
+    cfg: &Config,
+    artifact_id: Option<&str>,
+    change_name: Option<&str>,
+    schema_name: Option<&str>,
+    as_json: bool,
+) -> Result<i32> {
+    let report = instructions::get(cfg, change_name, schema_name, artifact_id)?;
+    let output = if as_json {
+        format!("{}\n", serde_json::to_string_pretty(&report)?)
+    } else {
+        match &report {
+            instructions::InstructionOutput::Artifact(report) => {
+                artifact_instructions_human(report)
+            }
+            instructions::InstructionOutput::Apply(report) => apply_instructions_human(report),
+        }
+    };
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    stdout
+        .write_all(output.as_bytes())
+        .context("writing instructions output")?;
+    Ok(0)
+}
+
 /// `--json` shape for `new change`: pinned here (rather than inlined in
 /// `cmd_new_change`) so a rename/typo doesn't ship silently, matching
 /// `show_json`/`park_status_json`. Renders `dir` via `to_string_lossy`
@@ -578,6 +768,55 @@ fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
                 "note: couldn't determine a git baseline for this change; \
                  task-blocked detection will be skipped for it."
             );
+        }
+    }
+    Ok(0)
+}
+
+fn new_artifact_json(outcome: &artifact::NewArtifactOutcome) -> serde_json::Value {
+    json!({
+        "artifact": outcome.artifact,
+        "change": outcome.change,
+        "path": outcome.path.to_string_lossy(),
+        "status": "created",
+        "validated": outcome.validated,
+        "warnings": outcome.warnings,
+    })
+}
+
+fn cmd_new_artifact(
+    cfg: &Config,
+    type_name: &str,
+    capability: Option<&str>,
+    change_name: Option<&str>,
+    from_stdin: bool,
+    force: bool,
+    as_json: bool,
+) -> Result<i32> {
+    let stdin_content = if from_stdin {
+        let mut content = String::new();
+        std::io::stdin()
+            .read_to_string(&mut content)
+            .context("reading stdin")?;
+        Some(content)
+    } else {
+        None
+    };
+    let outcome = artifact::create(
+        cfg,
+        type_name,
+        capability,
+        change_name,
+        stdin_content.as_deref(),
+        force,
+    )?;
+
+    if as_json {
+        println!("{}", serde_json::to_string(&new_artifact_json(&outcome))?);
+    } else {
+        println!("✓ Created {}: {}", outcome.artifact, outcome.path.display());
+        if outcome.validated {
+            println!("  Content validated ✓");
         }
     }
     Ok(0)
@@ -682,6 +921,40 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
         }
+        Command::Analyze { change, json } => {
+            let cfg = require_initialized(&root)?;
+            cmd_analyze(&cfg, change.as_deref(), *json)
+        }
+        Command::Status {
+            change,
+            schema,
+            json,
+        } => {
+            let cfg = require_initialized(&root)?;
+            cmd_status(&cfg, change.as_deref(), schema.as_deref(), *json)
+        }
+        Command::Instructions {
+            artifact,
+            change,
+            schema,
+            json,
+            skill,
+        } => {
+            // Skill bodies are proprietary oracle resources and are not
+            // embedded in openspectra. This check intentionally precedes all
+            // project/change/schema work so --skill always wins.
+            if let Some(skill) = skill {
+                anyhow::bail!("Unknown skill: {skill}");
+            }
+            let cfg = require_initialized(&root)?;
+            cmd_instructions(
+                &cfg,
+                artifact.as_deref(),
+                change.as_deref(),
+                schema.as_deref(),
+                *json,
+            )
+        }
         Command::Validate {
             change,
             changes,
@@ -721,6 +994,25 @@ fn run() -> Result<i32> {
             NewTarget::Change { name, json } => {
                 let cfg = require_initialized(&root)?;
                 cmd_new_change(&cfg, name, *json)
+            }
+            NewTarget::Artifact {
+                type_name,
+                capability,
+                change,
+                stdin,
+                force,
+                json,
+            } => {
+                let cfg = require_initialized(&root)?;
+                cmd_new_artifact(
+                    &cfg,
+                    type_name,
+                    capability.as_deref(),
+                    change.as_deref(),
+                    *stdin,
+                    *force,
+                    *json,
+                )
             }
         },
         Command::Task { target } => match target {

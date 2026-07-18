@@ -1,10 +1,11 @@
 //! Change discovery and metadata.
 //!
-//! On disk a change is a directory `<spec_dir>/changes/<name>/` containing
-//! `proposal.md`, `design.md`, `tasks.md`, `specs/<cap>/spec.md`, and a
-//! `.openspec.yaml` metadata file. Spectra tracks per-change state under
-//! `.spectra/`: `.spectra/changes/<name>.started` records the baseline git SHA
-//! and `.spectra/changes/<name>.parked` marks a parked change.
+//! On disk a change is a directory `<spec_dir>/changes/<name>/` with an
+//! `.openspec.yaml` metadata file and, as its workflow advances, artifact files
+//! such as `proposal.md`, `design.md`, `tasks.md`, and `specs/<cap>/spec.md`.
+//! Spectra tracks per-change state under `.spectra/`:
+//! `.spectra/changes/<name>.started` records the baseline git SHA and
+//! `.spectra/changes/<name>.parked` marks a parked change.
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
@@ -25,8 +26,8 @@ static ARCHIVED_PREFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\d{4}-\d{2}-
 /// Parsed `<change>/.openspec.yaml`. `Serialize` skips `None` fields (rather
 /// than emitting `key: null`) so a round-trip through `archive::
 /// stamp_archived_metadata` reproduces the sparse-field shape the reference
-/// CLI itself writes (e.g. a plain `new change` scaffold has no
-/// `created_by`/`archived_by`/`archived_at` lines at all).
+/// CLI itself writes (e.g. a plain `new change` omits only
+/// `created_with`/`archived_by`/`archived_at`).
 ///
 /// `extra` catches any YAML key this struct doesn't otherwise model (a field
 /// from a newer reference-CLI version, or one a human added by hand) via
@@ -231,16 +232,17 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
     })
 }
 
-/// Scaffold a new change directory: `.openspec.yaml`, `proposal.md`,
-/// `design.md`, `tasks.md`, and (best-effort) a `.spectra/changes/<name>.started`
-/// baseline SHA. Errors if `name` isn't kebab-case, is archived-prefixed, is
-/// the reserved `archive` name, or the change already exists.
+/// Create a new change directory with `.openspec.yaml` and, best-effort, a
+/// `.spectra/changes/<name>.started` baseline SHA. Artifact files are created
+/// later by the workflow. Errors if `name` isn't kebab-case, is
+/// archived-prefixed, is the reserved `archive` name, or the change already
+/// exists.
 ///
 /// Note: not safe against a concurrent `create` for the same name racing
 /// between the existence check and the writes below (the same TOCTOU class
 /// as `park`'s concurrent-deletion race, just triggered by concurrent
 /// creation instead). On any failure inside `create_inner`, the partial
-/// scaffold directory is removed so a retry doesn't get a misleading
+/// change directory is removed so a retry doesn't get a misleading
 /// "already exists" error; cleanup failure itself is logged, not silenced.
 pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {
@@ -260,7 +262,7 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     // change doesn't silently inherit stale state -- see
     // `clear_stale_sidecar_state`'s own doc comment for exactly what that
     // covers. Best-effort: a failure here is unrelated to whether the
-    // scaffold itself can succeed, so it's logged rather than blocking
+    // change creation itself can succeed, so it's logged rather than blocking
     // `create`.
     if let Err(e) = clear_stale_sidecar_state(cfg, name) {
         eprintln!("warning: failed to clear stale sidecar state for '{name}': {e}");
@@ -278,7 +280,7 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
             }
             // create_inner writes `.started` last, so a failure there can
             // leave a (possibly partial) baseline file with no change
-            // directory behind it; clear it along with the scaffold dir.
+            // directory behind it; clear it along with the change dir.
             if let Err(cleanup_err) = clear_stale_sidecar_state(cfg, name) {
                 eprintln!(
                     "warning: failed to remove partial sidecar state for '{name}' after create error: {cleanup_err}"
@@ -293,29 +295,11 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
 
     let today = chrono::Local::now().date_naive();
-    let files: [(&str, String); 4] = [
-        (
-            ".openspec.yaml",
-            format!("schema: spec-driven\ncreated: {today}\ncreated_with: spectra-cli\n"),
-        ),
-        (
-            "proposal.md",
-            format!("# {name}\n\ntodo: describe what this change does and why.\n"),
-        ),
-        // Lowercase-only: `drift`'s Symbol-anchor extraction (anchors.rs)
-        // flags any capitalized word not found elsewhere in the repo as a
-        // broken reference, so placeholder prose here must avoid it or a
-        // freshly-created change scores as heavily drifted immediately.
-        (
-            "design.md",
-            "# design\n\ntodo: describe the technical design here.\n".to_string(),
-        ),
-        ("tasks.md", "# tasks\n\n- [ ] todo\n".to_string()),
-    ];
-    for (filename, content) in files {
-        let path = dir.join(filename);
-        std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
-    }
+    let created_by = crate::git::change_creator_identity(&cfg.root);
+    let metadata_path = dir.join(".openspec.yaml");
+    let metadata = format!("schema: spec-driven\ncreated: {today}\ncreated_by: {created_by}\n");
+    std::fs::write(&metadata_path, metadata)
+        .with_context(|| format!("writing {}", metadata_path.display()))?;
 
     // Best-effort: a non-git root (or a repo with no commits yet) just means
     // `drift`'s Tasks dimension has no baseline to diff blocked-task detection
@@ -684,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn create_scaffolds_all_expected_files() {
+    fn create_writes_only_oracle_metadata() {
         let tmp = TempDir::new();
         let cfg = Config {
             root: tmp.to_path_buf(),
@@ -692,15 +676,25 @@ mod tests {
             locale: None,
         };
 
+        let before_create = chrono::Local::now().date_naive().to_string();
         let ch = create(&cfg, "add-search-filter").unwrap();
+        let after_create = chrono::Local::now().date_naive().to_string();
+        let created = ch.metadata.created.as_deref().unwrap();
+        let created_by = ch.metadata.created_by.as_deref().unwrap();
 
         assert_eq!(ch.name, "add-search-filter");
         assert!(ch.dir.join(".openspec.yaml").is_file());
-        assert!(ch.proposal_md().is_file());
-        assert!(ch.design_md().is_file());
-        assert!(ch.tasks_md().is_file());
+        assert!(!ch.proposal_md().exists());
+        assert!(!ch.design_md().exists());
+        assert!(!ch.tasks_md().exists());
+        assert_eq!(
+            std::fs::read_to_string(ch.dir.join(".openspec.yaml")).unwrap(),
+            format!("schema: spec-driven\ncreated: {created}\ncreated_by: {created_by}\n")
+        );
         assert_eq!(ch.metadata.schema.as_deref(), Some("spec-driven"));
-        assert!(ch.metadata.created.is_some());
+        assert!(created == before_create || created == after_create);
+        assert!(!created_by.is_empty());
+        assert_eq!(ch.metadata.created_with, None);
         assert_eq!(list_active(&cfg), vec!["add-search-filter".to_string()]);
         assert_eq!(ch.started_sha, None);
     }
@@ -807,7 +801,7 @@ mod tests {
         run(&["add", "README.md"]);
         run(&["commit", "-q", "-m", "init"]);
         // `.spectra` as a plain file (not a directory) makes the `.started`
-        // baseline write fail after the 4 scaffold files already succeeded,
+        // baseline write fail after the metadata write already succeeded,
         // forcing create() down the partial-failure cleanup path.
         write(&tmp.join(".spectra"), "");
 
@@ -815,28 +809,6 @@ mod tests {
         assert!(
             !dir.exists(),
             "failed create() must not leave a partial change directory behind"
-        );
-    }
-
-    #[test]
-    fn create_scaffolds_design_md_with_no_broken_symbol_anchors() {
-        let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-        };
-
-        let ch = create(&cfg, "add-search-filter").unwrap();
-
-        let design = std::fs::read_to_string(ch.design_md()).unwrap();
-        let symbol_count = crate::anchors::extract(&design)
-            .iter()
-            .filter(|a| a.kind == crate::anchors::AnchorKind::Symbol)
-            .count();
-        assert_eq!(
-            symbol_count, 0,
-            "scaffolded design.md must not contain capitalized Symbol anchors"
         );
     }
 
@@ -943,7 +915,6 @@ mod tests {
         let tmp = TempDir::new();
         let cfg = git_repo_cfg(&tmp);
         create(&cfg, "add-search-filter").unwrap();
-        std::fs::remove_file(cfg.changes_dir().join("add-search-filter").join("tasks.md")).unwrap();
 
         let err = mark_task_done(&cfg, "add-search-filter", 1).unwrap_err();
         assert_eq!(
