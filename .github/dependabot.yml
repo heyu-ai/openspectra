@@ -1,0 +1,69 @@
+# Dependabot configuration.
+#
+# Two ecosystems are tracked:
+#   * cargo          -- the Rust crate dependencies for the whole workspace
+#                       (root Cargo.toml + committed Cargo.lock).
+#   * github-actions -- the actions pinned in .github/workflows/*.yml
+#                       (actions/checkout, dtolnay/rust-toolchain,
+#                       Swatinem/rust-cache, ...). Kept fresh so we pick up
+#                       supply-chain / security fixes in the CI toolchain too.
+#
+# Grouping rationale (learned the hard way on other repos):
+#   * CVE-driven *security* updates bypass version-update groups and would
+#     otherwise open one PR per affected package. Each ecosystem therefore has
+#     a dedicated `applies-to: security-updates` group with `patterns: ["*"]`
+#     that collapses them into a single PR.
+#   * Routine minor/patch version bumps are batched to cut PR noise. Major
+#     bumps are deliberately left OUT of the version-update group so each lands
+#     as its own PR -- majors are the ones that tend to be breaking and deserve
+#     isolated review.
+#
+# CI runs `cargo build --release --locked`, so Cargo.lock is the authoritative
+# lockfile; the cargo updater bumps Cargo.toml and Cargo.lock together, keeping
+# `--locked` builds green.
+version: 2
+updates:
+  # --- Rust crate dependencies -------------------------------------------
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      cargo-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # --- GitHub Actions used by the CI / release workflows -----------------
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      actions-version:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        # Same policy as cargo: batch minor/patch, leave majors ungrouped so a
+        # potentially breaking action major (e.g. upload-artifact v3 -> v4)
+        # lands as its own reviewable PR.
+        update-types:
+          - minor
+          - patch
