@@ -1,0 +1,113 @@
+name: Upstream Watch
+
+# Weekly digest of upstream changes worth considering for openspectra:
+#   * kaochenlong/spectra-app  — the closed-source ORACLE we reverse-engineer.
+#   * Fission-AI/OpenSpec      — the OpenSpec format authority validate/archive track.
+# Fetches new releases + recently-closed issues via `gh` (read-only on the
+# upstreams) and, only when something changed, opens a triage digest issue in
+# this repo. No secrets beyond the default GITHUB_TOKEN; the "what to adopt"
+# judgement is left to a human (or Claude on demand) reading the digest.
+
+on:
+  schedule:
+    # Mondays 08:00 UTC. Window is 8 days (1-day overlap so nothing slips
+    # between weekly runs).
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Look-back window in days"
+        required: false
+        default: "8"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      ORACLE_REPO: kaochenlong/spectra-app
+      OPENSPEC_REPO: Fission-AI/OpenSpec
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute look-back window
+        id: window
+        env:
+          # Untrusted workflow_dispatch input: keep it out of the script source
+          # (never inline ${{ ... }} into run:) and validate before use.
+          DAYS_INPUT: ${{ github.event.inputs.days || '8' }}
+        run: |
+          set -euo pipefail
+          DAYS="$DAYS_INPUT"
+          case "$DAYS" in
+            ''|*[!0-9]*)
+              echo "[FAIL] days input must be a positive integer, got '$DAYS'" >&2
+              exit 1
+              ;;
+          esac
+          SINCE="$(date -u -d "${DAYS} days ago" +%Y-%m-%d)"
+          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
+          echo "Look-back window starts $SINCE (${DAYS} days)."
+
+      - name: Fetch upstream releases and closed issues
+        env:
+          SINCE: ${{ steps.window.outputs.since }}
+        run: |
+          set -euo pipefail
+
+          # Releases (via the REST API so we get html_url), filtered to the window.
+          gh api "repos/${ORACLE_REPO}/releases?per_page=30" \
+            --jq "[.[] | select(.published_at >= \"${SINCE}\") | {tagName: .tag_name, name: .name, publishedAt: .published_at, url: .html_url}]" \
+            > oracle_rel.json
+          gh api "repos/${OPENSPEC_REPO}/releases?per_page=30" \
+            --jq "[.[] | select(.published_at >= \"${SINCE}\") | {tagName: .tag_name, name: .name, publishedAt: .published_at, url: .html_url}]" \
+            > openspec_rel.json
+
+          # Closed issues in the window (server-side date filter via search).
+          gh issue list -R "${ORACLE_REPO}" --state closed \
+            --search "closed:>=${SINCE}" --limit 60 \
+            --json number,title,url,closedAt > oracle_iss.json
+          gh issue list -R "${OPENSPEC_REPO}" --state closed \
+            --search "closed:>=${SINCE}" --limit 100 \
+            --json number,title,url,closedAt > openspec_iss.json
+
+          echo "Fetched:"
+          for f in oracle_rel oracle_iss openspec_rel openspec_iss; do
+            echo "  ${f}.json -> $(python3 -c "import json,sys;print(len(json.load(open('${f}.json'))))" ) item(s)"
+          done
+
+      - name: Build digest
+        id: digest
+        env:
+          SINCE: ${{ steps.window.outputs.since }}
+        run: |
+          set -euo pipefail
+          OUT="$(python3 scripts/upstream-watch.py \
+            --since "${SINCE}" \
+            --oracle-releases oracle_rel.json --oracle-issues oracle_iss.json \
+            --openspec-releases openspec_rel.json --openspec-issues openspec_iss.json \
+            --out digest.md)"
+          echo "$OUT"
+          COUNT="${OUT#ITEM_COUNT=}"
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
+      - name: Open digest issue
+        if: steps.digest.outputs.count != '0'
+        env:
+          SINCE: ${{ steps.window.outputs.since }}
+          COUNT: ${{ steps.digest.outputs.count }}
+        run: |
+          set -euo pipefail
+          gh issue create \
+            --title "upstream-watch: ${SINCE} (${COUNT} item(s))" \
+            --label enhancement \
+            --body-file digest.md
+          echo "Opened digest issue with ${COUNT} item(s)."
+
+      - name: No changes
+        if: steps.digest.outputs.count == '0'
+        run: echo "No relevant upstream changes in the window; no issue opened."
