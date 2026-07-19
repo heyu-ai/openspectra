@@ -154,7 +154,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image (load locally for smoke test)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           # amd64-only by design: aarch64 Linux users should use the aarch64-unknown-linux-musl release tarball.
