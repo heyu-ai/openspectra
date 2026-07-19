@@ -61,3 +61,9 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+        # Same policy as cargo: batch minor/patch, leave majors ungrouped so a
+        # potentially breaking action major (e.g. upload-artifact v3 -> v4)
+        # lands as its own reviewable PR.
+        update-types:
+          - minor
+          - patch
