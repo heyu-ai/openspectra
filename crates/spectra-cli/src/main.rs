@@ -1153,6 +1153,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn schemas_header_is_bold_only_when_color_is_enabled() {
+        // Pins the header's SGR code (bold \x1b[1m, matching the oracle) that
+        // `cmd_schemas` renders but the golden-backed integration tests can't
+        // reach: they force --no-color / pipe stdout, so `use_color` is always
+        // false there and a `"1"`->`"2"` mutation would otherwise survive.
+        assert_eq!(
+            colorize("Available schemas:", "1", true),
+            "\x1b[1mAvailable schemas:\x1b[0m"
+        );
+        assert_eq!(
+            colorize("Available schemas:", "1", false),
+            "Available schemas:"
+        );
+    }
+
     /// RAII guard for a per-test scratch directory: removes it on drop even
     /// when the test panics partway through (an assertion failure must not
     /// leak the directory).

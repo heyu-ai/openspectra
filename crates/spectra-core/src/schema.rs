@@ -751,6 +751,21 @@ mod tests {
     }
 
     #[test]
+    fn schema_description_ends_with_the_artifact_order_flow() {
+        // The permutation test above ties SCHEMA_ARTIFACT_ORDER to ARTIFACTS,
+        // but the human-readable SCHEMA_DESCRIPTION also spells out that flow
+        // (`... - proposal → specs → design → tasks`). Without this, a future
+        // artifact could update SCHEMA_ARTIFACT_ORDER + the JSON golden while
+        // leaving the description (and text golden) silently stale. Pin that
+        // the description's trailing flow equals the ordered artifact list.
+        let flow = SCHEMA_ARTIFACT_ORDER.join(" → ");
+        assert!(
+            SCHEMA_DESCRIPTION.ends_with(&flow),
+            "SCHEMA_DESCRIPTION {SCHEMA_DESCRIPTION:?} must end with the artifact flow {flow:?}"
+        );
+    }
+
+    #[test]
     fn empty_change_has_only_proposal_ready() {
         let change_dir = TempDir::new("empty");
 

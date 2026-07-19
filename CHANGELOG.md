@@ -10,6 +10,14 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- **`spectra schemas [--json]`** (#56) lists the built-in workflow schema
+  registry (only `spec-driven`). An sdd drop-in requirement — the sdd plugin
+  shells out to `spectra schemas`. Text, `--json`, and colored-TTY output are
+  pinned byte-for-byte against the v2.3.1 oracle
+  (`docs/reverse-engineering/schemas.md` + `golden/schemas-2.3.1.{json,txt}`).
+
 ### Fixed
 
 Four `analyze`/`instructions` fidelity gaps found by a mob review of the 0.3.0
