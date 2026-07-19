@@ -639,16 +639,28 @@ fn schema_line(schema: &schema::SchemaListing, use_color: bool) -> String {
     )
 }
 
+/// Render the full human `schemas` output (bold header + one dimmed line per
+/// schema), newline-terminated per line. Kept as a helper — rather than
+/// inlining the `println!`s in `cmd_schemas` — so the actual header/source SGR
+/// *wiring* (bold `\x1b[1m` header, dim `\x1b[2m` source) is byte-for-byte
+/// testable with color enabled; the golden integration tests only reach the
+/// `--no-color` path, so a `"1"`->`"2"` header regression would otherwise slip.
+fn render_schemas_human(schemas: &[schema::SchemaListing], use_color: bool) -> String {
+    // The oracle bolds the header (\x1b[1m) and dims each (source) tag (\x1b[2m).
+    let mut out = format!("{}\n", colorize("Available schemas:", "1", use_color));
+    for schema in schemas {
+        out.push_str(&schema_line(schema, use_color));
+        out.push('\n');
+    }
+    out
+}
+
 fn cmd_schemas(as_json: bool, use_color: bool) -> Result<i32> {
     let schemas = schema::schemas();
     if as_json {
         println!("{}", serde_json::to_string_pretty(&schemas)?);
     } else {
-        // The oracle bolds the header (\x1b[1m) and dims each (source) tag.
-        println!("{}", colorize("Available schemas:", "1", use_color));
-        for schema in &schemas {
-            println!("{}", schema_line(schema, use_color));
-        }
+        print!("{}", render_schemas_human(&schemas, use_color));
     }
     Ok(0)
 }
@@ -1154,18 +1166,23 @@ mod tests {
     }
 
     #[test]
-    fn schemas_header_is_bold_only_when_color_is_enabled() {
-        // Pins the header's SGR code (bold \x1b[1m, matching the oracle) that
-        // `cmd_schemas` renders but the golden-backed integration tests can't
-        // reach: they force --no-color / pipe stdout, so `use_color` is always
-        // false there and a `"1"`->`"2"` mutation would otherwise survive.
+    fn render_schemas_human_pins_the_full_colored_wiring() {
+        // Exercises the real `cmd_schemas` rendering path (header + lines), not
+        // just the `colorize` primitive, so a mutation of the *wiring* — e.g.
+        // the header SGR `"1"`->`"2"`, or dropping the dim on the source tag —
+        // fails here. The golden integration tests only reach the --no-color
+        // path (piped stdout), leaving this the sole guard on the colored path.
+        let schemas = schema::schemas();
+
+        // --no-color output must equal the two oracle-golden text lines.
         assert_eq!(
-            colorize("Available schemas:", "1", true),
-            "\x1b[1mAvailable schemas:\x1b[0m"
+            render_schemas_human(&schemas, false),
+            "Available schemas:\n  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks\n"
         );
+        // Colored output: bold \x1b[1m header, dim \x1b[2m source tag.
         assert_eq!(
-            colorize("Available schemas:", "1", false),
-            "Available schemas:"
+            render_schemas_human(&schemas, true),
+            "\x1b[1mAvailable schemas:\x1b[0m\n  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → design → tasks\n"
         );
     }
 
