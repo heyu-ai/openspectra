@@ -23,6 +23,21 @@ use std::path::Path;
 
 static CHECKBOX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*-\s*\[( |x|X)\]\s*(.+)$").unwrap());
 static BACKTICK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"`([^`]+)`").unwrap());
+
+/// Whether a line is a real task: a checkbox whose description is non-empty
+/// after trimming. `- [ ]` and `- [ ] ` (only trailing whitespace) are NOT
+/// tasks — the oracle drops them from numbering, progress, and `task done`
+/// targeting alike (`CHECKBOX_RE`'s `\s*(.+)` otherwise backtracks and
+/// captures a lone trailing space). Every call site that counts, targets, or
+/// flips a checkbox routes through here so their notion of "a task" can't
+/// drift — a `task done <id>` that renumbered differently from the apply-mode
+/// task list (`instructions.rs::parse_apply_tasks`) would silently mark the
+/// wrong line.
+fn is_task_line(line: &str) -> bool {
+    CHECKBOX_RE
+        .captures(line)
+        .is_some_and(|c| !c[2].trim().is_empty())
+}
 /// A backtick span looks like a file path if it contains a `/` and a file
 /// extension; this filters out commands and prose captured in backticks.
 static PATHLIKE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\w./-]+/[\w./-]+\.\w+$").unwrap());
@@ -50,6 +65,9 @@ pub fn parse(md: &str) -> Vec<Task> {
             let c = CHECKBOX_RE.captures(line)?;
             let done = &c[1] != " ";
             let description = c[2].trim().to_string();
+            if description.is_empty() {
+                return None;
+            }
             let files = BACKTICK_RE
                 .captures_iter(&description)
                 .map(|m| m[1].to_string())
@@ -81,7 +99,7 @@ pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     let checkbox_line_indices: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| CHECKBOX_RE.is_match(line))
+        .filter(|(_, line)| is_task_line(line))
         .map(|(i, _)| i)
         .collect();
     let total = checkbox_line_indices.len();
@@ -119,7 +137,7 @@ pub fn mark_all_done(md: &str) -> String {
     let mut new_md: String = md
         .lines()
         .map(|line| match CHECKBOX_RE.captures(line) {
-            Some(caps) if &caps[1] == " " => {
+            Some(caps) if &caps[1] == " " && !caps[2].trim().is_empty() => {
                 let state = caps
                     .get(1)
                     .expect("group 1 always captures on a CHECKBOX_RE match");
@@ -185,6 +203,24 @@ mod tests {
         assert_eq!(tasks.len(), 3);
         assert_eq!(tasks.iter().filter(|t| t.done).count(), 2);
         assert_eq!(tasks[0].description, "1.1 pending");
+    }
+
+    #[test]
+    fn empty_description_checkboxes_are_not_tasks_across_parse_and_mark_done() {
+        // A `- [ ] ` line (only trailing whitespace after the marker) is not a
+        // task: the oracle drops it from numbering, so `parse` (progress,
+        // `instructions apply`) and `mark_done` (`task done <id>`) must agree,
+        // otherwise following an id from one into the other marks the wrong
+        // line. Probed against Spectra.app v2.3.1: `task done 2` on this input
+        // targets "second real task", not the blank line.
+        let md = "- [x] first task\n- [ ] \n- [ ] second real task\n";
+        let tasks = parse(md);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[1].description, "second real task");
+
+        let (new_md, desc) = mark_done(md, 2).unwrap();
+        assert_eq!(desc, "second real task");
+        assert_eq!(new_md, "- [x] first task\n- [ ] \n- [x] second real task\n");
     }
 
     #[test]

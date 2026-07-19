@@ -270,7 +270,12 @@ fn slash_relative(base: &Path, path: &Path) -> Result<String> {
     Ok(parts.join("/"))
 }
 
-fn collect_markdown_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+/// Collect the delta spec files under a change's `specs/` tree — recursively,
+/// to support nested-capability layouts (`specs/<Epic>/<Feature>/spec.md`), but
+/// only files named exactly `spec.md`. The oracle scans that literal filename
+/// per capability directory (probed against Spectra.app v2.3.1); a sidecar such
+/// as `notes.md` is ignored, so it must not produce phantom findings here.
+fn collect_spec_md_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     let Some(entries) = crate::fsutil::read_dir_optional(dir)? else {
         return Ok(());
     };
@@ -281,8 +286,8 @@ fn collect_markdown_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
             .file_type()
             .with_context(|| format!("reading {}", path.display()))?;
         if file_type.is_dir() {
-            collect_markdown_paths(&path, paths)?;
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            collect_spec_md_paths(&path, paths)?;
+        } else if file_type.is_file() && path.file_name().is_some_and(|name| name == "spec.md") {
             paths.push(path);
         }
     }
@@ -292,7 +297,7 @@ fn collect_markdown_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
 fn collect_spec_files(change_dir: &Path) -> Result<Vec<SpecFile>> {
     let specs_dir = change_dir.join("specs");
     let mut paths = Vec::new();
-    collect_markdown_paths(&specs_dir, &mut paths)?;
+    collect_spec_md_paths(&specs_dir, &mut paths)?;
 
     let mut keyed_paths = Vec::with_capacity(paths.len());
     for path in paths {
@@ -436,12 +441,20 @@ fn structure_issues(content: &str) -> Vec<StructureIssue> {
 
 fn weak_language_pattern(line: &str) -> Option<&'static str> {
     let lowercase = line.to_lowercase();
+    // The full nine-word set the oracle flags (probed against Spectra.app
+    // v2.3.1), in priority order — the first needle that appears on the line
+    // wins, and its canonical spelling is reported. The pinned SPECS_INSTRUCTION
+    // text promises all nine; an earlier cut listed only five.
     [
         ("should", "should"),
         ("may", "may"),
         ("might", "might"),
+        ("consider", "consider"),
+        ("possibly", "possibly"),
         ("tbd", "TBD"),
+        ("todo", "TODO"),
         ("???", "???"),
+        ("tktk", "TKTK"),
     ]
     .into_iter()
     .find_map(|(needle, canonical)| lowercase.contains(needle).then_some(canonical))
@@ -971,6 +984,26 @@ mod tests {
         assert_eq!(weak_language_pattern("MAYBE this works"), Some("may"));
         assert_eq!(weak_language_pattern("status tbd"), Some("TBD"));
         assert_eq!(weak_language_pattern("fully specified"), None);
+
+        // The four words beyond the original five-word cut, each flagged by the
+        // oracle (probed v2.3.1) with its canonical spelling.
+        assert_eq!(
+            weak_language_pattern("we could consider this"),
+            Some("consider")
+        );
+        assert_eq!(weak_language_pattern("POSSIBLY later"), Some("possibly"));
+        assert_eq!(weak_language_pattern("todo: wire it up"), Some("TODO"));
+        assert_eq!(weak_language_pattern("placeholder TKTK"), Some("TKTK"));
+        // Priority follows list order across the new entries.
+        assert_eq!(
+            weak_language_pattern("consider possibly doing a todo"),
+            Some("consider")
+        );
+        assert_eq!(
+            weak_language_pattern("a possibly-there todo"),
+            Some("possibly")
+        );
+        assert_eq!(weak_language_pattern("todo then tktk"), Some("TODO"));
     }
 
     #[test]

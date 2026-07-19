@@ -8,6 +8,36 @@ OpenSpectra reimplements the closed-source `spectra` CLI, deliberate
 divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
+## [Unreleased]
+
+### Fixed
+
+Four `analyze`/`instructions` fidelity gaps found by a mob review of the 0.3.0
+work but not landed with it, each re-pinned against the v2.3.1 oracle:
+
+- **`analyze` now flags all nine weak-language words**, not five. `consider`,
+  `possibly`, `TODO`, and `TKTK` (alongside `should`/`may`/`might`/`TBD`/`???`)
+  are flagged as `ambWeakLanguage`, matching the oracle and the word list the
+  `specs` instruction text already advertised.
+- **`analyze` scans only the literal `spec.md` in each capability directory.**
+  It previously walked every `*.md` under `specs/`, so a sidecar like
+  `notes.md` produced phantom findings the oracle never emits.
+- **An empty-description checkbox (`- [ ] ` with only trailing whitespace) is
+  no longer counted as a task.** `instructions apply` dropped it from its task
+  list but `tasks.md` parsing (`spectra tasks`, `task done <id>`) still counted
+  it, so an id taken from `instructions apply` could silently mark the wrong
+  line done. All checkbox call sites now share one predicate and drop the line,
+  matching the oracle.
+
+### Security
+
+- Added a regression test pinning that `new artifact --force` cannot overwrite
+  a file outside the change directory through a pre-planted symlink at the
+  artifact path. The 0.3.0 atomic temp-file + `rename` install already replaces
+  the symlink entry rather than following it (unlike the oracle, which follows
+  the link); the test locks that guarantee against a future change to the
+  write path.
+
 ## [0.3.0] - 2026-07-18
 
 ### Added

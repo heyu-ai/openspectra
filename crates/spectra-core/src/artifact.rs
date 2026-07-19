@@ -369,6 +369,45 @@ mod tests {
         assert_eq!(tmp_residue(&change_dir), Vec::<String>::new());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir() {
+        // Security: a change dir is untrusted input. If `proposal.md` is a
+        // symlink pointing outside the tree, `--force` must not overwrite the
+        // link target. The oracle follows the link (a shared vulnerability);
+        // the temp-file + atomic-`rename` install replaces the symlink entry
+        // itself instead, so the target is untouched. Pinned here because a
+        // future change to the write path (e.g. back to a direct
+        // `fs::write(path, ...)`) would silently reintroduce the escape.
+        let tmp = TempDir::new("symlink-escape");
+        let cfg = config(&tmp);
+        let change_dir = add_change(&cfg, "demo-feature");
+
+        let outside = tmp.join("outside-secret.txt");
+        std::fs::write(&outside, "PRECIOUS").unwrap();
+        std::os::unix::fs::symlink(&outside, change_dir.join("proposal.md")).unwrap();
+
+        create(
+            &cfg,
+            "proposal",
+            None,
+            Some("demo-feature"),
+            Some("## Why replacement"),
+            true,
+        )
+        .unwrap();
+
+        // The link target is untouched, and proposal.md is now a regular file
+        // holding the new content (the symlink entry was replaced, not followed).
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+        let meta = std::fs::symlink_metadata(change_dir.join("proposal.md")).unwrap();
+        assert!(meta.file_type().is_file());
+        assert_eq!(
+            std::fs::read_to_string(change_dir.join("proposal.md")).unwrap(),
+            "## Why replacement"
+        );
+    }
+
     #[test]
     fn artifact_types_map_onto_schema_artifacts() {
         // Locks the CLI-type <-> schema-DAG mapping both ways: every
