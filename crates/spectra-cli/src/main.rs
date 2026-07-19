@@ -1,6 +1,6 @@
-//! OpenSpectra CLI: `init`, `drift`, `analyze`, `status`, `instructions`, `validate`,
-//! `list`, `show`, `park`, `unpark`, `new change`, `new artifact`, `task done`,
-//! `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `status`,
+//! `instructions`, `validate`, `list`, `show`, `park`, `unpark`, `new change`,
+//! `new artifact`, `task done`, `archive`.
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -49,6 +49,12 @@ enum Command {
     Analyze {
         #[arg(help = "Change name (auto-detects if only one exists)")]
         change: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List available workflow schemas (only `spec-driven` is built in).
+    Schemas {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
@@ -620,6 +626,33 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// Render one schema's human line, e.g.
+/// `  spec-driven (package) — <description>`, dimming the `(source)` tag when
+/// color is enabled (matching the oracle's `\x1b[2m` faint styling). Pulled out
+/// so the color wiring is unit-testable without spawning the binary.
+fn schema_line(schema: &schema::SchemaListing, use_color: bool) -> String {
+    format!(
+        "  {} {} — {}",
+        schema.name,
+        colorize(&format!("({})", schema.source), "2", use_color),
+        schema.description
+    )
+}
+
+fn cmd_schemas(as_json: bool, use_color: bool) -> Result<i32> {
+    let schemas = schema::schemas();
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&schemas)?);
+    } else {
+        // The oracle bolds the header (\x1b[1m) and dims each (source) tag.
+        println!("{}", colorize("Available schemas:", "1", use_color));
+        for schema in &schemas {
+            println!("{}", schema_line(schema, use_color));
+        }
+    }
+    Ok(0)
+}
+
 fn cmd_status(
     cfg: &Config,
     change_name: Option<&str>,
@@ -925,6 +958,10 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_analyze(&cfg, change.as_deref(), *json)
         }
+        // `schemas` lists the built-in schema registry, which needs no
+        // project — the oracle lists it outside an initialized project too, so
+        // it deliberately skips `require_initialized` (like `init`).
+        Command::Schemas { json } => cmd_schemas(*json, use_color),
         Command::Status {
             change,
             schema,
@@ -1095,6 +1132,25 @@ mod tests {
         );
         assert!(conclusion_line("light", false).starts_with("Drift is minor"));
         assert!(!conclusion_line("light", false).contains('\x1b'));
+    }
+
+    #[test]
+    fn schema_line_dims_the_source_tag_only_when_color_is_enabled() {
+        let schema = schema::SchemaListing {
+            artifacts: &["proposal", "specs", "design", "tasks"],
+            description: "Default OpenSpec workflow - proposal → specs → design → tasks",
+            name: "spec-driven",
+            source: "package",
+        };
+
+        assert_eq!(
+            schema_line(&schema, false),
+            "  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks"
+        );
+        assert_eq!(
+            schema_line(&schema, true),
+            "  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → design → tasks"
+        );
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even
