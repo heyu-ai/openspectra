@@ -666,3 +666,41 @@ fn unknown_change_exits_one_with_status_compatible_error() {
         "Error: Change 'nope' not found.\n"
     );
 }
+
+#[test]
+fn analyze_ignores_markdown_sidecars_next_to_spec_md() {
+    // The oracle scans only the literal `spec.md` in each capability directory
+    // (probed v2.3.1); a sidecar such as `notes.md` — even one full of
+    // weak-language and unmatched requirements — must produce no findings.
+    let root = TempDir::new("sidecar");
+    init_project(&root);
+    add_change(&root, "demo");
+    write_change_file(
+        &root,
+        "demo",
+        "proposal.md",
+        &proposal_with_capability("alpha"),
+    );
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/spec.md",
+        &complete_delta("ADDED", "Alpha works", "alpha happy"),
+    );
+    write_change_file(&root, "demo", "tasks.md", "- [ ] implement alpha works\n");
+    // A sidecar that WOULD trip covMissingTask + ambWeakLanguage if scanned.
+    write_change_file(
+        &root,
+        "demo",
+        "specs/alpha/notes.md",
+        "## ADDED Requirements\n\n### Requirement: Sidecar Ghost\nThe system should possibly do TODO.\n",
+    );
+
+    let (text, report) = json_report(&root, "demo");
+    assert!(
+        !text.contains("notes.md"),
+        "no finding location should reference the sidecar: {text}"
+    );
+    assert_no_finding(&report, "covMissingTask");
+    assert_no_finding(&report, "ambWeakLanguage");
+}

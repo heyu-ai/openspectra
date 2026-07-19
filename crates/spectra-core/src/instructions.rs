@@ -177,6 +177,16 @@ fn parse_apply_tasks(markdown: &str) -> Vec<ApplyTask> {
         .filter_map(|line| {
             let captures = APPLY_TASK_RE.captures(line)?;
             let raw_description = captures[2].trim();
+            // A checkbox whose description is only trailing whitespace
+            // (`- [ ] `) is not a task: the regex's `(.+)` backtracks onto the
+            // lone space, but the oracle drops the line from numbering. Must
+            // stay in lockstep with `tasks::is_task_line` (which backs
+            // `task done <id>`), or an id from this list would target a
+            // different line there. Decided on the raw description, before the
+            // `[P]` strip, so both parsers judge task-ness identically.
+            if raw_description.is_empty() {
+                return None;
+            }
             let (parallel, description) = raw_description
                 .strip_prefix("[P]")
                 .map_or((false, raw_description), |description| {
@@ -563,6 +573,18 @@ mod tests {
             vec![false, true, true, false, false]
         );
         assert_eq!(tasks[4].id, "5");
+    }
+
+    #[test]
+    fn apply_parser_drops_checkboxes_with_only_a_trailing_space() {
+        // `- [ ] ` (empty description after trim) is not a task: the oracle
+        // drops it from numbering, so it must not be counted or shift ids here.
+        // Must stay in lockstep with `tasks::is_task_line` (`task done <id>`).
+        let tasks = parse_apply_tasks("- [x] first task\n- [ ] \n- [ ] second real task\n");
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(tasks[0].description, "first task");
+        assert_eq!(tasks[1].id, "2");
+        assert_eq!(tasks[1].description, "second real task");
     }
 
     #[test]
