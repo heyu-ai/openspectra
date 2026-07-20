@@ -10,6 +10,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-20
+
 ### Added
 
 - **`spectra schemas [--json]`** (#56) lists the built-in workflow schema
@@ -164,6 +166,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/howie/openspectra/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/howie/openspectra/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/howie/openspectra/releases/tag/v0.4.0
+[0.3.0]: https://github.com/howie/openspectra/releases/tag/v0.3.0
 [0.2.0]: https://github.com/howie/openspectra/releases/tag/v0.2.0
 [0.1.0]: https://github.com/howie/openspectra/releases/tag/v0.1.0
