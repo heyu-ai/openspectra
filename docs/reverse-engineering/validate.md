@@ -67,14 +67,34 @@ with a nested delta silently ignored.
    `at least one delta`.
 2. **Content quality (an `ERROR` only under `--strict`).** Each ADDED or
    MODIFIED requirement must:
-   - state a normative `SHALL` or `MUST` (matched word-boundaried and
-     case-sensitively — `MARSHALL` and a lowercase `shall` do not count), and
+   - state a normative `SHALL` or `MUST` **in its first text block** (matched
+     word-boundaried and case-sensitively — `MARSHALL` and a lowercase `shall`
+     do not count), and
    - carry at least one `#### Scenario:` block.
 
    Without `--strict` these findings are not reported, so a non-strict run
-   gates purely on structure. This mirrors OSS, where `--strict` is what turns
-   content-quality findings into failures; the downstream gate always passes
-   `--strict`, so it gets the full rule set.
+   gates purely on structure. The downstream gate always passes `--strict`, so
+   it gets the full rule set.
+
+   **"First text block" (issue #80).** The `SHALL`/`MUST` check reads only the
+   requirement's first text block, not the whole body — mirroring OSS's
+   `extractRequirementText`. Scanning the lines after the `### Requirement:`
+   heading, it skips blank lines and `**Key**: value` metadata lines (e.g.
+   `**Priority**: high`), stops at the first `#### Scenario:` header, and takes
+   the first remaining line as the normative text. A leading
+   `> **Goal**: <user story>` blockquote is **not** skipped — its first
+   character is `>`, not `**`, so it is not a metadata line and therefore *is*
+   the first text block. Consequences that match OSS:
+   - A requirement written *Goal-first* (a `> **Goal**:` blockquote, then the
+     `SHALL` sentence on a later line) **fails** — the normative keyword is not
+     in the block the parser treats as normative. Moving the `SHALL` paragraph
+     above the Goal blockquote fixes it.
+   - A `SHALL` that appears only inside a scenario (after the first `####`)
+     does **not** count; the normative clause must be in the first block.
+
+   This is a deliberate tightening over the earlier whole-body scan, which
+   passed a requirement with a `SHALL` *anywhere* in its body and so could not
+   distinguish Goal-first authoring from normative-first (issue #80).
 
 REMOVED and RENAMED requirements carry no body, so the content-quality rules
 do not apply to them — only the structural "counts as a delta" rule does.
@@ -119,6 +139,19 @@ per issue) is pinned by a unit test so it can't drift silently.
 
 ## Known divergences from the OSS validator
 
+- **Content-quality findings are `--strict`-only here; OSS emits them
+  unconditionally.** In OSS 1.5.0 (`src/core/validation/validator.ts`,
+  `v1.5.0`), the `ADDED/MODIFIED "<name>" must contain SHALL or MUST` finding is
+  an unconditional `ERROR` — `strictMode` there only controls whether *warnings*
+  also fail the run (`valid = strict ? errors===0 && warnings===0 : errors===0`),
+  not whether this rule fires. OpenSpectra keeps the normative-keyword and
+  missing-scenario checks gated behind `--strict` (its own design: a non-strict
+  run stays structure-only, so existing consumers are not broken by the
+  first-block tightening). This is safe for the motivating drop-in: the issue
+  #37 gate always passes `--strict`, so it sees the finding exactly as OSS does.
+  A consumer that runs `validate` *without* `--strict` and expects OSS-identical
+  errors would not see this one — un-gating it would be a separate, deliberate
+  behavior change.
 - The OSS validator has additional checks (e.g. cross-referencing modified
   requirements against the canonical spec) that are **not** reproduced here;
   `validate` implements the subset the issue #37 gate depends on plus the

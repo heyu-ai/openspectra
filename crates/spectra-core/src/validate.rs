@@ -15,10 +15,12 @@
 //!    MODIFIED`/`## REMOVED` section, or a `- TO:` entry under `## RENAMED`,
 //!    in any `specs/**/spec.md` beneath the change.
 //!  - Content quality (an ERROR only under `--strict`): each ADDED/MODIFIED
-//!    requirement must state a normative `SHALL`/`MUST` and carry at least one
-//!    `#### Scenario:` block. Without `--strict` these are not reported, so a
-//!    non-strict run gates purely on structure (matching OSS, where `--strict`
-//!    is what turns content-quality findings into hard failures).
+//!    requirement must state a normative `SHALL`/`MUST` **in its first text
+//!    block** (issue #80 — see `extract_requirement_text`) and carry at least
+//!    one `#### Scenario:` block. Without `--strict` these are not reported, so
+//!    a non-strict run gates purely on structure. (OSS fires the SHALL/MUST
+//!    finding unconditionally, not just under `--strict`; the strict gating
+//!    here is OpenSpectra's own choice — see `validate.md` "Known divergences".)
 
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -32,6 +34,38 @@ use crate::config::Config;
 /// but not "MARSHALL", and case-sensitivity keeps a lowercase "shall" (prose,
 /// not a normative clause) from counting.
 static SHALL_OR_MUST_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(SHALL|MUST)\b").unwrap());
+
+/// A `**Key**: value` metadata line (e.g. `**Priority**: high`), matched at the
+/// start of a trimmed line. When locating a requirement's first *text* block
+/// these are skipped, mirroring OSS's `extractRequirementText`. Note the leading
+/// `**` requirement means a `> **Goal**:` blockquote is *not* matched (its first
+/// char is `>`), so a Goal blockquote counts as the first text block — the
+/// issue #80 discrimination.
+static METADATA_LINE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\*\*[^*]+\*\*:").unwrap());
+
+/// The requirement's first "text block", the way OSS's `extractRequirementText`
+/// locates it: scanning the body after the `### Requirement:` heading, skip
+/// blank lines and `**Key**:` metadata lines, stop at the first `#### ` scenario
+/// header, and return the first remaining line. A leading `> **Goal**:`
+/// blockquote is deliberately *not* skipped — it is that first block — so a
+/// normative `SHALL`/`MUST` placed *after* a Goal blockquote is never reached
+/// (issue #80). Returns `None` when the requirement has no such line (no
+/// normative text at all), which the caller treats as failing the rule.
+fn extract_requirement_text(body: &str) -> Option<&str> {
+    for line in body.lines() {
+        // Stop at a scenario header (OSS: `/^####\s+/`), anchored at column 0
+        // like the other structural headers.
+        if line.starts_with("####") && line[4..].starts_with([' ', '\t']) {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || METADATA_LINE_RE.is_match(trimmed) {
+            continue;
+        }
+        return Some(trimmed);
+    }
+    None
+}
 
 /// One validation finding. Field order is the serialized `--json` order and is
 /// the documented contract the downstream gate parses (`level`/`path`/`message`).
@@ -214,11 +248,12 @@ struct PendingReq {
 impl PendingReq {
     fn finish(self) -> BodyRequirement {
         BodyRequirement {
-            // A normative keyword inside a fenced code block is an unusual but
-            // harmless false-*pass* (it only relaxes the gate), so SHALL/MUST
-            // stays a whole-body scan; only the false-*fail* case (a scenario
-            // hidden by a fence) is made fence-aware via `has_scenario`.
-            has_shall_or_must: SHALL_OR_MUST_RE.is_match(&self.body),
+            // The normative keyword must appear in the requirement's *first*
+            // text block (issue #80), not merely somewhere in the body — a
+            // SHALL sitting after a `> **Goal**:` blockquote or only inside a
+            // scenario does not count, matching OSS's first-block extraction.
+            has_shall_or_must: extract_requirement_text(&self.body)
+                .is_some_and(|text| SHALL_OR_MUST_RE.is_match(text)),
             has_scenario: self.has_scenario,
             name: self.name,
         }
@@ -448,6 +483,64 @@ mod tests {
         // a lowercase "shall" is prose, not a normative clause.
         let delta = "## ADDED Requirements\n\n\
             ### Requirement: R\n\nThe MARSHALL shall maybe do it.\n\n#### Scenario: s\n\n- **WHEN** x\n";
+        let parsed = parse_delta(delta);
+        assert!(!parsed.body_reqs[0].has_shall_or_must);
+        assert!(parsed.body_reqs[0].has_scenario);
+    }
+
+    #[test]
+    fn parse_delta_shall_reads_only_the_first_text_block() {
+        // Issue #80 (OSS parity): the normative check reads only the first text
+        // block after the heading. A requirement whose first block is a `>
+        // **Goal**:` user-story blockquote, with the SHALL sentence placed
+        // *after* it, has no normative content where the parser looks -> FAIL.
+        // The same prose with the SHALL first PASSES. The two differ only in the
+        // order of the Goal blockquote and the normative paragraph.
+        let bad = "## ADDED Requirements\n\n\
+            ### Requirement: Goal First\n\n\
+            > **Goal**: As an author, I want a user story first.\n\n\
+            The system SHALL do the thing.\n\n\
+            #### Scenario: s\n\n- **WHEN** x\n";
+        let good = "## ADDED Requirements\n\n\
+            ### Requirement: Normative First\n\n\
+            The system SHALL do the thing.\n\n\
+            > **Goal**: As an author, I want a user story after.\n\n\
+            #### Scenario: s\n\n- **WHEN** x\n";
+        assert!(
+            !parse_delta(bad).body_reqs[0].has_shall_or_must,
+            "a Goal blockquote first block hides a SHALL in a later block"
+        );
+        assert!(
+            parse_delta(good).body_reqs[0].has_shall_or_must,
+            "a normative-first requirement must be recognized"
+        );
+    }
+
+    #[test]
+    fn parse_delta_shall_extraction_skips_metadata_key_lines() {
+        // OSS `extractRequirementText` skips `**Key**: value` metadata lines
+        // when locating the first text block, so a normative sentence placed
+        // after a `**Priority**:` line is still seen. (A `> **Goal**:`
+        // blockquote is NOT skipped -- the leading `>` means it is not a
+        // `**Key**:` line -- which is exactly the discrimination above.)
+        let delta = "## ADDED Requirements\n\n\
+            ### Requirement: With Metadata\n\n\
+            **Priority**: high\n\n\
+            The system MUST do it.\n\n\
+            #### Scenario: s\n\n- **WHEN** x\n";
+        assert!(parse_delta(delta).body_reqs[0].has_shall_or_must);
+    }
+
+    #[test]
+    fn parse_delta_shall_only_inside_a_scenario_does_not_count() {
+        // A SHALL that appears only inside a scenario block (after the first
+        // `#### Scenario:`) is not in the requirement's first text block, so the
+        // requirement is not normative -- extraction stops at the scenario
+        // header, matching OSS.
+        let delta = "## ADDED Requirements\n\n\
+            ### Requirement: Scenario Only\n\n\
+            The system does a thing.\n\n\
+            #### Scenario: s\n\n- **WHEN** x\n- **THEN** it SHALL happen\n";
         let parsed = parse_delta(delta);
         assert!(!parsed.body_reqs[0].has_shall_or_must);
         assert!(parsed.body_reqs[0].has_scenario);
