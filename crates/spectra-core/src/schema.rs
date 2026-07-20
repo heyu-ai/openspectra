@@ -382,6 +382,51 @@ pub fn artifacts() -> &'static [ArtifactDefinition] {
 pub const SCHEMA_NAME: &str = "spec-driven";
 pub const APPLY_REQUIRES: &[&str] = &["tasks"];
 
+/// Source label the oracle reports for the built-in schema in
+/// `spectra schemas`. `spec-driven` ships inside the binary ("package"), as
+/// opposed to project- or user-level schema files (which OpenSpectra does not
+/// support). Pinned against the oracle — see docs/reverse-engineering/schemas.md.
+pub const SCHEMA_SOURCE: &str = "package";
+
+/// One-line schema description shown by `spectra schemas`. Pinned byte-for-byte
+/// against the oracle. The `→`-separated list is the recommended *authoring*
+/// order (proposal → specs → design → tasks), which deliberately differs from
+/// `ARTIFACTS`' dependency-definition order (proposal, design, specs, tasks).
+pub const SCHEMA_DESCRIPTION: &str =
+    "Default OpenSpec workflow - proposal → specs → design → tasks";
+
+/// Artifact ids in the workflow order the oracle lists for `spectra schemas`
+/// (proposal → specs → design → tasks). Kept as its own constant — not derived
+/// from `ARTIFACTS` — because the listing mirrors the authoring sequence
+/// encoded in `SCHEMA_DESCRIPTION`, not the artifact-definition order. A unit
+/// test asserts this stays a permutation of the `ARTIFACTS` id set so a future
+/// artifact addition can't silently desync the two.
+pub const SCHEMA_ARTIFACT_ORDER: &[&str] = &["proposal", "specs", "design", "tasks"];
+
+/// A workflow schema as reported by `spectra schemas`. Field declaration order
+/// matches the oracle's `--json` output (alphabetical: artifacts, description,
+/// name, source), so `serde` serializes it byte-for-byte against the golden
+/// without needing `serde_json::Value`'s BTreeMap sorting.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct SchemaListing {
+    pub artifacts: &'static [&'static str],
+    pub description: &'static str,
+    pub name: &'static str,
+    pub source: &'static str,
+}
+
+/// The built-in workflow schema registry backing `spectra schemas`.
+/// OpenSpectra ships exactly one schema (`spec-driven`); project/user schema
+/// discovery is not implemented, so this always returns a single entry.
+pub fn schemas() -> Vec<SchemaListing> {
+    vec![SchemaListing {
+        artifacts: SCHEMA_ARTIFACT_ORDER,
+        description: SCHEMA_DESCRIPTION,
+        name: SCHEMA_NAME,
+        source: SCHEMA_SOURCE,
+    }]
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArtifactState {
@@ -663,6 +708,61 @@ mod tests {
                 .collect();
             assert_eq!(artifact.deps, golden_deps.as_slice());
         }
+    }
+
+    #[test]
+    fn schemas_registry_matches_oracle_golden_shape() {
+        let listings = schemas();
+        assert_eq!(listings.len(), 1);
+        let schema = &listings[0];
+        assert_eq!(schema.name, "spec-driven");
+        assert_eq!(schema.source, "package");
+        assert_eq!(
+            schema.description,
+            "Default OpenSpec workflow - proposal → specs → design → tasks"
+        );
+        assert_eq!(schema.artifacts, &["proposal", "specs", "design", "tasks"]);
+    }
+
+    #[test]
+    fn schemas_json_serializes_byte_for_byte_against_the_oracle_golden() {
+        let golden_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../docs/reverse-engineering/golden/schemas-2.3.1.json");
+        let golden = std::fs::read_to_string(&golden_path).unwrap();
+
+        let rendered = serde_json::to_string_pretty(&schemas()).unwrap();
+
+        // The golden captures the oracle's `--json` stdout, which ends in a
+        // trailing newline the CLI adds via `println!`; the serializer itself
+        // emits no trailing newline, so compare against the trimmed golden.
+        assert_eq!(rendered, golden.trim_end());
+    }
+
+    #[test]
+    fn schema_artifact_order_is_a_permutation_of_the_artifact_definition_ids() {
+        // The listing order is maintained by hand (authoring order, not
+        // dependency order); this guards against a future ARTIFACTS change
+        // that adds/removes an artifact without updating SCHEMA_ARTIFACT_ORDER.
+        let mut listed: Vec<&str> = SCHEMA_ARTIFACT_ORDER.to_vec();
+        let mut defined: Vec<&str> = ARTIFACTS.iter().map(|artifact| artifact.id).collect();
+        listed.sort_unstable();
+        defined.sort_unstable();
+        assert_eq!(listed, defined);
+    }
+
+    #[test]
+    fn schema_description_ends_with_the_artifact_order_flow() {
+        // The permutation test above ties SCHEMA_ARTIFACT_ORDER to ARTIFACTS,
+        // but the human-readable SCHEMA_DESCRIPTION also spells out that flow
+        // (`... - proposal → specs → design → tasks`). Without this, a future
+        // artifact could update SCHEMA_ARTIFACT_ORDER + the JSON golden while
+        // leaving the description (and text golden) silently stale. Pin that
+        // the description's trailing flow equals the ordered artifact list.
+        let flow = SCHEMA_ARTIFACT_ORDER.join(" → ");
+        assert!(
+            SCHEMA_DESCRIPTION.ends_with(&flow),
+            "SCHEMA_DESCRIPTION {SCHEMA_DESCRIPTION:?} must end with the artifact flow {flow:?}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
-//! OpenSpectra CLI: `init`, `drift`, `analyze`, `status`, `instructions`, `validate`,
-//! `list`, `show`, `park`, `unpark`, `new change`, `new artifact`, `task done`,
-//! `archive`.
+//! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `status`,
+//! `instructions`, `validate`, `list`, `show`, `park`, `unpark`, `new change`,
+//! `new artifact`, `task done`, `archive`.
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -49,6 +49,12 @@ enum Command {
     Analyze {
         #[arg(help = "Change name (auto-detects if only one exists)")]
         change: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List available workflow schemas (only `spec-driven` is built in).
+    Schemas {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
@@ -620,6 +626,45 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// Render one schema's human line, e.g.
+/// `  spec-driven (package) — <description>`, dimming the `(source)` tag when
+/// color is enabled (matching the oracle's `\x1b[2m` faint styling). Pulled out
+/// so the color wiring is unit-testable without spawning the binary.
+fn schema_line(schema: &schema::SchemaListing, use_color: bool) -> String {
+    format!(
+        "  {} {} — {}",
+        schema.name,
+        colorize(&format!("({})", schema.source), "2", use_color),
+        schema.description
+    )
+}
+
+/// Render the full human `schemas` output (bold header + one dimmed line per
+/// schema), newline-terminated per line. Kept as a helper — rather than
+/// inlining the `println!`s in `cmd_schemas` — so the actual header/source SGR
+/// *wiring* (bold `\x1b[1m` header, dim `\x1b[2m` source) is byte-for-byte
+/// testable with color enabled; the golden integration tests only reach the
+/// `--no-color` path, so a `"1"`->`"2"` header regression would otherwise slip.
+fn render_schemas_human(schemas: &[schema::SchemaListing], use_color: bool) -> String {
+    // The oracle bolds the header (\x1b[1m) and dims each (source) tag (\x1b[2m).
+    let mut out = format!("{}\n", colorize("Available schemas:", "1", use_color));
+    for schema in schemas {
+        out.push_str(&schema_line(schema, use_color));
+        out.push('\n');
+    }
+    out
+}
+
+fn cmd_schemas(as_json: bool, use_color: bool) -> Result<i32> {
+    let schemas = schema::schemas();
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&schemas)?);
+    } else {
+        print!("{}", render_schemas_human(&schemas, use_color));
+    }
+    Ok(0)
+}
+
 fn cmd_status(
     cfg: &Config,
     change_name: Option<&str>,
@@ -925,6 +970,10 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_analyze(&cfg, change.as_deref(), *json)
         }
+        // `schemas` lists the built-in schema registry, which needs no
+        // project — the oracle lists it outside an initialized project too, so
+        // it deliberately skips `require_initialized` (like `init`).
+        Command::Schemas { json } => cmd_schemas(*json, use_color),
         Command::Status {
             change,
             schema,
@@ -1095,6 +1144,46 @@ mod tests {
         );
         assert!(conclusion_line("light", false).starts_with("Drift is minor"));
         assert!(!conclusion_line("light", false).contains('\x1b'));
+    }
+
+    #[test]
+    fn schema_line_dims_the_source_tag_only_when_color_is_enabled() {
+        let schema = schema::SchemaListing {
+            artifacts: &["proposal", "specs", "design", "tasks"],
+            description: "Default OpenSpec workflow - proposal → specs → design → tasks",
+            name: "spec-driven",
+            source: "package",
+        };
+
+        assert_eq!(
+            schema_line(&schema, false),
+            "  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks"
+        );
+        assert_eq!(
+            schema_line(&schema, true),
+            "  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → design → tasks"
+        );
+    }
+
+    #[test]
+    fn render_schemas_human_pins_the_full_colored_wiring() {
+        // Exercises the real `cmd_schemas` rendering path (header + lines), not
+        // just the `colorize` primitive, so a mutation of the *wiring* — e.g.
+        // the header SGR `"1"`->`"2"`, or dropping the dim on the source tag —
+        // fails here. The golden integration tests only reach the --no-color
+        // path (piped stdout), leaving this the sole guard on the colored path.
+        let schemas = schema::schemas();
+
+        // --no-color output must equal the two oracle-golden text lines.
+        assert_eq!(
+            render_schemas_human(&schemas, false),
+            "Available schemas:\n  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks\n"
+        );
+        // Colored output: bold \x1b[1m header, dim \x1b[2m source tag.
+        assert_eq!(
+            render_schemas_human(&schemas, true),
+            "\x1b[1mAvailable schemas:\x1b[0m\n  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → design → tasks\n"
+        );
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even

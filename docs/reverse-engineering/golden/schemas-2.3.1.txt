@@ -1,0 +1,2 @@
+Available schemas:
+  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks
