@@ -193,6 +193,20 @@ fn list_json_preserves_types() {
     );
 }
 
+/// Parsing before comparing (as the test above does) is blind to whitespace,
+/// so the oracle's 2-space pretty shape needs its own byte-level pin -- a
+/// silent drop to compact JSON would otherwise ship green.
+#[test]
+fn list_json_is_two_space_pretty_printed() {
+    let home = TempDir::new("config-json-bytes");
+    run_ok(&home, &["config", "set", "answer", "42"]);
+    run_ok(&home, &["config", "set", "tdd", "true"]);
+    assert_eq!(
+        run_ok(&home, &["config", "list", "--json"]),
+        "{\n  \"answer\": 42,\n  \"tdd\": true\n}\n"
+    );
+}
+
 #[test]
 fn flow_style_values_render_as_block_yaml_on_get() {
     let home = TempDir::new("config-flow");
@@ -226,20 +240,52 @@ fn unset_is_idempotent_and_creates_the_file_when_missing() {
 }
 
 #[test]
-fn reset_deletes_the_file_and_accepts_the_inert_flags() {
-    let home = TempDir::new("config-reset");
+fn plain_reset_truncates_to_an_empty_mapping_rather_than_deleting() {
+    let home = TempDir::new("config-reset-plain");
     run_ok(&home, &["config", "set", "k", "v"]);
-    assert!(config_file(&home).exists());
     assert_eq!(
         run_ok(&home, &["config", "reset"]),
         "\u{2713} Config reset.\n"
     );
+    // Probed: the oracle leaves `{}\n` behind -- it does NOT delete the file.
+    assert_eq!(std::fs::read_to_string(config_file(&home)).unwrap(), "{}\n");
+    assert_eq!(
+        run_ok(&home, &["config", "list"]),
+        "No configuration set.\n"
+    );
+    // Idempotent, and `-y` alone does not change the mode.
+    run_ok(&home, &["config", "reset", "-y"]);
+    assert_eq!(std::fs::read_to_string(config_file(&home)).unwrap(), "{}\n");
+}
+
+#[test]
+fn plain_reset_seeds_a_config_that_never_existed() {
+    let home = TempDir::new("config-reset-virgin");
+    assert_eq!(
+        run_ok(&home, &["config", "reset"]),
+        "\u{2713} Config reset.\n"
+    );
+    // Probed: on a virgin HOME the oracle creates the dir and an empty mapping.
+    assert_eq!(std::fs::read_to_string(config_file(&home)).unwrap(), "{}\n");
+}
+
+#[test]
+fn reset_all_deletes_the_file_and_is_idempotent() {
+    let home = TempDir::new("config-reset-all");
+    run_ok(&home, &["config", "set", "k", "v"]);
+    assert!(config_file(&home).exists());
+    // Probed: `--all` is NOT an inert flag -- it switches truncate to delete.
+    assert_eq!(
+        run_ok(&home, &["config", "reset", "--all"]),
+        "\u{2713} Config reset.\n"
+    );
     assert!(!config_file(&home).exists());
-    // Probed: a second reset (and --all/-y) still succeed with no prompt.
+    // A second `--all` reset still succeeds; `-y` never prompts.
     assert_eq!(
         run_ok(&home, &["config", "reset", "--all", "-y"]),
         "\u{2713} Config reset.\n"
     );
+    assert!(!config_file(&home).exists());
 }
 
 #[test]
@@ -281,6 +327,175 @@ fn edit_propagates_the_editor_exit_status() {
     assert_eq!(fail.status.code(), Some(1));
     // Probed oracle error when the editor exits non-zero.
     assert_eq!(fail.stderr, b"Error: Editor exited with error.\n");
+}
+
+/// Write an executable stub "editor" that records its argv into `receipt`, so
+/// tests can assert *which* program was launched and *which* path it was
+/// handed -- `true`/`false` ignore argv entirely and cannot show either.
+#[cfg(unix)]
+fn stub_editor(dir: &Path, name: &str, receipt: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let script = dir.join(name);
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\nprintf '{name} %s' \"$1\" > '{}'\nexit 0\n",
+            receipt.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// Pins the whole `edit` launch contract in one place: the probed
+/// `EDITOR` -> `VISUAL` -> `vi` precedence, that an *empty* `EDITOR` reaches
+/// spawn instead of being treated as unset, and that the config path (not some
+/// other path) is what gets handed to the editor.
+#[cfg(unix)]
+#[test]
+fn edit_resolves_editor_visual_then_vi_and_passes_the_config_path() {
+    let home = TempDir::new("config-edit-precedence");
+    let bin = TempDir::new("config-edit-bin");
+    let receipt = bin.join("receipt.txt");
+    for name in ["vi", "myeditor", "myvisual"] {
+        stub_editor(&bin, name, &receipt);
+    }
+    let expected_path = config_file(&home);
+
+    let run_edit = |envs: &[(&str, &str)], remove: &[&str]| -> String {
+        let _ = std::fs::remove_file(&receipt);
+        let mut cmd = spectra_cfg(&home);
+        cmd.args(["config", "edit"]).env("PATH", &*bin);
+        for (k, v) in envs {
+            cmd.env(k, v);
+        }
+        for k in remove {
+            cmd.env_remove(k);
+        }
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        std::fs::read_to_string(&receipt).unwrap()
+    };
+
+    // EDITOR wins over VISUAL, and receives the jailed config path.
+    assert_eq!(
+        run_edit(&[("EDITOR", "myeditor"), ("VISUAL", "myvisual")], &[]),
+        format!("myeditor {}", expected_path.display())
+    );
+    // VISUAL is consulted when EDITOR is absent (probed against the oracle).
+    assert_eq!(
+        run_edit(&[("VISUAL", "myvisual")], &["EDITOR"]),
+        format!("myvisual {}", expected_path.display())
+    );
+    // Neither set -> `vi` (probed: the oracle looks up `vi`, not `vim`).
+    assert_eq!(
+        run_edit(&[], &["EDITOR", "VISUAL"]),
+        format!("vi {}", expected_path.display())
+    );
+}
+
+/// Probed: an empty `EDITOR` is *not* treated as unset -- the oracle attempts
+/// to spawn `""` and fails, rather than falling back to VISUAL or `vi`.
+#[test]
+fn edit_with_an_empty_editor_fails_instead_of_falling_back() {
+    let home = TempDir::new("config-edit-empty");
+    let out = spectra_cfg(&home)
+        .args(["config", "edit"])
+        .env("EDITOR", "")
+        .env("VISUAL", "true")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.starts_with("Error: Failed to open editor '':"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+/// Probed: the oracle's stderr for an unspawnable editor.
+#[test]
+fn edit_spawn_failure_matches_the_oracle_wording() {
+    let home = TempDir::new("config-edit-nospawn");
+    let out = spectra_cfg(&home)
+        .args(["config", "edit"])
+        .env("EDITOR", "definitely_not_a_real_editor")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.starts_with("Error: Failed to open editor 'definitely_not_a_real_editor':"),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+/// Probed: `edit` creates the config dir and seeds a missing file with the
+/// oracle's exact header before spawning, so the editor can actually save --
+/// and it leaves an existing config untouched.
+#[test]
+fn edit_seeds_a_missing_config_and_preserves_an_existing_one() {
+    let home = TempDir::new("config-edit-seed");
+    let out = spectra_cfg(&home)
+        .args(["config", "edit"])
+        .env("EDITOR", "true")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        std::fs::read_to_string(config_file(&home)).unwrap(),
+        "# OpenSpec global config\n"
+    );
+
+    run_ok(&home, &["config", "set", "keep", "me"]);
+    let again = spectra_cfg(&home)
+        .args(["config", "edit"])
+        .env("EDITOR", "true")
+        .output()
+        .unwrap();
+    assert!(again.status.success());
+    assert_eq!(
+        std::fs::read_to_string(config_file(&home)).unwrap(),
+        "keep: me\n"
+    );
+}
+
+/// Probed: an unreadable config must survive a refused write rather than being
+/// replaced by a file holding only the new key. This is the data-loss guard.
+#[cfg(unix)]
+#[test]
+fn writes_refuse_an_unreadable_config_instead_of_clobbering_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new("config-unreadable");
+    run_ok(&home, &["config", "set", "alpha", "1"]);
+    run_ok(&home, &["config", "set", "beta", "2"]);
+    let file = config_file(&home);
+    let original = std::fs::read_to_string(&file).unwrap();
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_to_string(&file).is_ok() {
+        return; // running as root; the permission bits are not enforced
+    }
+
+    for args in [
+        vec!["config", "set", "delta", "4"],
+        vec!["config", "unset", "alpha"],
+        vec!["config", "reset"],
+    ] {
+        let out = run(&home, &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?} should fail: {out:?}");
+        assert!(out.stdout.is_empty(), "{args:?} must not print success");
+    }
+
+    // Display paths stay lenient, matching the oracle.
+    assert_eq!(
+        run_ok(&home, &["config", "list"]),
+        "No configuration set.\n"
+    );
+
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
 }
 
 #[cfg(target_os = "linux")]

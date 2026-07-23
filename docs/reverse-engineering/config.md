@@ -5,9 +5,13 @@ user configuration, and how OpenSpectra reproduces it.
 
 > Source binary: `Spectra.app/Contents/MacOS/spectra` v2.3.1 (arm64 Mach-O).
 > Behaviour was probed by running the binary as a golden oracle over fresh
-> `HOME` jails and a synthetic `spectra init` project, then byte-diffing a
-> 40-step transcript (identical command sequence, oracle vs openspectra —
-> see "Reproducing the oracle" below).
+> `HOME` jails and a synthetic `spectra init` project, then byte-diffing
+> transcripts of identical command sequences (oracle vs openspectra — see
+> "Reproducing the oracle" below).
+>
+> **Every row below marked (probed) was measured.** Rows that are conventions
+> rather than measurements are marked **(inferred)** and named in
+> "Inferred, not measured".
 
 ## TL;DR
 
@@ -24,9 +28,13 @@ No subcommand requires an initialized project. Implementation lives in
 | `list` | sorted `key = value` lines; `No configuration set.` when empty; `--json` = 2-space pretty JSON preserving scalar types (`{}` when empty) |
 | `get <KEY>` | prints the rendered value; missing key → stderr `Error: Key '<KEY>' not found.`, exit 1 |
 | `set <KEY> <VALUE>` | YAML-parses the value (see typing); echoes `✓ <KEY> = <raw input>`; `--string` forces a string; `--allow-unknown` is **inert** (2.3.1 accepts unknown keys either way) |
-| `unset <KEY>` | `✓ Removed key: <KEY>`, exit 0 **even when the key/file is absent** — and creates a `{}` file when none existed |
-| `reset` | deletes the file; `✓ Config reset.`; idempotent; `--all` and `-y` are **inert** (no confirmation prompt even on a TTY, probed via `script(1)`) |
-| `edit` | spawns `$EDITOR` on the path (unset falls back to vim); a non-zero editor exit → stderr `Error: Editor exited with error.`, exit 1 |
+| `unset <KEY>` | `✓ Removed key: <KEY>`, exit 0 **even when the key is absent** — and creates a `{}` file when none existed |
+| `reset` | **truncates** the file to `{}` — creating it (and its directory) when absent. Does *not* delete. Idempotent |
+| `reset --all` | **deletes** the file. Idempotent. `--all` is **not** an inert flag — it selects delete instead of truncate |
+| `edit` | creates the config dir and seeds a missing file with `# OpenSpec global config\n`, then spawns the editor on that path; a non-zero editor exit → stderr `Error: Editor exited with error.`, exit 1 |
+
+`-y` **is** inert: neither `reset` mode ever prompts, on a TTY or piped
+(verified under `script(1)`).
 
 ## File location
 
@@ -38,11 +46,8 @@ $HOME/Library/Application Support/openspec/config.yaml
 
 * Follows the `HOME` env var — an overridden `HOME` moves the whole tree
   (probed), which is what makes the integration tests jailable.
-* `XDG_CONFIG_HOME` is **ignored on macOS** (probed). The Linux layout
-  (`$XDG_CONFIG_HOME/openspec/config.yaml`, falling back to
-  `~/.config/openspec/config.yaml`) is the standard config-dir convention
-  (`dirs::config_dir()` shape) and **cannot be probed** — the oracle is a
-  macOS-only binary. Note the app dir is `openspec`, not `spectra`.
+* `XDG_CONFIG_HOME` is **ignored on macOS** (probed).
+* Note the app dir is `openspec`, not `spectra`.
 
 ## Value typing (`set`)
 
@@ -53,7 +58,7 @@ back to the literal string. All probed:
 |-------|-----------|
 | `true` / `TRUE` | bool `true` |
 | `42` | int |
-| `3.14` | float |
+| `2.5` | float |
 | `null`, `""` (empty) | null |
 | `[1, 2, 3]` | sequence |
 | `{a: 1}` | mapping |
@@ -68,6 +73,12 @@ Keys are **flat literals**: `set claude_effort.apply high` writes the single
 key `claude_effort.apply: high` — dotted paths are *not* nested (probed),
 even though `spectra init`'s commented `.spectra.yaml` template suggests a
 nested `claude_effort:` block.
+
+A **hyphen-leading** key or value is rejected by the argument parser on both
+sides, byte-identically (`config set answer -5` → `error: unexpected argument
+'-5' found` plus the `tip: to pass '-5' as a value, use '-- -5'` line, exit 2).
+Both binaries are clap-based, so this is parity, not a limitation to "fix" —
+adding `allow_hyphen_values` would *create* a divergence.
 
 ## Value rendering (`get` / `list`)
 
@@ -84,6 +95,28 @@ separator line. Sequences render block-style: `arr = - 1\n- 2\n- 3\n\n`.
 
 `list` sorts by key. `list --json` preserves scalar types
 (`"tdd": "true"` for a forced string vs `"tdd": true` for a bool).
+
+## `edit`: editor resolution and side effects
+
+Probed precedence: **`$EDITOR` → `$VISUAL` → `vi`**.
+
+* An **empty** `$EDITOR` is *not* treated as unset: it reaches spawn and fails
+  with `Error: Failed to open editor '': No such file or directory (os error 2)`,
+  exit 1.
+* The final fallback is **`vi`, not `vim`** — with a `PATH` containing only a
+  `vim`, the oracle errors `Failed to open editor 'vi'`; with only a `vi` it
+  runs. (On macOS `vi` *is* vim, which is why a naive probe reading the
+  terminal banner mistakes one for the other. Use stub scripts on a fake
+  `PATH` to observe the exec'd name.)
+* `$EDITOR` is **not** shell-split: `EDITOR="code --wait"` fails on both sides
+  with `Failed to open editor 'code --wait'`. Do not add shell splitting — it
+  would both diverge and open a shell-injection surface.
+* Before spawning, the oracle creates `.../openspec/` and, when the file is
+  absent, seeds it with exactly `# OpenSpec global config\n` (25 bytes,
+  xxd-confirmed). An **existing** file is left untouched. Without this the
+  editor is handed a path inside a directory that does not exist, so a real
+  editor's save fails — and because most editors still exit 0 after reporting
+  that, the user's edits would vanish with no signal from the CLI.
 
 ## Key-order divergence (deliberate)
 
@@ -105,20 +138,47 @@ All probed:
   it. No backup is made — mirrored as-is (unlike e.g. `archive`'s corrupt
   `openspec.yaml` backup, this matches the oracle).
 * **Non-mapping file** (e.g. a bare list) → same as corrupt.
+* **Non-UTF-8 bytes** → same as corrupt on both sides (both overwrite).
+* **Unreadable file** (mode 000) → the *read* paths are lenient like a corrupt
+  file (`list` → `No configuration set.`; `get k` → `Error: Key 'k' not found.`,
+  exit 1), but every *write* path refuses: `set`, `unset`, and plain `reset`
+  all print `Error: Permission denied (os error 13)`, exit 1, and **leave the
+  file intact**. `reset --all` is the exception — it does not read first, so it
+  deletes the file and exits 0.
+  This asymmetry is load-bearing for openspectra: `set`/`unset` are
+  load-modify-save, and `write_atomically`'s temp+rename needs only the
+  *directory* write bit, so flattening the read error into "empty" would
+  replace the whole config with a file holding just the new key. See
+  `global_config::load` vs `load_for_display`.
 * **`unset` last key** → file left as `{}`.
-* Openspectra writes atomically (temp + rename, shared with `init`); the
-  oracle's write mechanics were not probed — only the resulting bytes.
 
-## Not ported / unverified
+## Known divergences (measured, deliberate, not defects)
 
-* `edit`'s `$VISUAL` handling is unprobed; openspectra consults only
-  `$EDITOR` and falls back to `vi` (the oracle fell back to vim when both
-  were unset; `vi` is the portable spelling).
-* The oracle's `--no-color` help line reads `Disable colored output`;
-  openspectra's global flag appends `(also respects the NO_COLOR env var)`
-  on every command — a pre-existing repo-wide divergence, not specific to
-  `config`.
-* Key validation: 2.3.1 accepts any key, so `--allow-unknown` ships inert
+* **Write mechanics.** The oracle writes the config file **in place**, so with
+  a read-only *directory* (mode 555) holding a writable config it still
+  succeeds (`✓ beta = 2`, exit 0). openspectra writes atomically (temp +
+  rename, shared with `init`), which needs the directory write bit and
+  therefore fails there. Atomicity protects against a crash mid-write, which
+  the oracle does not; the trade was made knowingly. This is the only case
+  where the oracle succeeds and openspectra does not.
+* **`HOME` unset.** The oracle still resolves the account's home via the OS
+  password database and prints a path; openspectra errors
+  (`could not determine the config directory ...`, exit 1). Matching would
+  require a `getpwuid`-backed dependency (e.g. `dirs`) that this workspace
+  does not carry — see Follow-ups.
+* **`--no-color` help wording.** openspectra's global flag appends
+  `(also respects the NO_COLOR env var)`. Pre-existing repo-wide divergence,
+  not specific to `config`.
+
+## Inferred, not measured
+
+* **The Linux path layout** (`$XDG_CONFIG_HOME/openspec/config.yaml`, falling
+  back to `~/.config/openspec/config.yaml`) is the standard config-dir
+  convention. It **cannot be probed** — the oracle is a macOS-only binary that
+  ignores XDG. openspectra additionally requires `XDG_CONFIG_HOME` to be
+  **absolute**, per the XDG spec: honoring a relative value would make the
+  global config location depend on the process's working directory.
+* **Key validation.** 2.3.1 accepts any key, so `--allow-unknown` ships inert
   (flag parity for help-text fidelity). If a later oracle version starts
   rejecting unknown keys, wire the flag up then.
 
@@ -135,17 +195,31 @@ OURS=target/release/spectra
 # key-sort `list --json` — its key order is random on the oracle), then diff.
 ```
 
-The calibration sequence used for this port covered: `path`; empty/populated
-`list` (+`--json`); every typing row from the table above (round-tripped
-through `set`/`get`); the missing-key error; inert-flag variants
-(`--allow-unknown`, `reset --all -y`); double `unset`; `unset` on a missing
-file; double `reset`; and the `--help` surfaces. The only diff was the
-pre-existing `--no-color` help wording noted above.
+The calibration covered, in two passes:
 
-The full behaviours above are pinned by
+1. **Happy path (40 steps):** `path`; empty/populated `list` (+`--json`); every
+   typing row above, round-tripped through `set`/`get`; the missing-key error;
+   `--allow-unknown`; double `unset`; `unset` on a missing file; double
+   `reset`; and every `--help` surface. Sole diff: the `--no-color` help
+   wording noted above.
+2. **`edit` and degenerate I/O (added after review found the first pass had
+   never exercised them):** editor resolution with stub scripts on a fake
+   `PATH` (`EDITOR`, `VISUAL`, neither, empty `EDITOR`, unspawnable `EDITOR`,
+   `EDITOR` with arguments); post-`edit` file state on a virgin and an existing
+   `HOME`; post-`reset` and post-`reset --all` file bytes; and `set`/`unset`/
+   `reset`/`reset --all` against a mode-000 config, a non-UTF-8 config, a
+   config path that is a directory, and a read-only directory.
+
+> **Method note.** The first pass concluded that `--all` was inert because it
+> ran `reset` and `reset --all` back to back and only inspected the file
+> afterwards — the truncate was invisible behind the later delete. Probe one
+> operation per jail; a conflated sequence yields a confident wrong answer.
+
+The behaviours above are pinned by
 `crates/spectra-cli/tests/config_integration.rs` (byte-golden stdout/stderr
-and exit codes, per-test `HOME` jails) and the unit tests in
-`crates/spectra-core/src/global_config.rs`. The sort-wiring and the
-serializer-newline rendering were additionally mutation-verified (dropping
-`entries.sort()` / trimming the serializer newline each fail the pinned
-tests).
+and exit codes, per-test `HOME` jails, stub editors that record their argv)
+and the unit tests in `crates/spectra-core/src/global_config.rs`. Seven of
+them are mutation-verified — reverting the I/O-error propagation, the
+`$VISUAL` lookup, the empty-`EDITOR` handling, the `edit` seed, the
+`reset`/`reset --all` split, the JSON pretty-printing, or the path passed to
+the editor each turns the corresponding test red.

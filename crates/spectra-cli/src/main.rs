@@ -1003,7 +1003,10 @@ fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
             println!("{}", path.display());
         }
         ConfigTarget::List { json } => {
-            let settings = gc::load(&path);
+            // Display paths read leniently: probed, the oracle prints
+            // "No configuration set." for an unreadable file too. Only the
+            // write paths surface the I/O error.
+            let settings = gc::load_for_display(&path);
             if *json {
                 let obj: serde_json::Value = serde_json::Value::Object(
                     settings
@@ -1028,7 +1031,7 @@ fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
             }
         }
         ConfigTarget::Get { key } => {
-            let settings = gc::load(&path);
+            let settings = gc::load_for_display(&path);
             let Some(value) = gc::get_value(&settings, key) else {
                 anyhow::bail!("Key '{key}' not found.");
             };
@@ -1052,21 +1055,32 @@ fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
             gc::unset_value(&path, key)?;
             println!("{} Removed key: {key}", check("\u{2713}"));
         }
-        ConfigTarget::Reset { all: _, yes: _ } => {
-            gc::reset(&path)?;
+        // `--all` is *not* inert (probed): plain `reset` truncates the file to
+        // `{}` (creating it when absent), while `--all` deletes it outright.
+        // `-y` is inert in both modes -- neither ever prompts, even on a TTY.
+        ConfigTarget::Reset { all, yes: _ } => {
+            if *all {
+                gc::reset_delete(&path)?;
+            } else {
+                gc::reset_to_empty(&path)?;
+            }
             println!("{} Config reset.", check("\u{2713}"));
         }
         ConfigTarget::Edit => {
-            // Fallback probed only as far as "EDITOR unset launches vim";
-            // `vi` is the portable spelling. $VISUAL was not probed and is
-            // deliberately not consulted.
+            // Probed precedence: $EDITOR (even when empty -- an empty value
+            // reaches spawn and fails, it is not treated as unset) -> $VISUAL
+            // -> `vi`. The oracle spawns `vi`, not `vim`: with a PATH holding
+            // only a `vim`, it errors "Failed to open editor 'vi'".
             let editor = std::env::var_os("EDITOR")
-                .filter(|e| !e.is_empty())
+                .or_else(|| std::env::var_os("VISUAL"))
                 .unwrap_or_else(|| "vi".into());
+            // The oracle creates the directory and seeds a missing file before
+            // spawning, so the editor can actually save.
+            gc::ensure_editable(&path)?;
             let status = std::process::Command::new(&editor)
                 .arg(&path)
                 .status()
-                .with_context(|| format!("launching editor {}", editor.to_string_lossy()))?;
+                .with_context(|| format!("Failed to open editor '{}'", editor.to_string_lossy()))?;
             if !status.success() {
                 anyhow::bail!("Editor exited with error.");
             }

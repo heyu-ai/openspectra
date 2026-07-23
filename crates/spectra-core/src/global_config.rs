@@ -11,10 +11,13 @@
 //!   nested path.
 //! * Values are parsed as YAML scalars/collections (`true` → bool, `42` →
 //!   int, `[1, 2]` → sequence); anything unparseable falls back to a string.
-//! * A missing, unreadable, unparseable, or non-mapping file silently reads
-//!   as empty, and the next write overwrites it.
+//! * A missing, unparseable, or non-mapping file reads as empty, and the next
+//!   write overwrites it. An *unreadable* file is different: the oracle
+//!   reports the I/O error and leaves the file alone (probed), so a read
+//!   failure other than `NotFound` must not be flattened into "empty".
 //! * `unset` saves even when nothing was removed (creating a `{}` file);
-//!   `reset` deletes the file and is idempotent.
+//!   `reset` deletes the file and is idempotent — but, like `set`/`unset`, it
+//!   refuses when the existing file cannot be read (probed).
 
 use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
@@ -25,19 +28,35 @@ use std::path::{Path, PathBuf};
 ///
 /// Follows `$HOME` (probed: the oracle honors a `HOME` override on macOS and
 /// ignores `XDG_CONFIG_HOME` there); the Linux XDG branch is the standard
-/// config-dir convention and is unverifiable against the macOS-only oracle.
+/// config-dir convention and is **inferred**, not measured — the oracle is a
+/// macOS-only binary and cannot exercise it.
+///
+/// Divergence (probed, deliberate): with `HOME` unset the oracle still
+/// resolves the account's home via the OS password database, while this errors
+/// instead. Matching would need a `getpwuid` dependency the workspace does not
+/// carry; see `docs/reverse-engineering/config.md`.
 pub fn config_path() -> Result<PathBuf> {
     resolve_config_path(
         cfg!(target_os = "macos"),
         std::env::var_os("HOME").as_deref(),
         std::env::var_os("XDG_CONFIG_HOME").as_deref(),
     )
-    .ok_or_else(|| anyhow::anyhow!("could not determine the config directory (HOME is not set)"))
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not determine the config directory (neither HOME nor XDG_CONFIG_HOME is usable)"
+        )
+    })
 }
 
 /// Pure resolver behind [`config_path`], split from the env reads so every
 /// platform/env combination is unit-testable without mutating process env
 /// vars (which would be racy under the parallel test harness).
+///
+/// A relative `XDG_CONFIG_HOME` is rejected rather than joined: the XDG base
+/// directory spec requires an absolute path, and honoring a relative one would
+/// make the *global* config location depend on the process's working
+/// directory — the same `spectra config get` would read different files from
+/// different cwds.
 fn resolve_config_path(
     macos_layout: bool,
     home: Option<&OsStr>,
@@ -47,26 +66,50 @@ fn resolve_config_path(
     let config_dir = if macos_layout {
         Path::new(home?).join("Library/Application Support")
     } else {
-        match xdg_config_home.filter(|x| !x.is_empty()) {
-            Some(xdg) => PathBuf::from(xdg),
+        match xdg_config_home
+            .filter(|x| !x.is_empty())
+            .map(Path::new)
+            .filter(|x| x.is_absolute())
+        {
+            Some(xdg) => xdg.to_path_buf(),
             None => Path::new(home?).join(".config"),
         }
     };
     Some(config_dir.join("openspec").join("config.yaml"))
 }
 
-/// Read the settings mapping. Lenient by design (probed): a missing,
-/// unreadable, unparseable, or non-mapping file all read as empty — the
-/// oracle reports "No configuration set." for a corrupt file and lets the
-/// next `set` overwrite it, so failing loudly here would diverge.
-pub fn load(path: &Path) -> Mapping {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Mapping::new();
+/// Read the settings mapping for a *write* (load-modify-save).
+///
+/// Lenient only about **content**: a missing file and an unparseable or
+/// non-mapping one all read as empty, matching the oracle, which reports
+/// "No configuration set." for a corrupt file and lets the next `set`
+/// overwrite it.
+///
+/// It is deliberately **not** lenient about **I/O**. Flattening a
+/// `PermissionDenied`/`InvalidData`/`EIO` read into "empty" would make the
+/// following `save` write a file containing only the new key — silently
+/// destroying a config that was merely unreadable, because the temp+rename in
+/// [`save`] needs the *directory* write bit rather than the file's. Probed:
+/// the oracle reports `Permission denied (os error 13)` and leaves the file
+/// alone. This mirrors [`crate::touched`], which splits the same three cases.
+pub fn load(path: &Path) -> Result<Mapping> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Mapping::new()),
+        Err(e) => return Err(e.into()),
     };
-    match serde_yaml::from_str::<Value>(&text) {
+    Ok(match serde_yaml::from_str::<Value>(&text) {
         Ok(Value::Mapping(map)) => map,
         _ => Mapping::new(),
-    }
+    })
+}
+
+/// Read the settings mapping for a *display* path (`list` / `get`), where an
+/// unreadable file reads as empty just like a corrupt one — probed: the oracle
+/// prints "No configuration set." and `Key '<k>' not found.` for a mode-000
+/// file rather than surfacing the I/O error. Only the write paths refuse.
+pub fn load_for_display(path: &Path) -> Mapping {
+    load(path).unwrap_or_default()
 }
 
 /// Write the settings mapping, creating parent directories as needed.
@@ -101,12 +144,19 @@ pub fn parse_value(raw: &str, force_string: bool) -> Value {
 /// print raw, bool/number via their scalar form, and everything else (null,
 /// sequences, mappings) through the YAML serializer — whose trailing newline
 /// is why `get` on a null key prints `null\n\n` (probed).
+///
+/// The `expect` states the assumption rather than hiding it: serializing an
+/// already-constructed `serde_yaml::Value` has no failure mode here, and
+/// substituting an empty string on error would render an existing value as
+/// nothing at exit 0 — the silent-failure shape this crate avoids elsewhere.
 pub fn render_value(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        other => serde_yaml::to_string(other).unwrap_or_default(),
+        other => {
+            serde_yaml::to_string(other).expect("serializing a serde_yaml::Value is infallible")
+        }
     }
 }
 
@@ -148,9 +198,10 @@ pub fn key_string(key: &Value) -> String {
     }
 }
 
-/// `config set`: load-modify-save. Overwrites a corrupt file (probed).
+/// `config set`: load-modify-save. Overwrites a corrupt file, refuses an
+/// unreadable one (both probed — see [`load`]).
 pub fn set_value(path: &Path, key: &str, raw: &str, force_string: bool) -> Result<()> {
-    let mut settings = load(path);
+    let mut settings = load(path)?;
     settings.insert(
         Value::String(key.to_string()),
         parse_value(raw, force_string),
@@ -160,21 +211,52 @@ pub fn set_value(path: &Path, key: &str, raw: &str, force_string: bool) -> Resul
 
 /// `config unset`: remove and save unconditionally — the oracle reports
 /// success for a missing key and even creates a `{}` file when none existed
-/// (probed), so this does not distinguish "removed" from "was absent".
+/// (probed), so this does not distinguish "removed" from "was absent". Like
+/// `set`, it refuses when the existing file cannot be read.
 pub fn unset_value(path: &Path, key: &str) -> Result<()> {
-    let mut settings = load(path);
+    let mut settings = load(path)?;
     settings.remove(Value::String(key.to_string()));
     save(path, &settings)
 }
 
-/// `config reset`: delete the file. Idempotent (probed: exits 0 when the
-/// file is already gone).
-pub fn reset(path: &Path) -> Result<()> {
+/// `config reset` (no `--all`): truncate the settings to an empty mapping,
+/// writing `{}\n` — creating the file and its directory when absent (probed).
+/// Like `set`/`unset` it reads first, so an unreadable file is refused rather
+/// than replaced. Idempotent.
+pub fn reset_to_empty(path: &Path) -> Result<()> {
+    load(path)?;
+    save(path, &Mapping::new())
+}
+
+/// `config reset --all`: delete the file outright. Unlike [`reset_to_empty`]
+/// this does *not* read first, so it succeeds on an unreadable config
+/// (probed). Idempotent — an already-absent file exits 0.
+pub fn reset_delete(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
     }
+}
+
+/// `config edit`'s pre-spawn side effect: create the config directory and, when
+/// the file does not yet exist, seed it with the oracle's exact header bytes
+/// (probed). An existing file is left untouched. Without this the editor is
+/// pointed at a path inside a directory that does not exist, so a real editor's
+/// save fails — and since most editors still exit 0 after reporting that, the
+/// user's edits vanish with no signal from the CLI.
+pub const EDIT_SEED: &str = "# OpenSpec global config\n";
+
+pub fn ensure_editable(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    if !path.exists() {
+        crate::init::write_atomically(path, EDIT_SEED)
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -216,6 +298,22 @@ mod tests {
         );
         assert_eq!(resolve_config_path(true, Some(os("")), None), None);
         assert_eq!(resolve_config_path(false, None, None), None);
+    }
+
+    /// A relative `XDG_CONFIG_HOME` would make the *global* config location
+    /// depend on the process CWD; the XDG spec requires an absolute path, so
+    /// it falls back to `$HOME/.config` instead of being joined.
+    #[test]
+    fn resolve_config_path_ignores_a_relative_xdg_config_home() {
+        assert_eq!(
+            resolve_config_path(false, Some(os("/home/u")), Some(os("relative/dir"))),
+            Some(PathBuf::from("/home/u/.config/openspec/config.yaml"))
+        );
+        // With no usable HOME either, a relative XDG cannot rescue it.
+        assert_eq!(
+            resolve_config_path(false, None, Some(os("relative/dir"))),
+            None
+        );
     }
 
     #[test]
@@ -286,13 +384,50 @@ mod tests {
     fn load_reads_missing_corrupt_and_non_mapping_files_as_empty() {
         let dir = TempDir::new("gconfig-load");
         let path = dir.join("config.yaml");
-        assert!(load(&path).is_empty(), "missing file");
+        assert!(load(&path).unwrap().is_empty(), "missing file");
 
         std::fs::write(&path, "not: [valid: yaml\n").unwrap();
-        assert!(load(&path).is_empty(), "corrupt file");
+        assert!(load(&path).unwrap().is_empty(), "corrupt file");
 
         std::fs::write(&path, "- 1\n- 2\n").unwrap();
-        assert!(load(&path).is_empty(), "non-mapping file");
+        assert!(load(&path).unwrap().is_empty(), "non-mapping file");
+    }
+
+    /// The data-loss guard: an *I/O* read failure must not be flattened into
+    /// "empty", or the save that follows writes a file holding only the new
+    /// key. `write_atomically`'s temp+rename needs only the directory write
+    /// bit, so it would happily replace a file it could not read.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_file_is_refused_by_the_write_paths_but_empty_for_display() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new("gconfig-unreadable");
+        let path = dir.join("config.yaml");
+        std::fs::write(&path, "alpha: 1\nbeta: 2\ngamma: 3\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        // Root ignores the permission bits, so skip rather than fail there.
+        if std::fs::read_to_string(&path).is_ok() {
+            return;
+        }
+
+        // Display paths stay lenient (probed: the oracle prints
+        // "No configuration set." for a mode-000 file).
+        assert!(load_for_display(&path).is_empty());
+
+        // Write paths refuse, and -- the point of the test -- leave the bytes.
+        assert!(load(&path).is_err(), "load must surface the I/O error");
+        assert!(set_value(&path, "delta", "4", false).is_err());
+        assert!(unset_value(&path, "alpha").is_err());
+        assert!(reset_to_empty(&path).is_err());
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha: 1\nbeta: 2\ngamma: 3\n",
+            "the unreadable config must survive every refused write"
+        );
     }
 
     #[test]
@@ -302,7 +437,7 @@ mod tests {
         set_value(&path, "tdd", "true", false).unwrap();
         set_value(&path, "claude_effort.apply", "high", false).unwrap();
 
-        let settings = load(&path);
+        let settings = load(&path).unwrap();
         assert_eq!(get_value(&settings, "tdd"), Some(&Value::Bool(true)));
         // Probed: dotted keys are literal flat keys, not nested paths.
         assert_eq!(
@@ -345,16 +480,52 @@ mod tests {
         unset_value(&path, "only").unwrap();
     }
 
+    /// Probed: plain `reset` truncates to `{}` and *creates* the file when it
+    /// was absent -- it does not delete. Only `--all` deletes (next test).
     #[test]
-    fn reset_deletes_the_file_and_is_idempotent() {
-        let dir = TempDir::new("gconfig-reset");
+    fn reset_to_empty_truncates_and_creates_rather_than_deleting() {
+        let dir = TempDir::new("gconfig-reset-empty");
+        let path = dir.join("nested").join("config.yaml");
+        set_value(&path, "k", "v", false).unwrap();
+        reset_to_empty(&path).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{}\n");
+
+        // Idempotent, and it seeds a config that never existed.
+        let virgin = dir.join("virgin").join("config.yaml");
+        reset_to_empty(&virgin).unwrap();
+        assert_eq!(std::fs::read_to_string(&virgin).unwrap(), "{}\n");
+        reset_to_empty(&virgin).unwrap();
+        assert_eq!(std::fs::read_to_string(&virgin).unwrap(), "{}\n");
+    }
+
+    #[test]
+    fn reset_delete_removes_the_file_and_is_idempotent() {
+        let dir = TempDir::new("gconfig-reset-all");
         let path = dir.join("config.yaml");
         set_value(&path, "k", "v", false).unwrap();
         assert!(path.exists());
-        reset(&path).unwrap();
+        reset_delete(&path).unwrap();
         assert!(!path.exists());
-        // Probed: a second reset still succeeds.
-        reset(&path).unwrap();
+        // Probed: a second `--all` reset still succeeds.
+        reset_delete(&path).unwrap();
+    }
+
+    #[test]
+    fn ensure_editable_seeds_a_missing_file_and_preserves_an_existing_one() {
+        let dir = TempDir::new("gconfig-editable");
+        let path = dir.join("nested").join("config.yaml");
+        ensure_editable(&path).unwrap();
+        // Probed oracle bytes.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), EDIT_SEED);
+        assert_eq!(EDIT_SEED, "# OpenSpec global config\n");
+
+        std::fs::write(&path, "keep: me\n").unwrap();
+        ensure_editable(&path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "keep: me\n",
+            "an existing config must not be clobbered by edit"
+        );
     }
 
     #[test]
@@ -374,5 +545,14 @@ mod tests {
         // A hand-edited file can have a non-string key; it is stringified.
         let odd: Value = serde_yaml::from_str("1: x\n").unwrap();
         assert_eq!(to_json(&odd), serde_json::json!({"1": "x"}));
+    }
+
+    /// Both branches are reachable from a hand-edited config, and neither was
+    /// pinned before: a non-finite float has no JSON representation, and a
+    /// tagged scalar must be unwrapped rather than dispatched on.
+    #[test]
+    fn to_json_handles_non_finite_floats_and_tagged_values() {
+        let odd: Value = serde_yaml::from_str("x: .nan\ny: !!str 7\n").unwrap();
+        assert_eq!(to_json(&odd), serde_json::json!({"x": null, "y": "7"}));
     }
 }
