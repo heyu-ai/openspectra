@@ -18,7 +18,10 @@ changes.
   `.spectra/changes/<name>.in-progress` sidecar instead, which is
   indistinguishable through the CLI because **no command reads the marker** —
   `list`, `list --json`, `list --parked`, `status`, `analyze`, and `show` are
-  byte-identical before and after, and a regression test locks that. Other
+  byte-identical before and after, and a regression test locks all six of
+  those invocations against a fixture whose `list --json` reads `"done"`
+  beforehand (otherwise a marker leaking into that field would produce
+  identical bytes and the lock would prove nothing). Other
   oracle behaviors reproduced deliberately: success prints nothing and exits 0,
   a name with no corresponding change is accepted and recorded (ghost change),
   repeated adds are idempotent, and there is no `--json` flag and no removal

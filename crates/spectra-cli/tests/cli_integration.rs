@@ -484,15 +484,44 @@ fn in_progress_marker_does_not_change_list_or_status_output() {
     let tmp = TempDir::new("in-progress-write-only");
     init_project_with_change(&tmp, "shipping");
 
+    // The fixture MUST report `"status": "done"` before the marker is added.
+    // `list_change_items` derives `"in-progress"` for any change without a
+    // fully-completed tasks.md (main.rs: `total > 0 && done == total`), and a
+    // fresh `new change` has no tasks.md at all -- so on the default fixture
+    // the pre-add JSON already says "in-progress", and a mutation wiring the
+    // marker into that field produces byte-identical output. The lock would
+    // silently prove nothing. Completing the tasks is what gives the two
+    // states different bytes, and therefore gives this assertion teeth.
+    std::fs::write(
+        tmp.join("openspec")
+            .join("changes")
+            .join("shipping")
+            .join("tasks.md"),
+        "# Tasks\n\n- [x] 1. done\n",
+    )
+    .unwrap();
+    let baseline = spectra()
+        .args(["list", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&baseline.stdout).contains("\"status\": \"done\""),
+        "fixture precondition: list --json must read \"done\" before the add, \
+         else a marker leak into that field is invisible: {baseline:?}"
+    );
+
     // `list --json` carries a *derived* task status that is also spelled
     // "in-progress" (main.rs `list_change_items`). It is unrelated to this
     // marker, and it is the surface most likely to be wired to it by mistake
     // -- so it has to be in the lock, not just the human-readable listing.
-    let read_paths: [&[&str]; 5] = [
+    // `analyze` is here because CHANGELOG names it among the locked surfaces.
+    let read_paths: [&[&str]; 6] = [
         &["list"],
         &["list", "--json"],
         &["list", "--parked"],
         &["status"],
+        &["analyze", "shipping"],
         &["show", "shipping"],
     ];
 

@@ -4,11 +4,12 @@
 //! `.openspec.yaml` metadata file and, as its workflow advances, artifact files
 //! such as `proposal.md`, `design.md`, `tasks.md`, and `specs/<cap>/spec.md`.
 //! Spectra tracks per-change state under `.spectra/`:
-//! `.spectra/changes/<name>.started` records the baseline git SHA and
-//! `.spectra/changes/<name>.parked` is an on-hold marker; both mirror the
-//! oracle. `.spectra/changes/<name>.in-progress` is an OpenSpectra-only
-//! marker with no oracle counterpart on disk -- the oracle keeps that state
-//! in SQLite (see `docs/reverse-engineering/in-progress.md`).
+//! `.spectra/changes/<name>.parked` mirrors the oracle's on-hold state.
+//! `.spectra/changes/<name>.started` records the baseline git SHA drift needs
+//! and is OpenSpectra-only (see `docs/reverse-engineering/artifact-workflow.md`).
+//! `.spectra/changes/<name>.in-progress` is likewise OpenSpectra-only on disk
+//! -- the oracle keeps that state in SQLite, not as a sidecar (see
+//! `docs/reverse-engineering/in-progress.md`).
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
@@ -882,6 +883,59 @@ mod tests {
         );
         assert_eq!(list_active(&cfg), vec!["reused-name".to_string()]);
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    /// A sidecar that cannot be removed must not shield the ones after it.
+    /// The loop used to `return` on the first failure, and the in-progress
+    /// marker sits ahead of `.started` and `touched.json` -- so an
+    /// unremovable marker (it has no removal command, no read path, and
+    /// nothing validates it) silently left the stale baseline SHA in place,
+    /// and the recreated change scored drift against the previous change's
+    /// baseline. Both callers only warn, so nothing surfaced.
+    #[cfg(unix)]
+    #[test]
+    fn clear_stale_sidecar_state_clears_later_sidecars_when_an_earlier_one_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        create(&cfg, "blocked").unwrap();
+        park(&cfg, "blocked").unwrap();
+        mark_in_progress(&cfg, "blocked").unwrap();
+        crate::touched::record(&cfg, "blocked", 1, "task", vec!["src/lib.rs".to_string()]).unwrap();
+        let touched = crate::touched::touched_path(&cfg, "blocked");
+        assert!(touched.is_file(), "fixture: touched.json must exist");
+
+        // Make removals inside .spectra/changes/ fail while .spectra/touched/
+        // stays writable, so a first-error return would be observable.
+        let changes_state_dir = parked_marker_path(&cfg, "blocked")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let original = std::fs::metadata(&changes_state_dir).unwrap().permissions();
+        let mut locked = original.clone();
+        locked.set_mode(0o555);
+        std::fs::set_permissions(&changes_state_dir, locked).unwrap();
+
+        let result = clear_stale_sidecar_state(&cfg, "blocked");
+
+        std::fs::set_permissions(&changes_state_dir, original).unwrap();
+
+        let err = result.expect_err("removal failures must be reported, not swallowed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("blocked.parked") && msg.contains("blocked.in-progress"),
+            "every failing sidecar must be named, not just the first: {msg}"
+        );
+        assert!(
+            !touched.exists(),
+            "touched.json must still be cleared even though earlier sidecars failed"
+        );
     }
 
     #[test]
