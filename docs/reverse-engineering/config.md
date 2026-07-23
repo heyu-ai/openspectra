@@ -138,7 +138,13 @@ All probed:
   it. No backup is made — mirrored as-is (unlike e.g. `archive`'s corrupt
   `openspec.yaml` backup, this matches the oracle).
 * **Non-mapping file** (e.g. a bare list) → same as corrupt.
-* **Non-UTF-8 bytes** → same as corrupt on both sides (both overwrite).
+* **Non-UTF-8 bytes** → same as corrupt on both sides (both overwrite). This
+  is a *content* problem, not an I/O fault, and the distinction is easy to lose:
+  `std::fs::read_to_string` reports non-UTF-8 as `io::ErrorKind::InvalidData`,
+  indistinguishable from a real read failure, so `load` reads bytes and decodes
+  separately. Classifying it as I/O made `set` refuse where the oracle
+  overwrites (caught in re-review; pinned by
+  `non_utf8_config_reads_as_empty_and_is_overwritten_by_set`).
 * **Unreadable file** (mode 000) → the *read* paths are lenient like a corrupt
   file (`list` → `No configuration set.`; `get k` → `Error: Key 'k' not found.`,
   exit 1), but every *write* path refuses: `set`, `unset`, and plain `reset`
@@ -161,6 +167,16 @@ All probed:
   therefore fails there. Atomicity protects against a crash mid-write, which
   the oracle does not; the trade was made knowingly. This is the only case
   where the oracle succeeds and openspectra does not.
+* **A symlinked config file.** Same root cause, opposite symptom: the oracle
+  writes *through* a `config.yaml` symlink and leaves the link in place, while
+  the temp+rename replaces the link with a regular file — so a dotfile
+  manager's tracked target silently stops receiving updates. Both exit 0, so
+  only the on-disk result differs. Measured: with `config.yaml -> real.yaml`
+  containing `a: 1`, `config set k v` gives oracle `real.yaml == "k: v\na: 1\n"`
+  and a still-symlinked `config.yaml`; openspectra leaves `real.yaml`
+  untouched and `config.yaml` a regular file. `edit` behaves the same way on a
+  dangling link. Accepted for the same reason as the row above; see
+  `init::write_atomically`'s rationale.
 * **`HOME` unset.** The oracle still resolves the account's home via the OS
   password database and prints a path; openspectra errors
   (`could not determine the config directory ...`, exit 1). Matching would

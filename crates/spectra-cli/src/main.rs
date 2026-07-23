@@ -213,12 +213,12 @@ enum ConfigTarget {
     /// Reset config
     Reset {
         /// Reset all settings
-        // Accepted but inert, like -y: the oracle resets (deletes the file)
-        // identically with or without either flag and never prompts (probed
-        // in both TTY and piped runs).
+        // NOT inert (probed): plain `reset` truncates the file to `{}`, while
+        // `--all` deletes it outright. See `cmd_config`'s Reset arm.
         #[arg(long)]
         all: bool,
         /// Skip confirmation
+        // Inert (probed): neither reset mode ever prompts, on a TTY or piped.
         #[arg(short = 'y', long)]
         yes: bool,
     },

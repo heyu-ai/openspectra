@@ -11,13 +11,15 @@
 //!   nested path.
 //! * Values are parsed as YAML scalars/collections (`true` → bool, `42` →
 //!   int, `[1, 2]` → sequence); anything unparseable falls back to a string.
-//! * A missing, unparseable, or non-mapping file reads as empty, and the next
-//!   write overwrites it. An *unreadable* file is different: the oracle
-//!   reports the I/O error and leaves the file alone (probed), so a read
-//!   failure other than `NotFound` must not be flattened into "empty".
-//! * `unset` saves even when nothing was removed (creating a `{}` file);
-//!   `reset` deletes the file and is idempotent — but, like `set`/`unset`, it
-//!   refuses when the existing file cannot be read (probed).
+//! * A missing, unparseable, non-mapping, or non-UTF-8 file reads as empty,
+//!   and the next write overwrites it. An *unreadable* file is different: the
+//!   oracle reports the I/O error and leaves the file alone (probed), so a
+//!   genuine read fault must not be flattened into "empty".
+//! * `unset` saves even when nothing was removed (creating a `{}` file).
+//! * `reset` **truncates** the file to `{}` (creating it when absent) and, like
+//!   `set`/`unset`, refuses when the existing file cannot be read; `reset
+//!   --all` **deletes** it and never reads, so it succeeds on an unreadable
+//!   config. Both are idempotent. (probed — `--all` is not an inert flag.)
 
 use anyhow::{Context, Result};
 use serde_yaml::{Mapping, Value};
@@ -85,18 +87,30 @@ fn resolve_config_path(
 /// "No configuration set." for a corrupt file and lets the next `set`
 /// overwrite it.
 ///
+/// Non-UTF-8 bytes count as **content**, not I/O: probed, the oracle
+/// overwrites such a file exactly like corrupt YAML.
+///
 /// It is deliberately **not** lenient about **I/O**. Flattening a
-/// `PermissionDenied`/`InvalidData`/`EIO` read into "empty" would make the
+/// `PermissionDenied`/`IsADirectory`/`EIO` read into "empty" would make the
 /// following `save` write a file containing only the new key — silently
 /// destroying a config that was merely unreadable, because the temp+rename in
 /// [`save`] needs the *directory* write bit rather than the file's. Probed:
 /// the oracle reports `Permission denied (os error 13)` and leaves the file
-/// alone. This mirrors [`crate::touched`], which splits the same three cases.
+/// alone. This mirrors [`crate::touched`], which splits the same cases.
 pub fn load(path: &Path) -> Result<Mapping> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
+    // Read bytes, not `read_to_string`: the latter reports non-UTF-8 content
+    // as `InvalidData`, indistinguishable from a real I/O fault. Probed, the
+    // oracle treats non-UTF-8 exactly like corrupt YAML -- `set` overwrites it
+    // and exits 0 -- so a decode failure must stay on the lenient side of this
+    // split. Only genuine I/O faults (PermissionDenied, IsADirectory, EIO, ...)
+    // are propagated.
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Mapping::new()),
         Err(e) => return Err(e.into()),
+    };
+    let Ok(text) = String::from_utf8(bytes) else {
+        return Ok(Mapping::new());
     };
     Ok(match serde_yaml::from_str::<Value>(&text) {
         Ok(Value::Mapping(map)) => map,
@@ -235,18 +249,25 @@ pub fn reset_delete(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+        // Bare, with no `with_context` path prefix: every other error surface
+        // in `config` reaches the user as the oracle emits it (probed, e.g.
+        // `Error: Operation not permitted (os error 1)` when the config path is
+        // a directory). A prefix here would both diverge and leak the absolute
+        // path into a message the oracle keeps short.
+        Err(e) => Err(e.into()),
     }
 }
 
-/// `config edit`'s pre-spawn side effect: create the config directory and, when
-/// the file does not yet exist, seed it with the oracle's exact header bytes
-/// (probed). An existing file is left untouched. Without this the editor is
-/// pointed at a path inside a directory that does not exist, so a real editor's
-/// save fails — and since most editors still exit 0 after reporting that, the
-/// user's edits vanish with no signal from the CLI.
+/// The exact bytes the oracle seeds a missing config with before opening it
+/// in an editor (probed, xxd-confirmed).
 pub const EDIT_SEED: &str = "# OpenSpec global config\n";
 
+/// `config edit`'s pre-spawn side effect: create the config directory and, when
+/// the file does not yet exist, seed it with [`EDIT_SEED`] (probed). An
+/// existing file is left untouched. Without this the editor is pointed at a
+/// path inside a directory that does not exist, so a real editor's save fails —
+/// and since most editors still exit 0 after reporting that, the user's edits
+/// vanish with no signal from the CLI.
 pub fn ensure_editable(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -287,6 +308,11 @@ mod tests {
         assert_eq!(
             resolve_config_path(false, Some(os("/home/u")), None),
             Some(PathBuf::from("/home/u/.config/openspec/config.yaml"))
+        );
+        // An absolute XDG dir stands on its own -- HOME is not consulted.
+        assert_eq!(
+            resolve_config_path(false, None, Some(os("/xdg"))),
+            Some(PathBuf::from("/xdg/openspec/config.yaml"))
         );
     }
 
@@ -391,6 +417,15 @@ mod tests {
 
         std::fs::write(&path, "- 1\n- 2\n").unwrap();
         assert!(load(&path).unwrap().is_empty(), "non-mapping file");
+
+        // Non-UTF-8 is a *content* problem, not an I/O fault: probed, the
+        // oracle treats it exactly like corrupt YAML and lets `set` overwrite
+        // it. Reading via `read_to_string` would misclassify this as
+        // `InvalidData` and refuse the write.
+        std::fs::write(&path, b"alpha: 1\nbeta: \"\xff\xfe\"\n").unwrap();
+        assert!(load(&path).unwrap().is_empty(), "non-UTF-8 file");
+        set_value(&path, "delta", "4", false).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "delta: 4\n");
     }
 
     /// The data-loss guard: an *I/O* read failure must not be flattened into
@@ -407,8 +442,17 @@ mod tests {
         std::fs::write(&path, "alpha: 1\nbeta: 2\ngamma: 3\n").unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-        // Root ignores the permission bits, so skip rather than fail there.
+        // Root ignores the permission bits, so the scenario cannot be built
+        // there. Announce the skip and restore the mode, matching this crate's
+        // sibling root-skips -- a silent early return would leave the only
+        // coverage of the data-loss guard vacuous on a root CI runner with
+        // nothing in the log to say so.
         if std::fs::read_to_string(&path).is_ok() {
+            eprintln!(
+                "skipping an_unreadable_file_is_refused_by_the_write_paths_but_empty_for_display: \
+                 running as root (chmod 0o000 not enforced)"
+            );
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             return;
         }
 
@@ -427,6 +471,15 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "alpha: 1\nbeta: 2\ngamma: 3\n",
             "the unreadable config must survive every refused write"
+        );
+
+        // `reset --all` is the documented exception: it never reads, so it
+        // deletes an unreadable config rather than refusing (probed).
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        reset_delete(&path).unwrap();
+        assert!(
+            !path.exists(),
+            "reset --all must delete even an unreadable config"
         );
     }
 

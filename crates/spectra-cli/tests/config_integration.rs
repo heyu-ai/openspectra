@@ -475,7 +475,15 @@ fn writes_refuse_an_unreadable_config_instead_of_clobbering_it() {
     let original = std::fs::read_to_string(&file).unwrap();
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
     if std::fs::read_to_string(&file).is_ok() {
-        return; // running as root; the permission bits are not enforced
+        // Announce the skip (and restore the mode) rather than returning
+        // silently: this is the only CLI-level coverage of the data-loss
+        // guard, so a quiet skip on a root runner reads as "verified".
+        eprintln!(
+            "skipping writes_refuse_an_unreadable_config_instead_of_clobbering_it: \
+             running as root (chmod 0o000 not enforced)"
+        );
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        return;
     }
 
     for args in [
@@ -486,6 +494,15 @@ fn writes_refuse_an_unreadable_config_instead_of_clobbering_it() {
         let out = run(&home, &args);
         assert_eq!(out.status.code(), Some(1), "{args:?} should fail: {out:?}");
         assert!(out.stdout.is_empty(), "{args:?} must not print success");
+        // Pin the exact wording, not just "it failed": the oracle's message is
+        // part of AC-1, and asserting only the exit code lets a reworded (or
+        // wrongly-classified) error ship green -- which is how the non-UTF-8
+        // regression stayed invisible to this suite.
+        assert_eq!(
+            String::from_utf8(out.stderr).unwrap(),
+            "Error: Permission denied (os error 13)\n",
+            "{args:?} stderr must match the oracle"
+        );
     }
 
     // Display paths stay lenient, matching the oracle.
@@ -496,6 +513,75 @@ fn writes_refuse_an_unreadable_config_instead_of_clobbering_it() {
 
     std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+}
+
+/// The documented exception to the rule above: `reset --all` never reads, so
+/// it deletes an unreadable config and exits 0 (probed).
+#[cfg(unix)]
+#[test]
+fn reset_all_deletes_even_an_unreadable_config() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new("config-unreadable-all");
+    run_ok(&home, &["config", "set", "alpha", "1"]);
+    let file = config_file(&home);
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_to_string(&file).is_ok() {
+        eprintln!(
+            "skipping reset_all_deletes_even_an_unreadable_config: \
+             running as root (chmod 0o000 not enforced)"
+        );
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+
+    assert_eq!(
+        run_ok(&home, &["config", "reset", "--all"]),
+        "\u{2713} Config reset.\n"
+    );
+    assert!(!file.exists());
+}
+
+/// Probed: when the config path is a directory, `reset --all`'s `remove_file`
+/// fails and the oracle prints the bare OS error -- no path prefix. Pins the
+/// absence of a `with_context` wrapper on that arm.
+#[test]
+fn reset_all_on_a_directory_config_path_reports_the_bare_os_error() {
+    let home = TempDir::new("config-reset-dir");
+    std::fs::create_dir_all(config_file(&home)).unwrap();
+    let out = run(&home, &["config", "reset", "--all"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.contains("removing "),
+        "stderr must not carry a path-prefixed context: {stderr}"
+    );
+    assert!(
+        stderr.starts_with("Error: ") && stderr.contains("(os error "),
+        "unexpected stderr: {stderr}"
+    );
+}
+
+/// Non-UTF-8 bytes are a *content* problem, not an I/O fault: probed, the
+/// oracle overwrites such a file exactly like corrupt YAML. Reading the config
+/// via `read_to_string` would misclassify it as `InvalidData` and refuse the
+/// write -- a regression this pins.
+#[test]
+fn non_utf8_config_reads_as_empty_and_is_overwritten_by_set() {
+    let home = TempDir::new("config-non-utf8");
+    let file = config_file(&home);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"alpha: 1\nbeta: \"\xff\xfe\"\n").unwrap();
+
+    assert_eq!(
+        run_ok(&home, &["config", "list"]),
+        "No configuration set.\n"
+    );
+    assert_eq!(
+        run_ok(&home, &["config", "set", "delta", "4"]),
+        "\u{2713} delta = 4\n"
+    );
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "delta: 4\n");
 }
 
 #[cfg(target_os = "linux")]
