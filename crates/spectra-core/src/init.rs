@@ -167,7 +167,7 @@ fn read_gitignore(path: &Path) -> Result<String> {
 /// On failure, the temp file is removed on a best-effort basis; if that
 /// cleanup itself also fails, the original error is still what's returned,
 /// with the cleanup failure logged to stderr rather than silently dropped.
-fn write_atomically(path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_atomically(path: &Path, contents: &str) -> Result<()> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 

@@ -1,6 +1,6 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `status`,
 //! `instructions`, `validate`, `list`, `show`, `park`, `unpark`, `new change`,
-//! `new artifact`, `task done`, `archive`.
+//! `new artifact`, `task done`, `archive`, `config`.
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -165,6 +165,65 @@ enum Command {
         #[arg(long)]
         mark_tasks_complete: bool,
     },
+    /// Config management commands
+    Config {
+        #[command(subcommand)]
+        target: ConfigTarget,
+    },
+}
+
+/// Subcommands of `spectra config`, managing the *global* user config file
+/// (see `spectra_core::global_config`) — none of them need an initialized
+/// project (probed: the oracle runs them outside any project).
+#[derive(Subcommand, Debug)]
+enum ConfigTarget {
+    /// Show config file path
+    Path,
+    /// List all settings
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Get a config value
+    Get {
+        /// Config key
+        key: String,
+    },
+    /// Set a config value
+    Set {
+        /// Config key
+        key: String,
+        /// Config value
+        value: String,
+        /// Treat value as string
+        #[arg(long)]
+        string: bool,
+        /// Allow unknown keys
+        // Accepted but inert, mirroring the oracle (probed: 2.3.1 accepts
+        // unknown keys with or without this flag).
+        #[arg(long)]
+        allow_unknown: bool,
+    },
+    /// Remove a config key
+    Unset {
+        /// Config key
+        key: String,
+    },
+    /// Reset config
+    Reset {
+        /// Reset all settings
+        // Accepted but inert, like -y: the oracle resets (deletes the file)
+        // identically with or without either flag and never prompts (probed
+        // in both TTY and piped runs).
+        #[arg(long)]
+        all: bool,
+        /// Skip confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+    /// Edit config in $EDITOR
+    Edit,
 }
 
 #[derive(Subcommand, Debug)]
@@ -931,6 +990,91 @@ fn cmd_archive(
     Ok(0)
 }
 
+/// `spectra config <sub>`: manage the global user config file. Output shapes
+/// are pinned against the 2.3.1 oracle — see
+/// `docs/reverse-engineering/config.md`.
+fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
+    use spectra_core::global_config as gc;
+
+    let path = gc::config_path()?;
+    let check = |text: &str| colorize(text, "32", use_color);
+    match target {
+        ConfigTarget::Path => {
+            println!("{}", path.display());
+        }
+        ConfigTarget::List { json } => {
+            let settings = gc::load(&path);
+            if *json {
+                let obj: serde_json::Value = serde_json::Value::Object(
+                    settings
+                        .iter()
+                        .map(|(k, v)| (gc::key_string(k), gc::to_json(v)))
+                        .collect(),
+                );
+                println!("{}", serde_json::to_string_pretty(&obj)?);
+            } else if settings.is_empty() {
+                println!("No configuration set.");
+            } else {
+                // The oracle sorts the human listing by key (probed), even
+                // though its file/JSON key order is arbitrary.
+                let mut entries: Vec<(String, String)> = settings
+                    .iter()
+                    .map(|(k, v)| (gc::key_string(k), gc::render_value(v)))
+                    .collect();
+                entries.sort();
+                for (key, rendered) in entries {
+                    println!("{key} = {rendered}");
+                }
+            }
+        }
+        ConfigTarget::Get { key } => {
+            let settings = gc::load(&path);
+            let Some(value) = gc::get_value(&settings, key) else {
+                anyhow::bail!("Key '{key}' not found.");
+            };
+            // Null/sequence/mapping renderings end in the YAML serializer's
+            // newline, so this prints e.g. `null\n\n` — byte-matching the
+            // oracle.
+            println!("{}", gc::render_value(value));
+        }
+        ConfigTarget::Set {
+            key,
+            value,
+            string,
+            allow_unknown: _,
+        } => {
+            gc::set_value(&path, key, value, *string)?;
+            // Echo the raw CLI argument, not the parsed value (probed:
+            // `set parallel_tasks TRUE` echoes `TRUE` but stores `true`).
+            println!("{} {key} = {value}", check("\u{2713}"));
+        }
+        ConfigTarget::Unset { key } => {
+            gc::unset_value(&path, key)?;
+            println!("{} Removed key: {key}", check("\u{2713}"));
+        }
+        ConfigTarget::Reset { all: _, yes: _ } => {
+            gc::reset(&path)?;
+            println!("{} Config reset.", check("\u{2713}"));
+        }
+        ConfigTarget::Edit => {
+            // Fallback probed only as far as "EDITOR unset launches vim";
+            // `vi` is the portable spelling. $VISUAL was not probed and is
+            // deliberately not consulted.
+            let editor = std::env::var_os("EDITOR")
+                .filter(|e| !e.is_empty())
+                .unwrap_or_else(|| "vi".into());
+            let status = std::process::Command::new(&editor)
+                .arg(&path)
+                .status()
+                .with_context(|| format!("launching editor {}", editor.to_string_lossy()))?;
+            if !status.success() {
+                anyhow::bail!("Editor exited with error.");
+            }
+        }
+    }
+    Ok(0)
+}
+
 fn task_counts(tasks_md: &Path) -> (usize, usize) {
     let Ok(text) = std::fs::read_to_string(tasks_md) else {
         return (0, 0);
@@ -1082,6 +1226,8 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_archive(&cfg, change.as_deref(), *skip_specs, *mark_tasks_complete)
         }
+        // Global config management needs no project (like `init`/`schemas`).
+        Command::Config { target } => cmd_config(target, use_color),
     }
 }
 
