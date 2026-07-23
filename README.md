@@ -4,9 +4,9 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** early. `spectra init` / `drift` / `validate` (+ minimal `list` /
-> `show` / `park` / `unpark` / `new change` / `task done` / `archive`) is
-> implemented in Rust and runs on Linux/macOS with zero runtime dependencies
+> **Status:** early. `spectra init` / `drift` / `validate` / `update` (+ minimal
+> `list` / `show` / `park` / `unpark` / `new change` / `task done` / `archive`)
+> is implemented in Rust and runs on Linux/macOS with zero runtime dependencies
 > (just `git` on `PATH`). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
 > [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
@@ -204,9 +204,10 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / archive
+crates/spectra-cli/    # clap CLI: init / drift / validate / update / list / show / park / unpark / new change / task done / archive
+crates/spectra-core/assets/update/   # instruction-file templates captured verbatim from the oracle (generated; see update.md)
 docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
-scripts/               # oracle calibration probes
+scripts/               # oracle calibration probes + template capture (capture-update-templates.py)
 ```
 
 ## License

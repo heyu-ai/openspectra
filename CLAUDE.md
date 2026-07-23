@@ -16,6 +16,12 @@ this file is agent-facing operational context.
 - `scripts/capture-golden.sh` — macOS-only, requires the closed-source
   reference binary (`SPECTRA_BIN`); regenerates golden fixtures used to
   calibrate constants. Not runnable in CI.
+- `scripts/capture-update-templates.py` — same constraints (macOS + reference
+  binary); regenerates `crates/spectra-core/assets/update/`, the generated
+  `update_manifest.rs`, and the `update` golden TSV. It is a verification
+  contract, not a printer: template round-trip, per-tool stdout, registry
+  order, and the codex×gemini quirk are all re-checked, and any mismatch
+  exits non-zero keeping its sandboxes. Never hand-edit its outputs.
 
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 
