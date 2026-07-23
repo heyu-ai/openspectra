@@ -11,6 +11,7 @@ starting with the `drift` command.
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
 > [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
 > [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
+> [`docs/reverse-engineering/update.md`](docs/reverse-engineering/update.md),
 > and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
 > (the last one is **not** oracle-verified — see that doc). `validate` is
 > likewise **not** oracle-verified: it matches the OSS `openspec validate`

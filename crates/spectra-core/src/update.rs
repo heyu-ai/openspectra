@@ -11,17 +11,23 @@
 //! - `--force` 在 oracle 2.3.1 觀察不到任何行為差異（CLI 收下但語義同
 //!   預設），這裡照樣只收不用。
 //! - 模板中 `{{SPEC_DIR}}` 代換為 config 的 `spec_dir`；oracle 輸出本身
-//!   含有漏代換的字面 `{{SPEC_DIR}}`（cursor spectra-ask 的 frontmatter），
-//!   capture 時跳脫成 `{{RAW_SPEC_DIR}}`，render 時還原字面值。
-//! - 根目錄的 marker 檔（`CLAUDE.md`、`.cursorrules` 等）以
+//!   含有漏代換的字面 `{{SPEC_DIR}}`（每個工具的 spectra-ask 命令檔，
+//!   445 個 tool-file 中有 19 個、去重後 9 個 blob），capture 時跳脫成
+//!   `{{RAW_SPEC_DIR}}`，render 時還原字面值。
+//! - [`FileKind`] 是**對 oracle 實測**分類的（sentinel 存活法），不是從模板
+//!   文字推論：kilocode 的 10 個 `.kilocode/workflows/*.md` 模板本身是完整
+//!   marker 區塊，oracle 卻整檔覆寫。
+//! - marker 檔（`CLAUDE.md`、`.cursorrules`、`AGENTS.md` 等 11 個路徑）以
 //!   `<!-- SPECTRA:START … -->` / `<!-- SPECTRA:END -->` 區塊管理：
-//!   區塊完整 → 原地替換（前後內容保留）；只有 START 沒 END → 整塊附加到
-//!   檔尾；沒有 START（不管有沒有孤兒 END）→ 前置到檔首。
+//!   區塊完整 → 原地替換（marker 之外的內容保留，**含同行前後綴**）；
+//!   只有 START 沒 END → 整塊附加到檔尾；沒有 START（不管有沒有孤兒 END）
+//!   → 前置到檔首。詳細替換區間見 [`merge_managed_block`]。
+//! - 既有檔讀不成 UTF-8 → 當作不存在（整份丟棄重寫），與 oracle 一致。
 //! - `.claude/settings.json` 是 JSON 合併：管理鍵強制為管理值、使用者鍵
 //!   保留、鍵按字母排序（oracle 即 serde_json 預設 BTreeMap 行為）、
 //!   2 空格縮排、無結尾換行；無法解析成 JSON object 時整檔換成預設模板。
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::Path;
 
 use crate::config::Config;
@@ -40,9 +46,11 @@ const MARKER_END: &str = "<!-- SPECTRA:END -->";
 /// 一個工具檔案的寫入策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
-    /// 整檔覆寫（skills、commands、prompts……）。
+    /// 整檔覆寫（skills、commands、prompts，以及 kilocode 的 workflows——
+    /// 後者的模板看起來是 marker 區塊，但 oracle 實測是整檔覆寫）。
+    /// oracle 的做法是 unlink + 重建，故不跟隨 symlink、且能換掉唯讀檔。
     Plain,
-    /// 根目錄 marker 檔：只管理 START/END 區塊，區塊外內容保留。
+    /// marker 檔：只管理 START/END 區塊，區塊外內容保留。
     Managed,
     /// `.claude/settings.json`：JSON 物件合併。
     ClaudeSettings,
@@ -98,26 +106,62 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let rendered = render(file.template, spec_dir);
-    let content = match file.kind {
-        FileKind::Plain => rendered,
+    match file.kind {
+        // Plain：oracle 實測是 unlink + 重建（連可寫檔的 inode 都會變），
+        // 這帶來兩個可觀察行為，兩者都要照做：唯讀既有檔會被成功換掉、
+        // 而 symlink **不會**被跟隨（link 本身被移除，指向的外部檔案毫髮無傷）。
+        // 先前用 `fs::write` 同時錯失這兩點——唯讀檔讓整個 run exit 1，
+        // symlink 則被寫穿而覆寫專案外檔案。
+        FileKind::Plain => {
+            remove_if_present(&path)?;
+            std::fs::write(&path, rendered)
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        // Managed / ClaudeSettings：讀取既有內容再合併，屬 read-modify-write。
+        // oracle 這兩類是就地寫入（會跟隨 symlink）；本 repo 對這個取捨已有
+        // 明文裁定——`artifact.rs` 的
+        // `force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir`
+        // 記載「oracle 跟隨 link 是共有的漏洞」，openspectra 一律改用
+        // temp + atomic rename。故此處**刻意偏離 oracle**，換得兩件事：
+        // 使用者的 CLAUDE.md 不會因中途中斷而被截斷成空檔，且 symlink 不會
+        // 被寫穿。副作用是唯讀的 Managed 檔在我們這邊會成功、oracle 則
+        // exit 1——差異已記錄於 update.md。
         FileKind::Managed => {
-            let existing = read_if_exists(&path)?;
-            merge_managed_block(existing.as_deref(), &rendered)
+            let existing = read_existing(&path)?;
+            let content = merge_managed_block(existing.as_deref(), &rendered);
+            crate::fsutil::write_atomically(&path, &content)?;
         }
         FileKind::ClaudeSettings => {
-            let existing = read_if_exists(&path)?;
-            merge_settings(existing.as_deref(), &rendered)
+            let existing = read_existing(&path)?;
+            let content = merge_settings(existing.as_deref(), &rendered);
+            crate::fsutil::write_atomically(&path, &content)?;
         }
-    };
-    std::fs::write(&path, content)?;
+    }
     Ok(())
 }
 
-fn read_if_exists(path: &Path) -> Result<Option<String>> {
-    match std::fs::read_to_string(path) {
-        Ok(s) => Ok(Some(s)),
+/// 移除既有檔案；不存在就當作成功。symlink 也是移除 link 本身
+/// （`remove_file` 不跟隨），這正是 Plain 路徑要的語意。
+fn remove_if_present(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+    }
+}
+
+/// 讀取既有內容供合併使用。**讀不成 UTF-8 就當作檔案不存在**——這是對
+/// oracle 實測的結果：非 UTF-8 的 `CLAUDE.md`（即使內含合法 marker 配對）
+/// 會被整份丟棄、直接寫入全新區塊，既不是 lossy 轉碼也不是保留原位元組。
+/// 先前用 `read_to_string` 直接 `?`，讓一個 latin-1 的既有檔把整個
+/// 445 檔的 run 打斷成 exit 1 + 部分寫入（17 檔只寫出 4 檔）。
+///
+/// 真正的 I/O 失敗（權限等）仍然往上拋，不與「讀不懂」混為一談。
+fn read_existing(path: &Path) -> Result<Option<String>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(String::from_utf8(bytes).ok()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
     }
 }
 
@@ -129,50 +173,41 @@ fn render(template: &str, spec_dir: &str) -> String {
         .replace(RAW_SPEC_DIR_PLACEHOLDER, SPEC_DIR_PLACEHOLDER)
 }
 
-/// 找到「行首是 `needle`」的行，回傳該行的起始 byte offset。
-/// 從 `from` 開始找；marker 必須在行首（縮排的不算——oracle 只在行首寫
-/// marker，這裡採同樣的嚴格比對）。
-fn find_marker_line(content: &str, needle: &str, from: usize) -> Option<usize> {
-    let hay = &content[from..];
-    if hay.starts_with(needle) && from == 0 {
-        return Some(0);
-    }
-    // 之後的候選都必須緊跟在換行後。
-    let mut search = 0;
-    while let Some(pos) = hay[search..].find(needle) {
-        let abs = search + pos;
-        if abs == 0 && from == 0 {
-            return Some(from);
-        }
-        if abs > 0 && hay.as_bytes()[abs - 1] == b'\n' {
-            return Some(from + abs);
-        }
-        search = abs + needle.len();
-    }
-    None
-}
-
-/// 行尾（含換行）的 offset；最後一行沒換行就到 EOF。
-fn line_end(content: &str, line_start: usize) -> usize {
-    match content[line_start..].find('\n') {
-        Some(off) => line_start + off + 1,
-        None => content.len(),
-    }
-}
-
-/// 管理區塊合併（marker 檔案的三種情況，probe 詳見 module doc）。
+/// 管理區塊合併。
+///
+/// 被替換的區間是 **純子字串接合，沒有任何行錨定**——這是對 oracle 2.3.1
+/// 用 sentinel 實測刻畫出來的（`docs/reverse-engineering/update.md` 的
+/// 「Replacement region」一節列出全部觀察）：
+///
+/// ```text
+/// replace [ 字面 MARKER_START 的 byte offset ,
+///           字面 MARKER_END 結束的 byte offset（下一個 byte 是 '\n' 就再 +1） ]
+/// ```
+///
+/// 三個後果都經實測確認，且都與「行錨定」直覺相反：
+/// - marker 同行、位於 START **之前**的內容保留（縮排、前綴文字皆然）；
+/// - END **之後**的同行尾隨內容保留（早期版本會把它連同整行刪掉）；
+/// - 尾端的 `+1 if '\n'` 正是 CRLF 檔案殘留一個 `\r\n` 的成因：`END -->`
+///   後面接的是 `\r` 而非 `\n`，所以不吃掉，該 `\r\n` 留在原地。
+///
+/// PR #86 review 之前這裡用的是行錨定 + 整行替換，造成四個 oracle 分歧，
+/// 其中兩個會**刪掉使用者內容**（空 body 的區塊、END 同行尾隨內容）。
+///
 /// `block` 是完整的新區塊（START 起、END 止、含結尾換行）。
 fn merge_managed_block(existing: Option<&str>, block: &str) -> String {
     let content = match existing {
         None => return block.to_string(),
         Some(c) => c,
     };
-    match find_marker_line(content, MARKER_START, 0) {
+    match content.find(MARKER_START) {
         Some(start) => {
-            match find_marker_line(content, MARKER_END, line_end(content, start)) {
-                Some(end_start) => {
-                    // 區塊完整：原地替換，前後內容保留。
-                    let end = line_end(content, end_start);
+            match content[start..].find(MARKER_END) {
+                Some(rel) => {
+                    // 區塊完整：原地替換，marker 之外的內容（含同行前後綴）保留。
+                    let mut end = start + rel + MARKER_END.len();
+                    if content[end..].starts_with('\n') {
+                        end += 1;
+                    }
                     format!("{}{}{}", &content[..start], block, &content[end..])
                 }
                 None => {
@@ -300,13 +335,75 @@ mod tests {
         assert_eq!(got, format!("{existing}\n{}", block()));
     }
 
+    // 以下 6 個 case 全部 pin 自對 oracle 2.3.1 的差分實測。PR #86 review 之前
+    // 這裡只有一個 `managed_indented_marker_is_not_recognized`，斷言的是與
+    // oracle **相反**的行為（縮排 marker 不算），等於用一個綠燈測試把 parity
+    // bug 鎖住。
+
     #[test]
-    fn managed_indented_marker_is_not_recognized() {
-        // marker 不在行首（縮排）→ 不算，照無 marker 前置。
+    fn managed_indented_marker_is_recognized_and_its_indent_survives() {
+        // oracle：marker 不需在行首；replacement 從 marker 的 byte offset 起算，
+        // 所以同行且位於 marker 之前的內容（這裡的兩個空格）保留。
         let existing = "  <!-- SPECTRA:START v1.0.2 -->\nX\n<!-- SPECTRA:END -->\n";
+        assert_eq!(
+            merge_managed_block(Some(existing), &block()),
+            format!("  {}", block())
+        );
+    }
+
+    #[test]
+    fn managed_empty_body_pair_is_replaced_in_place_not_appended() {
+        // 迴歸：END 緊接在 START 下一行時，舊的行錨定搜尋找不到 END，於是把
+        // 完整配對誤判成「有 START 沒 END」→ 附加第二個區塊，下一次執行再把
+        // 兩個區塊之間的使用者內容一併吃掉。四個 reviewer 各自獨立指出。
+        let existing =
+            "USER BEFORE\n<!-- SPECTRA:START v1.0.2 -->\n<!-- SPECTRA:END -->\nUSER AFTER\n";
         let got = merge_managed_block(Some(existing), &block());
-        assert!(got.starts_with(&block()));
-        assert!(got.ends_with(existing));
+        assert_eq!(got, format!("USER BEFORE\n{}USER AFTER\n", block()));
+        // 且必須是固定點：再跑一次不得改變任何位元組。
+        assert_eq!(merge_managed_block(Some(&got), &block()), got);
+    }
+
+    #[test]
+    fn managed_trailing_text_after_the_end_marker_survives() {
+        // oracle 只吃到 END marker 文字結束（外加緊接的一個 '\n'），
+        // 同行尾隨內容保留；舊實作連整行一起刪，屬使用者資料遺失。
+        let existing = "<!-- SPECTRA:START v1.0.2 -->\nOLD\n<!-- SPECTRA:END --> trailing\ntail\n";
+        assert_eq!(
+            merge_managed_block(Some(existing), &block()),
+            format!("{} trailing\ntail\n", block())
+        );
+    }
+
+    #[test]
+    fn managed_text_before_the_start_marker_on_the_same_line_survives() {
+        let existing = "PREFIX <!-- SPECTRA:START v1.0.2 -->\nOLD\n<!-- SPECTRA:END -->\nZ\n";
+        assert_eq!(
+            merge_managed_block(Some(existing), &block()),
+            format!("PREFIX {}Z\n", block())
+        );
+    }
+
+    #[test]
+    fn managed_crlf_file_keeps_the_carriage_return_the_oracle_leaves_behind() {
+        // `+1 if next byte is '\n'` 的直接後果：CRLF 檔案 END 之後是 '\r'，
+        // 不吃掉，所以殘留一個 "\r\n"。這是 oracle 的行為，逐位元照抄。
+        let existing =
+            "P\r\n<!-- SPECTRA:START v1.0.2 -->\r\nOLD\r\n<!-- SPECTRA:END -->\r\nafter\r\n";
+        assert_eq!(
+            merge_managed_block(Some(existing), &block()),
+            format!("P\r\n{}\r\nafter\r\n", block())
+        );
+    }
+
+    #[test]
+    fn managed_replacement_is_not_line_anchored_at_all() {
+        // 極端形狀：START 與 END 同在一行、兩側都有文字。
+        let existing = "AAA <!-- SPECTRA:START v1 --> MID <!-- SPECTRA:END --> ZZZ\n";
+        assert_eq!(
+            merge_managed_block(Some(existing), &block()),
+            format!("AAA {} ZZZ\n", block())
+        );
     }
 
     #[test]
@@ -434,6 +531,66 @@ mod tests {
     }
 
     #[test]
+    fn file_kinds_match_the_probed_oracle_classification() {
+        // 這些數字是**對 oracle 實測**（sentinel 存活法）得到的，不是從模板
+        // 文字推的。舊版把「模板以 START marker 開頭」直接當成 Managed，於是
+        // 把 10 個 kilocode workflow 誤判成 Managed（oracle 其實整檔覆寫）。
+        // 這個測試同時堵住 reviewer 指出的循環斷言問題：
+        // `every_managed_template_is_a_complete_marker_block` 斷言的正是產生器
+        // 用來分類的那個述詞，永遠不可能紅。
+        let mut managed = Vec::new();
+        let mut settings = 0;
+        let mut plain_but_marker_shaped = Vec::new();
+        for tool in update_manifest::TOOLS {
+            for file in tool.files {
+                match file.kind {
+                    FileKind::Managed => managed.push(file.relpath),
+                    FileKind::ClaudeSettings => settings += 1,
+                    FileKind::Plain => {
+                        if file.template.starts_with(MARKER_START) {
+                            plain_but_marker_shaped.push(file.relpath);
+                        }
+                    }
+                }
+            }
+        }
+        managed.sort_unstable();
+        managed.dedup();
+        assert_eq!(
+            managed,
+            [
+                ".cursorrules",
+                ".windsurfrules",
+                "AGENTS.md",
+                "CLAUDE.md",
+                "CLINE.md",
+                "CODEBUDDY.md",
+                "COSTRICT.md",
+                "GEMINI.md",
+                "IFLOW.md",
+                "QODER.md",
+                "QWEN.md"
+            ],
+            "Managed set drifted from the probed oracle classification"
+        );
+        assert_eq!(settings, 1);
+        plain_but_marker_shaped.sort_unstable();
+        plain_but_marker_shaped.dedup();
+        assert_eq!(
+            plain_but_marker_shaped.len(),
+            10,
+            "expected exactly kilocode's 10 workflow files to look managed but be \
+             full-overwrite; got {plain_but_marker_shaped:?}"
+        );
+        assert!(
+            plain_but_marker_shaped
+                .iter()
+                .all(|p| p.starts_with(".kilocode/workflows/")),
+            "{plain_but_marker_shaped:?}"
+        );
+    }
+
+    #[test]
     fn every_managed_template_is_a_complete_marker_block() {
         // Managed 模板必須 START 起、END（含換行）止——merge 演算法的前提。
         for tool in update_manifest::TOOLS {
@@ -522,6 +679,96 @@ mod tests {
         std::fs::write(&skill, "tampered").unwrap();
         update_instruction_files(&cfg).unwrap();
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), original);
+    }
+
+    #[test]
+    fn update_does_not_write_through_a_symlinked_plain_path() {
+        // Plain 路徑：oracle 本身就是 unlink+recreate（實測），所以既符合
+        // parity 也符合本 repo 的安全 baseline——link 被換成一般檔，指向的
+        // 專案外檔案毫髮無傷。舊版的 `fs::write` 會寫穿。
+        let tmp = TempDir::new("update-symlink-plain");
+        std::fs::create_dir_all(tmp.join(".claude/skills/spectra-drift")).unwrap();
+        let outside = tmp.join("outside-secret.txt");
+        std::fs::write(&outside, "PRECIOUS").unwrap();
+        let victim = tmp.join(".claude/skills/spectra-drift/SKILL.md");
+        std::os::unix::fs::symlink(&outside, &victim).unwrap();
+
+        update_instruction_files(&init_cfg(&tmp)).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+        assert!(!victim.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(std::fs::read_to_string(&victim)
+            .unwrap()
+            .contains("spectra-drift"));
+    }
+
+    #[test]
+    fn update_does_not_write_through_a_symlinked_managed_path() {
+        // Managed 路徑：oracle **會**寫穿 symlink，這裡刻意偏離——理由與
+        // `artifact.rs` 的同名 baseline 一致（見 fsutil::write_atomically 的
+        // doc）。這個測試就是那個裁定在 `update` 上的釘子。
+        let tmp = TempDir::new("update-symlink-managed");
+        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+        let outside = tmp.join("outside-notes.md");
+        std::fs::write(&outside, "PRECIOUS").unwrap();
+        std::os::unix::fs::symlink(&outside, tmp.join("CLAUDE.md")).unwrap();
+
+        update_instruction_files(&init_cfg(&tmp)).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+        let claude_md = tmp.join("CLAUDE.md");
+        assert!(!claude_md
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(std::fs::read_to_string(&claude_md)
+            .unwrap()
+            .starts_with(MARKER_START));
+    }
+
+    #[test]
+    fn update_treats_a_non_utf8_existing_file_as_absent_instead_of_aborting() {
+        // oracle 實測：非 UTF-8 的既有檔（即使含合法 marker 配對）整份丟棄、
+        // 寫入全新區塊。舊版用 read_to_string + `?`，一個 latin-1 檔就讓整個
+        // 445 檔的 run 變成 exit 1 + 部分寫入。
+        let tmp = TempDir::new("update-non-utf8");
+        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+        std::fs::write(tmp.join("CLAUDE.md"), b"caf\xe9 notes\n").unwrap();
+
+        update_instruction_files(&init_cfg(&tmp)).unwrap();
+
+        let claude_md = std::fs::read_to_string(tmp.join("CLAUDE.md")).unwrap();
+        assert!(claude_md.starts_with(MARKER_START));
+        assert!(
+            !claude_md.contains("notes"),
+            "non-UTF-8 content must be discarded"
+        );
+        // 其餘檔案照樣寫完，不因這一個檔中止。
+        assert!(tmp.join(".claude/skills/spectra-drift/SKILL.md").is_file());
+    }
+
+    #[test]
+    fn update_replaces_a_read_only_plain_file_like_the_oracle_does() {
+        // oracle 的 Plain 寫入是 unlink+recreate，所以 0400 的既有檔會被成功
+        // 換掉（unlink 只需要目錄權限）。舊版的 fs::write 在這裡 exit 1。
+        let tmp = TempDir::new("update-readonly-plain");
+        std::fs::create_dir_all(tmp.join(".claude/skills/spectra-drift")).unwrap();
+        let locked = tmp.join(".claude/skills/spectra-drift/SKILL.md");
+        // sentinel 必須是模板裡不會出現的字串。第一版用 "locked" 而模板含
+        // "blocked"，斷言因此為了錯的理由而紅——測試自身的 bug，不是產品碼的。
+        std::fs::write(&locked, "ZZ_READONLY_SENTINEL_ZZ\n").unwrap();
+        let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o400);
+        std::fs::set_permissions(&locked, perms).unwrap();
+
+        update_instruction_files(&init_cfg(&tmp)).unwrap();
+
+        let text = std::fs::read_to_string(&locked).unwrap();
+        assert!(
+            !text.contains("ZZ_READONLY_SENTINEL_ZZ"),
+            "read-only file must be replaced"
+        );
     }
 
     #[test]

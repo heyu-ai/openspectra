@@ -347,6 +347,48 @@ fn codex_writes_only_agents_md_when_gemini_is_present() {
 // ---- 自訂 spec_dir 代換（end-to-end）----
 
 #[test]
+fn a_non_utf8_existing_file_does_not_abort_the_run() {
+    // 迴歸（PR #86 review）：一個 latin-1 的既有檔曾讓整個 run 變成 exit 1 +
+    // 部分寫入（17 檔只寫出 4 檔）。oracle 把讀不懂的既有檔當成不存在。
+    let root = TempDir::new("update-non-utf8");
+    init_root(&root, "openspec");
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    std::fs::write(root.join(".claude/settings.json"), b"{\"k\":\"caf\xe9\"}").unwrap();
+    std::fs::write(root.join("CLAUDE.md"), b"caf\xe9 notes\n").unwrap();
+
+    let out = run_update(&root, &[]);
+    assert!(out.status.success(), "run aborted: {out:?}");
+    assert_eq!(stdout(&out), "✓ Updated instruction files for: claude\n");
+
+    let mut files = Vec::new();
+    collect_files(&root, &root, &mut files);
+    assert!(
+        files.len() >= 15,
+        "expected the full tree to be written, got {files:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
+        "{\n  \"includeGitInstructions\": false\n}"
+    );
+}
+
+#[test]
+fn a_symlinked_managed_file_does_not_leak_writes_outside_the_project() {
+    // 本 repo 的安全 baseline（artifact.rs:374）在 `update` 上的釘子：
+    // oracle 會寫穿 symlink 覆寫專案外檔案，openspectra 一律不。
+    let root = TempDir::new("update-symlink");
+    init_root(&root, "openspec");
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    let outside = root.join("outside-secret.md");
+    std::fs::write(&outside, "PRECIOUS").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("CLAUDE.md")).unwrap();
+
+    let out = run_update(&root, &[]);
+    assert!(out.status.success());
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+}
+
+#[test]
 fn custom_spec_dir_is_substituted_into_written_files() {
     let root = TempDir::new("update-specdir");
     init_root(&root, "docs/specs");

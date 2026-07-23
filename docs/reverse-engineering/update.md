@@ -104,31 +104,97 @@ mtime even when content is unchanged; content itself is idempotent).
 Missing files are recreated; files the tool set doesn't own (e.g. a user's
 own `.claude/skills/my-own/`) are never touched or deleted.
 
-Three per-file strategies exist:
+Three per-file strategies exist. **Which file gets which strategy is probed,
+not inferred**: `capture-update-templates.py` seeds a sandbox, appends a
+sentinel after the END marker, re-runs `update`, and classifies by whether the
+sentinel survives. Guessing from the template text ("does it start with the
+START marker?") is wrong — see the kilocode note below.
 
-1. **Plain** (skills, commands, workflows, prompts): full overwrite.
-2. **Managed marker files** (root-level `CLAUDE.md`, `GEMINI.md`,
-   `QWEN.md`, `CLINE.md`, `CODEBUDDY.md`, `COSTRICT.md`, `IFLOW.md`,
-   `QODER.md`, `AGENTS.md`, `.cursorrules`, `.windsurfrules`): only the
-   `<!-- SPECTRA:START v1.0.2 -->` … `<!-- SPECTRA:END -->` block is
-   managed. Probed algorithm:
-   - *File missing or empty*: write just the block.
-   - *Valid pair* (a line starting with `<!-- SPECTRA:START` followed
-     later by a `<!-- SPECTRA:END -->` line): replace those lines in
-     place; content before START and after END survives. The START match
-     is prefix-based, so an old version suffix (e.g. `v0.9.0`) is still
-     found and upgraded.
-   - *START but no END after it*: original content is left untouched and a
-     fresh complete block is **appended** at EOF after a blank line.
-   - *No START* (even if an orphan END exists): fresh block is
-     **prepended**, followed by a blank line and the original content.
+1. **Plain** (422 of 445 tool-files: skills, commands, prompts, and — despite
+   appearances — kilocode's workflows): full overwrite. Mechanically the oracle
+   **unlinks and recreates**: the inode changes even for an unchanged writable
+   file. Two observable consequences follow, both reproduced:
+   - a read-only (0400) existing file is replaced successfully and comes back
+     0644 (unlink needs directory permission, not file permission);
+   - a **symlinked** path is *not* followed — the link itself is removed and
+     replaced by a regular file, leaving the link target untouched.
+2. **Managed marker files** (22 entries / 11 distinct paths: root-level
+   `CLAUDE.md`, `GEMINI.md`, `QWEN.md`, `CLINE.md`, `CODEBUDDY.md`,
+   `COSTRICT.md`, `IFLOW.md`, `QODER.md`, `AGENTS.md`, `.cursorrules`,
+   `.windsurfrules`; `GEMINI.md` is written by both gemini and antigravity):
+   only the `<!-- SPECTRA:START v1.0.2 -->` … `<!-- SPECTRA:END -->` block is
+   managed. See "Replacement region" below for the exact rule.
+
+   > **kilocode's 10 `.kilocode/workflows/spectra-*.md` are *not* Managed**,
+   > even though each template *is* a complete marker block. The oracle
+   > full-overwrites them. This is precisely why the classification is probed:
+   > a text-prefix heuristic classifies all 10 as Managed and nothing catches
+   > it, because on a fresh sandbox both strategies emit identical bytes.
 3. **`.claude/settings.json`** (claude only): JSON object merge. Managed
    keys are forced to managed values (`includeGitInstructions: false`
    even if the user set `true`), unknown user keys survive, keys end up
    alphabetically sorted (the oracle exhibits exactly serde_json's default
    BTreeMap behavior), 2-space indent, **no trailing newline**. Invalid
    JSON or a non-object (`[1,2]`) is silently replaced with the default
-   template.
+   template. (A/B'd against the oracle on 15 adversarial inputs — `{}`,
+   empty, whitespace-only, `null`, `[1,2]`, `"hi"`, malformed, duplicate keys,
+   trailing garbage, deep nesting, unicode keys, bigint, `1.0`, wrong-typed
+   managed key, UTF-8 BOM — all byte-identical.)
+
+### Replacement region (Managed)
+
+The replaced span is a **plain substring splice with no line anchoring at
+all**. Characterised by planting sentinels around the markers and reading which
+survive:
+
+```text
+replace [ byte offset of the literal "<!-- SPECTRA:START",
+          byte offset just past the literal "<!-- SPECTRA:END -->"
+          (+1 further byte if that byte is '\n') ]
+```
+
+One model explains every observation:
+
+| Existing content | Result |
+|---|---|
+| `AAA\n\t  <START>…<END>\nZZZ\n` | the `\t  ` indentation **survives** — the splice starts at the marker offset, not the line start |
+| `PREFIX <START>…` | `PREFIX ` survives |
+| `<START> SUFFIX\n…` | ` SUFFIX` is consumed |
+| `…PREEND <END>` | `PREEND ` is consumed |
+| `…<END> POSTEND\n` | ` POSTEND` **survives** |
+| `AAA <START> MID <END> ZZZ\n` | `AAA ` and ` ZZZ` survive, `MID` is consumed |
+| CRLF file | the `\r` after `<END>` is *not* consumed (it is not `\n`), so an orphan `\r\n` remains — this quirk is the `+1` clause, not a separate rule |
+| empty body (`<END>` right after `<START>`) | replaced in place, idempotent |
+
+The other two shapes:
+
+- *START but no END after it*: original content is left untouched and a
+  fresh complete block is **appended** at EOF after a blank line.
+- *No START* (even if an orphan END exists): fresh block is **prepended**,
+  followed by a blank line and the original content. A missing or empty file
+  yields just the block.
+
+The START match is a plain substring search, so an old version suffix
+(e.g. `v0.9.0`) is still found and upgraded, and a marker inside a fenced code
+block *is* matched (the oracle has no fence awareness). With two complete
+blocks present, the first one wins.
+
+> OpenSpectra shipped a line-anchored variant of this in its first draft; PR #86's
+> mob review found four divergences from the rule above, two of which deleted
+> user content. The regression tests in `update.rs` pin each shape in the table.
+
+### Existing files the oracle cannot read or write
+
+- **Unreadable as UTF-8** (e.g. a latin-1 `CLAUDE.md`): treated as *absent*.
+  The original bytes are discarded and a fresh block is written — no lossy
+  transcoding, no splice. This holds even when the file contains a valid
+  marker pair.
+- **Read-only `Plain` file**: replaced (see the unlink+recreate note above).
+- **Read-only `Managed` file**: the oracle writes in place, so it **fails**,
+  exiting 1 with `Error: Permission denied (os error 13)`.
+- **Read-only parent directory**: exits 1 with the same message, leaving a
+  partially written tree. Partial write sets on a hard failure are oracle
+  behavior, not a defect to paper over.
 
 ## `{{SPEC_DIR}}` substitution
 
@@ -138,10 +204,13 @@ diff (default `openspec` vs a unique token spec-dir) so substitution sites
 are unambiguous — a plain search for "openspec" would false-match the
 "OpenSpec" brand name.
 
-**Oracle bug preserved**: the cursor `spectra-ask.md` frontmatter contains
-a literal, never-substituted `{{SPEC_DIR}}documents` in the oracle's own
-output (both sandboxes byte-identical there). OpenSpectra's templates
-escape such literals as `{{RAW_SPEC_DIR}}` at capture time and restore
+**Oracle bug preserved**: a literal, never-substituted `{{SPEC_DIR}}documents`
+appears in the oracle's own output (both sandboxes byte-identical there). It is
+not a one-off: it is in **every tool's `spectra-ask` command/prompt file — 19 of
+the 445 tool-files, across 18 tools, deduped to 9 blobs** — e.g. cursor's
+`.cursor/commands/spectra-ask.md` frontmatter and gemini's
+`.gemini/commands/spectra/ask.toml` `description =` value. OpenSpectra's
+templates escape such literals as `{{RAW_SPEC_DIR}}` at capture time and restore
 them at render time, so the bug survives byte-for-byte.
 
 ## The codex × gemini suppression quirk
@@ -176,30 +245,70 @@ changes — all byte-identical across update runs (hash-compared).
 binary) regenerates:
 
 - `crates/spectra-core/assets/update/` — 170 deduped template blobs
-  (2.3 MB; 445 tool-files share content heavily, e.g. one 10-skill set is
-  shared verbatim by cursor/windsurf/qwen/gemini/…),
+  (2.3 MB; 445 tool-files share content heavily, e.g. 8 of the 10 skill
+  templates are byte-identical across cursor/windsurf/qwen/gemini —
+  `spectra-ingest` and `spectra-propose` have per-tool variants),
 - `crates/spectra-core/src/update_manifest.rs` — the generated registry
-  (tool → detection path → file specs), and
+  (tool → detection path → file specs → **probed** `FileKind`), and
 - `golden/update-trees-2.3.1.tsv` — sha256 of every oracle output file
   with the default spec_dir, which CI's
   `every_tool_tree_matches_the_oracle_golden_byte_for_byte` integration
   test verifies without needing the oracle.
 
-The script is a verification contract, not a printer: it round-trips every
-template (token capture → `{{SPEC_DIR}}` → re-resolve → must equal the
-default capture byte-for-byte), pins each tool's stdout, re-verifies the
-registry order and the codex×gemini quirk, and exits non-zero keeping the
-sandboxes on any mismatch. The round-trip check caught the
-`{{SPEC_DIR}}documents` oracle bug on its first run.
+The script is a verification contract, not a printer: it derives each tool's
+write set by **diffing the sandbox before and after `update`** (and fails if
+`update` touched anything `init` created), round-trips every template (token
+capture → `{{SPEC_DIR}}` → re-resolve → must equal the default capture
+byte-for-byte), probes every marker-shaped template's `FileKind` against the
+oracle rather than guessing from its text, pins each tool's stdout, re-verifies
+the registry order and the codex×gemini quirk, asserts blob filenames cannot
+collide at their 12-hex prefix, and exits non-zero keeping the sandboxes on any
+mismatch. The round-trip check caught the `{{SPEC_DIR}}documents` oracle bug on
+its first run.
+
+**What the contract does *not* cover** — stated plainly rather than implied
+away:
+
+- **Registry additions.** The all-tools sandbox creates detection directories
+  from the script's own `TOOLS` list and compares stdout against a string built
+  from that same list, so a tool the oracle *gains* is never detected and the
+  check still passes. No CLI closure check exists: `init --tools bogus-tool-xyz`
+  exits 0 and prints `Generated files for: bogus-tool-xyz` rather than rejecting
+  an unknown id. The script pins `len(TOOLS) == 23` and the weekly
+  upstream-watch flags oracle releases; discovering an added tool is a manual
+  read of the release, not something this script detects.
+- **The golden TSV covers the fresh-write path only** — 445 rows of
+  first-write bytes. The merge paths (`Managed`, `ClaudeSettings`) are pinned by
+  unit tests against probed oracle behavior, not by golden bytes.
+
+## Deliberate divergences from the oracle
+
+Everything else in this document is parity. These two are not, and both are
+security rulings this repo already made elsewhere:
+
+| Behavior | Oracle | OpenSpectra | Why |
+|---|---|---|---|
+| Symlinked `Managed` / `ClaudeSettings` path (e.g. a dotfile-managed `CLAUDE.md`) | follows the link and overwrites the target outside the project | replaces the link with a regular file; the target is untouched | `artifact.rs`'s `force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir` already ruled that the oracle's link-following is "a shared vulnerability" this CLI does not copy. `update` writes 445 paths inside a user's project, so the exposure is larger, not smaller. |
+| Read-only `Managed` file | exits 1, `Permission denied (os error 13)` | succeeds (temp file + rename needs directory permission only) | falls out of the atomic write above; not independently motivated |
+
+`Plain` paths need no divergence: the oracle's own unlink+recreate already
+declines to follow symlinks, so parity and safety coincide for 422 of 445
+files.
+
+Atomicity for `Managed` / `ClaudeSettings` is a second reason for the same
+mechanism: those are read-modify-write over a user-owned file, and a plain
+truncate-then-write interrupted mid-way would empty a `CLAUDE.md` — destroying
+exactly the surrounding content the merge logic exists to preserve. Atomicity
+is invisible to byte-for-byte parity, so oracle equivalence is no argument
+against it.
 
 ## Open questions
 
 - Whether any oracle config (`.spectra.yaml` `tools:` uncommented) alters
   detection — not probed; the key ships commented-out and `update`
   demonstrably re-detects from the filesystem.
-- Behavior on markers with trailing same-line content (e.g. text after
-  `<!-- SPECTRA:END -->` on the same line) — unprobed edge; OpenSpectra
-  treats the marker line as ending at its newline.
 - Why gemini suppresses codex's skills (intentional dedup for gemini-cli's
   `.agents` support, or a tool-definition bug) — behavior is pinned
   either way.
+- What the oracle does when a `Managed` file's *parent* is a symlinked
+  directory (only the file itself was probed).

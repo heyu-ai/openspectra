@@ -27,6 +27,7 @@ Usage:
 
 import argparse
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -90,28 +91,26 @@ def oracle_version(spectra: str) -> str:
     return out[1]
 
 
-def capture_tree(root: Path, spec_dir: str) -> dict[str, bytes]:
-    """所有 update 產出的檔案（排除 init 的 baseline 三件套）。"""
-    baseline = {
-        ".spectra.yaml",
-        ".gitignore",
-        f"{spec_dir}/config.yaml",
+def snapshot_tree(root: Path) -> dict[str, bytes]:
+    """整棵樹的 relpath → bytes（不排除任何東西）。"""
+    return {
+        p.relative_to(root).as_posix(): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
     }
-    files: dict[str, bytes] = {}
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
-        rel = p.relative_to(root).as_posix()
-        if rel in baseline:
-            continue
-        files[rel] = p.read_bytes()
-    return files
 
 
 def run_update_sandbox(
     spectra: str, tmp: Path, tool_id: str, detect_dir: str, spec_dir: str | None
 ) -> tuple[Path, dict[str, bytes], str]:
-    """建沙盒 → init → mkdir 偵測目錄 → update。回傳 (root, tree, stdout)。"""
+    """建沙盒 → init → 快照 → mkdir 偵測目錄 → update → 差分。
+
+    寫檔集合是 **量出來的**（update 前後樹狀差分），不是「全部檔案扣掉三個
+    寫死的 baseline 路徑」。舊版那種寫法有兩個 fail-open：init 若新增一個
+    不在寫死清單裡的檔案，會被誤記成 update 的模板並進 manifest 與 golden；
+    而 update 若動到 baseline 三件套，也不會有人發現（PR #86 review 由
+    Codex 與 Claude/code-reviewer 各自指出）。
+    """
     tag = "default" if spec_dir is None else "token"
     root = tmp / f"{tool_id}-{tag}"
     root.mkdir(parents=True)
@@ -121,6 +120,8 @@ def run_update_sandbox(
     r = run(init_argv)
     if r.returncode != 0:
         fail(f"{tool_id}/{tag}: init failed: {r.stderr.strip()}")
+
+    before = snapshot_tree(root)
     (root / detect_dir).mkdir(parents=True)
     r = run([spectra, "update", str(root), "--no-color"])
     if r.returncode != 0:
@@ -128,7 +129,46 @@ def run_update_sandbox(
     expected = f"✓ Updated instruction files for: {tool_id}\n"
     if r.stdout != expected:
         fail(f"{tool_id}/{tag}: stdout {r.stdout!r} != expected {expected!r}")
-    return root, capture_tree(root, spec_dir or DEFAULT_SPEC_DIR), r.stdout
+    after = snapshot_tree(root)
+
+    # update 不得改動 init 已經放好的任何檔案。
+    for rel, content in before.items():
+        if rel not in after:
+            fail(f"{tool_id}/{tag}: update deleted a pre-existing file: {rel}")
+        if after[rel] != content:
+            fail(f"{tool_id}/{tag}: update modified a pre-existing file: {rel}")
+
+    written = {rel: b for rel, b in after.items() if rel not in before}
+    return root, written, r.stdout
+
+
+def probe_file_kind(spectra: str, tmp: Path, tool_id: str, detect_dir: str, relpath: str) -> str:
+    """實測某個檔案是 Managed（保留 marker 區塊外的內容）還是 Plain（整檔覆寫）。
+
+    做法：先讓 oracle 寫一次，在檔尾附加 sentinel，再跑一次 update，看
+    sentinel 還在不在。這取代了舊版「模板文字以 START marker 開頭就當
+    Managed」的猜測——該猜測從未對 merge 行為驗證過（capture 只跑全新沙盒，
+    兩種 kind 的首次寫入位元組相同），實測發現它把 10 個
+    `.kilocode/workflows/*.md` 誤判成 Managed，而 oracle 其實整檔覆寫
+    （PR #86 review 由 Claude/silent-failure-hunter 指出並經 lead 重現）。
+    """
+    sentinel = "ZZ_KIND_PROBE_SENTINEL_ZZ"
+    root = tmp / f"kindprobe-{tool_id}-{abs(hash(relpath)) % 100000}"
+    root.mkdir(parents=True)
+    r = run([spectra, "init", str(root), "--no-color"])
+    if r.returncode != 0:
+        fail(f"{tool_id}: kind-probe init failed: {r.stderr.strip()}")
+    (root / detect_dir).mkdir(parents=True, exist_ok=True)
+    if run([spectra, "update", str(root), "--no-color"]).returncode != 0:
+        fail(f"{tool_id}: kind-probe seed update failed")
+
+    target = root / relpath
+    if not target.is_file():
+        fail(f"{tool_id}: kind-probe target missing after seed update: {relpath}")
+    target.write_text(target.read_text() + f"\n{sentinel}\n", encoding="utf-8")
+    if run([spectra, "update", str(root), "--no-color"]).returncode != 0:
+        fail(f"{tool_id}: kind-probe second update failed")
+    return "Managed" if sentinel in target.read_text(encoding="utf-8") else "Plain"
 
 
 def blob_ext(relpath: str) -> str:
@@ -144,7 +184,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--spectra-bin",
-        default="/Applications/Spectra.app/Contents/MacOS/spectra",
+        default=os.environ.get(
+            "SPECTRA_BIN", "/Applications/Spectra.app/Contents/MacOS/spectra"
+        ),
         help="reference binary path (or set SPECTRA_BIN)",
     )
     ap.add_argument(
@@ -212,6 +254,42 @@ def main() -> None:
         per_tool[tool_id] = entries
         print(f"[OK] {tool_id}: {len(entries)} files")
 
+    # ---- FileKind：對 oracle 實測，不從模板文字猜 ----
+    # 只有「模板本身是完整 marker 區塊」的檔案才需要問；其餘必然是整檔覆寫。
+    # 但「是 marker 區塊」不蘊含「oracle 會做 merge」——10 個
+    # `.kilocode/workflows/*.md` 正是反例，所以逐一 probe。
+    kinds: dict[tuple[str, str], str] = {}
+    marker_candidates = 0
+    for tool_id, detect_dir in TOOLS:
+        for rel, blob_name in per_tool[tool_id]:
+            if rel == SETTINGS_RELPATH:
+                kinds[(tool_id, rel)] = "ClaudeSettings"
+                continue
+            if not blob_text(blobs, blob_name).startswith(MARKER_START):
+                kinds[(tool_id, rel)] = "Plain"
+                continue
+            marker_candidates += 1
+            kinds[(tool_id, rel)] = probe_file_kind(
+                spectra, tmp, tool_id, detect_dir, rel
+            )
+    managed = sorted(k for k, v in kinds.items() if v == "Managed")
+    plain_marker_files = sorted(
+        k
+        for k, v in kinds.items()
+        if v == "Plain" and blob_text_for(blobs, per_tool, k).startswith(MARKER_START)
+    )
+    print(
+        f"[OK] file kinds probed: {marker_candidates} marker-shaped templates -> "
+        f"{len(managed)} Managed, {len(plain_marker_files)} full-overwrite despite "
+        f"looking managed"
+    )
+    if plain_marker_files:
+        # 不是失敗，但一定要顯示——這正是「用文字前綴猜」會漏掉的那一類。
+        for tool_id, rel in plain_marker_files:
+            print(f"     [note] {tool_id}:{rel} starts with the START marker but is Plain")
+    if not managed:
+        fail("no Managed files probed -- the kind probe is not exercising anything")
+
     # registry 順序驗證：全工具沙盒的訊息必須照 TOOLS 順序列出全部 id。
     all_root = tmp / "all-tools"
     all_root.mkdir()
@@ -232,6 +310,17 @@ def main() -> None:
             f"  pinned: {expected!r}"
         )
     print(f"[OK] registry order verified ({len(TOOLS)} tools)")
+    # 這個檢查驗的是「已知工具的順序與存在」，**不是集合封閉性**：偵測目錄與
+    # expected 字串都由本檔的 TOOLS 產生，所以 oracle 未來「新增」一個工具時，
+    # 它不會被建目錄、不會被偵測、也不會出現在 stdout，本檢查照樣 exit 0。
+    # 經 probe 確認 CLI 無從列舉 registry（`init --tools bogus-tool-xyz` 會 exit 0
+    # 並印 `Generated files for: bogus-tool-xyz`，不拒絕未知 id），所以這裡如實
+    # 標示限制，而不是假裝有涵蓋（PR #86 review，Claude/silent-failure-hunter）。
+    if len(TOOLS) != 23:
+        fail(
+            f"TOOLS has {len(TOOLS)} entries, pinned at 23. If the oracle really "
+            "gained or lost a tool, update this pin AND update.md's detection matrix."
+        )
 
     # codex×gemini 抑制怪癖：gemini 在場時 codex 只寫 AGENTS.md
     # （.agents/skills/* 整組不寫）。port 依賴這條規則，capture 時一併驗證
@@ -246,7 +335,8 @@ def main() -> None:
     r = run([spectra, "update", str(quirk_root), "--no-color"])
     if r.stdout != "✓ Updated instruction files for: gemini, codex\n":
         fail(f"codex-gemini: unexpected stdout {r.stdout!r}")
-    quirk_files = set(capture_tree(quirk_root, DEFAULT_SPEC_DIR))
+    quirk_baseline = {".spectra.yaml", ".gitignore", f"{DEFAULT_SPEC_DIR}/config.yaml"}
+    quirk_files = set(snapshot_tree(quirk_root)) - quirk_baseline
     expected_quirk = {rel for rel, _ in per_tool["gemini"]} | {"AGENTS.md"}
     if quirk_files != expected_quirk:
         fail(
@@ -254,6 +344,15 @@ def main() -> None:
             f"{sorted(quirk_files ^ expected_quirk)}"
         )
     print("[OK] codex-gemini suppression quirk verified")
+
+    # blob 檔名是 sha256 的前 12 個 hex；兩個不同模板若前綴與副檔名都相同，
+    # 第二個 write_text 會靜默蓋掉第一個，於是某個工具的 manifest 會
+    # include_str! 到錯的模板。機率極低，但這支腳本的定位是 fail-loud
+    # 驗證契約，不能留靜默失敗面。
+    blob_names = [name for name, _ in blobs.values()]
+    if len(set(blob_names)) != len(blob_names):
+        dupes = sorted({n for n in blob_names if blob_names.count(n) > 1})
+        fail(f"blob filename collision at 12-hex prefix: {dupes}")
 
     # ---- 寫出產物（全部驗證通過之後才動 repo）----
     if assets_dir.exists():
@@ -279,12 +378,7 @@ def main() -> None:
         lines.append(f"        detect_dir: {rust_str(detect_dir)},")
         lines.append("        files: &[")
         for rel, blob_name in per_tool[tool_id]:
-            if rel == SETTINGS_RELPATH:
-                kind = "FileKind::ClaudeSettings"
-            elif blobs_text_starts_with_marker(blobs, blob_name):
-                kind = "FileKind::Managed"
-            else:
-                kind = "FileKind::Plain"
+            kind = f"FileKind::{kinds[(tool_id, rel)]}"
             lines.append("            FileSpec {")
             lines.append(f"                relpath: {rust_str(rel)},")
             lines.append(f"                kind: {kind},")
@@ -315,14 +409,25 @@ def main() -> None:
         shutil.rmtree(tmp)
 
 
-def blobs_text_starts_with_marker(
-    blobs: dict[str, tuple[str, str]], blob_name: str
-) -> bool:
+def blob_text(blobs: dict[str, tuple[str, str]], blob_name: str) -> str:
     for name, text in blobs.values():
         if name == blob_name:
-            return text.startswith(MARKER_START)
+            return text
     fail(f"internal: blob {blob_name} not found")
-    return False  # unreachable
+    return ""  # unreachable
+
+
+def blob_text_for(
+    blobs: dict[str, tuple[str, str]],
+    per_tool: dict[str, list[tuple[str, str]]],
+    key: tuple[str, str],
+) -> str:
+    tool_id, rel = key
+    for entry_rel, blob_name in per_tool[tool_id]:
+        if entry_rel == rel:
+            return blob_text(blobs, blob_name)
+    fail(f"internal: no blob for {tool_id}:{rel}")
+    return ""  # unreachable
 
 
 if __name__ == "__main__":
