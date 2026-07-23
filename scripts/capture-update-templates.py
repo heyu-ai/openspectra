@@ -153,7 +153,10 @@ def probe_file_kind(spectra: str, tmp: Path, tool_id: str, detect_dir: str, relp
     （PR #86 review 由 Claude/silent-failure-hunter 指出並經 lead 重現）。
     """
     sentinel = "ZZ_KIND_PROBE_SENTINEL_ZZ"
-    root = tmp / f"kindprobe-{tool_id}-{abs(hash(relpath)) % 100000}"
+    # sha256 而非 hash()：CPython 3.3 起字串 hash 每個 interpreter 執行都不同，
+    # 兩個 relpath 撞號時沙盒目錄會重疊（mkdir 直接炸，但理由完全看不出來）。
+    digest = hashlib.sha256(relpath.encode("utf-8")).hexdigest()[:8]
+    root = tmp / f"kindprobe-{tool_id}-{digest}"
     root.mkdir(parents=True)
     r = run([spectra, "init", str(root), "--no-color"])
     if r.returncode != 0:

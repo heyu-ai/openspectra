@@ -91,6 +91,13 @@ Probed non-triggers: `.codex`, `.junie`, `.zed`, `.goose`, `.aider`,
 | ≥1 tool detected | stdout | `✓ Updated instruction files for: <ids, comma-joined, registry order>` | 0 |
 | no tools detected | stdout | `! No AI tool configurations found. Use 'spectra init --tools' to set up.` | 0 |
 | not initialized | stderr | `Error: Not initialized. Run 'spectra init' first.` | 1 |
+| unwritable target (e.g. read-only parent dir) | stderr | `Error: Permission denied (os error 13)` — **bare**, no path | 1 |
+
+stderr is empty on every successful run. The unwritable-target row is why the
+`update` write path deliberately does *not* attach path context to its I/O
+errors, unlike the rest of `spectra-core`: here the oracle's exact string is the
+contract (AC-2), and the crate-wide "attach the path" convention applies to
+commands with no oracle string to match.
 
 Color (pty capture): only the leading symbol is wrapped — `✓` in green
 (`\x1b[32m✓\x1b[0m`), `!` in yellow (`\x1b[33m!\x1b[0m`). The error line is
@@ -294,6 +301,25 @@ security rulings this repo already made elsewhere:
 `Plain` paths need no divergence: the oracle's own unlink+recreate already
 declines to follow symlinks, so parity and safety coincide for 422 of 445
 files.
+
+The atomic path preserves an existing file's permission bits before renaming,
+because the oracle writes in place and therefore keeps them: without that, a
+`0600` `.claude/settings.json` would come back `0644` after an update, exposing
+the very user keys the merge preserves. The temp file is created with `O_EXCL`,
+so a pre-created symlink at the predictable temp path cannot be written through.
+
+### Residual risk: symlinked *ancestor* directories
+
+Only the final path component is defended. If a **parent** is a symlink —
+e.g. `.claude -> ~/dotfiles/claude` — detection accepts it and every file is
+written into the link target, outside the project root. Measured: the oracle
+does exactly the same (13 files into the external directory, byte-identical to
+ours), and symlinking your own `.claude` at a dotfile manager is a legitimate
+setup rather than an attack. This is therefore documented rather than blocked:
+`artifact.rs`'s no-escape baseline is scoped to a *change directory*, which is
+untrusted input, whereas the project root here is the user's own. Defending
+ancestors would need beneath-root/no-follow directory handles and would break
+that workflow while diverging further from the reference binary.
 
 Atomicity for `Managed` / `ClaudeSettings` is a second reason for the same
 mechanism: those are read-modify-write over a user-owned file, and a plain

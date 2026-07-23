@@ -190,25 +190,82 @@ fn symlink_target_is_dir(path: &Path) -> Result<bool> {
 /// On failure, the temp file is removed on a best-effort basis; if that
 /// cleanup itself also fails, the original error is still what's returned,
 /// with the cleanup failure logged to stderr rather than silently dropped.
-pub(crate) fn write_atomically(path: &Path, contents: &str) -> Result<()> {
+/// The temp file is created with `create_new` (`O_EXCL`), so an attacker who
+/// pre-creates the predictable temp path -- including as a **symlink** to a
+/// file outside the project -- cannot get us to write through it: `O_EXCL`
+/// refuses to open an existing path of any kind, and the write is retried
+/// under a fresh name. Without it, `fs::write` would follow such a symlink and
+/// truncate the target, defeating the whole point of the rename (PR #86
+/// review, Codex).
+///
+/// When `path` already exists as a regular file, its permission bits are
+/// copied onto the replacement before the rename. Otherwise a `0600`
+/// `.claude/settings.json` would come back `0644` after an update, exposing
+/// the user keys the merge deliberately preserves -- and the reference binary,
+/// which writes in place, keeps the original mode.
+///
+/// Returns [`std::io::Result`] rather than [`anyhow::Result`] on purpose: the
+/// `update` command must surface the raw OS error text to stay byte-identical
+/// with the reference binary, while `init` wraps it with path context. Adding
+/// context here would take that choice away from both callers.
+pub(crate) fn write_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| anyhow!("path {} has no file name", path.display()))?
-        .to_string_lossy();
-    let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
+    let file_name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            ErrorKind::InvalidInput,
+            format!("path {} has no file name", path.display()),
+        )
+    })?;
+    let file_name = file_name.to_string_lossy();
 
-    if let Err(e) = std::fs::write(&tmp_path, contents) {
-        cleanup_temp_file(&tmp_path);
-        return Err(e).with_context(|| format!("writing {}", tmp_path.display()));
+    // O_EXCL means a pre-existing temp path is a hard error rather than a
+    // write-through; bounded retries keep an adversarially-recreated path from
+    // turning into an infinite loop.
+    let mut last_err = None;
+    for _ in 0..16 {
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
+        let mut file = match std::fs::File::create_new(&tmp_path) {
+            Ok(f) => f,
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                last_err = Some(e);
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
+        if let Err(e) = std::io::Write::write_all(&mut file, contents.as_bytes()) {
+            drop(file);
+            cleanup_temp_file(&tmp_path);
+            return Err(e);
+        }
+        drop(file);
+        if let Err(e) = copy_existing_permissions(path, &tmp_path) {
+            cleanup_temp_file(&tmp_path);
+            return Err(e);
+        }
+        if let Err(e) = std::fs::rename(&tmp_path, path) {
+            cleanup_temp_file(&tmp_path);
+            return Err(e);
+        }
+        return Ok(());
     }
-    if let Err(e) = std::fs::rename(&tmp_path, path) {
-        cleanup_temp_file(&tmp_path);
-        return Err(e).with_context(|| format!("renaming {} into place", tmp_path.display()));
+    Err(last_err.unwrap_or_else(|| {
+        std::io::Error::new(ErrorKind::AlreadyExists, "temp file name kept colliding")
+    }))
+}
+
+/// Copy `target`'s permission bits onto `tmp` when `target` is an existing
+/// regular file. A missing target (the common create case) leaves the
+/// umask-derived default alone; a symlink target is deliberately not followed,
+/// since the rename is about to replace the link itself.
+fn copy_existing_permissions(target: &Path, tmp: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(target) {
+        Ok(meta) if meta.file_type().is_file() => std::fs::set_permissions(tmp, meta.permissions()),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
     }
-    Ok(())
 }
 
 /// Best-effort removal of a [`write_atomically`] temp file after its write or

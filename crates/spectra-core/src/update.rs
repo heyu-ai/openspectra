@@ -98,11 +98,22 @@ pub fn update_instruction_files(cfg: &Config) -> Result<Vec<&'static str>> {
     Ok(tools.iter().map(|t| t.id).collect())
 }
 
+/// 寫出單一工具檔案。
+///
+/// **這條路徑上的 I/O 錯誤一律不加 `.with_context`**：AC-2 要求錯誤字串與
+/// oracle 逐字一致，而 oracle 印的是裸的 `Error: Permission denied (os error
+/// 13)`（唯讀父目錄實測）。crate 其他地方的慣例是附上路徑，那是給沒有
+/// oracle 字串可對齊的指令用的；此處對齊 oracle 優先。
+///
+/// 這一點推翻了 PR #86 第一輪 review 接受的一個 finding（「`fs::write` 應比照
+/// 5 個 sibling call site 附加路徑 context」）——第二輪 Codex 指出加了 context
+/// 就不再等於 oracle 的輸出，實測確認：加 context 後我們印
+/// `Error: removing <path>: Permission denied (os error 13)`，oracle 印
+/// `Error: Permission denied (os error 13)`。
 fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
     let path = root.join(file.relpath);
     if let Some(parent) = path.parent() {
-        // 不加 context：oracle 在偵測路徑是普通檔案時就是裸的
-        // "File exists (os error 17)"（機率極低的 parity bug 保留）。
+        // oracle 在偵測路徑是普通檔案時就是裸的 "File exists (os error 17)"。
         std::fs::create_dir_all(parent)?;
     }
     let rendered = render(file.template, spec_dir);
@@ -114,8 +125,7 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
         // symlink 則被寫穿而覆寫專案外檔案。
         FileKind::Plain => {
             remove_if_present(&path)?;
-            std::fs::write(&path, rendered)
-                .with_context(|| format!("writing {}", path.display()))?;
+            std::fs::write(&path, rendered)?;
         }
         // Managed / ClaudeSettings：讀取既有內容再合併，屬 read-modify-write。
         // oracle 這兩類是就地寫入（會跟隨 symlink）；本 repo 對這個取捨已有
@@ -142,11 +152,14 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
 
 /// 移除既有檔案；不存在就當作成功。symlink 也是移除 link 本身
 /// （`remove_file` 不跟隨），這正是 Plain 路徑要的語意。
+///
+/// 失敗時回裸的 io error，不加路徑 context——理由見 [`write_file`] 上方
+/// 關於錯誤字串的說明。
 fn remove_if_present(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("removing {}", path.display())),
+        Err(e) => Err(e.into()),
     }
 }
 

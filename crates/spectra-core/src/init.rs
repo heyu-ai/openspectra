@@ -75,6 +75,7 @@ pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
         &root.join(".spectra.yaml"),
         &format!("spec_dir: {spec_dir}\n"),
     )
+    .map_err(anyhow::Error::from)
     .context("writing .spectra.yaml")?;
 
     Ok(InitOutcome {
@@ -131,7 +132,9 @@ fn ensure_gitignore_entry(root: &Path) -> Result<bool> {
     }
     updated.push_str(GITIGNORE_ENTRY);
     updated.push_str(newline);
-    write_atomically(&path, &updated).context("writing .gitignore")?;
+    write_atomically(&path, &updated)
+        .map_err(anyhow::Error::from)
+        .context("writing .gitignore")?;
     Ok(true)
 }
 
@@ -169,6 +172,57 @@ mod tests {
             vec!["out.txt".to_string()],
             "no stray <file>.tmp-<pid> should remain after a successful write"
         );
+    }
+
+    #[test]
+    fn write_atomically_preserves_an_existing_files_permission_bits() {
+        // 迴歸（PR #86 round-2, Codex）：改用 temp+rename 之後，替換檔是以
+        // umask 預設權限新建的，於是一個 0600 的 .claude/settings.json 更新後
+        // 變成 0644，把它保留下來的使用者鍵暴露給同機其他使用者。oracle 就地
+        // 寫入、保留原 mode。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let target = tmp.join("secret.json");
+        std::fs::write(&target, "old").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&target, "new").unwrap();
+
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "existing mode must survive the rename");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
+    fn write_atomically_does_not_write_through_a_pre_created_temp_symlink() {
+        // 迴歸（PR #86 round-2, Codex）：暫存檔名可由 pid 推得，攻擊者若能在
+        // 專案目錄內先建立同名 symlink 指向外部檔案，舊版的 fs::write 會跟隨
+        // 它並截斷該外部檔案，等於繞過 rename 提供的保護。create_new(O_EXCL)
+        // 讓既存路徑直接失敗、改用下一個名字。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+        let outside = tmp.join("outside-secret.txt");
+        std::fs::write(&outside, "PRECIOUS").unwrap();
+        // 攻擊者預先佔用「下一個」暫存檔名。序號是 process-local 且單調遞增，
+        // 所以逐一佔用一小段範圍，確保命中實際會用到的那個。
+        let pid = std::process::id();
+        for seq in 0..8 {
+            let guess = tmp.join(format!("out.txt.tmp-{pid}-{seq}"));
+            if !guess.exists() {
+                std::os::unix::fs::symlink(&outside, &guess).unwrap();
+            }
+        }
+
+        write_atomically(&target, "new content").unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&outside).unwrap(),
+            "PRECIOUS",
+            "the outside file must not be written through the temp symlink"
+        );
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new content");
+        let _ = std::fs::Permissions::from_mode(0o644); // silence unused import on some cfgs
     }
 
     #[test]

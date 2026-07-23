@@ -110,6 +110,35 @@ fn multi_tool_message_lists_ids_in_registry_order() {
         stdout(&out),
         "✓ Updated instruction files for: claude, cursor, gemini, codex\n"
     );
+    assert!(out.stderr.is_empty(), "unexpected stderr: {out:?}");
+}
+
+#[test]
+fn an_unwritable_target_reports_the_oracle_error_verbatim() {
+    // AC-2 要求錯誤字串逐字對齊：oracle 對唯讀父目錄印裸的
+    // `Error: Permission denied (os error 13)`，不含路徑。第一輪 review 曾
+    // 要求比照 crate 慣例加上路徑 context，第二輪實測發現那樣就不再等於
+    // oracle 的輸出——這個測試釘住實測的那一版。
+    let root = TempDir::new("update-unwritable");
+    init_root(&root, "openspec");
+    let locked_dir = root.join(".claude/skills/spectra-drift");
+    std::fs::create_dir_all(&locked_dir).unwrap();
+    std::fs::write(locked_dir.join("SKILL.md"), "x\n").unwrap();
+    let mut perms = std::fs::metadata(&locked_dir).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+    std::fs::set_permissions(&locked_dir, perms.clone()).unwrap();
+
+    let out = run_update(&root, &[]);
+
+    // 還原權限，否則 TempDir 的 drop 清不掉。
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&locked_dir, perms).unwrap();
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Error: Permission denied (os error 13)\n"
+    );
 }
 
 // ---- 寫檔集合與位元組（對 golden TSV）----
@@ -189,6 +218,10 @@ fn every_tool_tree_matches_the_oracle_golden_byte_for_byte() {
             stdout(&out),
             format!("✓ Updated instruction files for: {tool}\n")
         );
+        // stderr parity：oracle 成功時 stderr 全空。少了這個斷言，一行
+        // `eprintln!` 可以在全套測試綠燈下混進去（PR #86 round-2, Codex 以
+        // mutation 示範）。
+        assert!(out.stderr.is_empty(), "{tool}: unexpected stderr: {out:?}");
 
         let expected: Vec<(&str, &str)> = rows
             .iter()
