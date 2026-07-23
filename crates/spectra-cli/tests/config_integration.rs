@@ -542,6 +542,52 @@ fn reset_all_deletes_even_an_unreadable_config() {
     assert!(!file.exists());
 }
 
+/// Probed: when a path component is a regular file the removal fails ENOTDIR,
+/// and the oracle -- like us -- treats the config as simply absent and exits 0.
+#[test]
+fn reset_all_exits_zero_when_the_config_parent_is_a_regular_file() {
+    let home = TempDir::new("config-reset-enotdir");
+    let parent = config_file(&home);
+    let parent = parent.parent().unwrap();
+    std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+    std::fs::write(parent, "i am a file\n").unwrap();
+    assert_eq!(
+        run_ok(&home, &["config", "reset", "--all"]),
+        "\u{2713} Config reset.\n"
+    );
+}
+
+/// Probed: the oracle emits the bare OS error when it cannot create the config
+/// directory; ours must not prefix it with `creating <path>:`.
+#[cfg(unix)]
+#[test]
+fn a_failed_directory_creation_reports_the_bare_os_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = TempDir::new("config-readonly-home");
+    std::fs::set_permissions(&*home, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = home.join("probe-write-check");
+    if std::fs::write(&probe, b"x").is_ok() {
+        eprintln!(
+            "skipping a_failed_directory_creation_reports_the_bare_os_error: \
+             running as root (mode 0o555 not enforced)"
+        );
+        let _ = std::fs::remove_file(&probe);
+        std::fs::set_permissions(&*home, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let out = run(&home, &["config", "set", "k", "v"]);
+    std::fs::set_permissions(&*home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        !stderr.contains("creating "),
+        "stderr must not carry a path-prefixed context: {stderr}"
+    );
+    assert_eq!(stderr, "Error: Permission denied (os error 13)\n");
+}
+
 /// Probed: when the config path is a directory, `reset --all`'s `remove_file`
 /// fails and the oracle prints the bare OS error -- no path prefix. Pins the
 /// absence of a `with_context` wrapper on that arm.

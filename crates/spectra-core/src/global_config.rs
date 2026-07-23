@@ -129,12 +129,16 @@ pub fn load_for_display(path: &Path) -> Mapping {
 /// Write the settings mapping, creating parent directories as needed.
 pub fn save(path: &Path, settings: &Mapping) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
+        // Bare, no path-prefixed context: probed with a mode-555 HOME, the
+        // oracle emits `Error: Permission denied (os error 13)` here, so a
+        // `creating <path>:` prefix would both diverge and leak the absolute
+        // path. `write_atomically` still adds its own context naming the temp
+        // file -- recorded as a Known divergence in
+        // `docs/reverse-engineering/config.md`.
+        std::fs::create_dir_all(parent)?;
     }
     let text = serde_yaml::to_string(settings).context("serializing config")?;
     crate::init::write_atomically(path, &text)
-        .with_context(|| format!("writing {}", path.display()))
 }
 
 /// Look up a key. Keys are literal flat strings (probed: dotted keys are not
@@ -248,12 +252,21 @@ pub fn reset_to_empty(path: &Path) -> Result<()> {
 pub fn reset_delete(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        // Bare, with no `with_context` path prefix: every other error surface
-        // in `config` reaches the user as the oracle emits it (probed, e.g.
-        // `Error: Operation not permitted (os error 1)` when the config path is
-        // a directory). A prefix here would both diverge and leak the absolute
-        // path into a message the oracle keeps short.
+        // "Nothing to delete" covers more than `NotFound`: when a component of
+        // the path is a regular file the removal fails `ENOTDIR`, and the
+        // oracle likewise treats the config as absent and exits 0 (probed).
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(())
+        }
+        // Bare, with no path-prefixed context: probed, the oracle emits the raw
+        // OS error here (e.g. `Error: Operation not permitted (os error 1)`
+        // when the config path is a directory). A prefix would both diverge and
+        // leak the absolute path into a message the oracle keeps short.
         Err(e) => Err(e.into()),
     }
 }
@@ -270,12 +283,11 @@ pub const EDIT_SEED: &str = "# OpenSpec global config\n";
 /// vanish with no signal from the CLI.
 pub fn ensure_editable(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
+        // Bare, for the same reason as `save` -- see the note there.
+        std::fs::create_dir_all(parent)?;
     }
     if !path.exists() {
-        crate::init::write_atomically(path, EDIT_SEED)
-            .with_context(|| format!("writing {}", path.display()))?;
+        crate::init::write_atomically(path, EDIT_SEED)?;
     }
     Ok(())
 }

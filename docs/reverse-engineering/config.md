@@ -165,20 +165,24 @@ All probed:
   succeeds (`✓ beta = 2`, exit 0). openspectra writes atomically (temp +
   rename, shared with `init`), which needs the directory write bit and
   therefore fails there. Atomicity protects against a crash mid-write, which
-  the oracle does not; the trade was made knowingly. This is the only case
-  where the oracle succeeds and openspectra does not.
+  the oracle does not; the trade was made knowingly.
 * **A symlinked config file.** Same root cause, opposite symptom: the oracle
   writes *through* a `config.yaml` symlink and leaves the link in place, while
   the temp+rename replaces the link with a regular file — so a dotfile
   manager's tracked target silently stops receiving updates. Both exit 0, so
   only the on-disk result differs. Measured: with `config.yaml -> real.yaml`
-  containing `a: 1`, `config set k v` gives oracle `real.yaml == "k: v\na: 1\n"`
-  and a still-symlinked `config.yaml`; openspectra leaves `real.yaml`
-  untouched and `config.yaml` a regular file. `edit` behaves the same way on a
-  dangling link. Accepted for the same reason as the row above; see
-  `init::write_atomically`'s rationale.
-* **`HOME` unset.** The oracle still resolves the account's home via the OS
-  password database and prints a path; openspectra errors
+  containing `a: 1`, `config set k v` leaves the oracle's `config.yaml` a
+  symlink and its `real.yaml` holding both `a: 1` and `k: v` (in an order that
+  varies per run — see the key-order section; do not pin those bytes), while
+  openspectra leaves `real.yaml` untouched and `config.yaml` a regular file.
+  `edit` behaves the same way on a dangling link. Accepted for the same reason
+  as the row above; see `init::write_atomically`'s rationale.
+* **Context on a failed directory creation.** `save`/`ensure_editable` emit the
+  bare OS error for `create_dir_all` (matching the oracle on a mode-555 `HOME`),
+  but `write_atomically` still prefixes its own failures with the temp file
+  name. Reachable only in states the two rows above already accept.
+* **`HOME` unset *or empty*.** The oracle still resolves the account's home via
+  the OS password database and prints a path; openspectra errors
   (`could not determine the config directory ...`, exit 1). Matching would
   require a `getpwuid`-backed dependency (e.g. `dirs`) that this workspace
   does not carry — see Follow-ups.
@@ -194,9 +198,12 @@ All probed:
   ignores XDG. openspectra additionally requires `XDG_CONFIG_HOME` to be
   **absolute**, per the XDG spec: honoring a relative value would make the
   global config location depend on the process's working directory.
-* **Key validation.** 2.3.1 accepts any key, so `--allow-unknown` ships inert
-  (flag parity for help-text fidelity). If a later oracle version starts
-  rejecting unknown keys, wire the flag up then.
+* **Future key validation.** That 2.3.1 accepts any key — with or without
+  `--allow-unknown` — is *measured* (see the subcommand table and
+  `set_accepts_unknown_keys_with_and_without_allow_unknown`); only the
+  expectation that this could change is inferred. `--allow-unknown` therefore
+  ships inert, for help-text parity; if a later oracle version starts rejecting
+  unknown keys, wire the flag up then.
 
 ## Reproducing the oracle
 
