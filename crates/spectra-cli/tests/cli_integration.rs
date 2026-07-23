@@ -392,3 +392,114 @@ fn list_help_does_not_mention_changes_as_unimplemented() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(!stdout.contains("not yet implemented"));
 }
+
+#[test]
+fn in_progress_add_marks_an_existing_change_without_output() {
+    let tmp = TempDir::new("in-progress-existing");
+    init_project_with_change(&tmp, "shipping");
+
+    let out = spectra()
+        .args(["in-progress", "add", "shipping"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "in-progress add failed: {out:?}"
+    );
+    assert!(out.stdout.is_empty(), "stdout must be exactly empty");
+}
+
+#[test]
+fn in_progress_add_accepts_a_ghost_change() {
+    let tmp = TempDir::new("in-progress-ghost");
+    init_project_with_change(&tmp, "real-change");
+
+    let out = spectra()
+        .args(["in-progress", "add", "ghost-change"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "ghost-change add failed: {out:?}"
+    );
+}
+
+#[test]
+fn in_progress_marker_does_not_change_list_or_status_output() {
+    let tmp = TempDir::new("in-progress-write-only");
+    init_project_with_change(&tmp, "shipping");
+
+    let list_before = spectra().arg("list").current_dir(&*tmp).output().unwrap();
+    let status_before = spectra().arg("status").current_dir(&*tmp).output().unwrap();
+    assert!(list_before.status.success(), "list failed: {list_before:?}");
+    assert!(
+        status_before.status.success(),
+        "status failed: {status_before:?}"
+    );
+
+    let add = spectra()
+        .args(["in-progress", "add", "shipping"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(add.status.success(), "in-progress add failed: {add:?}");
+
+    let list_after = spectra().arg("list").current_dir(&*tmp).output().unwrap();
+    let status_after = spectra().arg("status").current_dir(&*tmp).output().unwrap();
+    assert!(list_after.status.success(), "list failed: {list_after:?}");
+    assert!(
+        status_after.status.success(),
+        "status failed: {status_after:?}"
+    );
+
+    assert_eq!(list_before.stdout, list_after.stdout);
+    assert_eq!(status_before.stdout, status_after.stdout);
+}
+
+#[test]
+fn in_progress_add_rejects_json_output() {
+    let tmp = TempDir::new("in-progress-json");
+    init_project_with_change(&tmp, "shipping");
+
+    let out = spectra()
+        .args(["in-progress", "add", "shipping", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn in_progress_rejects_remove_subcommand() {
+    let out = spectra()
+        .args(["in-progress", "remove", "shipping"])
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn in_progress_add_requires_an_initialized_project() {
+    let tmp = TempDir::new("in-progress-uninitialized");
+
+    let out = spectra()
+        .args(["in-progress", "add", "shipping"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("Not initialized"),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
