@@ -393,6 +393,17 @@ fn list_help_does_not_mention_changes_as_unimplemented() {
     assert!(!stdout.contains("not yet implemented"));
 }
 
+/// The marker path spelled out literally, on purpose: every other assertion
+/// in this file resolves it through `change::in_progress_marker_path`, the
+/// same production helper that writes it, so those assertions only prove
+/// "the file is wherever the code put it". Renaming the suffix or moving the
+/// directory left the whole suite green until this literal landed here.
+fn in_progress_marker(root: &Path, name: &str) -> PathBuf {
+    root.join(".spectra")
+        .join("changes")
+        .join(format!("{name}.in-progress"))
+}
+
 #[test]
 fn in_progress_add_marks_an_existing_change_without_output() {
     let tmp = TempDir::new("in-progress-existing");
@@ -410,6 +421,30 @@ fn in_progress_add_marks_an_existing_change_without_output() {
         "in-progress add failed: {out:?}"
     );
     assert!(out.stdout.is_empty(), "stdout must be exactly empty");
+    // Exit 0 with empty stdout is also what doing nothing at all looks like:
+    // without this the whole CLI-to-core wiring can be deleted and every test
+    // still passes.
+    assert!(
+        in_progress_marker(&tmp, "shipping").is_file(),
+        "marker must land at the documented .spectra/changes/<name>.in-progress"
+    );
+
+    // Idempotency at the CLI layer, not just in the core unit tests.
+    let again = spectra()
+        .args(["in-progress", "add", "shipping"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(
+        again.status.code(),
+        Some(0),
+        "repeated in-progress add failed: {again:?}"
+    );
+    assert!(again.stdout.is_empty(), "stdout must be exactly empty");
+    assert!(
+        in_progress_marker(&tmp, "shipping").is_file(),
+        "marker must survive a repeated add"
+    );
 }
 
 #[test]
@@ -428,6 +463,20 @@ fn in_progress_add_accepts_a_ghost_change() {
         Some(0),
         "ghost-change add failed: {out:?}"
     );
+    // The ghost marker is written, not skipped -- exit 0 alone cannot tell
+    // "recorded a marker for a change that does not exist" (the oracle's
+    // behavior) apart from "silently did nothing".
+    assert!(
+        in_progress_marker(&tmp, "ghost-change").is_file(),
+        "ghost marker must be written despite the change not existing"
+    );
+    assert!(
+        !tmp.join("openspec")
+            .join("changes")
+            .join("ghost-change")
+            .exists(),
+        "the change itself must not be created as a side effect"
+    );
 }
 
 #[test]
@@ -435,13 +484,25 @@ fn in_progress_marker_does_not_change_list_or_status_output() {
     let tmp = TempDir::new("in-progress-write-only");
     init_project_with_change(&tmp, "shipping");
 
-    let list_before = spectra().arg("list").current_dir(&*tmp).output().unwrap();
-    let status_before = spectra().arg("status").current_dir(&*tmp).output().unwrap();
-    assert!(list_before.status.success(), "list failed: {list_before:?}");
-    assert!(
-        status_before.status.success(),
-        "status failed: {status_before:?}"
-    );
+    // `list --json` carries a *derived* task status that is also spelled
+    // "in-progress" (main.rs `list_change_items`). It is unrelated to this
+    // marker, and it is the surface most likely to be wired to it by mistake
+    // -- so it has to be in the lock, not just the human-readable listing.
+    let read_paths: [&[&str]; 5] = [
+        &["list"],
+        &["list", "--json"],
+        &["list", "--parked"],
+        &["status"],
+        &["show", "shipping"],
+    ];
+
+    let capture = |args: &[&str]| {
+        let out = spectra().args(args).current_dir(&*tmp).output().unwrap();
+        assert!(out.status.success(), "{args:?} failed: {out:?}");
+        out.stdout
+    };
+
+    let before: Vec<Vec<u8>> = read_paths.iter().map(|a| capture(a)).collect();
 
     let add = spectra()
         .args(["in-progress", "add", "shipping"])
@@ -449,17 +510,18 @@ fn in_progress_marker_does_not_change_list_or_status_output() {
         .output()
         .unwrap();
     assert!(add.status.success(), "in-progress add failed: {add:?}");
-
-    let list_after = spectra().arg("list").current_dir(&*tmp).output().unwrap();
-    let status_after = spectra().arg("status").current_dir(&*tmp).output().unwrap();
-    assert!(list_after.status.success(), "list failed: {list_after:?}");
     assert!(
-        status_after.status.success(),
-        "status failed: {status_after:?}"
+        in_progress_marker(&tmp, "shipping").is_file(),
+        "marker must exist, else this lock proves nothing"
     );
 
-    assert_eq!(list_before.stdout, list_after.stdout);
-    assert_eq!(status_before.stdout, status_after.stdout);
+    for (args, expected) in read_paths.iter().zip(before) {
+        assert_eq!(
+            capture(args),
+            expected,
+            "{args:?} output changed after in-progress add; the marker must stay write-only"
+        );
+    }
 }
 
 #[test]
@@ -478,12 +540,23 @@ fn in_progress_add_rejects_json_output() {
 
 #[test]
 fn in_progress_rejects_remove_subcommand() {
+    // Runs in a TempDir like its siblings: clap rejects `remove` before any
+    // root resolution today, but this test exists precisely for the day a
+    // removal subcommand is added, and it must not touch the real checkout then.
+    let tmp = TempDir::new("in-progress-remove");
+
     let out = spectra()
         .args(["in-progress", "remove", "shipping"])
+        .current_dir(&*tmp)
         .output()
         .unwrap();
 
     assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("remove"),
+        "clap must name the rejected subcommand, else this passes for any error: {stderr}"
+    );
 }
 
 #[test]

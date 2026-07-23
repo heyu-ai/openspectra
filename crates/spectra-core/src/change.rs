@@ -5,7 +5,10 @@
 //! such as `proposal.md`, `design.md`, `tasks.md`, and `specs/<cap>/spec.md`.
 //! Spectra tracks per-change state under `.spectra/`:
 //! `.spectra/changes/<name>.started` records the baseline git SHA and
-//! `.spectra/changes/<name>.parked` / `<name>.in-progress` are sidecar markers.
+//! `.spectra/changes/<name>.parked` is an on-hold marker; both mirror the
+//! oracle. `.spectra/changes/<name>.in-progress` is an OpenSpectra-only
+//! marker with no oracle counterpart on disk -- the oracle keeps that state
+//! in SQLite (see `docs/reverse-engineering/in-progress.md`).
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
@@ -119,6 +122,13 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
 /// deliberately diverges here, consistently with its existing defensive
 /// clearing of `.parked`/`.started`, so a recreated same-named change cannot
 /// inherit a stale marker. A missing file is not an error.
+/// Every sidecar is attempted even when an earlier one fails, and the errors
+/// are reported together. Returning on the first failure would let one
+/// unremovable sidecar hide the others: since callers treat this as
+/// best-effort and only warn, a `.in-progress` marker that cannot be removed
+/// (it has no removal command, no read path, and nothing validates it) would
+/// silently leave `.started` and `touched.json` in place, and the recreated
+/// change would inherit the stale baseline SHA this function exists to clear.
 pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
     let sidecars = [
         parked_marker_path(cfg, name),
@@ -126,14 +136,19 @@ pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> 
         started_sha_path(cfg, name),
         crate::touched::touched_path(cfg, name),
     ];
+    let mut failures = Vec::new();
     for path in sidecars {
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) => return Err(e).with_context(|| format!("removing stale {}", path.display())),
+            Err(e) => failures.push(format!("removing stale {}: {e}", path.display())),
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
+    }
 }
 
 /// Errors unless `name` is both an existing change directory *and* passes
@@ -173,6 +188,12 @@ pub fn park(cfg: &Config, name: &str) -> Result<()> {
 
 /// Mark a change as in progress without exposing that state through any read
 /// path. The marker write is idempotent.
+///
+/// Unlike [`park`] and [`unpark`], this performs **no existence check**: a
+/// name with no corresponding change is accepted and recorded, matching the
+/// oracle's ghost-change behavior (see
+/// `docs/reverse-engineering/in-progress.md`). Names that are not a single
+/// path component are still rejected.
 pub fn mark_in_progress(cfg: &Config, name: &str) -> Result<()> {
     // Defensive security boundary, not oracle-probed: reject traversal names
     // even though this makes OpenSpectra deliberately stricter for that input.

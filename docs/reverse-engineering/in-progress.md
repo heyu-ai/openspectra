@@ -48,7 +48,8 @@ The probes established four load-bearing behaviors:
    row from the oracle database. No CLI read path exposes that orphan, and
    there is no CLI command to remove it.
 4. **The `list --json` string is a name collision.** `list --json` derives a
-   task status named `"in-progress"` when a change's tasks are not all done
+   task status named `"in-progress"` unless a change has at least one task and
+   all of them are done — a change with zero tasks reports `"in-progress"` too
    (`list_change_items` in `crates/spectra-cli/src/main.rs`). That derived
    string existed independently and is completely unrelated to the
    `in-progress add` marker. Adding the marker does not influence it.
