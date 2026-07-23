@@ -157,6 +157,20 @@ All probed:
   replace the whole config with a file holding just the new key. See
   `global_config::load` vs `load_for_display`.
 * **`unset` last key** → file left as `{}`.
+* **A path component is a regular file** (e.g. `.../openspec` exists as a file,
+  so the config path is `ENOTDIR`). Exit codes match everywhere; the message
+  differs on the write paths because the two implementations fail at different
+  syscalls — the oracle in its recursive mkdir, openspectra in its read:
+
+  | command | oracle | openspectra |
+  |---|---|---|
+  | `list` | `No configuration set.`, exit 0 | same |
+  | `reset --all` | `✓ Config reset.`, exit 0 | same (this is why `NotADirectory` joins `NotFound` in `reset_delete`) |
+  | `set` / `unset` / `reset` | `Error: File exists (os error 17)`, exit 1 | `Error: Not a directory (os error 20)`, exit 1 |
+
+  The `set`/`unset`/`reset` message difference is a **known divergence**:
+  same exit code, different errno text, in a state no consumer can reach
+  without hand-creating the file.
 
 ## Known divergences (measured, deliberate, not defects)
 

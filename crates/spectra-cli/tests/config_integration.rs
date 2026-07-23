@@ -577,15 +577,29 @@ fn a_failed_directory_creation_reports_the_bare_os_error() {
         return;
     }
 
-    let out = run(&home, &["config", "set", "k", "v"]);
+    // Both write entry points must be covered: `set` reaches `create_dir_all`
+    // through `save`, `edit` through `ensure_editable`. Testing only one lets
+    // the other's context wrapper come back unnoticed.
+    let set_out = run(&home, &["config", "set", "k", "v"]);
+    let edit_out = spectra_cfg(&home)
+        .args(["config", "edit"])
+        .env("EDITOR", "true")
+        .output()
+        .unwrap();
     std::fs::set_permissions(&*home, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert_eq!(out.status.code(), Some(1));
-    let stderr = String::from_utf8(out.stderr).unwrap();
-    assert!(
-        !stderr.contains("creating "),
-        "stderr must not carry a path-prefixed context: {stderr}"
-    );
-    assert_eq!(stderr, "Error: Permission denied (os error 13)\n");
+
+    for (label, out) in [("set", set_out), ("edit", edit_out)] {
+        assert_eq!(out.status.code(), Some(1), "{label} should fail: {out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(
+            !stderr.contains("creating "),
+            "{label} stderr must not carry a path-prefixed context: {stderr}"
+        );
+        assert_eq!(
+            stderr, "Error: Permission denied (os error 13)\n",
+            "{label}"
+        );
+    }
 }
 
 /// Probed: when the config path is a directory, `reset --all`'s `remove_file`
