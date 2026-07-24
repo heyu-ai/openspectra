@@ -147,10 +147,12 @@ fn read_gitignore(path: &Path) -> Result<String> {
     }
 }
 
-// `write_atomically` now lives in `crate::fsutil` so `update` can share it
-// (PR #86: `update` performs read-modify-write over user-owned files and must
-// not follow symlinks; a second copy here would be the kind of drift `fsutil`
-// exists to prevent).
+// `write_atomically` now lives in `crate::fsutil` so `update` and
+// `global_config` can share it (PR #86: `update` performs read-modify-write
+// over user-owned files and must not follow symlinks; a second copy here would
+// be the kind of drift `fsutil` exists to prevent — and would silently ship
+// `global_config` the pre-hardening version without O_EXCL / fchmod / the
+// unwritable-directory fallback).
 
 #[cfg(test)]
 mod tests {

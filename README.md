@@ -70,6 +70,7 @@ spectra completion install   [SHELL] [--verbose]  # writes it to the shell's use
 spectra completion uninstall [SHELL] [-y]         # removes that file
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
 spectra update [PATH] [--force]   # rewrites instruction files for every detected AI tool (.claude/, .cursor/, … 23 tools); oracle-verified byte-for-byte
+spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 ```
 
 Exit codes for `drift` (pinned against the reference binary): `0` on any
