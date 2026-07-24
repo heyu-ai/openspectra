@@ -12,6 +12,22 @@ changes.
 
 ### Added
 
+- **`spectra completion generate|install|uninstall`** (#60) produces and
+  installs shell completion scripts, built on `clap_complete`. `generate`
+  supports bash, zsh, fish, elvish, and powershell, and detects the shell from
+  `$SHELL` when the argument is omitted.
+
+  **Deliberately more capable than the oracle**: v2.3.1's `install`/`uninstall`
+  were probed and found to be no-op stubs that print a hint and write nothing.
+  Issue #60 explicitly waives byte-for-byte alignment here (the artifact is a
+  shell script, not a data contract), so OpenSpectra actually writes and
+  removes the files — bash into `$XDG_DATA_HOME/bash-completion/completions/`,
+  fish into `$XDG_CONFIG_HOME/fish/completions/`, and zsh into
+  `$ZDOTDIR/.zfunc/`. **No rc file is ever modified**; zsh instead prints a
+  one-time hint to add `fpath+=~/.zfunc` before `compinit`. `install`/
+  `uninstall` cover bash/zsh/fish only — elvish and powershell report a clear
+  error pointing at `generate`.
+
 - **`spectra in-progress add <NAME>`** (#61) records a write-only in-progress
   marker. The oracle keeps this state in a SQLite table
   (`.git/spectra-app/spectra.db`); OpenSpectra stores it as a
