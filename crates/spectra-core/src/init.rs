@@ -9,7 +9,8 @@ use crate::config::{Config, DEFAULT_SPEC_DIR};
 use crate::fsutil::write_atomically;
 
 /// Line ensured present in `.gitignore`. `.spectra/` holds per-change sidecar
-/// state (baseline SHAs, parked markers, touched-file tracking) that must
+/// state (baseline SHAs, parked markers, in-progress markers, touched-file
+/// tracking) that must
 /// never be committed — the root cause of the PR #19 self-recording bug was a
 /// project that had never run `init` and so had no such ignore entry.
 const GITIGNORE_ENTRY: &str = ".spectra/";

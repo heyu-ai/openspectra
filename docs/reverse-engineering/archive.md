@@ -84,8 +84,8 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    — its delta is skipped with a stderr warning, not dropped silently. The
    oracle also prints "Snapshot created for unarchive support." — **not
    implemented**; see "Known limitations" below.
-6. Clear the change's `.spectra/changes/<name>.{started,parked}` sidecar
-   markers **and** its `.spectra/touched/<name>.json` tracking file, if any
+6. Clear the change's `.spectra/changes/<name>.{started,parked,in-progress}`
+   sidecar markers **and** its `.spectra/touched/<name>.json` tracking file, if any
    (best-effort; a failure here only warns, since archiving itself already
    succeeded by this point). Not oracle-confirmed, but a correctness fix:
    without it, a re-created change of the same name could silently inherit a
