@@ -1,6 +1,6 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
 //! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
-//! `new change`, `new artifact`, `task done`, `archive`.
+//! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`.
 
 mod completion;
 
@@ -150,6 +150,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// In-progress marker operations.
+    InProgress {
+        #[command(subcommand)]
+        target: InProgressTarget,
+    },
     /// Create a new change or workflow artifact.
     New {
         #[command(subcommand)]
@@ -236,6 +241,12 @@ enum CompletionTarget {
         #[arg(short = 'y', long)]
         yes: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum InProgressTarget {
+    /// Record an in-progress marker for a change name.
+    Add { name: String },
 }
 
 /// Walk up from `start` to find the project root (dir containing `.spectra.yaml`),
@@ -649,6 +660,11 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     } else {
         println!("Unparked '{name}'.");
     }
+    Ok(0)
+}
+
+fn cmd_in_progress_add(cfg: &Config, name: &str) -> Result<i32> {
+    change::mark_in_progress(cfg, name)?;
     Ok(0)
 }
 
@@ -1091,6 +1107,12 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_unpark(&cfg, change, *json)
         }
+        Command::InProgress { target } => match target {
+            InProgressTarget::Add { name } => {
+                let cfg = require_initialized(&root)?;
+                cmd_in_progress_add(&cfg, name)
+            }
+        },
         Command::New { target } => match target {
             NewTarget::Change { name, json } => {
                 let cfg = require_initialized(&root)?;

@@ -44,8 +44,8 @@ init' first.` if `.spectra.yaml` is missing.
    - `openspec/changes/` and `openspec/specs/` (empty directories; git won't
      track them until something is written inside)
    - a `.gitignore` entry for `.spectra/` (OpenSpectra's own per-change
-     sidecar state directory — baseline SHAs, parked markers, touched-file
-     tracking — which must never be committed):
+     sidecar state directory — baseline SHAs, parked markers, in-progress
+     markers, touched-file tracking — which must never be committed):
      - no `.gitignore` exists → create one containing just `.spectra/`
      - `.gitignore` exists but lacks the entry → append it, first inserting a
        trailing newline if the file didn't already end in one, so existing

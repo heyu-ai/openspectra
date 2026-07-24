@@ -4,8 +4,12 @@
 //! `.openspec.yaml` metadata file and, as its workflow advances, artifact files
 //! such as `proposal.md`, `design.md`, `tasks.md`, and `specs/<cap>/spec.md`.
 //! Spectra tracks per-change state under `.spectra/`:
-//! `.spectra/changes/<name>.started` records the baseline git SHA and
-//! `.spectra/changes/<name>.parked` marks a parked change.
+//! `.spectra/changes/<name>.parked` mirrors the oracle's on-hold state.
+//! `.spectra/changes/<name>.started` records the baseline git SHA drift needs
+//! and is OpenSpectra-only (see `docs/reverse-engineering/artifact-workflow.md`).
+//! `.spectra/changes/<name>.in-progress` is likewise OpenSpectra-only on disk
+//! -- the oracle keeps that state in SQLite, not as a sidecar (see
+//! `docs/reverse-engineering/in-progress.md`).
 
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
@@ -96,34 +100,56 @@ fn parked_marker_path(cfg: &Config, name: &str) -> PathBuf {
         .join(format!("{name}.parked"))
 }
 
+fn in_progress_marker_path(cfg: &Config, name: &str) -> PathBuf {
+    cfg.root
+        .join(".spectra")
+        .join("changes")
+        .join(format!("{name}.in-progress"))
+}
+
 fn is_parked(cfg: &Config, name: &str) -> bool {
     parked_marker_path(cfg, name).exists()
 }
 
-/// Remove any `.parked`/`.started`/`.spectra/touched/<name>.json` sidecar
-/// files for `name`. Used by `create` (a change directory of the same name
-/// deleted by hand, rather than via `spectra archive`, may have left these
-/// behind — clearing them stops a freshly created change from silently
-/// inheriting stale parked/baseline/touched-file state) and by
-/// `archive::archive` itself (an archived change is no longer active, so
-/// its sidecar state is cruft once the move succeeds — and, for
-/// `touched.json` specifically, leaving it around would make a
-/// *future* change of the same name inherit a prior change's touched-file
-/// history). A missing file is not an error.
+/// Remove any `.parked`/`.in-progress`/`.started`/
+/// `.spectra/touched/<name>.json` sidecar files for `name`. Used by `create`
+/// (a change directory of the same name deleted by hand, rather than via
+/// `spectra archive`, may have left these behind — clearing them stops a
+/// freshly created change from silently inheriting stale state) and by
+/// `archive::archive` itself (an archived change is no longer active, so its
+/// sidecar state is cruft once the move succeeds).
+///
+/// The oracle does not clear its in-progress marker on archive. OpenSpectra
+/// deliberately diverges here, consistently with its existing defensive
+/// clearing of `.parked`/`.started`, so a recreated same-named change cannot
+/// inherit a stale marker. A missing file is not an error.
+/// Every sidecar is attempted even when an earlier one fails, and the errors
+/// are reported together. Returning on the first failure would let one
+/// unremovable sidecar hide the others: since callers treat this as
+/// best-effort and only warn, a `.in-progress` marker that cannot be removed
+/// (it has no removal command, no read path, and nothing validates it) would
+/// silently leave `.started` and `touched.json` in place, and the recreated
+/// change would inherit the stale baseline SHA this function exists to clear.
 pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
     let sidecars = [
         parked_marker_path(cfg, name),
+        in_progress_marker_path(cfg, name),
         started_sha_path(cfg, name),
         crate::touched::touched_path(cfg, name),
     ];
+    let mut failures = Vec::new();
     for path in sidecars {
         match std::fs::remove_file(&path) {
             Ok(()) => {}
             Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) => return Err(e).with_context(|| format!("removing stale {}", path.display())),
+            Err(e) => failures.push(format!("removing stale {}: {e}", path.display())),
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
+    }
 }
 
 /// Errors unless `name` is both an existing change directory *and* passes
@@ -156,6 +182,29 @@ pub fn park(cfg: &Config, name: &str) -> Result<()> {
     let parent = marker
         .parent()
         .expect("parked_marker_path always has a parent");
+    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    std::fs::write(&marker, "").with_context(|| format!("writing {}", marker.display()))?;
+    Ok(())
+}
+
+/// Mark a change as in progress without exposing that state through any read
+/// path. The marker write is idempotent.
+///
+/// Unlike [`park`] and [`unpark`], this performs **no existence check**: a
+/// name with no corresponding change is accepted and recorded, matching the
+/// oracle's ghost-change behavior (see
+/// `docs/reverse-engineering/in-progress.md`). Names that are not a single
+/// path component are still rejected.
+pub fn mark_in_progress(cfg: &Config, name: &str) -> Result<()> {
+    // Defensive security boundary, not oracle-probed: reject traversal names
+    // even though this makes OpenSpectra deliberately stricter for that input.
+    if !is_valid_name(name) {
+        return Err(anyhow!("invalid change name '{name}'"));
+    }
+    let marker = in_progress_marker_path(cfg, name);
+    let parent = marker
+        .parent()
+        .expect("in_progress_marker_path always has a parent");
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     std::fs::write(&marker, "").with_context(|| format!("writing {}", marker.display()))?;
     Ok(())
@@ -612,6 +661,55 @@ mod tests {
     }
 
     #[test]
+    fn mark_in_progress_marks_an_existing_change_and_is_idempotent() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+        write(
+            &cfg.changes_dir().join("shipping").join("proposal.md"),
+            "# Shipping\n",
+        );
+
+        mark_in_progress(&cfg, "shipping").unwrap();
+        assert!(in_progress_marker_path(&cfg, "shipping").is_file());
+
+        mark_in_progress(&cfg, "shipping").unwrap();
+        assert!(in_progress_marker_path(&cfg, "shipping").is_file());
+    }
+
+    #[test]
+    fn mark_in_progress_marks_a_nonexistent_change() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        // Deliberately unlike `park`: the oracle's ghost-change probe accepts
+        // and records a marker for a change that does not exist.
+        mark_in_progress(&cfg, "ghost").unwrap();
+
+        assert!(in_progress_marker_path(&cfg, "ghost").is_file());
+        assert!(!cfg.changes_dir().join("ghost").exists());
+    }
+
+    #[test]
+    fn mark_in_progress_rejects_path_traversal_names() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        assert!(mark_in_progress(&cfg, "../evil").is_err());
+    }
+
+    #[test]
     fn park_errors_when_change_does_not_exist() {
         let tmp = TempDir::new();
         let cfg = Config {
@@ -766,10 +864,12 @@ mod tests {
 
         create(&cfg, "reused-name").unwrap();
         park(&cfg, "reused-name").unwrap();
+        mark_in_progress(&cfg, "reused-name").unwrap();
         // Simulate a user manually deleting the change dir (not via `archive`),
-        // leaving the `.parked` marker behind on disk.
+        // leaving the sidecar markers behind on disk.
         std::fs::remove_dir_all(cfg.changes_dir().join("reused-name")).unwrap();
         assert!(parked_marker_path(&cfg, "reused-name").is_file());
+        assert!(in_progress_marker_path(&cfg, "reused-name").is_file());
 
         let ch = create(&cfg, "reused-name").unwrap();
 
@@ -777,8 +877,65 @@ mod tests {
             !ch.parked,
             "a freshly created change must not inherit a stale parked marker"
         );
+        assert!(
+            !in_progress_marker_path(&cfg, "reused-name").exists(),
+            "a freshly created change must not inherit a stale in-progress marker"
+        );
         assert_eq!(list_active(&cfg), vec!["reused-name".to_string()]);
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    /// A sidecar that cannot be removed must not shield the ones after it.
+    /// The loop used to `return` on the first failure, and the in-progress
+    /// marker sits ahead of `.started` and `touched.json` -- so an
+    /// unremovable marker (it has no removal command, no read path, and
+    /// nothing validates it) silently left the stale baseline SHA in place,
+    /// and the recreated change scored drift against the previous change's
+    /// baseline. Both callers only warn, so nothing surfaced.
+    #[cfg(unix)]
+    #[test]
+    fn clear_stale_sidecar_state_clears_later_sidecars_when_an_earlier_one_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+        };
+
+        create(&cfg, "blocked").unwrap();
+        park(&cfg, "blocked").unwrap();
+        mark_in_progress(&cfg, "blocked").unwrap();
+        crate::touched::record(&cfg, "blocked", 1, "task", vec!["src/lib.rs".to_string()]).unwrap();
+        let touched = crate::touched::touched_path(&cfg, "blocked");
+        assert!(touched.is_file(), "fixture: touched.json must exist");
+
+        // Make removals inside .spectra/changes/ fail while .spectra/touched/
+        // stays writable, so a first-error return would be observable.
+        let changes_state_dir = parked_marker_path(&cfg, "blocked")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let original = std::fs::metadata(&changes_state_dir).unwrap().permissions();
+        let mut locked = original.clone();
+        locked.set_mode(0o555);
+        std::fs::set_permissions(&changes_state_dir, locked).unwrap();
+
+        let result = clear_stale_sidecar_state(&cfg, "blocked");
+
+        std::fs::set_permissions(&changes_state_dir, original).unwrap();
+
+        let err = result.expect_err("removal failures must be reported, not swallowed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("blocked.parked") && msg.contains("blocked.in-progress"),
+            "every failing sidecar must be named, not just the first: {msg}"
+        );
+        assert!(
+            !touched.exists(),
+            "touched.json must still be cleared even though earlier sidecars failed"
+        );
     }
 
     #[test]

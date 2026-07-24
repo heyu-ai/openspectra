@@ -5,12 +5,14 @@ spec-driven development CLI — reverse-engineered from the closed-source binary
 starting with the `drift` command.
 
 > **Status:** early. `spectra init` / `drift` / `validate` (+ minimal `list` /
-> `show` / `park` / `unpark` / `new change` / `task done` / `archive`) is
+> `show` / `park` / `unpark` / `new change` / `task done` / `in-progress add` /
+> `archive`) is
 > implemented in Rust and runs on Linux/macOS with zero runtime dependencies
 > (just `git` on `PATH`). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
 > [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
 > [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
+> [`docs/reverse-engineering/in-progress.md`](docs/reverse-engineering/in-progress.md),
 > and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
 > (the last one is **not** oracle-verified — see that doc). `validate` is
 > likewise **not** oracle-verified: it matches the OSS `openspec validate`
@@ -61,6 +63,7 @@ spectra status [--change <NAME>] [--schema <NAME>] [--json]   # shows the artifa
 spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifact's authoring instruction + template; with all artifacts done, switches to apply mode (tasks progress + preflight)
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
 spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md checkbox done, records touched files
+spectra in-progress add <NAME>    # records a write-only in-progress marker (no --json, no removal path, no effect on any listing)
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
 ```
 
@@ -203,7 +206,7 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / archive
+crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / in-progress add / archive
 docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
 scripts/               # oracle calibration probes
 ```
