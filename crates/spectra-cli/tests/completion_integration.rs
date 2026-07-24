@@ -316,10 +316,11 @@ fn zsh_and_fish_install_to_their_native_autoload_directories() {
     // line printed just above, so a hardcoded hint would slip through.
     assert!(
         combined_output(&zsh).contains(&format!(
-            "fpath+=({})",
+            "fpath+=('{}')",
             root.join("zdotdir/.zfunc").display()
         )),
-        "zsh hint must tell the user to add the directory actually written to: {zsh:?}"
+        "zsh hint must tell the user to add the directory actually written to, \
+         single-quoted so a path with spaces does not word-split: {zsh:?}"
     );
 
     let fish = isolated_spectra(&root)
@@ -380,20 +381,30 @@ fn install_and_uninstall_never_modify_an_existing_rc_file() {
 #[test]
 fn generate_detects_the_shell_from_the_environment() {
     let root = TempDir::new("completion-detect-shell");
-    let output = isolated_spectra(&root)
-        .args(["completion", "generate"])
-        .env("SHELL", "/bin/zsh")
-        .output()
-        .unwrap();
 
-    assert!(
-        output.status.success(),
-        "shell auto-detection failed: {output:?}"
-    );
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains(shell_marker("zsh")),
-        "$SHELL=/bin/zsh must produce a zsh script: {output:?}"
-    );
+    // More than one shell on purpose: with a single sample, a detection that
+    // ignores $SHELL and always returns that one shell passes -- and a bash
+    // user would silently get the zsh script.
+    for (shell_env, expected) in [
+        ("/bin/bash", "bash"),
+        ("/bin/zsh", "zsh"),
+        ("/usr/local/bin/fish", "fish"),
+    ] {
+        let output = isolated_spectra(&root)
+            .args(["completion", "generate"])
+            .env("SHELL", shell_env)
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "auto-detection failed for {shell_env}: {output:?}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(shell_marker(expected)),
+            "$SHELL={shell_env} must produce a {expected} script: {output:?}"
+        );
+    }
 }
 
 #[test]
@@ -441,15 +452,95 @@ fn install_and_uninstall_reject_unsupported_shells_with_generate_guidance() {
             );
             // The uninstall path rewrites the verb; without this a deleted
             // rewrite tells users that *installing* is unsupported.
+            //
+            // Assert the exact phrase, not `contains(verb)`: "uninstalling"
+            // contains "installing", so a `contains` check on the install
+            // branch is satisfied by the uninstall message and has zero
+            // discriminating power.
             let expected_verb = if op == "install" {
                 "installing"
             } else {
                 "uninstalling"
             };
             assert!(
-                message.contains(expected_verb),
-                "{op} {shell} message must say '{expected_verb}': {output:?}"
+                message.contains(&format!(
+                    "{expected_verb} {shell} completion is not supported"
+                )),
+                "{op} {shell} message must open with '{expected_verb}': {output:?}"
             );
+            if op == "install" {
+                assert!(
+                    !message.contains("uninstalling"),
+                    "install must not claim uninstalling is unsupported: {output:?}"
+                );
+            }
         }
     }
+}
+
+#[test]
+fn relative_xdg_data_home_falls_back_to_home_not_the_current_directory() {
+    // The empty-value case is not the whole story: a non-empty *relative*
+    // value joins the same way, so install wrote under the cwd and printed
+    // that relative path as if correct. The XDG spec requires an absolute
+    // path and says an invalid value takes the $HOME fallback.
+    let root = TempDir::new("completion-relative-xdg");
+    let home = root.join("home");
+    let cwd = root.join("elsewhere");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+
+    let output = spectra()
+        .args(["completion", "install", "bash"])
+        .current_dir(&cwd)
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", "relative-xdg")
+        .env("XDG_CONFIG_HOME", root.join("xdg-config"))
+        .env("ZDOTDIR", root.join("zdotdir"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "bash install failed: {output:?}");
+
+    assert!(
+        !cwd.join("relative-xdg").exists(),
+        "a relative XDG_DATA_HOME must not resolve against the cwd: {output:?}"
+    );
+    assert!(
+        home.join(".local/share/bash-completion/completions/spectra")
+            .is_file(),
+        "a relative XDG_DATA_HOME must take the $HOME fallback: {output:?}"
+    );
+}
+
+#[test]
+fn install_leaves_no_temp_file_when_the_rename_fails() {
+    // A pre-existing *directory* at the completion path lets the temp write
+    // succeed but makes the rename fail, exercising the cleanup-on-rename-
+    // failure branch. Without the cleanup call, the leftover `_spectra.tmp-*`
+    // would sit in the user's fpath directory still carrying `#compdef
+    // spectra` on its first line. Mirrors spectra-core's
+    // `write_atomically_cleans_up_the_temp_file_when_rename_fails`.
+    let root = TempDir::new("completion-rename-fails");
+    let completions = root.join("xdg-data/bash-completion/completions");
+    std::fs::create_dir_all(completions.join("spectra")).unwrap();
+
+    let output = isolated_spectra(&root)
+        .args(["completion", "install", "bash"])
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "install onto a directory must fail loudly: {output:?}"
+    );
+    let entries: Vec<String> = std::fs::read_dir(&completions)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        entries,
+        vec!["spectra".to_string()],
+        "a failed rename must leave no temp file behind: {entries:?}"
+    );
 }

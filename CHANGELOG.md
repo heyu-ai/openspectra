@@ -24,9 +24,18 @@ changes.
   removes the files — bash into `$XDG_DATA_HOME/bash-completion/completions/`,
   fish into `$XDG_CONFIG_HOME/fish/completions/`, and zsh into
   `$ZDOTDIR/.zfunc/`. **No rc file is ever modified**; zsh instead prints a
-  one-time hint to add `fpath+=~/.zfunc` before `compinit`. `install`/
-  `uninstall` cover bash/zsh/fish only — elvish and powershell report a clear
-  error pointing at `generate`.
+  one-time hint naming the directory it actually wrote to (so a `ZDOTDIR`
+  user is not sent to `~/.zfunc`), single-quoted so a path containing spaces
+  does not word-split when pasted. `install`/`uninstall` cover bash/zsh/fish
+  only — elvish and powershell report a clear error pointing at `generate`.
+
+  Writes go through a `create_new` temp file plus `rename`, so a symlink at
+  either the completion path or the temp path is replaced rather than
+  followed — a plain write would truncate whatever it pointed at, which is
+  how an early revision could overwrite a user's `.bashrc`. Environment
+  overrides (`XDG_DATA_HOME`, `XDG_CONFIG_HOME`, `ZDOTDIR`, `HOME`) are
+  honoured only when absolute; empty or relative values are treated as unset
+  per the XDG spec, rather than resolving against the current directory.
 
 - **`spectra in-progress add <NAME>`** (#61) records a write-only in-progress
   marker. The oracle keeps this state in a SQLite table
