@@ -439,6 +439,40 @@ fn a_directory_at_a_plain_target_reports_the_oracle_errno() {
 }
 
 #[test]
+fn a_directory_at_a_managed_target_reports_the_oracle_errno() {
+    // 迴歸（PR #86 round-2，Claude round2 lens）：寫入半邊改成裸錯誤時，
+    // 讀取半邊（read_existing）漏改，於是 Managed / ClaudeSettings 的失敗
+    // 訊息多出一段絕對路徑。Plain 形狀當時已經對齊，所以只有這半邊會露餡。
+    let root = TempDir::new("update-managed-dir");
+    init_root(&root, "openspec");
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    std::fs::create_dir_all(root.join("CLAUDE.md")).unwrap();
+
+    let out = run_update(&root, &[]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Error: Is a directory (os error 21)\n"
+    );
+}
+
+#[test]
+fn a_directory_at_the_settings_target_reports_the_oracle_errno() {
+    let root = TempDir::new("update-settings-dir");
+    init_root(&root, "openspec");
+    std::fs::create_dir_all(root.join(".claude/settings.json")).unwrap();
+
+    let out = run_update(&root, &[]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Error: Is a directory (os error 21)\n"
+    );
+}
+
+#[test]
 fn an_unwritable_project_root_still_updates_an_existing_managed_file() {
     // oracle 就地寫入 Managed 檔，只需要檔案的寫入權；0500 的根目錄仍能成功。
     // 我們的 temp+rename 需要目錄寫入權，故在該情境退回就地寫入以維持 parity。

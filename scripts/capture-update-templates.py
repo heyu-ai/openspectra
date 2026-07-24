@@ -292,7 +292,7 @@ def main() -> None:
             print(f"     [note] {tool_id}:{rel} starts with the START marker but is Plain")
     # 兩個方向都要斷言。只檢查 `not managed` 是**單邊**守衛：一個退化成
     # 「sentinel 永遠存活」的 probe（stale read、目標路徑不再被改寫、未來的
-    # 工具組合觸發抑制怪癖）會通過它，然後把 21 個 marker 形狀的檔案全部寫成
+    # 工具組合觸發抑制怪癖）會通過它，然後把 22 個 marker 形狀的檔案全部寫成
     # Managed，靜默還原 6a5bee4 修掉的缺陷。零命中的守衛在證明它會對已知壞
     # 輸入失敗之前沒有資訊量。（PR #86 round-2, Claude/silent-failure-hunter）
     if not managed:

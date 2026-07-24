@@ -117,9 +117,11 @@ probed, not inferred**: `capture-update-templates.py` seeds a sandbox, appends a
 sentinel after the END marker, re-runs `update`, and classifies by whether the
 sentinel survives — 22 candidates, splitting 12 Managed / 10 Plain. Guessing
 from the template text ("does it start with the START marker?") is wrong — see
-the kilocode note below. The remaining 423 files are assigned `Plain` on the
-unprobed premise that a template which is not a marker block cannot be
-merge-updated; that premise is not verified against the oracle.
+the kilocode note below. The remaining 423 entries are **not** probed: 422 are
+assigned `Plain` on the unprobed premise that a template which is not a marker
+block cannot be merge-updated, and the 423rd is `.claude/settings.json`, whose
+`ClaudeSettings` strategy is assigned by path. Neither premise is verified
+against the oracle.
 
 1. **Plain** (432 of 445 tool-files: skills, commands, prompts, and — despite
    appearances — kilocode's workflows): full overwrite. Mechanically the oracle

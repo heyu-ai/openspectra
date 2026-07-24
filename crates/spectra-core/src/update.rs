@@ -27,7 +27,7 @@
 //!   保留、鍵按字母排序（oracle 即 serde_json 預設 BTreeMap 行為）、
 //!   2 空格縮排、無結尾換行；無法解析成 JSON object 時整檔換成預設模板。
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 
 use crate::config::Config;
@@ -188,7 +188,11 @@ fn read_existing(path: &Path) -> Result<Option<String>> {
     match std::fs::read(path) {
         Ok(bytes) => Ok(String::from_utf8(bytes).ok()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+        // 裸 io error，與 [`write_file`]、[`remove_if_present`] 一致。上一輪
+        // 把寫入半邊改成裸錯誤時漏了這裡，於是同一個 commit 宣告「這條路徑
+        // 一律不加 context」、程式碼卻在讀取半邊照加——Managed 與
+        // ClaudeSettings 的三種失敗形狀因此多出一段絕對路徑。
+        Err(e) => Err(e.into()),
     }
 }
 
