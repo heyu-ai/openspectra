@@ -1011,8 +1011,8 @@ fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
                 let obj: serde_json::Value = serde_json::Value::Object(
                     settings
                         .iter()
-                        .map(|(k, v)| (gc::key_string(k), gc::to_json(v)))
-                        .collect(),
+                        .map(|(k, v)| Ok((gc::key_string(k)?, gc::to_json(v)?)))
+                        .collect::<Result<serde_json::Map<_, _>>>()?,
                 );
                 println!("{}", serde_json::to_string_pretty(&obj)?);
             } else if settings.is_empty() {
@@ -1022,8 +1022,8 @@ fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
                 // though its file/JSON key order is arbitrary.
                 let mut entries: Vec<(String, String)> = settings
                     .iter()
-                    .map(|(k, v)| (gc::key_string(k), gc::render_value(v)))
-                    .collect();
+                    .map(|(k, v)| Ok((gc::key_string(k)?, gc::render_value(v)?)))
+                    .collect::<Result<Vec<_>>>()?;
                 entries.sort();
                 for (key, rendered) in entries {
                     println!("{key} = {rendered}");
@@ -1038,7 +1038,7 @@ fn cmd_config(target: &ConfigTarget, use_color: bool) -> Result<i32> {
             // Null/sequence/mapping renderings end in the YAML serializer's
             // newline, so this prints e.g. `null\n\n` — byte-matching the
             // oracle.
-            println!("{}", gc::render_value(value));
+            println!("{}", gc::render_value(value)?);
         }
         ConfigTarget::Set {
             key,

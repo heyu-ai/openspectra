@@ -163,26 +163,26 @@ pub fn parse_value(raw: &str, force_string: bool) -> Value {
 /// sequences, mappings) through the YAML serializer — whose trailing newline
 /// is why `get` on a null key prints `null\n\n` (probed).
 ///
-/// The `expect` states the assumption rather than hiding it: serializing an
-/// already-constructed `serde_yaml::Value` has no failure mode here, and
-/// substituting an empty string on error would render an existing value as
-/// nothing at exit 0 — the silent-failure shape this crate avoids elsewhere.
-pub fn render_value(value: &Value) -> String {
-    match value {
+/// Fallible rather than panicking: `list`/`get` are lenient display paths (they
+/// print "No configuration set." for a config they cannot even read), so an
+/// unexpected serializer failure should surface as an ordinary `Error: ...`
+/// exit 1, not abort the process. Substituting an empty string instead — the
+/// original `unwrap_or_default` — would render an existing value as nothing at
+/// exit 0, the silent-failure shape this crate avoids elsewhere.
+pub fn render_value(value: &Value) -> Result<String> {
+    Ok(match value {
         Value::String(s) => s.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        other => {
-            serde_yaml::to_string(other).expect("serializing a serde_yaml::Value is infallible")
-        }
-    }
+        other => serde_yaml::to_string(other).context("rendering a config value")?,
+    })
 }
 
 /// Convert a YAML value to JSON for `list --json`, preserving scalar types.
 /// Non-string mapping keys (possible only in a hand-edited file) are
 /// stringified; non-finite floats become null (JSON has no NaN).
-pub fn to_json(value: &Value) -> serde_json::Value {
-    match value {
+pub fn to_json(value: &Value) -> Result<serde_json::Value> {
+    Ok(match value {
         Value::Null => serde_json::Value::Null,
         Value::Bool(b) => (*b).into(),
         Value::Number(n) => {
@@ -197,23 +197,24 @@ pub fn to_json(value: &Value) -> serde_json::Value {
             }
         }
         Value::String(s) => s.clone().into(),
-        Value::Sequence(seq) => seq.iter().map(to_json).collect(),
+        Value::Sequence(seq) => seq.iter().map(to_json).collect::<Result<Vec<_>>>()?.into(),
         Value::Mapping(map) => serde_json::Value::Object(
             map.iter()
-                .map(|(k, v)| (key_string(k), to_json(v)))
-                .collect(),
+                .map(|(k, v)| Ok((key_string(k)?, to_json(v)?)))
+                .collect::<Result<serde_json::Map<_, _>>>()?,
         ),
-        Value::Tagged(tagged) => to_json(&tagged.value),
-    }
+        Value::Tagged(tagged) => to_json(&tagged.value)?,
+    })
 }
 
 /// A mapping key as a display string (string keys verbatim; anything else via
 /// its rendered scalar form, trimmed of the serializer's trailing newline).
-pub fn key_string(key: &Value) -> String {
-    match key {
+/// Fallible for the same reason as [`render_value`], which it delegates to.
+pub fn key_string(key: &Value) -> Result<String> {
+    Ok(match key {
         Value::String(s) => s.clone(),
-        other => render_value(other).trim_end().to_string(),
-    }
+        other => render_value(other)?.trim_end().to_string(),
+    })
 }
 
 /// `config set`: load-modify-save. Overwrites a corrupt file, refuses an
@@ -402,20 +403,21 @@ mod tests {
 
     #[test]
     fn render_value_matches_probed_oracle_bytes() {
+        let rendered = |v: &Value| render_value(v).unwrap();
         // Scalars have no trailing newline...
-        assert_eq!(render_value(&Value::String("hello".into())), "hello");
-        assert_eq!(render_value(&Value::Bool(true)), "true");
-        assert_eq!(render_value(&Value::Number(42.into())), "42");
-        assert_eq!(render_value(&Value::Number(2.5.into())), "2.5");
+        assert_eq!(rendered(&Value::String("hello".into())), "hello");
+        assert_eq!(rendered(&Value::Bool(true)), "true");
+        assert_eq!(rendered(&Value::Number(42.into())), "42");
+        assert_eq!(rendered(&Value::Number(2.5.into())), "2.5");
         // ...but null and collections go through the YAML serializer, whose
         // trailing newline the oracle passes straight through.
-        assert_eq!(render_value(&Value::Null), "null\n");
+        assert_eq!(rendered(&Value::Null), "null\n");
         assert_eq!(
-            render_value(&Value::Sequence(vec![1.into(), 2.into(), 3.into()])),
+            rendered(&Value::Sequence(vec![1.into(), 2.into(), 3.into()])),
             "- 1\n- 2\n- 3\n"
         );
         let map = parse_value("{a: 1}", false);
-        assert_eq!(render_value(&map), "a: 1\n");
+        assert_eq!(rendered(&map), "a: 1\n");
     }
 
     #[test]
@@ -595,21 +597,22 @@ mod tests {
 
     #[test]
     fn to_json_preserves_scalar_types_and_stringifies_odd_keys() {
-        assert_eq!(to_json(&Value::Null), serde_json::Value::Null);
-        assert_eq!(to_json(&Value::Bool(true)), serde_json::json!(true));
-        assert_eq!(to_json(&parse_value("42", false)), serde_json::json!(42));
-        assert_eq!(to_json(&parse_value("2.5", false)), serde_json::json!(2.5));
+        let json = |v: &Value| to_json(v).unwrap();
+        assert_eq!(json(&Value::Null), serde_json::Value::Null);
+        assert_eq!(json(&Value::Bool(true)), serde_json::json!(true));
+        assert_eq!(json(&parse_value("42", false)), serde_json::json!(42));
+        assert_eq!(json(&parse_value("2.5", false)), serde_json::json!(2.5));
         assert_eq!(
-            to_json(&parse_value("[1, 2, 3]", false)),
+            json(&parse_value("[1, 2, 3]", false)),
             serde_json::json!([1, 2, 3])
         );
         assert_eq!(
-            to_json(&parse_value("{a: 1}", false)),
+            json(&parse_value("{a: 1}", false)),
             serde_json::json!({"a": 1})
         );
         // A hand-edited file can have a non-string key; it is stringified.
         let odd: Value = serde_yaml::from_str("1: x\n").unwrap();
-        assert_eq!(to_json(&odd), serde_json::json!({"1": "x"}));
+        assert_eq!(json(&odd), serde_json::json!({"1": "x"}));
     }
 
     /// Both branches are reachable from a hand-edited config, and neither was
@@ -618,6 +621,9 @@ mod tests {
     #[test]
     fn to_json_handles_non_finite_floats_and_tagged_values() {
         let odd: Value = serde_yaml::from_str("x: .nan\ny: !!str 7\n").unwrap();
-        assert_eq!(to_json(&odd), serde_json::json!({"x": null, "y": "7"}));
+        assert_eq!(
+            to_json(&odd).unwrap(),
+            serde_json::json!({"x": null, "y": "7"})
+        );
     }
 }
