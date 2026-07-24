@@ -107,7 +107,8 @@ never colored. Piped output is uncolored (TTY detection).
 
 For every detected tool, `update` **unconditionally rewrites its whole
 file set on every run** (probed via mtime: all managed files get a fresh
-mtime even when content is unchanged; content itself is idempotent).
+mtime even when content is unchanged; content is idempotent **except for the
+orphan-START shape** — see "Replacement region" below).
 Missing files are recreated; files the tool set doesn't own (e.g. a user's
 own `.claude/skills/my-own/`) are never touched or deleted.
 
@@ -117,7 +118,7 @@ sentinel after the END marker, re-runs `update`, and classifies by whether the
 sentinel survives. Guessing from the template text ("does it start with the
 START marker?") is wrong — see the kilocode note below.
 
-1. **Plain** (422 of 445 tool-files: skills, commands, prompts, and — despite
+1. **Plain** (432 of 445 tool-files: skills, commands, prompts, and — despite
    appearances — kilocode's workflows): full overwrite. Mechanically the oracle
    **unlinks and recreates**: the inode changes even for an unchanged writable
    file. Two observable consequences follow, both reproduced:
@@ -125,7 +126,7 @@ START marker?") is wrong — see the kilocode note below.
      0644 (unlink needs directory permission, not file permission);
    - a **symlinked** path is *not* followed — the link itself is removed and
      replaced by a regular file, leaving the link target untouched.
-2. **Managed marker files** (22 entries / 11 distinct paths: root-level
+2. **Managed marker files** (12 entries / 11 distinct paths: root-level
    `CLAUDE.md`, `GEMINI.md`, `QWEN.md`, `CLINE.md`, `CODEBUDDY.md`,
    `COSTRICT.md`, `IFLOW.md`, `QODER.md`, `AGENTS.md`, `.cursorrules`,
    `.windsurfrules`; `GEMINI.md` is written by both gemini and antigravity):
@@ -177,6 +178,16 @@ The other two shapes:
 
 - *START but no END after it*: original content is left untouched and a
   fresh complete block is **appended** at EOF after a blank line.
+
+  > **This shape is not idempotent, and that is oracle behavior.** On the
+  > *second* run the appended block's END pairs with the orphan START, so the
+  > splice swallows everything between them — user content written after the
+  > unpaired marker is deleted. Probed on 2.3.1: run 1 keeps it, run 2 removes
+  > it, byte-identical to OpenSpectra on both runs; run 3 onward is a fixed
+  > point. Pinned by
+  > `managed_orphan_start_swallows_content_on_the_second_run_matching_the_oracle`
+  > so that "converging" it later has to be a deliberate divergence rather than
+  > an accident.
 - *No START* (even if an orphan END exists): fresh block is **prepended**,
   followed by a blank line and the original content. A missing or empty file
   yields just the block.
@@ -299,7 +310,7 @@ security rulings this repo already made elsewhere:
 | Read-only `Managed` file | exits 1, `Permission denied (os error 13)` | succeeds (temp file + rename needs directory permission only) | falls out of the atomic write above; not independently motivated |
 
 `Plain` paths need no divergence: the oracle's own unlink+recreate already
-declines to follow symlinks, so parity and safety coincide for 422 of 445
+declines to follow symlinks, so parity and safety coincide for 432 of 445
 files.
 
 The atomic path preserves an existing file's permission bits before renaming,

@@ -329,6 +329,31 @@ mod tests {
     }
 
     #[test]
+    fn managed_orphan_start_swallows_content_on_the_second_run_matching_the_oracle() {
+        // 這不是 bug，是 **parity**：孤兒 START 在 run 1 之後，新附加區塊的 END
+        // 會與那個孤兒 START 配成一對，於是 run 2 把兩者之間的使用者內容吃掉。
+        // 對 oracle 2.3.1 實測兩次執行皆逐位元相同（BEFORE 留、INSIDE 消失）。
+        //
+        // 釘住它的理由：先前只測到 run 1，未來若有人「順手把 append 路徑改成
+        // 收斂」，就會在全套測試綠燈的情況下偏離 oracle。這個測試讓那種改動
+        // 必須是有意識的決定。
+        let existing = "MY-BEFORE\n<!-- SPECTRA:START v0.0.1 -->\nMY-INSIDE\n";
+        let run1 = merge_managed_block(Some(existing), &block());
+        assert!(run1.contains("MY-BEFORE"));
+        assert!(run1.contains("MY-INSIDE"), "run 1 preserves user content");
+
+        let run2 = merge_managed_block(Some(&run1), &block());
+        assert!(run2.contains("MY-BEFORE"));
+        assert!(
+            !run2.contains("MY-INSIDE"),
+            "run 2 swallows content between the orphan START and the appended END \
+             -- oracle-verified parity, do not 'fix' without re-probing"
+        );
+        // run 3 起才是固定點。
+        assert_eq!(merge_managed_block(Some(&run2), &block()), run2);
+    }
+
+    #[test]
     fn managed_orphan_end_without_start_still_prepends() {
         // oracle probe：只有 END 沒 START → 當成無 marker，前置；孤兒 END
         // 留在原內容裡。

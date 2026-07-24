@@ -155,112 +155,11 @@ fn read_gitignore(path: &Path) -> Result<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn write_atomically_writes_full_content_and_leaves_no_temp_file_behind() {
-        let tmp = TempDir::new();
-        let target = tmp.join("out.txt");
-
-        write_atomically(&target, "hello\n").unwrap();
-
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
-        let entries: Vec<_> = std::fs::read_dir(&*tmp)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(
-            entries,
-            vec!["out.txt".to_string()],
-            "no stray <file>.tmp-<pid> should remain after a successful write"
-        );
-    }
-
-    #[test]
-    fn write_atomically_preserves_an_existing_files_permission_bits() {
-        // 迴歸（PR #86 round-2, Codex）：改用 temp+rename 之後，替換檔是以
-        // umask 預設權限新建的，於是一個 0600 的 .claude/settings.json 更新後
-        // 變成 0644，把它保留下來的使用者鍵暴露給同機其他使用者。oracle 就地
-        // 寫入、保留原 mode。
-        use std::os::unix::fs::PermissionsExt;
-        let tmp = TempDir::new();
-        let target = tmp.join("secret.json");
-        std::fs::write(&target, "old").unwrap();
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
-
-        write_atomically(&target, "new").unwrap();
-
-        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "existing mode must survive the rename");
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
-    }
-
-    #[test]
-    fn write_atomically_does_not_write_through_a_pre_created_temp_symlink() {
-        // 迴歸（PR #86 round-2, Codex）：暫存檔名可由 pid 推得，攻擊者若能在
-        // 專案目錄內先建立同名 symlink 指向外部檔案，舊版的 fs::write 會跟隨
-        // 它並截斷該外部檔案，等於繞過 rename 提供的保護。create_new(O_EXCL)
-        // 讓既存路徑直接失敗、改用下一個名字。
-        use std::os::unix::fs::PermissionsExt;
-        let tmp = TempDir::new();
-        let target = tmp.join("out.txt");
-        let outside = tmp.join("outside-secret.txt");
-        std::fs::write(&outside, "PRECIOUS").unwrap();
-        // 攻擊者預先佔用「下一個」暫存檔名。序號是 process-local 且單調遞增，
-        // 所以逐一佔用一小段範圍，確保命中實際會用到的那個。
-        let pid = std::process::id();
-        for seq in 0..8 {
-            let guess = tmp.join(format!("out.txt.tmp-{pid}-{seq}"));
-            if !guess.exists() {
-                std::os::unix::fs::symlink(&outside, &guess).unwrap();
-            }
-        }
-
-        write_atomically(&target, "new content").unwrap();
-
-        assert_eq!(
-            std::fs::read_to_string(&outside).unwrap(),
-            "PRECIOUS",
-            "the outside file must not be written through the temp symlink"
-        );
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "new content");
-        let _ = std::fs::Permissions::from_mode(0o644); // silence unused import on some cfgs
-    }
-
-    #[test]
-    fn write_atomically_leaves_the_target_untouched_when_the_write_fails() {
-        let tmp = TempDir::new();
-        // A nonexistent parent directory makes the temp-file write itself
-        // fail before any rename is attempted -- this covers "write fails
-        // before touching the target", not a torn/interrupted write (which
-        // needs fault injection this test doesn't attempt).
-        let target = tmp.join("nonexistent-dir").join("out.txt");
-
-        write_atomically(&target, "hello").unwrap_err();
-
-        assert!(!target.exists());
-    }
-
-    #[test]
-    fn write_atomically_cleans_up_the_temp_file_when_rename_fails() {
-        let tmp = TempDir::new();
-        let target = tmp.join("out.txt");
-        // A pre-existing directory at the target path lets the temp-file
-        // write succeed (it's a different filename) but makes the rename
-        // fail (renaming a file onto an existing directory is rejected),
-        // exercising the cleanup-on-rename-failure branch specifically.
-        std::fs::create_dir_all(&target).unwrap();
-
-        write_atomically(&target, "hello").unwrap_err();
-
-        let entries: Vec<_> = std::fs::read_dir(&*tmp)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(
-            entries,
-            vec!["out.txt".to_string()],
-            "no stray out.txt.tmp-<pid>-<seq> should remain after a failed rename, got: {entries:?}"
-        );
-    }
+    // `write_atomically`'s own unit tests live beside the function in
+    // `fsutil.rs` (this repo's convention: unit tests in the same file as the
+    // code). Only `init`'s *call site* is tested here -- see
+    // `init_gitignore_update_routes_through_write_atomically_not_a_plain_write`
+    // below.
 
     /// After chmod(0o555), root (or a container with CAP_DAC_OVERRIDE) can
     /// still create files inside `path`, so the permission-denied scenario

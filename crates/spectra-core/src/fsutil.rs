@@ -176,16 +176,23 @@ fn symlink_target_is_dir(path: &Path) -> Result<bool> {
 /// corrupted by that rarer case is still a clean two-step recovery: delete
 /// it and re-run `spectra init` (see `Config::load`'s parse-error hint).
 ///
-/// **If `path` is a symlink, the rename replaces the link itself with a
-/// regular file rather than writing through to its target.** For `init` that
-/// was merely incidental; for `update` it is the whole point, and the reason
-/// this helper lives here rather than staying private to `init`. `update`
-/// writes 445 paths inside a user's project, any of which a dotfile manager
-/// may have symlinked outside it; a direct `std::fs::write` would follow the
-/// link and clobber the target. `artifact.rs` made the same ruling for change
-/// dirs (see its `force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir`
+/// **If the final path component is a symlink, the rename replaces the link
+/// itself with a regular file rather than writing through to its target.** For
+/// `init` that was merely incidental; for `update` it is the whole point, and
+/// the reason this helper lives here rather than staying private to `init`.
+/// `update` writes 445 paths inside a user's project, any of whose *final
+/// component* a dotfile manager may have symlinked outside it; a direct
+/// `std::fs::write` would follow the link and clobber the target.
+/// `artifact.rs` made the same ruling for change dirs (see its
+/// `force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir`
 /// test) -- the reference binary follows the link, and OpenSpectra
 /// deliberately does not.
+///
+/// Only the final component is defended: a symlinked **ancestor** (e.g.
+/// `.claude -> ~/dotfiles/claude`) is followed, matching the reference binary,
+/// and is recorded as a residual risk in
+/// `docs/reverse-engineering/update.md` ("Residual risk: symlinked *ancestor*
+/// directories").
 ///
 /// On failure, the temp file is removed on a best-effort basis; if that
 /// cleanup itself also fails, the original error is still what's returned,
@@ -226,33 +233,48 @@ pub(crate) fn write_atomically(path: &Path, contents: &str) -> std::io::Result<(
     for _ in 0..16 {
         let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
-        let mut file = match std::fs::File::create_new(&tmp_path) {
-            Ok(f) => f,
+        match write_via_temp(path, contents, &tmp_path) {
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                 last_err = Some(e);
                 continue;
             }
-            Err(e) => return Err(e),
-        };
-        if let Err(e) = std::io::Write::write_all(&mut file, contents.as_bytes()) {
-            drop(file);
-            cleanup_temp_file(&tmp_path);
-            return Err(e);
+            other => return other,
         }
-        drop(file);
-        if let Err(e) = copy_existing_permissions(path, &tmp_path) {
-            cleanup_temp_file(&tmp_path);
-            return Err(e);
-        }
-        if let Err(e) = std::fs::rename(&tmp_path, path) {
-            cleanup_temp_file(&tmp_path);
-            return Err(e);
-        }
-        return Ok(());
     }
     Err(last_err.unwrap_or_else(|| {
         std::io::Error::new(ErrorKind::AlreadyExists, "temp file name kept colliding")
     }))
+}
+
+/// One attempt of [`write_atomically`] at a caller-chosen temp path.
+///
+/// Split out so the `O_EXCL` guarantee is **directly testable**. It previously
+/// lived inline, and the regression test had to guess which sequence number the
+/// shared `COUNTER` would hand out; under `cargo test --all` the counter is
+/// already far past any guessable window, so the collision branch was never
+/// reached and the test passed without exercising anything (PR #86 round-2,
+/// found by mutation with a control — the lead's own mutation run missed it
+/// because it filtered to the single test, where the counter does start at 0).
+///
+/// Returns [`ErrorKind::AlreadyExists`] iff `tmp_path` was occupied — by a
+/// regular file, a directory, or a symlink planted by an attacker.
+fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Result<()> {
+    let mut file = std::fs::File::create_new(tmp_path)?;
+    if let Err(e) = std::io::Write::write_all(&mut file, contents.as_bytes()) {
+        drop(file);
+        cleanup_temp_file(tmp_path);
+        return Err(e);
+    }
+    drop(file);
+    if let Err(e) = copy_existing_permissions(path, tmp_path) {
+        cleanup_temp_file(tmp_path);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(tmp_path, path) {
+        cleanup_temp_file(tmp_path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Copy `target`'s permission bits onto `tmp` when `target` is an existing
@@ -331,6 +353,145 @@ mod tests {
         }
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("spec.md"), content).unwrap();
+    }
+
+    // ---- write_atomically (moved here from init.rs: unit tests belong beside
+    // the code they cover, and the security-critical one was hiding in a module
+    // nobody opens when reviewing this file) ----
+
+    #[test]
+    fn write_atomically_writes_full_content_and_leaves_no_temp_file_behind() {
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+
+        write_atomically(&target, "hello\n").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "hello\n");
+        let entries: Vec<_> = fs::read_dir(&*tmp)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            entries,
+            vec!["out.txt".to_string()],
+            "no stray <file>.tmp-<pid> should remain after a successful write"
+        );
+    }
+
+    #[test]
+    fn write_atomically_preserves_an_existing_files_permission_bits() {
+        // 迴歸（PR #86 round-2, Codex）：改用 temp+rename 之後，替換檔是以
+        // umask 預設權限新建的，於是一個 0600 的 .claude/settings.json 更新後
+        // 變成 0644，把它保留下來的使用者鍵暴露給同機其他使用者。oracle 就地
+        // 寫入、保留原 mode。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let target = tmp.join("secret.json");
+        fs::write(&target, "old").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_atomically(&target, "new").unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "existing mode must survive the rename");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
+    fn write_via_temp_refuses_a_pre_created_temp_symlink_instead_of_writing_through_it() {
+        // 迴歸（PR #86 round-2, Codex）：暫存檔名由 pid + 序號組成，可被推測。
+        // 攻擊者若先在該路徑放一個指向外部檔案的 symlink，舊版的 fs::write 會
+        // 跟隨它並截斷該外部檔案，rename 提供的保護形同虛設。
+        //
+        // 這個測試直接呼叫 `write_via_temp` 並指定暫存路徑。前一版改為呼叫
+        // `write_atomically` 並「猜」序號 0..8——但 COUNTER 是整個 test binary
+        // 共用的 static，在 `cargo test --all`（CI 的跑法）下輪到本測試時序號
+        // 早已遠超該範圍，於是 O_EXCL 分支從未被觸發、測試恆綠卻什麼都沒驗到。
+        // 由 round-2 reviewer 以「突變 + 對照組」抓出；lead 自己的突變驗證因為
+        // 用測試名稱過濾執行（序號從 0 起算）而漏掉。
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+        let outside = tmp.join("outside-secret.txt");
+        fs::write(&outside, "PRECIOUS").unwrap();
+        let tmp_path = tmp.join("out.txt.tmp-attacker");
+        std::os::unix::fs::symlink(&outside, &tmp_path).unwrap();
+
+        let err = write_via_temp(&target, "new content", &tmp_path).unwrap_err();
+
+        assert_eq!(
+            err.kind(),
+            ErrorKind::AlreadyExists,
+            "an occupied temp path must be refused, not written through"
+        );
+        assert_eq!(
+            fs::read_to_string(&outside).unwrap(),
+            "PRECIOUS",
+            "the symlink target outside the project must be untouched"
+        );
+        assert!(!target.exists(), "the target must not have been created");
+    }
+
+    #[test]
+    fn write_atomically_retries_past_an_occupied_temp_name_and_still_succeeds() {
+        // 對照：上一個測試證明「被佔用就拒絕」，這個證明外層迴圈會換名字重試，
+        // 所以拒絕不會變成阻斷正常寫入。
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+        let outside = tmp.join("outside.txt");
+        fs::write(&outside, "PRECIOUS").unwrap();
+        // 佔用接下來 12 個候選名（上限 16，故仍有餘裕成功）。
+        let pid = std::process::id();
+        let probe = tmp.join("probe.txt");
+        write_atomically(&probe, "x").unwrap(); // 讓 COUNTER 前進到已知起點附近
+        let start = (0..u64::MAX)
+            .find(|seq| !tmp.join(format!("out.txt.tmp-{pid}-{seq}")).exists())
+            .unwrap();
+        for seq in start..start + 12 {
+            std::os::unix::fs::symlink(&outside, tmp.join(format!("out.txt.tmp-{pid}-{seq}")))
+                .unwrap();
+        }
+
+        write_atomically(&target, "new content").unwrap();
+
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new content");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+    }
+
+    #[test]
+    fn write_atomically_leaves_the_target_untouched_when_the_write_fails() {
+        let tmp = TempDir::new();
+        // A nonexistent parent directory makes the temp-file write itself
+        // fail before any rename is attempted -- this covers "write fails
+        // before touching the target", not a torn/interrupted write (which
+        // needs fault injection this test doesn't attempt).
+        let target = tmp.join("nonexistent-dir").join("out.txt");
+
+        write_atomically(&target, "hello").unwrap_err();
+
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn write_atomically_cleans_up_the_temp_file_when_rename_fails() {
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+        // A pre-existing directory at the target path lets the temp-file
+        // write succeed (it's a different filename) but makes the rename
+        // fail (renaming a file onto an existing directory is rejected),
+        // exercising the cleanup-on-rename-failure branch specifically.
+        fs::create_dir_all(&target).unwrap();
+
+        write_atomically(&target, "hello").unwrap_err();
+
+        let entries: Vec<_> = fs::read_dir(&*tmp)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            entries,
+            vec!["out.txt".to_string()],
+            "no stray out.txt.tmp-<pid>-<seq> should remain after a failed rename, got: {entries:?}"
+        );
     }
 
     #[test]

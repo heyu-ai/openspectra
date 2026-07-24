@@ -333,13 +333,15 @@ def main() -> None:
     r = run([spectra, "init", str(quirk_root), "--no-color"])
     if r.returncode != 0:
         fail(f"codex-gemini: init failed: {r.stderr.strip()}")
+    # 與 run_update_sandbox 同樣用 before/after 差分，而不是扣掉三個寫死的
+    # baseline 路徑——後者在 init 新增或改名檔案時會為了無關的理由爆掉。
+    quirk_before = set(snapshot_tree(quirk_root))
     (quirk_root / ".agents").mkdir()
     (quirk_root / ".gemini").mkdir()
     r = run([spectra, "update", str(quirk_root), "--no-color"])
     if r.stdout != "✓ Updated instruction files for: gemini, codex\n":
         fail(f"codex-gemini: unexpected stdout {r.stdout!r}")
-    quirk_baseline = {".spectra.yaml", ".gitignore", f"{DEFAULT_SPEC_DIR}/config.yaml"}
-    quirk_files = set(snapshot_tree(quirk_root)) - quirk_baseline
+    quirk_files = set(snapshot_tree(quirk_root)) - quirk_before
     expected_quirk = {rel for rel, _ in per_tool["gemini"]} | {"AGENTS.md"}
     if quirk_files != expected_quirk:
         fail(
