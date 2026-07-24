@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 use crate::config::{Config, DEFAULT_SPEC_DIR};
+use crate::fsutil::write_atomically;
 
 /// Line ensured present in `.gitignore`. `.spectra/` holds per-change sidecar
 /// state (baseline SHAs, parked markers, in-progress markers, touched-file
@@ -75,6 +76,7 @@ pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
         &root.join(".spectra.yaml"),
         &format!("spec_dir: {spec_dir}\n"),
     )
+    .map_err(anyhow::Error::from)
     .context("writing .spectra.yaml")?;
 
     Ok(InitOutcome {
@@ -131,7 +133,9 @@ fn ensure_gitignore_entry(root: &Path) -> Result<bool> {
     }
     updated.push_str(GITIGNORE_ENTRY);
     updated.push_str(newline);
-    write_atomically(&path, &updated).context("writing .gitignore")?;
+    write_atomically(&path, &updated)
+        .map_err(anyhow::Error::from)
+        .context("writing .gitignore")?;
     Ok(true)
 }
 
@@ -143,132 +147,22 @@ fn read_gitignore(path: &Path) -> Result<String> {
     }
 }
 
-/// Write `contents` to `path` atomically: write to a temp file in the same
-/// directory, then rename into place. A same-filesystem `rename` is atomic
-/// with respect to concurrent readers and to the process being killed
-/// (`SIGKILL`) or hitting a disk-full error after the syscall returns, so
-/// `path` is never observed as a partial write that satisfies `path.exists()`
-/// while failing to parse. This matters most for `.spectra.yaml`, since
-/// [`Config::is_initialized`] treats its mere existence as a reliable
-/// "scaffolding is complete" signal.
-///
-/// This does *not* guarantee durability across true power loss (that needs
-/// `fsync`-ing the temp file and the parent directory, which this skips as
-/// disproportionate for a few bytes of config) -- but a `.spectra.yaml`
-/// corrupted by that rarer case is still a clean two-step recovery: delete
-/// it and re-run `spectra init` (see [`Config::load`]'s parse-error hint).
-///
-/// If `path` is a symlink, the rename replaces the link itself with a
-/// regular file rather than writing through to its target -- not handled
-/// specially, since this CLI has no evidence of needing to support a
-/// symlinked `.gitignore`/`.spectra.yaml` (e.g. a dotfile manager) and doing
-/// so isn't a data-loss risk (the correct content still lands, just not at
-/// the symlink's target). The same applies to the *global* config file this
-/// now also writes ([`crate::global_config::save`]), which a dotfile manager
-/// is more likely to symlink: the accepted outcome is unchanged -- the write
-/// succeeds and the link is replaced, rather than the target being modified.
-///
-/// On failure, the temp file is removed on a best-effort basis; if that
-/// cleanup itself also fails, the original error is still what's returned,
-/// with the cleanup failure logged to stderr rather than silently dropped.
-pub(crate) fn write_atomically(path: &Path, contents: &str) -> Result<()> {
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-    let file_name = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("path {} has no file name", path.display()))?
-        .to_string_lossy();
-    let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
-
-    if let Err(e) = std::fs::write(&tmp_path, contents) {
-        cleanup_temp_file(&tmp_path);
-        return Err(e).with_context(|| format!("writing {}", tmp_path.display()));
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, path) {
-        cleanup_temp_file(&tmp_path);
-        return Err(e).with_context(|| format!("renaming {} into place", tmp_path.display()));
-    }
-    Ok(())
-}
-
-/// Best-effort removal of a `write_atomically` temp file after its write or
-/// rename step failed. The primary error is always what the caller returns;
-/// this only logs (rather than silently dropping) a secondary failure here,
-/// so a double-fault doesn't vanish without a trace. `NotFound` isn't logged:
-/// it means the initial `std::fs::write` failed before ever creating the
-/// temp file (the common case -- an unwritable/missing target directory),
-/// so there's nothing to clean up and no secondary fault to report.
-fn cleanup_temp_file(tmp_path: &Path) {
-    if let Err(e) = std::fs::remove_file(tmp_path) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            eprintln!(
-                "warning: failed to clean up temp file {}: {e}",
-                tmp_path.display()
-            );
-        }
-    }
-}
+// `write_atomically` now lives in `crate::fsutil` so `update` and
+// `global_config` can share it (PR #86: `update` performs read-modify-write
+// over user-owned files and must not follow symlinks; a second copy here would
+// be the kind of drift `fsutil` exists to prevent — and would silently ship
+// `global_config` the pre-hardening version without O_EXCL / fchmod / the
+// unwritable-directory fallback).
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn write_atomically_writes_full_content_and_leaves_no_temp_file_behind() {
-        let tmp = TempDir::new();
-        let target = tmp.join("out.txt");
-
-        write_atomically(&target, "hello\n").unwrap();
-
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "hello\n");
-        let entries: Vec<_> = std::fs::read_dir(&*tmp)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(
-            entries,
-            vec!["out.txt".to_string()],
-            "no stray <file>.tmp-<pid> should remain after a successful write"
-        );
-    }
-
-    #[test]
-    fn write_atomically_leaves_the_target_untouched_when_the_write_fails() {
-        let tmp = TempDir::new();
-        // A nonexistent parent directory makes the temp-file write itself
-        // fail before any rename is attempted -- this covers "write fails
-        // before touching the target", not a torn/interrupted write (which
-        // needs fault injection this test doesn't attempt).
-        let target = tmp.join("nonexistent-dir").join("out.txt");
-
-        write_atomically(&target, "hello").unwrap_err();
-
-        assert!(!target.exists());
-    }
-
-    #[test]
-    fn write_atomically_cleans_up_the_temp_file_when_rename_fails() {
-        let tmp = TempDir::new();
-        let target = tmp.join("out.txt");
-        // A pre-existing directory at the target path lets the temp-file
-        // write succeed (it's a different filename) but makes the rename
-        // fail (renaming a file onto an existing directory is rejected),
-        // exercising the cleanup-on-rename-failure branch specifically.
-        std::fs::create_dir_all(&target).unwrap();
-
-        write_atomically(&target, "hello").unwrap_err();
-
-        let entries: Vec<_> = std::fs::read_dir(&*tmp)
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
-            .collect();
-        assert_eq!(
-            entries,
-            vec!["out.txt".to_string()],
-            "no stray out.txt.tmp-<pid>-<seq> should remain after a failed rename, got: {entries:?}"
-        );
-    }
+    // `write_atomically`'s own unit tests live beside the function in
+    // `fsutil.rs` (this repo's convention: unit tests in the same file as the
+    // code). Only `init`'s *call site* is tested here -- see
+    // `init_gitignore_update_routes_through_write_atomically_not_a_plain_write`
+    // below.
 
     /// After chmod(0o555), root (or a container with CAP_DAC_OVERRIDE) can
     /// still create files inside `path`, so the permission-denied scenario

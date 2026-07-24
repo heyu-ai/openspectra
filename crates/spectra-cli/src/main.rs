@@ -1,7 +1,7 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
 //! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
 //! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`,
-//! `config`.
+//! `update`, `config`.
 
 mod completion;
 
@@ -165,6 +165,14 @@ enum Command {
     Task {
         #[command(subcommand)]
         target: TaskTarget,
+    },
+    /// Update instruction files
+    Update {
+        /// Project path (defaults to current directory)
+        path: Option<PathBuf>,
+        /// Overwrite existing files
+        #[arg(long)]
+        force: bool,
     },
     /// Archive a completed change (move it to `changes/archive/<date>-<name>`
     /// and apply its added spec requirements, unless --skip-specs).
@@ -1033,6 +1041,33 @@ fn cmd_archive(
     Ok(0)
 }
 
+/// `update` 的人類輸出行，抽出來讓 colorize 接線可單元測試（同
+/// `conclusion_line` 的作法）。措辭與著色逐字 pin 自 oracle 2.3.1：
+/// 綠色 `✓` / 黃色 `!` 只包符號本身。
+fn update_result_line(ids: &[&str], use_color: bool) -> String {
+    if ids.is_empty() {
+        format!(
+            "{} No AI tool configurations found. Use 'spectra init --tools' to set up.",
+            colorize("!", "33", use_color)
+        )
+    } else {
+        format!(
+            "{} Updated instruction files for: {}",
+            colorize("✓", "32", use_color),
+            ids.join(", ")
+        )
+    }
+}
+
+fn cmd_update(cfg: &Config, _force: bool, use_color: bool) -> Result<i32> {
+    // --force 只為 CLI parity 收下：對 oracle 2.3.1 實測有無 --force 行為
+    // 完全相同（update 本來就無條件重寫每個管理檔），見
+    // docs/reverse-engineering/update.md 的 --force 一節。
+    let ids = spectra_core::update::update_instruction_files(cfg)?;
+    println!("{}", update_result_line(&ids, use_color));
+    Ok(0)
+}
+
 /// `spectra config <sub>`: manage the global user config file. Output shapes
 /// are pinned against the 2.3.1 oracle — see
 /// `docs/reverse-engineering/config.md`.
@@ -1307,6 +1342,18 @@ fn run() -> Result<i32> {
                 cmd_task_done(&cfg, change.as_deref(), task_id, *json)
             }
         },
+        Command::Update { path, force } => {
+            // oracle probe（docs/reverse-engineering/update.md）：無 [PATH]
+            // 時從 cwd 往上找 `.spectra.yaml`（同其他指令的 find_root）；
+            // 給了 [PATH] 就必須「正好是」專案根——oracle 對明確路徑不做
+            // walk-up，子目錄會直接 Not initialized。
+            let update_root = match path {
+                Some(p) => p.clone(),
+                None => root.clone(),
+            };
+            let cfg = require_initialized(&update_root)?;
+            cmd_update(&cfg, *force, use_color)
+        }
         Command::Archive {
             change,
             skip_specs,
@@ -1379,6 +1426,27 @@ mod tests {
         );
         assert!(conclusion_line("light", false).starts_with("Drift is minor"));
         assert!(!conclusion_line("light", false).contains('\x1b'));
+    }
+
+    #[test]
+    fn update_result_line_pins_oracle_wording_and_symbol_only_coloring() {
+        // 綠 ✓ / 黃 ! 只包符號（pty probe 對 oracle 2.3.1 的逐位元捕捉）。
+        assert_eq!(
+            update_result_line(&["claude", "cursor"], true),
+            "\x1b[32m✓\x1b[0m Updated instruction files for: claude, cursor"
+        );
+        assert_eq!(
+            update_result_line(&["claude"], false),
+            "✓ Updated instruction files for: claude"
+        );
+        assert_eq!(
+            update_result_line(&[], true),
+            "\x1b[33m!\x1b[0m No AI tool configurations found. Use 'spectra init --tools' to set up."
+        );
+        assert_eq!(
+            update_result_line(&[], false),
+            "! No AI tool configurations found. Use 'spectra init --tools' to set up."
+        );
     }
 
     #[test]

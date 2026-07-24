@@ -4,14 +4,15 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** early. `spectra init` / `drift` / `validate` (+ minimal `list` /
-> `show` / `park` / `unpark` / `new change` / `task done` / `in-progress add` /
-> `completion` / `archive`) is
-> implemented in Rust and runs on Linux/macOS with zero runtime dependencies
+> **Status:** early. `spectra init` / `drift` / `validate` / `update` (+ minimal
+> `list` / `show` / `park` / `unpark` / `new change` / `task done` /
+> `in-progress add` / `completion` / `archive`) is implemented in Rust and runs
+> on Linux/macOS with zero runtime dependencies
 > (just `git` on `PATH`). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
 > [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
 > [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
+> [`docs/reverse-engineering/update.md`](docs/reverse-engineering/update.md),
 > [`docs/reverse-engineering/in-progress.md`](docs/reverse-engineering/in-progress.md),
 > and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
 > (the last one is **not** oracle-verified — see that doc). `validate` is
@@ -68,6 +69,7 @@ spectra completion generate [SHELL]              # prints a shell completion scr
 spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
 spectra completion uninstall [SHELL] [-y]         # removes that file
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
+spectra update [PATH] [--force]   # rewrites instruction files for every detected AI tool (.claude/, .cursor/, … 23 tools); oracle-verified byte-for-byte
 spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 ```
 
@@ -210,9 +212,10 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / in-progress add / completion / archive
+crates/spectra-cli/    # clap CLI: init / drift / validate / update / list / show / park / unpark / new change / task done / in-progress add / completion / archive
+crates/spectra-core/assets/update/   # instruction-file templates captured verbatim from the oracle (generated; see update.md)
 docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
-scripts/               # oracle calibration probes
+scripts/               # oracle calibration probes + template capture (capture-update-templates.py)
 ```
 
 ## License

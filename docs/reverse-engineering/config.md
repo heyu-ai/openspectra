@@ -152,7 +152,7 @@ All probed:
   file intact**. `reset --all` is the exception — it does not read first, so it
   deletes the file and exits 0.
   This asymmetry is load-bearing for openspectra: `set`/`unset` are
-  load-modify-save, and `write_atomically`'s temp+rename needs only the
+  load-modify-save, and `fsutil::write_atomically`'s temp+rename needs only the
   *directory* write bit, so flattening the read error into "empty" would
   replace the whole config with a file holding just the new key. See
   `global_config::load` vs `load_for_display`.
@@ -190,11 +190,17 @@ All probed:
   varies per run — see the key-order section; do not pin those bytes), while
   openspectra leaves `real.yaml` untouched and `config.yaml` a regular file.
   `edit` behaves the same way on a dangling link. Accepted for the same reason
-  as the row above; see `init::write_atomically`'s rationale.
+  as the row above; see `fsutil::write_atomically`'s rationale (PR #86 moved it
+  out of `init` and hardened it — O_EXCL, exact-mode `fchmod`, and an
+  in-place fallback when the directory is unwritable but the file exists).
 * **Context on a failed directory creation.** `save`/`ensure_editable` emit the
-  bare OS error for `create_dir_all` (matching the oracle on a mode-555 `HOME`),
-  but `write_atomically` still prefixes its own failures with the temp file
-  name. Reachable only in states the two rows above already accept.
+  bare OS error for `create_dir_all` (measured to match the oracle on a
+  mode-555 `HOME`). The temp-file write path is now bare too: after PR #86,
+  `fsutil::write_atomically` returns raw I/O errors (no path prefix — verified
+  by its own tests and the `update` path's oracle A/B), so the earlier
+  divergence where a failed temp write leaked its path can no longer occur.
+  The exact reachable state (temp write fails while `create_dir_all` succeeds)
+  was not separately re-probed against the oracle on macOS.
 * **`HOME` unset *or empty*.** The oracle still resolves the account's home via
   the OS password database and prints a path; openspectra errors
   (`could not determine the config directory ...`, exit 1). Matching would

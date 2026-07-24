@@ -23,3 +23,4 @@ clap_complete.workspace = true
 
 [dev-dependencies]
 chrono.workspace = true
+sha2.workspace = true

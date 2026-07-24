@@ -132,13 +132,14 @@ pub fn save(path: &Path, settings: &Mapping) -> Result<()> {
         // Bare, no path-prefixed context: probed with a mode-555 HOME, the
         // oracle emits `Error: Permission denied (os error 13)` here, so a
         // `creating <path>:` prefix would both diverge and leak the absolute
-        // path. `write_atomically` still adds its own context naming the temp
-        // file -- recorded as a Known divergence in
-        // `docs/reverse-engineering/config.md`.
+        // path. `fsutil::write_atomically` also returns bare I/O errors (PR #86
+        // hardened it and moved it out of `init`), so the temp-file write path
+        // no longer leaks a path either -- the Known divergence config.md
+        // recorded for the old `init::write_atomically` is gone.
         std::fs::create_dir_all(parent)?;
     }
     let text = serde_yaml::to_string(settings).context("serializing config")?;
-    crate::init::write_atomically(path, &text)
+    crate::fsutil::write_atomically(path, &text).map_err(anyhow::Error::from)
 }
 
 /// Look up a key. Keys are literal flat strings (probed: dotted keys are not
@@ -288,7 +289,7 @@ pub fn ensure_editable(path: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     if !path.exists() {
-        crate::init::write_atomically(path, EDIT_SEED)?;
+        crate::fsutil::write_atomically(path, EDIT_SEED).map_err(anyhow::Error::from)?;
     }
     Ok(())
 }
