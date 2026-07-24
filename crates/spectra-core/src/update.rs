@@ -124,7 +124,14 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
         // 先前用 `fs::write` 同時錯失這兩點——唯讀檔讓整個 run exit 1，
         // symlink 則被寫穿而覆寫專案外檔案。
         FileKind::Plain => {
-            remove_if_present(&path)?;
+            // 目錄不 unlink：oracle 只對「一般檔（或 symlink）」解除連結，
+            // 目標是目錄時它直接落到建立步驟並回報該步驟的錯誤。我們若無條件
+            // remove_file，同一個輸入會回不同的 errno（實測 oracle
+            // `Is a directory (os error 21)` vs 我們 `Operation not permitted
+            // (os error 1)`），違反 AC-2 的錯誤字串對齊。
+            if !is_dir_no_follow(&path) {
+                remove_if_present(&path)?;
+            }
             std::fs::write(&path, rendered)?;
         }
         // Managed / ClaudeSettings：讀取既有內容再合併，屬 read-modify-write。
@@ -139,15 +146,22 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
         FileKind::Managed => {
             let existing = read_existing(&path)?;
             let content = merge_managed_block(existing.as_deref(), &rendered);
-            crate::fsutil::write_atomically(&path, &content)?;
+            crate::fsutil::write_atomically_or_in_place(&path, &content)?;
         }
         FileKind::ClaudeSettings => {
             let existing = read_existing(&path)?;
             let content = merge_settings(existing.as_deref(), &rendered);
-            crate::fsutil::write_atomically(&path, &content)?;
+            crate::fsutil::write_atomically_or_in_place(&path, &content)?;
         }
     }
     Ok(())
+}
+
+/// 目標是否為目錄（不跟隨 symlink——指向目錄的 symlink 仍應被移除）。
+fn is_dir_no_follow(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_dir())
+        .unwrap_or(false)
 }
 
 /// 移除既有檔案；不存在就當作成功。symlink 也是移除 link 本身

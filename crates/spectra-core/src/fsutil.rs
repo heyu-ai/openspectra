@@ -216,6 +216,34 @@ fn symlink_target_is_dir(path: &Path) -> Result<bool> {
 /// with the reference binary, while `init` wraps it with path context. Adding
 /// context here would take that choice away from both callers.
 pub(crate) fn write_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
+    write_atomically_inner(path, contents, false)
+}
+
+/// [`write_atomically`], but falling back to an in-place write when the temp
+/// file cannot be created because the **directory** is unwritable.
+///
+/// Only `update` uses this, and only for oracle parity: creating a temp file
+/// needs write permission on the directory, while writing an existing file in
+/// place needs it only on the file, so a `0500` project root breaks temp+rename
+/// while the reference binary — which writes in place — updates the file and
+/// exits 0 (measured, with controls, PR #86 round-2).
+///
+/// `init` deliberately does **not** get this: it has no oracle string to match
+/// here, and `init_gitignore_update_routes_through_write_atomically_not_a_plain_write`
+/// exists precisely to stop `.gitignore` regressing to a plain write.
+///
+/// The fallback still refuses to follow a symlink and still refuses to create a
+/// missing file, so neither the security stance nor the "both fail when the
+/// entry must be created" parity shape is affected.
+pub(crate) fn write_atomically_or_in_place(path: &Path, contents: &str) -> std::io::Result<()> {
+    write_atomically_inner(path, contents, true)
+}
+
+fn write_atomically_inner(
+    path: &Path,
+    contents: &str,
+    fall_back_in_place: bool,
+) -> std::io::Result<()> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     let file_name = path.file_name().ok_or_else(|| {
@@ -238,12 +266,35 @@ pub(crate) fn write_atomically(path: &Path, contents: &str) -> std::io::Result<(
                 last_err = Some(e);
                 continue;
             }
+            Err(e) if fall_back_in_place && e.kind() == ErrorKind::PermissionDenied => {
+                return write_in_place_fallback(path, contents, e);
+            }
             other => return other,
         }
     }
     Err(last_err.unwrap_or_else(|| {
         std::io::Error::new(ErrorKind::AlreadyExists, "temp file name kept colliding")
     }))
+}
+
+/// The in-place fallback behind [`write_atomically_or_in_place`]: used **only
+/// when the target is an existing regular file**. A symlink still refuses to be
+/// followed (that is the whole point of the helper) and an absent target still
+/// errors — which is also what the reference binary does when it has to create
+/// an entry in an unwritable directory, so parity holds on that shape too.
+///
+/// Atomicity is lost here. That is not a regression against the reference
+/// binary, which never had it; the alternative is failing a run the oracle
+/// completes, which breaks the drop-in claim outright.
+fn write_in_place_fallback(
+    path: &Path,
+    contents: &str,
+    original: std::io::Error,
+) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() => std::fs::write(path, contents),
+        _ => Err(original),
+    }
 }
 
 /// One attempt of [`write_atomically`] at a caller-chosen temp path.
@@ -259,17 +310,23 @@ pub(crate) fn write_atomically(path: &Path, contents: &str) -> std::io::Result<(
 /// Returns [`ErrorKind::AlreadyExists`] iff `tmp_path` was occupied — by a
 /// regular file, a directory, or a symlink planted by an attacker.
 fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Result<()> {
-    let mut file = std::fs::File::create_new(tmp_path)?;
+    // The target's mode is applied **at creation**, not chmod'd afterwards.
+    // Fixing it up after the write left a window in which the fully merged
+    // content -- including every user key the merge exists to preserve, and
+    // `.claude/settings.json` is where people keep tokens -- sat on disk
+    // group/world-readable at a guessable name (PR #86 round-2).
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    if let Some(mode) = existing_file_mode(path)? {
+        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, mode);
+    }
+    let mut file = opts.open(tmp_path)?;
     if let Err(e) = std::io::Write::write_all(&mut file, contents.as_bytes()) {
         drop(file);
         cleanup_temp_file(tmp_path);
         return Err(e);
     }
     drop(file);
-    if let Err(e) = copy_existing_permissions(path, tmp_path) {
-        cleanup_temp_file(tmp_path);
-        return Err(e);
-    }
     if let Err(e) = std::fs::rename(tmp_path, path) {
         cleanup_temp_file(tmp_path);
         return Err(e);
@@ -277,26 +334,32 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
     Ok(())
 }
 
-/// Copy `target`'s permission bits onto `tmp` when `target` is an existing
-/// regular file. A missing target (the common create case) leaves the
-/// umask-derived default alone; a symlink target is deliberately not followed,
-/// since the rename is about to replace the link itself.
-fn copy_existing_permissions(target: &Path, tmp: &Path) -> std::io::Result<()> {
+/// `target`'s permission bits when it is an existing regular file, so the
+/// replacement can be created with them. `None` for a missing target (the
+/// create case: keep the umask default) and for a symlink, which is deliberately
+/// not followed since the rename is about to replace the link itself.
+fn existing_file_mode(target: &Path) -> std::io::Result<Option<u32>> {
     match std::fs::symlink_metadata(target) {
-        Ok(meta) if meta.file_type().is_file() => std::fs::set_permissions(tmp, meta.permissions()),
-        Ok(_) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Ok(meta) if meta.file_type().is_file() => Ok(Some(
+            std::os::unix::fs::PermissionsExt::mode(&meta.permissions()),
+        )),
+        Ok(_) => Ok(None),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
     }
 }
 
-/// Best-effort removal of a [`write_atomically`] temp file after its write or
+/// Best-effort removal of a [`write_via_temp`] temp file after its write or
 /// rename step failed. The primary error is always what the caller returns;
 /// this only logs (rather than silently dropping) a secondary failure here,
-/// so a double-fault doesn't vanish without a trace. `NotFound` isn't logged:
-/// it means the initial `std::fs::write` failed before ever creating the
-/// temp file (the common case -- an unwritable/missing target directory),
-/// so there's nothing to clean up and no secondary fault to report.
+/// so a double-fault doesn't vanish without a trace.
+///
+/// `NotFound` isn't logged: every call site now runs *after* the `create_new`
+/// succeeded, so the temp file did exist and its absence means something else
+/// (a concurrent run, a cleaner) removed it underneath us — there is nothing
+/// left to remove and the primary error already covers the failure. (The
+/// earlier rationale, "the initial `std::fs::write` failed before creating
+/// it", described a code path that no longer exists.)
 fn cleanup_temp_file(tmp_path: &Path) {
     if let Err(e) = std::fs::remove_file(tmp_path) {
         if e.kind() != ErrorKind::NotFound {
@@ -454,6 +517,74 @@ mod tests {
         write_atomically(&target, "new content").unwrap();
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "new content");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+    }
+
+    #[test]
+    fn existing_file_mode_reports_a_regular_files_bits_and_nothing_else() {
+        // 這是「暫存檔一開始就用最終權限建立」的機制本身。先前是寫完再 chmod，
+        // 中間有一段合併後內容以 0644 落地的視窗（PR #86 round-2）。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let regular = tmp.join("regular");
+        fs::write(&regular, "x").unwrap();
+        fs::set_permissions(&regular, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            existing_file_mode(&regular).unwrap().map(|m| m & 0o777),
+            Some(0o600)
+        );
+
+        assert_eq!(existing_file_mode(&tmp.join("absent")).unwrap(), None);
+
+        let link = tmp.join("link");
+        std::os::unix::fs::symlink(&regular, &link).unwrap();
+        assert_eq!(
+            existing_file_mode(&link).unwrap(),
+            None,
+            "a symlink must not be followed -- the rename replaces the link itself"
+        );
+    }
+
+    #[test]
+    fn write_atomically_falls_back_to_an_in_place_write_when_the_directory_is_unwritable() {
+        // 迴歸（PR #86 round-2）：建立暫存檔需要**目錄**寫入權，就地寫入只需要
+        // **檔案**寫入權。0500 的專案根加上既存可寫的 CLAUDE.md，oracle 更新成功
+        // 並 exit 0，而 temp+rename 會 exit 1——實測確認並附對照組。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let dir = tmp.join("locked");
+        fs::create_dir(&dir).unwrap();
+        let target = dir.join("out.txt");
+        fs::write(&target, "old").unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = write_atomically_or_in_place(&target, "new");
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        result.unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
+    fn the_unwritable_directory_fallback_still_refuses_to_follow_a_symlink() {
+        // fallback 不得成為繞過 symlink 保護的後門：目標是 symlink 時照樣失敗。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let outside = tmp.join("outside.txt");
+        fs::write(&outside, "PRECIOUS").unwrap();
+        let dir = tmp.join("locked");
+        fs::create_dir(&dir).unwrap();
+        let target = dir.join("out.txt");
+        std::os::unix::fs::symlink(&outside, &target).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = write_atomically_or_in_place(&target, "new");
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            result.is_err(),
+            "a symlinked target must not take the fallback"
+        );
         assert_eq!(fs::read_to_string(&outside).unwrap(), "PRECIOUS");
     }
 

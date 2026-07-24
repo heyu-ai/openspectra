@@ -290,8 +290,24 @@ def main() -> None:
         # 不是失敗，但一定要顯示——這正是「用文字前綴猜」會漏掉的那一類。
         for tool_id, rel in plain_marker_files:
             print(f"     [note] {tool_id}:{rel} starts with the START marker but is Plain")
+    # 兩個方向都要斷言。只檢查 `not managed` 是**單邊**守衛：一個退化成
+    # 「sentinel 永遠存活」的 probe（stale read、目標路徑不再被改寫、未來的
+    # 工具組合觸發抑制怪癖）會通過它，然後把 21 個 marker 形狀的檔案全部寫成
+    # Managed，靜默還原 6a5bee4 修掉的缺陷。零命中的守衛在證明它會對已知壞
+    # 輸入失敗之前沒有資訊量。（PR #86 round-2, Claude/silent-failure-hunter）
     if not managed:
-        fail("no Managed files probed -- the kind probe is not exercising anything")
+        fail("kind probe found no Managed file -- the probe is not discriminating")
+    if not plain_marker_files:
+        fail(
+            "kind probe found no marker-shaped Plain file -- the probe is not "
+            "discriminating (kilocode's workflows must land here)"
+        )
+    if (len(managed), len(plain_marker_files)) != (12, 10):
+        fail(
+            f"probed kind split drifted: {len(managed)} Managed / "
+            f"{len(plain_marker_files)} marker-shaped Plain, pinned at 12 / 10. "
+            "If the oracle really changed, update this pin AND update.md."
+        )
 
     # registry 順序驗證：全工具沙盒的訊息必須照 TOOLS 順序列出全部 id。
     all_root = tmp / "all-tools"

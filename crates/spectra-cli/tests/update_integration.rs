@@ -422,6 +422,48 @@ fn a_symlinked_managed_file_does_not_leak_writes_outside_the_project() {
 }
 
 #[test]
+fn a_directory_at_a_plain_target_reports_the_oracle_errno() {
+    // oracle 對「目標是目錄」只回報建立步驟的錯誤（`Is a directory`）；若我們
+    // 無條件 unlink，同一輸入會變成 `Operation not permitted`。AC-2 要求逐字對齊。
+    let root = TempDir::new("update-dir-target");
+    init_root(&root, "openspec");
+    std::fs::create_dir_all(root.join(".claude/skills/spectra-drift/SKILL.md")).unwrap();
+
+    let out = run_update(&root, &[]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Error: Is a directory (os error 21)\n"
+    );
+}
+
+#[test]
+fn an_unwritable_project_root_still_updates_an_existing_managed_file() {
+    // oracle 就地寫入 Managed 檔，只需要檔案的寫入權；0500 的根目錄仍能成功。
+    // 我們的 temp+rename 需要目錄寫入權，故在該情境退回就地寫入以維持 parity。
+    let root = TempDir::new("update-ro-root");
+    init_root(&root, "openspec");
+    std::fs::create_dir_all(root.join(".claude")).unwrap();
+    assert!(run_update(&root, &[]).status.success());
+
+    let mut perms = std::fs::metadata(&*root).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+    std::fs::set_permissions(&*root, perms.clone()).unwrap();
+
+    let out = run_update(&root, &[]);
+
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&*root, perms).unwrap();
+
+    assert!(
+        out.status.success(),
+        "expected oracle parity (exit 0): {out:?}"
+    );
+    assert_eq!(stdout(&out), "✓ Updated instruction files for: claude\n");
+}
+
+#[test]
 fn custom_spec_dir_is_substituted_into_written_files() {
     let root = TempDir::new("update-specdir");
     init_root(&root, "docs/specs");
