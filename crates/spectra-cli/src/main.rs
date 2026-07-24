@@ -1,13 +1,15 @@
-//! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `status`,
-//! `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
+//! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
+//! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
 //! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`.
+
+mod completion;
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::json;
 
 use spectra_core::{analyze, artifact, change, config::Config, drift, instructions, schema, spec};
@@ -52,6 +54,11 @@ enum Command {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
+    },
+    /// Generate, install, or uninstall shell completions.
+    Completion {
+        #[command(subcommand)]
+        target: CompletionTarget,
     },
     /// List available workflow schemas (only `spec-driven` is built in).
     Schemas {
@@ -214,6 +221,25 @@ enum TaskTarget {
         change: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CompletionTarget {
+    /// Generate a completion script to stdout; the shell auto-detects from
+    /// the SHELL environment variable when omitted.
+    Generate { shell: Option<clap_complete::Shell> },
+    /// Install a completion script in the shell's user completion directory.
+    Install {
+        shell: Option<clap_complete::Shell>,
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Uninstall the shell's completion script.
+    Uninstall {
+        shell: Option<clap_complete::Shell>,
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -970,6 +996,12 @@ fn first_line(path: &Path) -> String {
     }
 }
 
+fn completion_shell(shell: Option<clap_complete::Shell>) -> Result<clap_complete::Shell> {
+    shell
+        .or_else(clap_complete::Shell::from_env)
+        .ok_or_else(|| anyhow::anyhow!("could not detect shell from $SHELL; pass one explicitly"))
+}
+
 fn run() -> Result<i32> {
     let cli = Cli::parse();
     let use_color = color_enabled(cli.no_color);
@@ -986,6 +1018,26 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_analyze(&cfg, change.as_deref(), *json)
         }
+        // Completion scripts describe the CLI itself and do not depend on
+        // project state, so this deliberately skips `require_initialized`.
+        Command::Completion { target } => match target {
+            CompletionTarget::Generate { shell } => {
+                let shell = completion_shell(*shell)?;
+                clap_complete::generate(
+                    shell,
+                    &mut Cli::command(),
+                    "spectra",
+                    &mut std::io::stdout(),
+                );
+                Ok(0)
+            }
+            CompletionTarget::Install { shell, verbose } => {
+                completion::install(completion_shell(*shell)?, *verbose)
+            }
+            CompletionTarget::Uninstall { shell, yes } => {
+                completion::uninstall(completion_shell(*shell)?, *yes)
+            }
+        },
         // `schemas` lists the built-in schema registry, which needs no
         // project — the oracle lists it outside an initialized project too, so
         // it deliberately skips `require_initialized` (like `init`).
