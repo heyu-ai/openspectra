@@ -60,6 +60,44 @@ why; never add a blanket `#[allow]` just to make the check pass.
   recovered values against the pinned expectations, exit non-zero on drift or
   on a scan too short to cover them, and preserve the failing synthetic repo
   for inspection (see `scripts/calibrate-time.py --mode boundaries`).
+- Before an oracle probe, confirm the binary was rebuilt from clean source.
+  Mutation checks (a subagent's or your own) edit source → build → restore
+  source, but `target/` keeps the mutated artifact and `git status` is clean,
+  so the probe silently exercises the mutant. `touch` the source and rebuild,
+  or `strings target/release/spectra | grep <mutation-marker>` to confirm the
+  mutant string is gone, before trusting probe output (PR #84: a whole round
+  of editor-resolution probes ran against a `pr-test-analyzer` leftover mutant
+  — `.arg("/nonexistent/…")` — and every conclusion had to be thrown out).
+- One probe jail, one operation. Running several steps and only then inspecting
+  the final on-disk state lets a later step overwrite the state an earlier one
+  produced, yielding a confident wrong conclusion (PR #84: plain `reset`
+  truncates the file to `{}`, but running it back-to-back with `reset --all`
+  and checking afterwards showed only the delete, so `--all` was misread as an
+  inert flag — it is not; `reset` truncates and `--all` deletes).
+
+## Agent conduct
+
+Most work here is "align behavior to the oracle, one probe at a time," and that
+faithful-port momentum makes it easy to cross a boundary that belongs to a
+human. Two classes of decision must **stop and surface** rather than be taken
+silently or filed as an after-the-fact note:
+
+- **Whether the task should still be done.** When a probe or investigation
+  refutes an issue's premise (e.g. "some consumer needs this command" turns out
+  to have zero consumers), report that finding and let the human rule on
+  scope *before* porting the whole surface — do not finish the port and bury
+  "no consumer" as an aside in the PR description (PR #84: a repo-wide scan
+  found no plugin calls `spectra config`, yet the full interface was ported
+  anyway).
+- **Architecture trade-offs.** When oracle fidelity conflicts with another
+  engineering value (atomicity, a new dependency), a PR that claims the choice
+  is "left to the human" must not also arrive merge-ready with that choice
+  already baked in — claiming a decision is open while shipping the decided
+  code is having it both ways (PR #84: `write_atomically`'s atomic write vs the
+  oracle's in-place write).
+
+Cross-PR signal: when the control-log `autonomy_ratio` runs high (>70%), these
+two are the usual sources of overreach — bias toward asking on them.
 
 ## Applicable skills for this repo
 
