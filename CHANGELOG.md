@@ -10,7 +10,48 @@ changes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-24
+
 ### Added
+
+- **`spectra update [PATH] [--force]`** (#55) rewrites the instruction files of
+  every detected AI tool — 23 of them (`.claude/`, `.cursor/`, …,
+  `.github/prompts`) — to the current schema. Detection is filesystem
+  existence of each tool's path; the write set, stdout, exit codes, and error
+  strings are byte-for-byte aligned with the v2.3.1 oracle, verified in CI
+  against a captured golden tree without needing the closed-source binary.
+
+  Per-file behavior is **probed, not inferred**: skills/commands/prompts are
+  full-overwrite (`Plain`), 11 root-level marker files (`CLAUDE.md`,
+  `.cursorrules`, …) are merged only within their
+  `<!-- SPECTRA:START … -->`/`<!-- SPECTRA:END -->` block via a plain substring
+  splice with no line anchoring, and `.claude/settings.json` is a key-sorted
+  JSON merge. Two oracle bugs are preserved deliberately (an unsubstituted
+  `{{SPEC_DIR}}` literal in every `spectra-ask` file; a bare io error when a
+  detection path is a regular file), both documented in
+  [`docs/reverse-engineering/update.md`](docs/reverse-engineering/update.md).
+
+  Two deliberate divergences, both security rulings this repo already made for
+  change directories: writes to a `Managed`/`ClaudeSettings` path use a
+  hardened atomic write (`O_EXCL` temp + exact-mode `fchmod` + `rename`), so a
+  symlinked target is replaced rather than followed and an interrupted run
+  cannot truncate a user's `CLAUDE.md`. A read-only `Managed` file therefore
+  succeeds where the oracle exits 1. Symlinked *ancestor* directories are still
+  followed, matching the oracle (recorded as a residual risk).
+
+- **`spectra config <path|list|get|set|unset|reset|edit>`** (#57) manages the
+  global user config file (`~/Library/Application Support/openspec/config.yaml`
+  on macOS, `${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml` elsewhere,
+  absolute XDG paths only) and needs no initialized project. Output shapes,
+  key ordering, and error strings are pinned against the v2.3.1 oracle; see
+  [`docs/reverse-engineering/config.md`](docs/reverse-engineering/config.md).
+
+  Deliberate divergences, all documented: writes go through the same hardened
+  atomic write as `update` (in place → temp+rename), so a mode-555 config
+  *directory* fails where the oracle writes in place and succeeds, and a
+  symlinked `config.yaml` is replaced rather than written through. `HOME` unset
+  or empty errors instead of resolving via the OS password database (avoids a
+  new dependency).
 
 - **`spectra completion generate|install|uninstall`** (#60) produces and
   installs shell completion scripts, built on `clap_complete`. `generate`
@@ -212,7 +253,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/howie/openspectra/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/howie/openspectra/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/howie/openspectra/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/howie/openspectra/releases/tag/v0.4.0
 [0.3.0]: https://github.com/howie/openspectra/releases/tag/v0.3.0
 [0.2.0]: https://github.com/howie/openspectra/releases/tag/v0.2.0
