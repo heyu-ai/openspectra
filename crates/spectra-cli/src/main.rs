@@ -1,6 +1,6 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `status`,
-//! `instructions`, `validate`, `list`, `show`, `park`, `unpark`, `new change`,
-//! `new artifact`, `task done`, `archive`.
+//! `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
+//! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`.
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
@@ -143,6 +143,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// In-progress marker operations.
+    InProgress {
+        #[command(subcommand)]
+        target: InProgressTarget,
+    },
     /// Create a new change or workflow artifact.
     New {
         #[command(subcommand)]
@@ -210,6 +215,12 @@ enum TaskTarget {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum InProgressTarget {
+    /// Record an in-progress marker for a change name.
+    Add { name: String },
 }
 
 /// Walk up from `start` to find the project root (dir containing `.spectra.yaml`),
@@ -626,6 +637,11 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
+fn cmd_in_progress_add(cfg: &Config, name: &str) -> Result<i32> {
+    change::mark_in_progress(cfg, name)?;
+    Ok(0)
+}
+
 /// Render one schema's human line, e.g.
 /// `  spec-driven (package) — <description>`, dimming the `(source)` tag when
 /// color is enabled (matching the oracle's `\x1b[2m` faint styling). Pulled out
@@ -1039,6 +1055,12 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_unpark(&cfg, change, *json)
         }
+        Command::InProgress { target } => match target {
+            InProgressTarget::Add { name } => {
+                let cfg = require_initialized(&root)?;
+                cmd_in_progress_add(&cfg, name)
+            }
+        },
         Command::New { target } => match target {
             NewTarget::Change { name, json } => {
                 let cfg = require_initialized(&root)?;
