@@ -6,7 +6,7 @@ starting with the `drift` command.
 
 > **Status:** early. `spectra init` / `drift` / `validate` (+ minimal `list` /
 > `show` / `park` / `unpark` / `new change` / `task done` / `in-progress add` /
-> `archive`) is
+> `completion` / `archive`) is
 > implemented in Rust and runs on Linux/macOS with zero runtime dependencies
 > (just `git` on `PATH`). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
@@ -64,6 +64,9 @@ spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifac
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
 spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md checkbox done, records touched files
 spectra in-progress add <NAME>    # records a write-only in-progress marker (no --json, no removal path, no effect on any listing)
+spectra completion generate [SHELL]              # prints a shell completion script (bash|zsh|fish|elvish|powershell; detects $SHELL when omitted)
+spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
+spectra completion uninstall [SHELL] [-y]         # removes that file
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
 spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 ```
@@ -207,7 +210,7 @@ binary is used as a golden oracle to calibrate constants
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / in-progress add / archive
+crates/spectra-cli/    # clap CLI: init / drift / validate / list / show / park / unpark / new change / task done / in-progress add / completion / archive
 docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
 scripts/               # oracle calibration probes
 ```
