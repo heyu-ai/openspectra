@@ -163,12 +163,15 @@ fn read_gitignore(path: &Path) -> Result<String> {
 /// specially, since this CLI has no evidence of needing to support a
 /// symlinked `.gitignore`/`.spectra.yaml` (e.g. a dotfile manager) and doing
 /// so isn't a data-loss risk (the correct content still lands, just not at
-/// the symlink's target).
+/// the symlink's target). The same applies to the *global* config file this
+/// now also writes ([`crate::global_config::save`]), which a dotfile manager
+/// is more likely to symlink: the accepted outcome is unchanged -- the write
+/// succeeds and the link is replaced, rather than the target being modified.
 ///
 /// On failure, the temp file is removed on a best-effort basis; if that
 /// cleanup itself also fails, the original error is still what's returned,
 /// with the cleanup failure logged to stderr rather than silently dropped.
-fn write_atomically(path: &Path, contents: &str) -> Result<()> {
+pub(crate) fn write_atomically(path: &Path, contents: &str) -> Result<()> {
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 

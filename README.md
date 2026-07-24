@@ -68,6 +68,7 @@ spectra completion generate [SHELL]              # prints a shell completion scr
 spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
 spectra completion uninstall [SHELL] [-y]         # removes that file
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
+spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 ```
 
 Exit codes for `drift` (pinned against the reference binary): `0` on any
