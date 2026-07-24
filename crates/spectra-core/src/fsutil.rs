@@ -257,10 +257,30 @@ fn write_atomically_inner(
     // O_EXCL means a pre-existing temp path is a hard error rather than a
     // write-through; bounded retries keep an adversarially-recreated path from
     // turning into an infinite loop.
+    write_with_retry(path, contents, fall_back_in_place, &mut || {
+        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()))
+    })
+}
+
+/// The bounded retry loop, with the temp-path source injected.
+///
+/// `next_tmp` is a parameter rather than an inlined counter read so the retry
+/// branch is **deterministically testable**: a test can supply one occupied
+/// path followed by a free one. The previous test planted symlinks at
+/// `…-{0..11}` and hoped the shared `COUNTER` was still in that window; under
+/// `cargo test --all` it never is, so the retry branch went unexercised while
+/// the test stayed green — the same vacuity, in the same file, that round 2
+/// had already caught once (both external reviewers flagged it again).
+fn write_with_retry(
+    path: &Path,
+    contents: &str,
+    fall_back_in_place: bool,
+    next_tmp: &mut dyn FnMut() -> std::path::PathBuf,
+) -> std::io::Result<()> {
     let mut last_err = None;
     for _ in 0..16 {
-        let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let tmp_path = path.with_file_name(format!("{file_name}.tmp-{}-{seq}", std::process::id()));
+        let tmp_path = next_tmp();
         match write_via_temp(path, contents, &tmp_path) {
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                 last_err = Some(e);
@@ -310,21 +330,36 @@ fn write_in_place_fallback(
 /// Returns [`ErrorKind::AlreadyExists`] iff `tmp_path` was occupied — by a
 /// regular file, a directory, or a symlink planted by an attacker.
 fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Result<()> {
-    // The target's mode is applied **at creation**, not chmod'd afterwards.
-    // Fixing it up after the write left a window in which the fully merged
-    // content -- including every user key the merge exists to preserve, and
-    // `.claude/settings.json` is where people keep tokens -- sat on disk
-    // group/world-readable at a guessable name (PR #86 round-2).
+    // Two constraints pull against each other here, and both must hold:
+    //
+    // 1. The temp file must never be wider than the target, at any instant --
+    //    it holds the fully merged content, and `.claude/settings.json` is
+    //    where people keep tokens. So it is created `0600`, before any content
+    //    exists, rather than created wide and chmod'd afterwards.
+    // 2. The final mode must be *exactly* the target's. `OpenOptions::mode` is
+    //    masked by the process umask, so creating with the target's bits
+    //    silently narrows them: a `0644` file under `umask 077` came back
+    //    `0600` while the reference binary, writing in place, kept `0644`
+    //    (measured; PR #86 round-2, found independently by both external
+    //    reviewers). `File::set_permissions` is `fchmod`, which ignores the
+    //    umask, so the exact bits are applied after the write and before the
+    //    rename.
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
-    if let Some(mode) = existing_file_mode(path)? {
-        std::os::unix::fs::OpenOptionsExt::mode(&mut opts, mode);
-    }
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
     let mut file = opts.open(tmp_path)?;
     if let Err(e) = std::io::Write::write_all(&mut file, contents.as_bytes()) {
         drop(file);
         cleanup_temp_file(tmp_path);
         return Err(e);
+    }
+    if let Some(mode) = existing_file_mode(path)? {
+        let exact = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode);
+        if let Err(e) = file.set_permissions(exact) {
+            drop(file);
+            cleanup_temp_file(tmp_path);
+            return Err(e);
+        }
     }
     drop(file);
     if let Err(e) = std::fs::rename(tmp_path, path) {
@@ -442,6 +477,31 @@ mod tests {
     }
 
     #[test]
+    fn write_atomically_preserves_permission_bits_the_umask_would_have_masked() {
+        // 迴歸（PR #86 round-2，Codex 與 agy 各自獨立指出）：`OpenOptions::mode`
+        // 會被 process umask 遮罩，所以「用目標的 mode 建立暫存檔」在
+        // umask 077 下把 0644 悄悄窄化成 0600（oracle 就地寫入、保留 0644）。
+        // 前一版測試只用 0644 以外不會被一般 umask 動到的 0600，因此漏掉。
+        //
+        // 用 0666：任何常見 umask（022/077）都會遮掉部分位元，所以只有
+        // fchmod（不受 umask 影響）才能通過。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let target = tmp.join("wide.txt");
+        fs::write(&target, "old").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o666)).unwrap();
+
+        write_atomically(&target, "new").unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o666,
+            "the umask must not narrow bits the target already had"
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
     fn write_atomically_preserves_an_existing_files_permission_bits() {
         // 迴歸（PR #86 round-2, Codex）：改用 temp+rename 之後，替換檔是以
         // umask 預設權限新建的，於是一個 0600 的 .claude/settings.json 更新後
@@ -495,29 +555,59 @@ mod tests {
     }
 
     #[test]
-    fn write_atomically_retries_past_an_occupied_temp_name_and_still_succeeds() {
-        // 對照：上一個測試證明「被佔用就拒絕」，這個證明外層迴圈會換名字重試，
-        // 所以拒絕不會變成阻斷正常寫入。
+    fn write_with_retry_moves_past_an_occupied_candidate_to_a_free_one() {
+        // 對照：`write_via_temp_refuses_…` 證明「被佔用就拒絕」，這個證明外層
+        // 迴圈會換名字重試，所以拒絕不會變成阻斷正常寫入。
+        //
+        // 候選路徑用注入的，不猜共用 COUNTER——前一版就是靠猜，在
+        // `cargo test --all` 下永遠猜不中，retry 分支從未被執行卻恆綠。
         let tmp = TempDir::new();
         let target = tmp.join("out.txt");
         let outside = tmp.join("outside.txt");
         fs::write(&outside, "PRECIOUS").unwrap();
-        // 佔用接下來 12 個候選名（上限 16，故仍有餘裕成功）。
-        let pid = std::process::id();
-        let probe = tmp.join("probe.txt");
-        write_atomically(&probe, "x").unwrap(); // 讓 COUNTER 前進到已知起點附近
-        let start = (0..u64::MAX)
-            .find(|seq| !tmp.join(format!("out.txt.tmp-{pid}-{seq}")).exists())
-            .unwrap();
-        for seq in start..start + 12 {
-            std::os::unix::fs::symlink(&outside, tmp.join(format!("out.txt.tmp-{pid}-{seq}")))
-                .unwrap();
-        }
 
-        write_atomically(&target, "new content").unwrap();
+        let occupied = tmp.join("out.txt.tmp-occupied");
+        std::os::unix::fs::symlink(&outside, &occupied).unwrap();
+        let free = tmp.join("out.txt.tmp-free");
+
+        let mut candidates = vec![free.clone(), occupied.clone()];
+        write_with_retry(&target, "new content", false, &mut || {
+            candidates.pop().unwrap()
+        })
+        .unwrap();
 
         assert_eq!(fs::read_to_string(&target).unwrap(), "new content");
-        assert_eq!(fs::read_to_string(&outside).unwrap(), "PRECIOUS");
+        assert_eq!(
+            fs::read_to_string(&outside).unwrap(),
+            "PRECIOUS",
+            "the occupied candidate must have been skipped, not written through"
+        );
+        assert!(occupied
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn write_with_retry_gives_up_after_the_bounded_number_of_attempts() {
+        // 上限存在的理由：對手可以持續重建被佔用的路徑。這裡讓產生器永遠回同
+        // 一個被佔用的路徑，證明它會有界地放棄而不是無限迴圈。
+        let tmp = TempDir::new();
+        let target = tmp.join("out.txt");
+        let occupied = tmp.join("out.txt.tmp-always");
+        fs::write(&occupied, "squatter").unwrap();
+
+        let mut calls = 0usize;
+        let err = write_with_retry(&target, "x", false, &mut || {
+            calls += 1;
+            occupied.clone()
+        })
+        .unwrap_err();
+
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(calls, 16, "the retry bound must be exactly what it claims");
+        assert!(!target.exists());
     }
 
     #[test]
