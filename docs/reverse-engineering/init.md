@@ -226,6 +226,9 @@ git -C "$JAIL" init -q
 
 # inspect: tree, byte counts, trailing bytes
 find "$JAIL" -not -path "$JAIL/.git" -not -path "$JAIL/.git/*" | sort
+# expect exactly 8 lines: the jail root, .gitignore, .spectra.yaml, openspec,
+# openspec/changes, openspec/changes/archive, openspec/config.yaml,
+# openspec/specs
 wc -c "$JAIL/.spectra.yaml"        # 761 bytes
 wc -l "$JAIL/.spectra.yaml"        # 32 newline-terminated lines
 tail -c 24 "$JAIL/.spectra.yaml" | xxd   # ends "#   - cursor\n", no blank line

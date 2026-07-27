@@ -128,9 +128,10 @@ pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
 }
 
 fn init_resolved_spec_dir(root: &Path, spec_dir: String, adopted: bool) -> Result<InitOutcome> {
-    // `create_dir_all` on `changes/archive` creates `changes/` too; a single
-    // call keeps the error context on whichever level actually failed being
-    // reported as the archive path, which is where the write happened.
+    // One call: `create_dir_all` creates `changes/` as a parent. A failure at
+    // either level is reported with the archive path -- slightly less precise
+    // than two calls, but both levels fail for the same reasons (unwritable
+    // spec_dir, or `changes/` occupied by a file).
     std::fs::create_dir_all(root.join(&spec_dir).join("changes/archive"))
         .with_context(|| format!("creating {spec_dir}/changes/archive"))?;
     std::fs::create_dir_all(root.join(&spec_dir).join("specs"))
@@ -467,7 +468,8 @@ mod tests {
         assert_eq!(config.lines().nth(5), Some("spec_dir: docs/myspecs"));
         // 字面 32（不是 SPECTRA_CONFIG_TEMPLATE.lines().count()）：拿產出跟
         // 同一個常數比是自我參照，模板長度回歸兩邊一起變、斷言恆真。oracle
-        // 實測 .spectra.yaml 為 761 bytes、32 個 \n 結尾行（PR #101 review）。
+        // 實測為 32 個 \n 結尾行（PR #101 review；761 bytes 是 default render
+        // 的數字——本例的 spec_dir 替換行剛好等長，位元組數非本測試所釘）。
         assert_eq!(config.lines().count(), 32);
     }
 
