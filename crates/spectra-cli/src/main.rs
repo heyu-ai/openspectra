@@ -1588,6 +1588,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         let auth_dir = cfg.specs_dir().join("auth");
         std::fs::create_dir_all(&auth_dir).unwrap();
@@ -1611,6 +1612,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         let items = list_specs_items(&cfg).unwrap();
@@ -1624,6 +1626,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("shipped")).unwrap();
         std::fs::write(
@@ -1660,6 +1663,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("shipped")).unwrap();
         std::fs::write(
@@ -1678,6 +1682,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("auth")).unwrap();
         std::fs::write(
@@ -1705,6 +1710,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         std::fs::create_dir_all(cfg.specs_dir().join("billing")).unwrap();
         std::fs::write(
@@ -1726,6 +1732,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(resolve_show_content(&cfg, "ghost").is_err());
@@ -1738,6 +1745,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         std::fs::create_dir_all(cfg.changes_dir().join("broken")).unwrap();
         // A directory named `.openspec.yaml` makes `read_to_string` fail with

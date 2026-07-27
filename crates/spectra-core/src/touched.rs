@@ -219,6 +219,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         }
     }
 

@@ -12,8 +12,8 @@
 //!   預設），這裡照樣只收不用。
 //! - 模板中 `{{SPEC_DIR}}` 代換為 config 的 `spec_dir`；oracle 輸出本身
 //!   含有漏代換的字面 `{{SPEC_DIR}}`（每個工具的 spectra-ask 命令檔，
-//!   445 個 tool-file 中有 19 個、去重後 9 個 blob），capture 時跳脫成
-//!   `{{RAW_SPEC_DIR}}`，render 時還原字面值。
+//!   slash commands 開啟後的 455 個 tool-file 中有 20 個、去重後 9 個
+//!   blob），capture 時跳脫成 `{{RAW_SPEC_DIR}}`，render 時還原字面值。
 //! - [`FileKind`] 是**對 oracle 實測**分類的（sentinel 存活法），不是從模板
 //!   文字推論：kilocode 的 10 個 `.kilocode/workflows/*.md` 模板本身是完整
 //!   marker 區塊，oracle 卻整檔覆寫。
@@ -43,9 +43,18 @@ const MARKER_START: &str = "<!-- SPECTRA:START";
 /// 管理區塊終點。
 const MARKER_END: &str = "<!-- SPECTRA:END -->";
 
+/// 一個工具檔案的產生條件。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// 無條件產生。
+    Always,
+    /// 僅當 `.spectra.yaml` 的 `claude_slash_commands: true`。
+    ClaudeSlashCommands,
+}
+
 /// 一個工具檔案的寫入策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileKind {
+enum WriteStrategy {
     /// 整檔覆寫（skills、commands、prompts，以及 kilocode 的 workflows——
     /// 後者的模板看起來是 marker 區塊，但 oracle 實測是整檔覆寫）。
     /// oracle 的做法是 unlink + 重建，故不跟隨 symlink、且能換掉唯讀檔。
@@ -54,6 +63,41 @@ pub enum FileKind {
     Managed,
     /// `.claude/settings.json`：JSON 物件合併。
     ClaudeSettings,
+}
+
+/// 一個工具檔案的寫入策略與產生條件。
+///
+/// `gate` 放在逐檔 policy 上，而不是由工具 id 或路徑推斷。`FileKind::Plain`
+/// 等既有常數都代表 `Gate::Always`，讓尚未重跑 capture 的 generated manifest
+/// 保持可編譯；capture 會只替量測出的差集加上 `.gated(...)`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileKind {
+    strategy: WriteStrategy,
+    gate: Gate,
+}
+
+// 這三個 mixed-case associated constants 刻意保持 generated manifest 既有的
+// `FileKind::Plain` 語法；等 reviewer 重跑 capture 前不可手改 445 個產生項目。
+#[allow(non_upper_case_globals)]
+impl FileKind {
+    pub const Plain: Self = Self {
+        strategy: WriteStrategy::Plain,
+        gate: Gate::Always,
+    };
+    pub const Managed: Self = Self {
+        strategy: WriteStrategy::Managed,
+        gate: Gate::Always,
+    };
+    pub const ClaudeSettings: Self = Self {
+        strategy: WriteStrategy::ClaudeSettings,
+        gate: Gate::Always,
+    };
+
+    /// Attach an explicit generation condition to this individual file.
+    pub const fn gated(mut self, gate: Gate) -> Self {
+        self.gate = gate;
+        self
+    }
 }
 
 /// 工具檔案：寫到 `relpath`，內容由 `template` 經 spec_dir 代換而來。
@@ -83,19 +127,36 @@ pub fn detect_tools(root: &Path) -> Vec<&'static ToolDef> {
 /// found" 訊息）。
 pub fn update_instruction_files(cfg: &Config) -> Result<Vec<&'static str>> {
     let tools = detect_tools(&cfg.root);
+    update_detected_tools(cfg, &tools)?;
+    Ok(tools.iter().map(|t| t.id).collect())
+}
+
+/// 更新已偵測到的工具。獨立出來讓 gate 機制可用 synthetic `ToolDef` 測試，
+/// 不必依賴尚未由 reference binary 重生的 generated manifest。
+fn update_detected_tools(cfg: &Config, tools: &[&ToolDef]) -> Result<()> {
     // RE'd 怪癖（對 2.3.1 成對 probe，見 update.md）：gemini 同時被偵測到
     // 時，codex 只寫 AGENTS.md、整組 .agents/skills/* 被抑制。其他工具
     // 兩兩組合都互不影響（含同樣會寫 GEMINI.md 的 antigravity）。
     let gemini_present = tools.iter().any(|t| t.id == "gemini");
-    for tool in &tools {
+    for tool in tools {
         for file in tool.files {
+            if !gate_allows(file.kind.gate, cfg) {
+                continue;
+            }
             if tool.id == "codex" && gemini_present && file.relpath != "AGENTS.md" {
                 continue;
             }
             write_file(&cfg.root, file, &cfg.spec_dir)?;
         }
     }
-    Ok(tools.iter().map(|t| t.id).collect())
+    Ok(())
+}
+
+fn gate_allows(gate: Gate, cfg: &Config) -> bool {
+    match gate {
+        Gate::Always => true,
+        Gate::ClaudeSlashCommands => cfg.claude_slash_commands,
+    }
 }
 
 /// 寫出單一工具檔案。
@@ -117,13 +178,13 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let rendered = render(file.template, spec_dir);
-    match file.kind {
+    match file.kind.strategy {
         // Plain：oracle 實測是 unlink + 重建（連可寫檔的 inode 都會變），
         // 這帶來兩個可觀察行為，兩者都要照做：唯讀既有檔會被成功換掉、
         // 而 symlink **不會**被跟隨（link 本身被移除，指向的外部檔案毫髮無傷）。
         // 先前用 `fs::write` 同時錯失這兩點——唯讀檔讓整個 run exit 1，
         // symlink 則被寫穿而覆寫專案外檔案。
-        FileKind::Plain => {
+        WriteStrategy::Plain => {
             // 目錄不 unlink：oracle 只對「一般檔（或 symlink）」解除連結，
             // 目標是目錄時它直接落到建立步驟並回報該步驟的錯誤。我們若無條件
             // remove_file，同一個輸入會回不同的 errno（實測 oracle
@@ -143,12 +204,12 @@ fn write_file(root: &Path, file: &FileSpec, spec_dir: &str) -> Result<()> {
         // 使用者的 CLAUDE.md 不會因中途中斷而被截斷成空檔，且 symlink 不會
         // 被寫穿。副作用是唯讀的 Managed 檔在我們這邊會成功、oracle 則
         // exit 1——差異已記錄於 update.md。
-        FileKind::Managed => {
+        WriteStrategy::Managed => {
             let existing = read_existing(&path)?;
             let content = merge_managed_block(existing.as_deref(), &rendered);
             crate::fsutil::write_atomically_or_in_place(&path, &content)?;
         }
-        FileKind::ClaudeSettings => {
+        WriteStrategy::ClaudeSettings => {
             let existing = read_existing(&path)?;
             let content = merge_settings(existing.as_deref(), &rendered);
             crate::fsutil::write_atomically_or_in_place(&path, &content)?;
@@ -599,10 +660,10 @@ mod tests {
         let mut plain_but_marker_shaped = Vec::new();
         for tool in update_manifest::TOOLS {
             for file in tool.files {
-                match file.kind {
-                    FileKind::Managed => managed.push(file.relpath),
-                    FileKind::ClaudeSettings => settings += 1,
-                    FileKind::Plain => {
+                match file.kind.strategy {
+                    WriteStrategy::Managed => managed.push(file.relpath),
+                    WriteStrategy::ClaudeSettings => settings += 1,
+                    WriteStrategy::Plain => {
                         if file.template.starts_with(MARKER_START) {
                             plain_but_marker_shaped.push(file.relpath);
                         }
@@ -651,7 +712,7 @@ mod tests {
         // Managed 模板必須 START 起、END（含換行）止——merge 演算法的前提。
         for tool in update_manifest::TOOLS {
             for file in tool.files {
-                if file.kind == FileKind::Managed {
+                if file.kind.strategy == WriteStrategy::Managed {
                     assert!(
                         file.template.starts_with(MARKER_START),
                         "{}:{} does not start with the START marker",
@@ -674,7 +735,7 @@ mod tests {
         let mut seen = Vec::new();
         for tool in update_manifest::TOOLS {
             for file in tool.files {
-                if file.kind == FileKind::ClaudeSettings {
+                if file.kind.strategy == WriteStrategy::ClaudeSettings {
                     seen.push((tool.id, file.relpath));
                     assert!(serde_json::from_str::<serde_json::Value>(file.template).is_ok());
                 }
@@ -690,7 +751,88 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         }
+    }
+
+    static SYNTHETIC_GATED_FILES: &[FileSpec] = &[
+        FileSpec {
+            relpath: ".claude/skills/spectra-apply/SKILL.md",
+            kind: FileKind::Plain,
+            template: "always\n",
+        },
+        FileSpec {
+            relpath: ".claude/commands/spectra/apply.md",
+            kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+            template: "gated\n",
+        },
+    ];
+
+    static SYNTHETIC_GATED_TOOL: ToolDef = ToolDef {
+        id: "claude",
+        detect_dir: ".claude",
+        files: SYNTHETIC_GATED_FILES,
+    };
+
+    static SYNTHETIC_ALWAYS_COMMAND_FILES: &[FileSpec] = &[FileSpec {
+        relpath: ".codebuddy/commands/spectra/apply.md",
+        kind: FileKind::Plain,
+        template: "codebuddy\n",
+    }];
+
+    static SYNTHETIC_ALWAYS_COMMAND_TOOL: ToolDef = ToolDef {
+        id: "codebuddy",
+        detect_dir: ".codebuddy",
+        files: SYNTHETIC_ALWAYS_COMMAND_FILES,
+    };
+
+    #[test]
+    fn explicit_file_gate_controls_only_the_marked_fixture_and_is_additive_only() {
+        let tmp = TempDir::new("update-synthetic-gate");
+        let mut cfg = init_cfg(&tmp);
+        cfg.claude_slash_commands = false;
+
+        update_detected_tools(&cfg, &[&SYNTHETIC_GATED_TOOL]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".claude/skills/spectra-apply/SKILL.md")).unwrap(),
+            "always\n"
+        );
+        assert!(!tmp.join(".claude/commands").exists());
+
+        cfg.claude_slash_commands = true;
+        update_detected_tools(&cfg, &[&SYNTHETIC_GATED_TOOL]).unwrap();
+        let command = tmp.join(".claude/commands/spectra/apply.md");
+        assert_eq!(std::fs::read_to_string(&command).unwrap(), "gated\n");
+
+        std::fs::write(&command, "hand edit outside any marker\n").unwrap();
+        update_detected_tools(&cfg, &[&SYNTHETIC_GATED_TOOL]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&command).unwrap(),
+            "gated\n",
+            "gated command remains a Plain whole-file overwrite"
+        );
+
+        cfg.claude_slash_commands = false;
+        update_detected_tools(&cfg, &[&SYNTHETIC_GATED_TOOL]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&command).unwrap(),
+            "gated\n",
+            "disabling the gate must not clean up a previously written command"
+        );
+    }
+
+    #[test]
+    fn an_unmarked_codebuddy_command_is_not_controlled_by_the_claude_switch() {
+        let tmp = TempDir::new("update-synthetic-codebuddy-gate");
+        let mut cfg = init_cfg(&tmp);
+        cfg.claude_slash_commands = false;
+
+        update_detected_tools(&cfg, &[&SYNTHETIC_ALWAYS_COMMAND_TOOL]).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".codebuddy/commands/spectra/apply.md")).unwrap(),
+            "codebuddy\n"
+        );
     }
 
     #[test]
@@ -702,13 +844,46 @@ mod tests {
     }
 
     #[test]
-    fn update_claude_writes_the_full_file_set_and_reports_the_id() {
-        let tmp = TempDir::new("update-claude");
-        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
-        let ids = update_instruction_files(&init_cfg(&tmp)).unwrap();
-        assert_eq!(ids, ["claude"]);
-        for file in update_manifest::TOOLS[0].files {
-            assert!(tmp.join(file.relpath).is_file(), "missing {}", file.relpath);
+    fn update_claude_writes_exactly_the_files_its_gates_allow() {
+        // 前一版跑單一預設 config，斷言 manifest 裡 claude 的每一項都落地。
+        // 那在 manifest 只有 `Gate::Always` 時是對的，而 capture 重跑把 10 個
+        // `/spectra:X` command 加進來之後就必然失敗 —— 它們的 gate 在預設
+        // config 下是關的。這個更新只能在重跑之後做：在那之前 manifest 沒有
+        // gated 條目，改寫後的版本反而會因為下面的 vacuity guard 而失敗。
+        //
+        // 順帶把斷言加強：不只驗「gate 開時有寫」，也驗「gate 關時沒寫」。
+        // 只驗前者的話，一個永遠回 true 的 `gate_allows` 可以讓測試全綠。
+        for enabled in [false, true] {
+            let tmp = TempDir::new(&format!("update-claude-slash-{enabled}"));
+            std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+            let mut cfg = init_cfg(&tmp);
+            cfg.claude_slash_commands = enabled;
+
+            let ids = update_instruction_files(&cfg).unwrap();
+            assert_eq!(ids, ["claude"]);
+
+            let mut gated_seen = 0usize;
+            for file in update_manifest::TOOLS[0].files {
+                if file.kind.gate == Gate::ClaudeSlashCommands {
+                    gated_seen += 1;
+                }
+                let should_exist = gate_allows(file.kind.gate, &cfg);
+                assert_eq!(
+                    tmp.join(file.relpath).is_file(),
+                    should_exist,
+                    "slash_commands={enabled}: {} should{} exist",
+                    file.relpath,
+                    if should_exist { "" } else { " not" }
+                );
+            }
+
+            // 若 manifest 有一天不再有 gated 條目（例如 capture 被跑成開關
+            // 關閉的狀態），上面的迴圈會退化成只驗 `Always`，這個測試就會
+            // 靜靜地不再涵蓋開關本身。這行讓那種退化變成紅燈而不是假綠。
+            assert_eq!(
+                gated_seen, 10,
+                "expected the 10 oracle-measured gated command files in the manifest"
+            );
         }
     }
 
@@ -847,6 +1022,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "docs/specs".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         update_instruction_files(&cfg).unwrap();
         let claude_md = std::fs::read_to_string(tmp.join("CLAUDE.md")).unwrap();

@@ -5,7 +5,8 @@ probed against the closed-source reference binary and ported. Unlike
 `init.md`, everything below **is oracle-verified**: each rule was probed
 against `Spectra.app/Contents/MacOS/spectra` 2.3.1, and the full per-tool
 output trees are pinned byte-for-byte in
-`golden/update-trees-2.3.1.tsv` (445 files across 23 tools).
+`golden/update-trees-2.3.1.tsv` (445 always-on files across 23 tools, plus
+10 Claude files gated by `claude_slash_commands`).
 
 ## CLI shape
 
@@ -117,13 +118,14 @@ probed, not inferred**: `capture-update-templates.py` seeds a sandbox, appends a
 sentinel after the END marker, re-runs `update`, and classifies by whether the
 sentinel survives — 22 candidates, splitting 12 Managed / 10 Plain. Guessing
 from the template text ("does it start with the START marker?") is wrong — see
-the kilocode note below. The remaining 423 entries are **not** probed: 422 are
+the kilocode note below. The remaining 433 enabled entries are **not** probed:
+432 are
 assigned `Plain` on the unprobed premise that a template which is not a marker
-block cannot be merge-updated, and the 423rd is `.claude/settings.json`, whose
+block cannot be merge-updated, and the last is `.claude/settings.json`, whose
 `ClaudeSettings` strategy is assigned by path. Neither premise is verified
 against the oracle.
 
-1. **Plain** (432 of 445 tool-files: skills, commands, prompts, and — despite
+1. **Plain** (442 of 455 enabled tool-files: skills, commands, prompts, and — despite
    appearances — kilocode's workflows): full overwrite. Mechanically the oracle
    **unlinks and recreates**: the inode changes even for an unchanged writable
    file. Two observable consequences follow, both reproduced:
@@ -219,22 +221,66 @@ blocks present, the first one wins.
   partially written tree. Partial write sets on a hard failure are oracle
   behavior, not a defect to paper over.
 
+## `claude_slash_commands`
+
+The project config key `claude_slash_commands` defaults to `false`; an absent
+key and an explicit `false` are equivalent. With the key off, Claude's
+`.claude` subtree contains its existing 13 generated files. With it on, that
+subtree contains 23 files: the same 13 plus these ten nested command paths
+(`CLAUDE.md` at the project root is also written in both states):
+
+```
+.claude/commands/spectra/{apply,archive,ask,audit,commit,debug,discuss,drift,ingest,propose}.md
+```
+
+`analyze` and `verify` remain skill-only. The switch does not change any
+existing skill's bytes, and `locale` does not affect command content. The gate
+is explicit per file in the generated manifest; it is not inferred from a
+`commands/spectra` path. This matters because CodeBuddy and other tools'
+commands remain always-on when the Claude switch is off.
+
+The oracle is additive-only: after a true run writes the commands, changing the
+key to false and running `update` again leaves those files in place. When a
+gated command is selected for writing, it uses the `Plain` strategy, so the
+whole file is unlinked and recreated even without `--force`; hand edits outside
+a marker do not survive.
+
+Two oracle template bugs are deliberately reproduced:
+
+- `.claude/commands/spectra/ask.md` keeps the literal, unsubstituted
+  `description: Query {{SPEC_DIR}}documents and answer questions`. Capture
+  escapes this as `{{RAW_SPEC_DIR}}`, then the existing renderer restores the
+  literal; the normal skill description is substituted.
+- `.claude/commands/spectra/commit.md` hardcodes `openspec/` in its two example
+  status lines even when the configured spec directory is different. The
+  corresponding Claude skill has the same hardcoding.
+
 ## `{{SPEC_DIR}}` substitution
 
 Templates embed the project's `spec_dir`: with `init --dir docs/specs`,
-written files read `docs/specs/changes/` etc. Captured via a two-sandbox
-diff (default `openspec` vs a unique token spec-dir) so substitution sites
-are unambiguous — a plain search for "openspec" would false-match the
-"OpenSpec" brand name.
+written files read `docs/specs/changes/` etc. Captured via the default
+`openspec` and a unique token spec-dir in the switch-on sandboxes, so
+substitution sites are unambiguous — a plain search for "openspec" would
+false-match the "OpenSpec" brand name.
 
 **Oracle bug preserved**: a literal, never-substituted `{{SPEC_DIR}}documents`
 appears in the oracle's own output (both sandboxes byte-identical there). It is
-not a one-off: it is in **every tool's `spectra-ask` command/prompt file — 19 of
-the 445 tool-files, across 18 tools, deduped to 9 blobs** — e.g. cursor's
-`.cursor/commands/spectra-ask.md` frontmatter and gemini's
+not a one-off: with Claude slash commands enabled it is in **20 of the 455
+tool-files, across 20 tools, deduped to 9 blobs** — e.g. Claude's nested
+`.claude/commands/spectra/ask.md`, cursor's
+`.cursor/commands/spectra-ask.md` frontmatter, and gemini's
 `.gemini/commands/spectra/ask.toml` `description =` value. OpenSpectra's
 templates escape such literals as `{{RAW_SPEC_DIR}}` at capture time and restore
 them at render time, so the bug survives byte-for-byte.
+
+The leak lives in the **frontmatter `description`**, not the body — which is why
+it is 20 files and not 21. Twenty-one tools ship a non-skill `spectra-ask` file,
+but kilocode's `.kilocode/workflows/spectra-ask.md` has no frontmatter at all
+(it opens directly on the `SPECTRA:START` marker), so it has nothing to leak;
+its seven body `{{SPEC_DIR}}` occurrences all substitute normally. The
+corresponding `spectra-ask` *skill* files substitute correctly everywhere,
+including Claude's — so the same description string is rendered one way as a
+skill and another as a command.
 
 ## The codex × gemini suppression quirk
 
@@ -267,27 +313,32 @@ changes — all byte-identical across update runs (hash-compared).
 `scripts/capture-update-templates.py` (macOS-only, needs the reference
 binary) regenerates:
 
-- `crates/spectra-core/assets/update/` — 170 deduped template blobs
-  (2.3 MB; 445 tool-files share content heavily, e.g. 8 of the 10 skill
+- `crates/spectra-core/assets/update/` — 172 deduped template blobs
+  (455 enabled tool-files share content heavily, e.g. 8 of the 10 skill
   templates are byte-identical across cursor/windsurf/qwen/gemini —
   `spectra-ingest` and `spectra-propose` have per-tool variants),
 - `crates/spectra-core/src/update_manifest.rs` — the generated registry
   (tool → detection path → file specs → **probed** `FileKind`), and
-- `golden/update-trees-2.3.1.tsv` — sha256 of every oracle output file
-  with the default spec_dir, which CI's
+- `golden/update-trees-2.3.1.tsv` — sha256 and gate of every oracle output file
+  with the default spec_dir, which CI replays with the switch both off and on;
+  its
   `every_tool_tree_matches_the_oracle_golden_byte_for_byte` integration
   test verifies without needing the oracle.
 
 The script is a verification contract, not a printer: it derives each tool's
 write set by **diffing the sandbox before and after `update`** (and fails if
-`update` touched anything `init` created), round-trips every template (token
-capture → `{{SPEC_DIR}}` → re-resolve → must equal the default capture
-byte-for-byte), probes every marker-shaped template's `FileKind` against the
-oracle rather than guessing from its text, pins each tool's stdout, re-verifies
-the registry order and the codex×gemini quirk, asserts blob filenames cannot
-collide at their 12-hex prefix, and exits non-zero keeping the sandboxes on any
-mismatch. The round-trip check caught the `{{SPEC_DIR}}documents` oracle bug on
-its first run.
+`update` touched anything `init` created). For every tool it runs default/token
+spec directories with the slash switch both off and on, derives gated files
+from the on-minus-off difference, requires both spec-dir rounds to derive the
+same set, and requires every shared file to remain byte-identical across switch
+states. The config edit enabling the switch is deliberately made before the
+baseline snapshot. The contract also round-trips every template (token capture
+→ `{{SPEC_DIR}}` → re-resolve → must equal the default capture byte-for-byte),
+probes every marker-shaped template's `FileKind` against the oracle rather than
+guessing from its text, pins each tool's stdout, re-verifies the registry order
+and the codex×gemini quirk, asserts blob filenames cannot collide at their
+12-hex prefix, and exits non-zero keeping the sandboxes on any mismatch. The
+round-trip check caught the `{{SPEC_DIR}}documents` oracle bug on its first run.
 
 **What the contract does *not* cover** — stated plainly rather than implied
 away:
@@ -300,9 +351,11 @@ away:
   an unknown id. The script pins `len(TOOLS) == 23` and the weekly
   upstream-watch flags oracle releases; discovering an added tool is a manual
   read of the release, not something this script detects.
-- **The golden TSV covers the fresh-write path only** — 445 rows of
-  first-write bytes. The merge paths (`Managed`, `ClaudeSettings`) are pinned by
-  unit tests against probed oracle behavior, not by golden bytes.
+- **The golden TSV covers the fresh-write path only** — 455 rows of
+  first-write bytes after the switch-aware capture rerun. Its gate column lets
+  CI verify the off and on write sets, but merge paths (`Managed`,
+  `ClaudeSettings`) are pinned by unit tests against probed oracle behavior,
+  not by golden bytes.
 
 ## Deliberate divergences from the oracle
 
@@ -311,11 +364,11 @@ security rulings this repo already made elsewhere:
 
 | Behavior | Oracle | OpenSpectra | Why |
 |---|---|---|---|
-| Symlinked `Managed` / `ClaudeSettings` path (e.g. a dotfile-managed `CLAUDE.md`) | follows the link and overwrites the target outside the project | replaces the link with a regular file; the target is untouched | `artifact.rs`'s `force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir` already ruled that the oracle's link-following is "a shared vulnerability" this CLI does not copy. `update` writes 445 paths inside a user's project, so the exposure is larger, not smaller. |
+| Symlinked `Managed` / `ClaudeSettings` path (e.g. a dotfile-managed `CLAUDE.md`) | follows the link and overwrites the target outside the project | replaces the link with a regular file; the target is untouched | `artifact.rs`'s `force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir` already ruled that the oracle's link-following is "a shared vulnerability" this CLI does not copy. `update` writes up to 455 paths inside a user's project, so the exposure is larger, not smaller. |
 | Read-only `Managed` file | exits 1, `Permission denied (os error 13)` | succeeds (temp file + rename needs directory permission only) | falls out of the atomic write above; not independently motivated |
 
 `Plain` paths need no divergence: the oracle's own unlink+recreate already
-declines to follow symlinks, so parity and safety coincide for 432 of 445
+declines to follow symlinks, so parity and safety coincide for 442 of 455 enabled
 files.
 
 The atomic path preserves an existing file's permission bits before renaming,

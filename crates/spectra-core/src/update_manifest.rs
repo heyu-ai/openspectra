@@ -4,13 +4,63 @@
 //! Registry order and detection directories are oracle behavior;
 //! see docs/reverse-engineering/update.md.
 
-use crate::update::{FileKind, FileSpec, ToolDef};
+use crate::update::{FileKind, FileSpec, Gate, ToolDef};
 
 pub static TOOLS: &[ToolDef] = &[
     ToolDef {
         id: "claude",
         detect_dir: ".claude",
         files: &[
+            FileSpec {
+                relpath: ".claude/commands/spectra/apply.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/57d5aaeb55ee.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/archive.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/a89d4311a521.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/ask.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/fa02e2663e8f.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/audit.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/1edf9f51e47c.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/commit.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/48b730c15813.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/debug.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/7e89ef8fb7d9.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/discuss.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/a7457c678870.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/drift.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/638041df99d9.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/ingest.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/f62a2898b8da.md"),
+            },
+            FileSpec {
+                relpath: ".claude/commands/spectra/propose.md",
+                kind: FileKind::Plain.gated(Gate::ClaudeSlashCommands),
+                template: include_str!("../assets/update/e28cee64b9de.md"),
+            },
             FileSpec {
                 relpath: ".claude/settings.json",
                 kind: FileKind::ClaudeSettings,

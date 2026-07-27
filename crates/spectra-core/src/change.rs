@@ -536,6 +536,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir().join("shipped").join("proposal.md"),
@@ -561,6 +562,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert_eq!(list_parked(&cfg), Vec::<String>::new());
@@ -573,6 +575,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir().join("zeta").join("proposal.md"),
@@ -604,6 +607,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir()
@@ -628,6 +632,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         // A change directory outside `changes_dir()` a traversal attempt could reach.
         write(&tmp.join("secret").join("proposal.md"), "outside\n");
@@ -646,6 +651,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir().join("shipped").join("proposal.md"),
@@ -667,6 +673,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir().join("shipping").join("proposal.md"),
@@ -687,6 +694,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         // Deliberately unlike `park`: the oracle's ghost-change probe accepts
@@ -704,6 +712,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(mark_in_progress(&cfg, "../evil").is_err());
@@ -716,6 +725,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(park(&cfg, "ghost").is_err());
@@ -728,6 +738,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir().join("on-hold").join("proposal.md"),
@@ -753,6 +764,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(unpark(&cfg, "ghost").is_err());
@@ -765,6 +777,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(
             &cfg.changes_dir()
@@ -785,6 +798,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         let before_create = chrono::Local::now().date_naive().to_string();
@@ -822,6 +836,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         let run = |args: &[&str]| {
             assert!(std::process::Command::new("git")
@@ -860,6 +875,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         create(&cfg, "reused-name").unwrap();
@@ -902,6 +918,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         create(&cfg, "blocked").unwrap();
@@ -945,6 +962,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(create(&cfg, "archive").is_err());
@@ -957,6 +975,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(create(&cfg, "Not_Kebab_Case").is_err());
@@ -970,6 +989,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert!(create(&cfg, "2026-01-01-old-change").is_err());
@@ -982,6 +1002,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         create(&cfg, "add-search-filter").unwrap();
@@ -995,6 +1016,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         let dir = cfg.changes_dir().join("add-search-filter");
         let run = |args: &[&str]| {
@@ -1032,6 +1054,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         let run = |args: &[&str]| {
             assert!(std::process::Command::new("git")
@@ -1087,6 +1110,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         }
     }
 
