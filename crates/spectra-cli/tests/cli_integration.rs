@@ -109,7 +109,7 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
 }
 
 #[test]
-fn init_text_output_reports_root_spec_dir_and_gitignore_update() {
+fn init_text_output_matches_the_oracle() {
     let tmp = TempDir::new("init-text");
     git(&tmp, &["init", "-q"]);
 
@@ -118,14 +118,17 @@ fn init_text_output_reports_root_spec_dir_and_gitignore_update() {
     let stdout = String::from_utf8(out.stdout).unwrap();
 
     // Canonicalize before comparing: on macOS `std::env::temp_dir()` returns
-    // a `/var/...` path that's actually a symlink to `/private/var/...`, and
-    // the CLI reports whatever `std::env::current_dir()` resolves to after
-    // `cd`-ing in, which follows the symlink -- a raw `contains` would only
-    // pass by coincidence (see the sibling JSON test for the same issue).
+    // `/var/...`, a symlink to `/private/var/...`, and the binary reports the
+    // canonical form -- comparing the raw temp path would fail spuriously.
     let canonical_root = tmp.canonicalize().unwrap();
-    assert!(stdout.contains(&canonical_root.display().to_string()));
-    assert!(stdout.contains("spec_dir: openspec"));
-    assert!(stdout.contains("Added '.spectra/' to .gitignore."));
+    assert_eq!(
+        stdout,
+        format!(
+            "✓ Initialized at {}\n",
+            canonical_root.join("openspec").display()
+        )
+    );
+    assert!(out.stderr.is_empty());
 }
 
 #[test]

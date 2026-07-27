@@ -31,9 +31,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/{changes,specs}/`,
-    /// and a `.spectra/` entry in `.gitignore`. Every other command requires
-    /// this to have run first.
+    /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/config.yaml`,
+    /// `<spec_dir>/{changes/archive,specs}/`, and a `.spectra/` entry in
+    /// `.gitignore`. Every other command requires this to have run first.
     Init {
         #[arg(long)]
         adopt: bool,
@@ -360,13 +360,9 @@ fn cmd_init(root: &Path, adopt: bool, as_json: bool) -> Result<i32> {
         );
     } else {
         println!(
-            "Initialized spectra project in {} (spec_dir: {}).",
-            outcome.root.display(),
-            outcome.spec_dir
+            "✓ Initialized at {}",
+            outcome.root.join(&outcome.spec_dir).display()
         );
-        if outcome.gitignore_updated {
-            println!("Added '.spectra/' to .gitignore.");
-        }
     }
     Ok(0)
 }

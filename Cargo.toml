@@ -24,6 +24,10 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 once_cell = "1"
+# `write_atomically` needs the process umask to reproduce the reference
+# binary's `0666 & ~umask` mode on newly-created files; std exposes no umask
+# API. See docs/reverse-engineering/update.md and issue #93.
+libc = "0.2"
 # dev-only: integration tests hash `update`'s written trees against the
 # oracle-captured golden TSV (docs/reverse-engineering/golden/update-trees-*).
 sha2 = "0.10"

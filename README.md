@@ -15,7 +15,8 @@ starting with the `drift` command.
 > [`docs/reverse-engineering/update.md`](docs/reverse-engineering/update.md),
 > [`docs/reverse-engineering/in-progress.md`](docs/reverse-engineering/in-progress.md),
 > and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
-> (the last one is **not** oracle-verified — see that doc). `validate` is
+> (init's default artifacts and stdout are oracle-verified; its `--adopt` /
+> `--json` extensions and a few edge cases are not — see that doc). `validate` is
 > likewise **not** oracle-verified: it matches the OSS `openspec validate`
 > contract, not the macOS binary — see
 > [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md).
@@ -47,7 +48,7 @@ severity — CI gates on the `severity` field of the JSON output (see below).
 ## Usage
 
 ```sh
-spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/{changes,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
+spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/config.yaml + <spec_dir>/{changes/archive,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
 spectra validate [CHANGE] [--changes] [--strict] [--json]  # OpenSpec structural gate; exits non-zero when any change is invalid
 spectra list  [--json]            # lists active changes
@@ -214,7 +215,7 @@ binary is used as a golden oracle to calibrate constants
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
 crates/spectra-cli/    # clap CLI: init / drift / validate / update / list / show / park / unpark / new change / task done / in-progress add / completion / archive
 crates/spectra-core/assets/update/   # instruction-file templates captured verbatim from the oracle (generated; see update.md)
-docs/reverse-engineering/   # how the original works (and, for init, what's still unverified)
+docs/reverse-engineering/   # how the original works (each doc separates probed from still-unverified behavior)
 scripts/               # oracle calibration probes + template capture (capture-update-templates.py)
 ```
 
