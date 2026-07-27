@@ -324,6 +324,22 @@ because the oracle writes in place and therefore keeps them: without that, a
 the very user keys the merge preserves. The temp file is created with `O_EXCL`,
 so a pre-created symlink at the predictable temp path cannot be written through.
 
+### Newly created file modes
+
+For a newly created file, the oracle uses the standard regular-file base mode
+filtered by the process umask: `0666 & ~umask`. Direct probes measured `0666`
+at umask `000`, `0664` at `002`, `0644` at `022`, and `0600` at `077`.
+OpenSpectra's `Plain` strategy already gets those modes from
+`std::fs::write`; the atomic `Managed` / `ClaudeSettings` strategy now keeps
+its temp file at `0600` while writing sensitive content, then applies the
+calculated create mode immediately before the rename. Existing regular targets
+still retain their current mode instead.
+
+Probe pitfall: umask `022` and `077` cannot distinguish an `0666` creation base
+from a hard-coded `0644` base, because both bases collapse to `0644` and `0600`
+respectively under those masks. A parity probe must include umask `002` or
+`000`; otherwise it can incorrectly conclude that the oracle's base is `0644`.
+
 ### Residual risk: symlinked *ancestor* directories
 
 Only the final path component is defended. If a **parent** is a symlink —

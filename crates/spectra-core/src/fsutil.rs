@@ -332,18 +332,18 @@ fn write_in_place_fallback(
 fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Result<()> {
     // Two constraints pull against each other here, and both must hold:
     //
-    // 1. The temp file must never be wider than the target, at any instant --
-    //    it holds the fully merged content, and `.claude/settings.json` is
-    //    where people keep tokens. So it is created `0600`, before any content
-    //    exists, rather than created wide and chmod'd afterwards.
-    // 2. The final mode must be *exactly* the target's. `OpenOptions::mode` is
-    //    masked by the process umask, so creating with the target's bits
-    //    silently narrows them: a `0644` file under `umask 077` came back
-    //    `0600` while the reference binary, writing in place, kept `0644`
-    //    (measured; PR #86 round-2, found independently by both external
-    //    reviewers). `File::set_permissions` is `fchmod`, which ignores the
-    //    umask, so the exact bits are applied after the write and before the
-    //    rename.
+    // 1. The temp file must never be wider than `0600` while it contains the
+    //    fully merged content -- `.claude/settings.json` is where people keep
+    //    tokens. So it is created `0600`, before any content exists, rather
+    //    than created wide and chmod'd afterwards.
+    // 2. The final mode must be exact. For an existing regular target that
+    //    means preserving its bits; `OpenOptions::mode` cannot do that because
+    //    the process umask silently narrows them (`0644` under `umask 077`
+    //    became `0600`, measured in PR #86 round-2). For a new target the
+    //    oracle uses the normal file-creation mode, `0666 & ~umask` (issue
+    //    #93), not this temp file's deliberately narrow `0600`. In both cases
+    //    `File::set_permissions` is `fchmod`, which ignores the umask, so the
+    //    selected bits are applied only after the write and before the rename.
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
@@ -353,13 +353,12 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
         cleanup_temp_file(tmp_path);
         return Err(e);
     }
-    if let Some(mode) = existing_file_mode(path)? {
-        let exact = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode);
-        if let Err(e) = file.set_permissions(exact) {
-            drop(file);
-            cleanup_temp_file(tmp_path);
-            return Err(e);
-        }
+    let mode = existing_file_mode(path)?.unwrap_or_else(|| create_mode(process_umask()));
+    let exact = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode);
+    if let Err(e) = file.set_permissions(exact) {
+        drop(file);
+        cleanup_temp_file(tmp_path);
+        return Err(e);
     }
     drop(file);
     if let Err(e) = std::fs::rename(tmp_path, path) {
@@ -370,9 +369,10 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
 }
 
 /// `target`'s permission bits when it is an existing regular file, so the
-/// replacement can be created with them. `None` for a missing target (the
-/// create case: keep the umask default) and for a symlink, which is deliberately
-/// not followed since the rename is about to replace the link itself.
+/// replacement can retain them. `None` for a missing target (the create case
+/// gets `0666 & ~umask` after its contents are safely written under `0600`) and
+/// for a symlink, which is deliberately not followed since the rename is about
+/// to replace the link itself.
 fn existing_file_mode(target: &Path) -> std::io::Result<Option<u32>> {
     match std::fs::symlink_metadata(target) {
         Ok(meta) if meta.file_type().is_file() => Ok(Some(
@@ -381,6 +381,44 @@ fn existing_file_mode(target: &Path) -> std::io::Result<Option<u32>> {
         Ok(_) => Ok(None),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e),
+    }
+}
+
+/// The reference binary's mode for a newly created regular file: the standard
+/// `open(O_CREAT, 0666)` base filtered by the process umask.
+fn create_mode(umask: u32) -> u32 {
+    0o666 & !umask
+}
+
+/// Read the process umask once, then reuse it for every atomic create.
+///
+/// POSIX exposes no read-only umask operation: `umask(2)` returns the old value
+/// only while replacing it. Restoring it immediately still leaves a
+/// process-global set/restore window in which a sibling thread could create a
+/// file under the temporary mask. `OnceLock` confines that unavoidable window
+/// to the first atomic write rather than repeating it for every generated file.
+fn process_umask() -> u32 {
+    static UMASK: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+    *UMASK.get_or_init(read_umask)
+}
+
+/// The set-then-restore dance itself, split out from [`process_umask`]'s
+/// `OnceLock` so it is **testable**. Caching is what makes the window rare;
+/// it is also what makes the read unobservable — once the lock is initialized
+/// no test can make it read again, so a test written against `process_umask`
+/// can only ever compare the cached value against the ambient mask. On the
+/// common `umask 022` box that comparison also passes for a hardcoded `0o022`,
+/// i.e. it is vacuous exactly where it matters (verified by mutation: the
+/// hardcoded variant kept such a test green).
+fn read_umask() -> u32 {
+    // SAFETY: `umask` accepts every `mode_t` value and has no pointer or
+    // lifetime preconditions. The first call returns the prior mask; the
+    // second restores that exact value.
+    unsafe {
+        let old = libc::umask(0o022);
+        libc::umask(old);
+        u32::from(old)
     }
 }
 
@@ -456,6 +494,63 @@ mod tests {
     // ---- write_atomically (moved here from init.rs: unit tests belong beside
     // the code they cover, and the security-critical one was hiding in a module
     // nobody opens when reviewing this file) ----
+
+    #[test]
+    fn newly_created_file_mode_uses_a_0666_base_filtered_by_umask() {
+        for (umask, expected) in [
+            (0o000, 0o666),
+            (0o002, 0o664),
+            (0o022, 0o644),
+            (0o077, 0o600),
+        ] {
+            assert_eq!(create_mode(umask), expected, "umask {umask:03o}");
+        }
+    }
+
+    #[test]
+    fn read_umask_reports_the_mask_actually_in_effect_and_restores_it() {
+        // `create_mode` 的算術有上面那個純函式測試涵蓋，但它證明不了讀取端：
+        // 把 `read_umask` 換成硬編 `0o022`，那個測試照樣全綠，而在 umask
+        // 002 / 000 的機器上每個新建檔案的權限都會錯。
+        //
+        // 這個測試**故意設一個非預設的 mask**（0o057）再讀。第一版沒有這樣做，
+        // 只把 `process_umask()` 拿去跟環境當下的 mask 比對 —— 在 umask 022 的
+        // 開發機上，硬編 `0o022` 的突變體讓它保持綠燈，也就是說它在唯一需要它
+        // 的地方是空的。突變驗證過：現在這一版對同一個突變體會失敗。
+        //
+        // 為什麼測 `read_umask` 而不是 `process_umask`：後者的 `OnceLock` 只讀
+        // 一次，測試無從讓它重讀，所以只能拿快取值跟環境比 —— 正是上面那個空的
+        // 比對。
+        //
+        // umask 是 process 全域，`cargo test` 平行執行，所以這裡序列化。鎖只能
+        // 約束**同樣拿鎖的**測試；同時跑的其他測試若在這短暫窗口內建立新檔，
+        // 會拿到 0o057。本檔其餘測試不受影響：它們要嘛不檢查 mode，要嘛先建檔
+        // 再自己 chmod。日後若新增「檢查新建檔案 mode」的測試，也要拿這把鎖。
+        static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // 前一個測試 panic 導致鎖中毒時，取回內部值繼續 —— 這裡保護的是全域
+        // umask，不是不變量，中毒不代表狀態不可用。
+        let _guard = UMASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        const PROBE: u32 = 0o057;
+        // SAFETY: 同 `read_umask`。
+        let original = unsafe { libc::umask(PROBE as libc::mode_t) };
+
+        let observed = read_umask();
+
+        // 先還原再 assert：assert 失敗會 panic，若還原在後面就會把 0o057 留給
+        // 整個 test binary 的其餘部分。
+        let left_behind = unsafe { libc::umask(original) };
+
+        assert_eq!(
+            observed, PROBE,
+            "read_umask must report the mask actually in effect, not a hardcoded value"
+        );
+        assert_eq!(
+            u32::from(left_behind),
+            PROBE,
+            "read_umask must leave the process mask exactly as it found it"
+        );
+    }
 
     #[test]
     fn write_atomically_writes_full_content_and_leaves_no_temp_file_behind() {
