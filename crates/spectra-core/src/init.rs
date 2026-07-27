@@ -14,6 +14,65 @@ use crate::fsutil::write_atomically;
 /// never be committed — the root cause of the PR #19 self-recording bug was a
 /// project that had never run `init` and so had no such ignore entry.
 const GITIGNORE_ENTRY: &str = ".spectra/";
+const GITIGNORE_COMMENT: &str = "# Spectra app data";
+
+const SPEC_CONFIG_TEMPLATE: &str = concat!(
+    "schema: spec-driven\n",
+    "\n",
+    "# Project context (optional)\n",
+    "# This is shown to AI when creating artifacts.\n",
+    "# Add your tech stack, conventions, style guides, domain knowledge, etc.\n",
+    "# Example:\n",
+    "#   context: |\n",
+    "#     Tech stack: TypeScript, React, Node.js\n",
+    "#     We use conventional commits\n",
+    "#     Domain: e-commerce platform\n",
+    "\n",
+    "# Per-artifact rules (optional)\n",
+    "# Add custom rules for specific artifacts.\n",
+    "# Example:\n",
+    "#   rules:\n",
+    "#     proposal:\n",
+    "#       - Keep proposals under 500 words\n",
+    "#       - Always include a \"Non-goals\" section\n",
+    "#     tasks:\n",
+    "#       - Break tasks into chunks of max 2 hours\n",
+);
+
+const SPECTRA_CONFIG_TEMPLATE: &str = concat!(
+    "# Spectra application config\n",
+    "# See: https://github.com/spectra-app/spectra\n",
+    "\n",
+    "# OpenSpec directory path (relative to project root)\n",
+    "# Changing this requires rebuilding the vector search index.\n",
+    "# spec_dir: docs/specs\n",
+    "\n",
+    "# Language for AI-generated artifacts\n",
+    "# locale: tw\n",
+    "\n",
+    "# Workflow toggles\n",
+    "# tdd: true\n",
+    "# audit: true\n",
+    "# parallel_tasks: true\n",
+    "\n",
+    "# Claude slash commands (set true to also generate /spectra:X commands)\n",
+    "# claude_slash_commands: true\n",
+    "\n",
+    "# Enable git worktree support for isolated change branches\n",
+    "# worktree: true\n",
+    "\n",
+    "# Custom git worktrees directory\n",
+    "# worktrees_dir: .spectra/worktrees\n",
+    "\n",
+    "# Claude Code skill effort levels (low/medium/high/xhigh/max)\n",
+    "# claude_effort:\n",
+    "#   apply: high\n",
+    "\n",
+    "# AI tools to generate instruction files for\n",
+    "# tools:\n",
+    "#   - claude\n",
+    "#   - cursor\n",
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InitOutcome {
@@ -25,13 +84,13 @@ pub struct InitOutcome {
     pub gitignore_updated: bool,
 }
 
-/// Scaffold `<spec_dir>/{changes,specs}/`, a `.gitignore` entry for
-/// `.spectra/`, and `.spectra.yaml` under `root`. Errors if `root` is already
-/// initialized. Intended to run once per project: `Config::is_initialized`'s
-/// check-then-act isn't lock-protected, so two concurrent invocations on the
-/// same never-initialized `root` could both pass it and both scaffold --
-/// harmless (the content each writes is deterministic) but redundant, not
-/// actually serialized against each other.
+/// Scaffold `<spec_dir>/{changes/archive,specs}/`, `<spec_dir>/config.yaml`, a
+/// `.gitignore` entry for `.spectra/`, and `.spectra.yaml` under `root`. Errors
+/// if `root` is already initialized. Intended to run once per project:
+/// `Config::is_initialized`'s check-then-act isn't lock-protected, so two
+/// concurrent invocations on the same never-initialized `root` could both pass
+/// it and both scaffold -- harmless (the content each writes is deterministic)
+/// but redundant, not actually serialized against each other.
 ///
 /// `.spectra.yaml` — the file [`Config::is_initialized`] checks — is written
 /// *last*, after every other step has succeeded, so its mere existence is a
@@ -48,9 +107,9 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
 ///
 /// Plain `init` keeps its original "fresh project" contract. `adopt` is the
 /// explicit compatibility path for a root that already has OpenSpec content:
-/// it only creates the two required directories if missing, ensures
+/// it creates the required directories and `config.yaml` if missing, ensures
 /// `.spectra/` is ignored, and writes `.spectra.yaml` last. It deliberately
-/// does not touch `project.md`, `AGENTS.md`, `config.yaml`, or any existing
+/// does not overwrite `project.md`, `AGENTS.md`, `config.yaml`, or any existing
 /// change/spec content under the spec directory.
 pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
     if Config::is_initialized(root) {
@@ -65,26 +124,51 @@ pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
     } else {
         DEFAULT_SPEC_DIR.to_string()
     };
+    init_resolved_spec_dir(root, spec_dir, adopt)
+}
+
+fn init_resolved_spec_dir(root: &Path, spec_dir: String, adopted: bool) -> Result<InitOutcome> {
     std::fs::create_dir_all(root.join(&spec_dir).join("changes"))
         .with_context(|| format!("creating {spec_dir}/changes"))?;
+    std::fs::create_dir_all(root.join(&spec_dir).join("changes/archive"))
+        .with_context(|| format!("creating {spec_dir}/changes/archive"))?;
     std::fs::create_dir_all(root.join(&spec_dir).join("specs"))
         .with_context(|| format!("creating {spec_dir}/specs"))?;
 
+    let spec_config_path = root.join(&spec_dir).join("config.yaml");
+    if !spec_config_path
+        .try_exists()
+        .with_context(|| format!("checking {}", spec_config_path.display()))?
+    {
+        write_atomically(&spec_config_path, SPEC_CONFIG_TEMPLATE)
+            .map_err(anyhow::Error::from)
+            .with_context(|| format!("writing {}", spec_config_path.display()))?;
+    }
+
     let gitignore_updated = ensure_gitignore_entry(root)?;
 
-    write_atomically(
-        &root.join(".spectra.yaml"),
-        &format!("spec_dir: {spec_dir}\n"),
-    )
-    .map_err(anyhow::Error::from)
-    .context("writing .spectra.yaml")?;
+    write_atomically(&root.join(".spectra.yaml"), &spectra_config(&spec_dir))
+        .map_err(anyhow::Error::from)
+        .context("writing .spectra.yaml")?;
 
     Ok(InitOutcome {
         root: root.to_path_buf(),
         spec_dir,
-        adopted: adopt,
+        adopted,
         gitignore_updated,
     })
+}
+
+fn spectra_config(spec_dir: &str) -> String {
+    if spec_dir == DEFAULT_SPEC_DIR {
+        SPECTRA_CONFIG_TEMPLATE.to_string()
+    } else {
+        SPECTRA_CONFIG_TEMPLATE.replacen(
+            "# spec_dir: docs/specs",
+            &format!("spec_dir: {spec_dir}"),
+            1,
+        )
+    }
 }
 
 /// Resolve the spec directory for an `--adopt`. Only the default `openspec`
@@ -109,9 +193,9 @@ fn detect_adopt_spec_dir(root: &Path) -> Result<String> {
     Ok(DEFAULT_SPEC_DIR.to_string())
 }
 
-/// Append [`GITIGNORE_ENTRY`] to `.gitignore` as its own line, unless a line
-/// already matches it (ignoring surrounding whitespace). Creates the file if
-/// it doesn't exist. Returns whether a write happened.
+/// Append the Spectra comment and [`GITIGNORE_ENTRY`] block to `.gitignore`,
+/// unless a line already matches the entry (ignoring surrounding whitespace).
+/// Creates the file if it doesn't exist. Returns whether a write happened.
 fn ensure_gitignore_entry(root: &Path) -> Result<bool> {
     let path = root.join(".gitignore");
     let existing = read_gitignore(&path)?;
@@ -128,9 +212,14 @@ fn ensure_gitignore_entry(root: &Path) -> Result<bool> {
     };
 
     let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
+    if !updated.is_empty() {
+        if !updated.ends_with('\n') {
+            updated.push_str(newline);
+        }
         updated.push_str(newline);
     }
+    updated.push_str(GITIGNORE_COMMENT);
+    updated.push_str(newline);
     updated.push_str(GITIGNORE_ENTRY);
     updated.push_str(newline);
     write_atomically(&path, &updated)
@@ -202,8 +291,9 @@ mod tests {
         // assertion below fails (while a naive "did init() return Err"
         // assertion would not have).
         let original_gitignore = "target/\n";
-        std::fs::create_dir_all(tmp.join("openspec/changes")).unwrap();
+        std::fs::create_dir_all(tmp.join("openspec/changes/archive")).unwrap();
         std::fs::create_dir_all(tmp.join("openspec/specs")).unwrap();
+        std::fs::write(tmp.join("openspec/config.yaml"), SPEC_CONFIG_TEMPLATE).unwrap();
         std::fs::write(tmp.join(".gitignore"), original_gitignore).unwrap();
 
         std::fs::set_permissions(&*tmp, std::fs::Permissions::from_mode(0o555)).unwrap();
@@ -266,6 +356,15 @@ mod tests {
         }
     }
 
+    fn entry_names(path: &Path) -> Vec<String> {
+        let mut names: Vec<_> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        names
+    }
+
     #[test]
     fn init_creates_config_and_scaffold_dirs() {
         let tmp = TempDir::new();
@@ -275,10 +374,145 @@ mod tests {
         assert!(!outcome.adopted);
         assert!(tmp.join(".spectra.yaml").is_file());
         assert!(tmp.join("openspec/changes").is_dir());
+        assert!(tmp.join("openspec/changes/archive").is_dir());
         assert!(tmp.join("openspec/specs").is_dir());
+        assert!(tmp.join("openspec/config.yaml").is_file());
+        assert_eq!(
+            entry_names(&tmp),
+            [".gitignore", ".spectra.yaml", "openspec"]
+        );
+        assert_eq!(
+            entry_names(&tmp.join("openspec")),
+            ["changes", "config.yaml", "specs"]
+        );
+        assert_eq!(entry_names(&tmp.join("openspec/changes")), ["archive"]);
+        assert!(entry_names(&tmp.join("openspec/changes/archive")).is_empty());
+        assert!(entry_names(&tmp.join("openspec/specs")).is_empty());
 
         let cfg = Config::load(&tmp).unwrap();
         assert_eq!(cfg.spec_dir, "openspec");
+    }
+
+    #[test]
+    fn init_creates_an_empty_changes_archive_directory() {
+        let tmp = TempDir::new();
+
+        init(&tmp).unwrap();
+
+        let archive = tmp.join("openspec/changes/archive");
+        assert!(archive.is_dir());
+        assert_eq!(std::fs::read_dir(archive).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn init_creates_the_oracle_spec_config_template() {
+        let tmp = TempDir::new();
+
+        init(&tmp).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(tmp.join("openspec/config.yaml")).unwrap(),
+            concat!(
+                "schema: spec-driven\n",
+                "\n",
+                "# Project context (optional)\n",
+                "# This is shown to AI when creating artifacts.\n",
+                "# Add your tech stack, conventions, style guides, domain knowledge, etc.\n",
+                "# Example:\n",
+                "#   context: |\n",
+                "#     Tech stack: TypeScript, React, Node.js\n",
+                "#     We use conventional commits\n",
+                "#     Domain: e-commerce platform\n",
+                "\n",
+                "# Per-artifact rules (optional)\n",
+                "# Add custom rules for specific artifacts.\n",
+                "# Example:\n",
+                "#   rules:\n",
+                "#     proposal:\n",
+                "#       - Keep proposals under 500 words\n",
+                "#       - Always include a \"Non-goals\" section\n",
+                "#     tasks:\n",
+                "#       - Break tasks into chunks of max 2 hours\n",
+            )
+        );
+    }
+
+    #[test]
+    fn spectra_config_replaces_only_line_six_for_a_non_default_spec_dir() {
+        let default = spectra_config(DEFAULT_SPEC_DIR);
+        let custom = spectra_config("docs/myspecs");
+
+        let default_lines: Vec<_> = default.lines().collect();
+        let custom_lines: Vec<_> = custom.lines().collect();
+        assert_eq!(default_lines[5], "# spec_dir: docs/specs");
+        assert_eq!(custom_lines[5], "spec_dir: docs/myspecs");
+        assert_eq!(default_lines.len(), custom_lines.len());
+        assert_eq!(&default_lines[..5], &custom_lines[..5]);
+        assert_eq!(&default_lines[6..], &custom_lines[6..]);
+    }
+
+    #[test]
+    fn resolved_non_default_spec_dir_places_artifacts_and_replaces_line_six() {
+        let tmp = TempDir::new();
+
+        let outcome = init_resolved_spec_dir(&tmp, "docs/myspecs".to_string(), true).unwrap();
+
+        assert_eq!(outcome.spec_dir, "docs/myspecs");
+        assert!(outcome.adopted);
+        assert!(tmp.join("docs/myspecs/changes/archive").is_dir());
+        assert!(tmp.join("docs/myspecs/specs").is_dir());
+        assert!(tmp.join("docs/myspecs/config.yaml").is_file());
+        let config = std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap();
+        assert_eq!(config.lines().nth(5), Some("spec_dir: docs/myspecs"));
+        assert_eq!(
+            config.lines().count(),
+            SPECTRA_CONFIG_TEMPLATE.lines().count()
+        );
+    }
+
+    #[test]
+    fn init_creates_the_oracle_spectra_config_template() {
+        let tmp = TempDir::new();
+
+        init(&tmp).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+            concat!(
+                "# Spectra application config\n",
+                "# See: https://github.com/spectra-app/spectra\n",
+                "\n",
+                "# OpenSpec directory path (relative to project root)\n",
+                "# Changing this requires rebuilding the vector search index.\n",
+                "# spec_dir: docs/specs\n",
+                "\n",
+                "# Language for AI-generated artifacts\n",
+                "# locale: tw\n",
+                "\n",
+                "# Workflow toggles\n",
+                "# tdd: true\n",
+                "# audit: true\n",
+                "# parallel_tasks: true\n",
+                "\n",
+                "# Claude slash commands (set true to also generate /spectra:X commands)\n",
+                "# claude_slash_commands: true\n",
+                "\n",
+                "# Enable git worktree support for isolated change branches\n",
+                "# worktree: true\n",
+                "\n",
+                "# Custom git worktrees directory\n",
+                "# worktrees_dir: .spectra/worktrees\n",
+                "\n",
+                "# Claude Code skill effort levels (low/medium/high/xhigh/max)\n",
+                "# claude_effort:\n",
+                "#   apply: high\n",
+                "\n",
+                "# AI tools to generate instruction files for\n",
+                "# tools:\n",
+                "#   - claude\n",
+                "#   - cursor\n",
+            )
+        );
     }
 
     #[test]
@@ -294,9 +528,11 @@ mod tests {
     fn init_adopt_preserves_existing_openspec_content() {
         let tmp = TempDir::new();
         let project = tmp.join("openspec/project.md");
+        let spec_config = tmp.join("openspec/config.yaml");
         let spec = tmp.join("openspec/specs/search/spec.md");
         std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
         std::fs::write(&project, "# Existing project\n\nDo not touch.\n").unwrap();
+        std::fs::write(&spec_config, "schema: custom\n").unwrap();
         std::fs::write(
             &spec,
             "# Search Specification\n\n## Requirements\n\n### Requirement: Search\n\nExisting.\n",
@@ -316,8 +552,12 @@ mod tests {
             "# Search Specification\n\n## Requirements\n\n### Requirement: Search\n\nExisting.\n"
         );
         assert_eq!(
+            std::fs::read_to_string(&spec_config).unwrap(),
+            "schema: custom\n"
+        );
+        assert_eq!(
             std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
-            "spec_dir: openspec\n"
+            SPECTRA_CONFIG_TEMPLATE
         );
     }
 
@@ -340,7 +580,9 @@ mod tests {
         assert!(outcome.adopted);
         assert_eq!(outcome.spec_dir, "openspec");
         assert!(tmp.join("openspec/changes").is_dir());
+        assert!(tmp.join("openspec/changes/archive").is_dir());
         assert!(tmp.join("openspec/specs").is_dir());
+        assert!(tmp.join("openspec/config.yaml").is_file());
         assert!(tmp.join(".spectra.yaml").is_file());
     }
 
@@ -365,7 +607,21 @@ mod tests {
 
         assert!(outcome.gitignore_updated);
         let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
-        assert!(contents.lines().any(|l| l == ".spectra/"));
+        assert_eq!(contents, "# Spectra app data\n.spectra/\n");
+    }
+
+    #[test]
+    fn init_appends_the_oracle_block_to_a_non_empty_gitignore() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".gitignore"), "node_modules/\n*.log\n").unwrap();
+
+        let outcome = init(&tmp).unwrap();
+
+        assert!(outcome.gitignore_updated);
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".gitignore")).unwrap(),
+            "node_modules/\n*.log\n\n# Spectra app data\n.spectra/\n"
+        );
     }
 
     #[test]
@@ -377,7 +633,7 @@ mod tests {
 
         assert!(outcome.gitignore_updated);
         let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
-        assert_eq!(contents, "target/\n.spectra/\n");
+        assert_eq!(contents, "target/\n\n# Spectra app data\n.spectra/\n");
     }
 
     #[test]
@@ -389,7 +645,10 @@ mod tests {
 
         assert!(outcome.gitignore_updated);
         let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
-        assert_eq!(contents, "target/\r\n.spectra/\r\n");
+        assert_eq!(
+            contents,
+            "target/\r\n\r\n# Spectra app data\r\n.spectra/\r\n"
+        );
     }
 
     #[test]
