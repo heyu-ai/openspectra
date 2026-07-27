@@ -340,10 +340,10 @@ the rename replaces the link itself (the documented security stance above),
 and the replacement's content may have been read *through* the link from a
 secret-bearing file. The oracle — which writes through the link and never
 creates an entry there — offers no parity mode for the replacing file, so
-OpenSpectra keeps the temp file's `0600` rather than treating it as a fresh
-create (PR #100 mob review ruling; folding it into the create case would have
-turned a symlinked `0600` settings.json into a `0644` regular file holding
-the same keys).
+OpenSpectra pins the replacement at `0600` (an explicit fchmod, so the mode is
+umask-independent) rather than treating it as a fresh create (PR #100 mob
+review ruling; folding it into the create case would have turned a symlinked
+`0600` settings.json into a `0644` regular file holding the same keys).
 
 Reading the umask is itself a set/restore dance (`umask(2)` has no read-only
 form). The transient value is `0o777`: a file a sibling thread creates inside

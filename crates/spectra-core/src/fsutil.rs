@@ -211,7 +211,7 @@ fn symlink_target_is_dir(path: &Path) -> Result<bool> {
 /// the user keys the merge deliberately preserves -- and the reference binary,
 /// which writes in place, keeps the original mode. A missing target is created
 /// at the reference binary's `0666 & ~umask` (issue #93). A symlinked or
-/// otherwise non-regular target keeps the temp file's `0600`: the replacement's
+/// otherwise non-regular target's replacement is pinned to `0600`: its
 /// content may have been read through the link from a secret-bearing file, and
 /// the oracle -- which writes through the link and never creates an entry
 /// there -- offers no parity mode for the file that replaces it (PR #100
@@ -369,11 +369,16 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
         // The entry being replaced is a symlink (or other non-regular file).
         // Its own bits describe the link, not the content's confidentiality,
         // and the merged content may have been read *through* the link from a
-        // secret-bearing target -- keep the temp file's `0600` instead of
+        // secret-bearing target -- pin the replacement to `0600` instead of
         // treating this as a fresh create (PR #100 mob review, consensus
         // Critical: `create_mode` here turned a symlinked 0600 settings.json
-        // into a 0644 regular file holding the same keys).
-        Ok(TargetMode::NonRegular) => None,
+        // into a 0644 regular file holding the same keys). An explicit `0600`
+        // rather than `None`: the temp file's own bits are `0o600 & ~umask`
+        // (OpenOptions::mode is masked), so skipping the fchmod would make
+        // this the one branch whose final mode still depends on the umask --
+        // the exact stated-but-false-invariant shape the re-review caught in
+        // the first version of this fix.
+        Ok(TargetMode::NonRegular) => Some(0o600),
         // Sibling failure branches all remove the temp file; this one must
         // too, or a temp file holding the fully merged content is silently
         // stranded, violating the cleanup invariant documented above
@@ -405,7 +410,7 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
 /// file's bits are preserved exactly, an absent target gets the reference
 /// binary's `0666 & ~umask` create mode, and a non-regular target (symlink,
 /// fifo, socket -- deliberately not followed, since the rename is about to
-/// replace the entry itself) keeps the temp file's `0600`. `Absent` and
+/// replace the entry itself) is pinned to `0600`. `Absent` and
 /// `NonRegular` were previously folded into one `None`, which sent the
 /// symlink case down the create path and widened secret-bearing content
 /// (PR #100 mob review, consensus Critical).
@@ -678,17 +683,25 @@ mod tests {
         // umask 預設權限新建的，於是一個 0600 的 .claude/settings.json 更新後
         // 變成 0644，把它保留下來的使用者鍵暴露給同機其他使用者。oracle 就地
         // 寫入、保留原 mode。
+        //
+        // 迴圈涵蓋 AC-2 列舉的 0600/0640（0666 由上面 umask 遮罩那個測試獨立
+        // 涵蓋）—— 字面收攏契約列舉，成本為零（PR #100 re-review NIT）。
         use std::os::unix::fs::PermissionsExt;
-        let tmp = TempDir::new();
-        let target = tmp.join("secret.json");
-        fs::write(&target, "old").unwrap();
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+        for existing in [0o600u32, 0o640] {
+            let tmp = TempDir::new();
+            let target = tmp.join("secret.json");
+            fs::write(&target, "old").unwrap();
+            fs::set_permissions(&target, fs::Permissions::from_mode(existing)).unwrap();
 
-        write_atomically(&target, "new").unwrap();
+            write_atomically(&target, "new").unwrap();
 
-        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "existing mode must survive the rename");
-        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+            let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                mode, existing,
+                "existing mode {existing:03o} must survive the rename"
+            );
+            assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+        }
     }
 
     #[test]
@@ -844,9 +857,11 @@ mod tests {
         // 迴歸（PR #100 mob review，consensus Critical）：Absent 與 NonRegular
         // 曾折疊成同一個 None，取代 symlink 的 regular 檔因此走 create 分支以
         // 0666 & ~umask 落地 —— 而其內容可能是透過 link 從 0600 的
-        // secret-bearing 目標讀進來的。斷言取代檔保留暫存檔的 0600。
-        // 不需要 UMASK_LOCK：NonRegular 分支不消費 umask；若突變讓它走 create
-        // 分支，無論窗口內外 mode 都不會是 0600（0o777 暫態只會更窄到 0）。
+        // secret-bearing 目標讀進來的。斷言取代檔被釘在 0600。
+        // 不需要 UMASK_LOCK：NonRegular 分支現在是顯式 fchmod(0600)，不受
+        // umask 影響（re-review 抓到第一版的理由是假的 —— 當時分支是 None、
+        // 最終 mode 是被 umask 遮罩的暫存檔 bits，正是「陳述不成立的
+        // invariant」的重演；現已改為顯式釘住）。
         use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new();
         let outside = tmp.join("dotfiles-secret.json");
