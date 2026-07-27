@@ -335,6 +335,20 @@ its temp file at `0600` while writing sensitive content, then applies the
 calculated create mode immediately before the rename. Existing regular targets
 still retain their current mode instead.
 
+A **symlinked (or otherwise non-regular) target** is neither of those cases:
+the rename replaces the link itself (the documented security stance above),
+and the replacement's content may have been read *through* the link from a
+secret-bearing file. The oracle — which writes through the link and never
+creates an entry there — offers no parity mode for the replacing file, so
+OpenSpectra keeps the temp file's `0600` rather than treating it as a fresh
+create (PR #100 mob review ruling; folding it into the create case would have
+turned a symlinked `0600` settings.json into a `0644` regular file holding
+the same keys).
+
+Reading the umask is itself a set/restore dance (`umask(2)` has no read-only
+form). The transient value is `0o777`: a file a sibling thread creates inside
+that window comes out narrower, never wider, than intended — fail-closed.
+
 Probe pitfall: umask `022` and `077` cannot distinguish an `0666` creation base
 from a hard-coded `0644` base, because both bases collapse to `0644` and `0600`
 respectively under those masks. A parity probe must include umask `002` or

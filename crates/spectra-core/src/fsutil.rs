@@ -209,7 +209,13 @@ fn symlink_target_is_dir(path: &Path) -> Result<bool> {
 /// copied onto the replacement before the rename. Otherwise a `0600`
 /// `.claude/settings.json` would come back `0644` after an update, exposing
 /// the user keys the merge deliberately preserves -- and the reference binary,
-/// which writes in place, keeps the original mode.
+/// which writes in place, keeps the original mode. A missing target is created
+/// at the reference binary's `0666 & ~umask` (issue #93). A symlinked or
+/// otherwise non-regular target keeps the temp file's `0600`: the replacement's
+/// content may have been read through the link from a secret-bearing file, and
+/// the oracle -- which writes through the link and never creates an entry
+/// there -- offers no parity mode for the file that replaces it (PR #100
+/// review, consensus).
 ///
 /// Returns [`std::io::Result`] rather than [`anyhow::Result`] on purpose: the
 /// `update` command must surface the raw OS error text to stay byte-identical
@@ -332,10 +338,14 @@ fn write_in_place_fallback(
 fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Result<()> {
     // Two constraints pull against each other here, and both must hold:
     //
-    // 1. The temp file must never be wider than `0600` while it contains the
-    //    fully merged content -- `.claude/settings.json` is where people keep
-    //    tokens. So it is created `0600`, before any content exists, rather
-    //    than created wide and chmod'd afterwards.
+    // 1. The temp file must never be wider than the mode the renamed file
+    //    will end up with, and never wider than `0600` before that final mode
+    //    is chosen -- `.claude/settings.json` is where people keep tokens. So
+    //    it is created `0600`, before any content exists, and only widened
+    //    (if at all) to the exact final mode right before the rename. (An
+    //    earlier wording claimed it never exceeds `0600` *while holding the
+    //    merged content*; that was false -- the widening happens exactly
+    //    then -- and PR #100's review flagged the stated-but-false invariant.)
     // 2. The final mode must be exact. For an existing regular target that
     //    means preserving its bits; `OpenOptions::mode` cannot do that because
     //    the process umask silently narrows them (`0644` under `umask 077`
@@ -353,12 +363,34 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
         cleanup_temp_file(tmp_path);
         return Err(e);
     }
-    let mode = existing_file_mode(path)?.unwrap_or_else(|| create_mode(process_umask()));
-    let exact = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode);
-    if let Err(e) = file.set_permissions(exact) {
-        drop(file);
-        cleanup_temp_file(tmp_path);
-        return Err(e);
+    let mode = match target_mode(path) {
+        Ok(TargetMode::Regular(bits)) => Some(bits),
+        Ok(TargetMode::Absent) => Some(create_mode(process_umask())),
+        // The entry being replaced is a symlink (or other non-regular file).
+        // Its own bits describe the link, not the content's confidentiality,
+        // and the merged content may have been read *through* the link from a
+        // secret-bearing target -- keep the temp file's `0600` instead of
+        // treating this as a fresh create (PR #100 mob review, consensus
+        // Critical: `create_mode` here turned a symlinked 0600 settings.json
+        // into a 0644 regular file holding the same keys).
+        Ok(TargetMode::NonRegular) => None,
+        // Sibling failure branches all remove the temp file; this one must
+        // too, or a temp file holding the fully merged content is silently
+        // stranded, violating the cleanup invariant documented above
+        // (PR #100 mob review).
+        Err(e) => {
+            drop(file);
+            cleanup_temp_file(tmp_path);
+            return Err(e);
+        }
+    };
+    if let Some(mode) = mode {
+        let exact = <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(mode);
+        if let Err(e) = file.set_permissions(exact) {
+            drop(file);
+            cleanup_temp_file(tmp_path);
+            return Err(e);
+        }
     }
     drop(file);
     if let Err(e) = std::fs::rename(tmp_path, path) {
@@ -368,18 +400,29 @@ fn write_via_temp(path: &Path, contents: &str, tmp_path: &Path) -> std::io::Resu
     Ok(())
 }
 
-/// `target`'s permission bits when it is an existing regular file, so the
-/// replacement can retain them. `None` for a missing target (the create case
-/// gets `0666 & ~umask` after its contents are safely written under `0600`) and
-/// for a symlink, which is deliberately not followed since the rename is about
-/// to replace the link itself.
-fn existing_file_mode(target: &Path) -> std::io::Result<Option<u32>> {
+/// What currently occupies `target`, distinguished because each case takes a
+/// different replacement mode in [`write_via_temp`]: an existing regular
+/// file's bits are preserved exactly, an absent target gets the reference
+/// binary's `0666 & ~umask` create mode, and a non-regular target (symlink,
+/// fifo, socket -- deliberately not followed, since the rename is about to
+/// replace the entry itself) keeps the temp file's `0600`. `Absent` and
+/// `NonRegular` were previously folded into one `None`, which sent the
+/// symlink case down the create path and widened secret-bearing content
+/// (PR #100 mob review, consensus Critical).
+#[derive(Debug, PartialEq)]
+enum TargetMode {
+    Regular(u32),
+    NonRegular,
+    Absent,
+}
+
+fn target_mode(target: &Path) -> std::io::Result<TargetMode> {
     match std::fs::symlink_metadata(target) {
-        Ok(meta) if meta.file_type().is_file() => Ok(Some(
+        Ok(meta) if meta.file_type().is_file() => Ok(TargetMode::Regular(
             std::os::unix::fs::PermissionsExt::mode(&meta.permissions()),
         )),
-        Ok(_) => Ok(None),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Ok(_) => Ok(TargetMode::NonRegular),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(TargetMode::Absent),
         Err(e) => Err(e),
     }
 }
@@ -396,7 +439,8 @@ fn create_mode(umask: u32) -> u32 {
 /// only while replacing it. Restoring it immediately still leaves a
 /// process-global set/restore window in which a sibling thread could create a
 /// file under the temporary mask. `OnceLock` confines that unavoidable window
-/// to the first atomic write rather than repeating it for every generated file.
+/// to the first atomic **create** (the only path that consults the umask)
+/// rather than repeating it for every generated file.
 fn process_umask() -> u32 {
     static UMASK: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
@@ -415,8 +459,13 @@ fn read_umask() -> u32 {
     // SAFETY: `umask` accepts every `mode_t` value and has no pointer or
     // lifetime preconditions. The first call returns the prior mask; the
     // second restores that exact value.
+    //
+    // `0o777` (not `0o022`) as the transient value: a file another thread
+    // creates inside the set/restore window comes out *narrower*, never
+    // wider, than intended -- the fail-closed direction (PR #100 mob review,
+    // Codex R2 upgrade).
     unsafe {
-        let old = libc::umask(0o022);
+        let old = libc::umask(0o777);
         libc::umask(old);
         mode_bits(old)
     }
@@ -459,6 +508,16 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::PathBuf;
+
+    /// umask 是 process 全域而 `cargo test` 平行執行：所有「修改 umask」或
+    /// 「斷言由預設路徑新建之檔案 mode」的測試都必須先取得這把鎖。它曾是
+    /// probe 測試內的 function-local static —— 其他測試根本無法命名它，註解
+    /// 「日後的測試也要拿這把鎖」的指示因此不可執行（PR #100 mob review，
+    /// Gemini；Codex 同項）。
+    ///
+    /// 前一個測試 panic 導致鎖中毒時取回內部值繼續：這裡保護的是全域 umask，
+    /// 不是資料不變量，中毒不代表狀態不可用。
+    static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     struct TempDir(PathBuf);
 
@@ -532,14 +591,21 @@ mod tests {
         // 一次，測試無從讓它重讀，所以只能拿快取值跟環境比 —— 正是上面那個空的
         // 比對。
         //
-        // umask 是 process 全域，`cargo test` 平行執行，所以這裡序列化。鎖只能
-        // 約束**同樣拿鎖的**測試；同時跑的其他測試若在這短暫窗口內建立新檔，
-        // 會拿到 0o057。本檔其餘測試不受影響：它們要嘛不檢查 mode，要嘛先建檔
-        // 再自己 chmod。日後若新增「檢查新建檔案 mode」的測試，也要拿這把鎖。
-        static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        // 前一個測試 panic 導致鎖中毒時，取回內部值繼續 —— 這裡保護的是全域
-        // umask，不是不變量，中毒不代表狀態不可用。
+        // umask 是 process 全域，`cargo test` 平行執行，所以拿 module 層級的
+        // UMASK_LOCK 序列化（見其 doc）。沒拿鎖的並行測試若恰好在探測窗口內
+        // 建檔，`read_umask` 的暫態值是 0o777，建出來的檔案只會更窄不會更寬
+        // —— fail-closed（PR #100 mob review，Codex R2）。
         let _guard = UMASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        // 先把 `process_umask` 的 OnceLock 釘在環境值上，再安裝探測 mask：
+        // 否則某個建檔測試若在 0o057 窗口內首次觸發快取，整個 test binary
+        // 之後的 create-mode 斷言都吃到 0o057（PR #100 mob review）。
+        let pinned = process_umask();
+        assert_eq!(
+            pinned,
+            read_umask(),
+            "the cache must hold the ambient mask before any probe runs"
+        );
 
         const PROBE: u32 = 0o057;
         // SAFETY: 同 `read_umask`。
@@ -716,27 +782,95 @@ mod tests {
     }
 
     #[test]
-    fn existing_file_mode_reports_a_regular_files_bits_and_nothing_else() {
-        // 這是「暫存檔一開始就用最終權限建立」的機制本身。先前是寫完再 chmod，
-        // 中間有一段合併後內容以 0644 落地的視窗（PR #86 round-2）。
+    fn target_mode_distinguishes_regular_absent_and_non_regular() {
+        // Regular 的 bits 是「暫存檔以最終權限收尾」機制的輸入；Absent 與
+        // NonRegular 必須可區分 —— 兩者曾折疊成同一個 None，讓 symlink 取代
+        // 檔走 create 分支（PR #100 mob review，consensus Critical）。
         use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new();
         let regular = tmp.join("regular");
         fs::write(&regular, "x").unwrap();
         fs::set_permissions(&regular, fs::Permissions::from_mode(0o600)).unwrap();
-        assert_eq!(
-            existing_file_mode(&regular).unwrap().map(|m| m & 0o777),
-            Some(0o600)
-        );
+        match target_mode(&regular).unwrap() {
+            TargetMode::Regular(m) => assert_eq!(m & 0o777, 0o600),
+            other => panic!("expected Regular for a regular file, got {other:?}"),
+        }
 
-        assert_eq!(existing_file_mode(&tmp.join("absent")).unwrap(), None);
+        assert_eq!(
+            target_mode(&tmp.join("absent")).unwrap(),
+            TargetMode::Absent
+        );
 
         let link = tmp.join("link");
         std::os::unix::fs::symlink(&regular, &link).unwrap();
         assert_eq!(
-            existing_file_mode(&link).unwrap(),
-            None,
+            target_mode(&link).unwrap(),
+            TargetMode::NonRegular,
             "a symlink must not be followed -- the rename replaces the link itself"
+        );
+    }
+
+    #[test]
+    fn write_atomically_creates_a_missing_target_at_0666_filtered_by_the_umask() {
+        // AC-1 的端到端串接：三聲部 mob review 一致指出 `create_mode` 的算術與
+        // `read_umask` 各自有測試，但沒有任何測試觀察 `write_atomically` 實際
+        // 建出的檔案 mode —— 把串接改回 `.unwrap_or(0o600)`（= 完整回退 #93 的
+        // 修復）當時所有測試仍綠。這裡直接斷言建檔結果。
+        //
+        // 拿鎖：斷言依賴 `process_umask` 快取值與環境一致。已接受的殘餘盲點：
+        // (a) 快取層被硬編 0o022 時，本測試在 umask 022 機器上無法區分 ——
+        //     讀取端硬編由 probe 測試的 0o057 殺掉，快取層只剩一行
+        //     `get_or_init(read_umask)`，突變面極小；
+        // (b) 在 umask 077 的機器上 expected == 0o600，本斷言退化為恆真 ——
+        //     CI runner 是 022（expected 0o644 ≠ 0o600，殺掉回退突變體）。
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = UMASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = TempDir::new();
+        let target = tmp.join("fresh.txt");
+
+        write_atomically(&target, "new").unwrap();
+
+        let mode = fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode,
+            create_mode(process_umask()),
+            "a freshly created file must land at 0666 & ~umask, not the temp file's 0600"
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), "new");
+    }
+
+    #[test]
+    fn write_atomically_keeps_0600_when_replacing_a_symlinked_target() {
+        // 迴歸（PR #100 mob review，consensus Critical）：Absent 與 NonRegular
+        // 曾折疊成同一個 None，取代 symlink 的 regular 檔因此走 create 分支以
+        // 0666 & ~umask 落地 —— 而其內容可能是透過 link 從 0600 的
+        // secret-bearing 目標讀進來的。斷言取代檔保留暫存檔的 0600。
+        // 不需要 UMASK_LOCK：NonRegular 分支不消費 umask；若突變讓它走 create
+        // 分支，無論窗口內外 mode 都不會是 0600（0o777 暫態只會更窄到 0）。
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = TempDir::new();
+        let outside = tmp.join("dotfiles-secret.json");
+        fs::write(&outside, "{\"token\":\"PRECIOUS\"}").unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o600)).unwrap();
+        let target = tmp.join("settings.json");
+        std::os::unix::fs::symlink(&outside, &target).unwrap();
+
+        write_atomically(&target, "{\"token\":\"PRECIOUS\",\"merged\":true}").unwrap();
+
+        let meta = fs::symlink_metadata(&target).unwrap();
+        assert!(
+            meta.file_type().is_file(),
+            "the rename must replace the link with a regular file"
+        );
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o600,
+            "the file replacing a symlink holds content read through the link -- it must stay 0600"
+        );
+        assert_eq!(
+            fs::read_to_string(&outside).unwrap(),
+            "{\"token\":\"PRECIOUS\"}",
+            "the link target itself must be untouched"
         );
     }
 
