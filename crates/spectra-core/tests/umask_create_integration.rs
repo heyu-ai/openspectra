@@ -89,11 +89,18 @@ fn init_creates_files_at_0666_filtered_by_each_contract_umask() {
             .env(CHILD_ENV, format!("{umask:o}"))
             .output()
             .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
             out.status.success(),
-            "child under umask {umask:03o} failed:\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&out.stdout),
+            "child under umask {umask:03o} failed:\nstdout:\n{stdout}\nstderr:\n{}",
             String::from_utf8_lossy(&out.stderr)
+        );
+        // libtest exits 0 when a filter matches zero tests, so a renamed child
+        // test would turn this into four green no-ops -- require the child to
+        // have actually run (PR #100 round-2 NIT).
+        assert!(
+            stdout.contains("1 passed"),
+            "the child test did not run under umask {umask:03o} -- filter broken?\n{stdout}"
         );
     }
 }
