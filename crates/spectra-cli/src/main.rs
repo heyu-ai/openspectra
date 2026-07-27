@@ -39,6 +39,9 @@ enum Command {
         adopt: bool,
         #[arg(long)]
         json: bool,
+        /// AI tools to generate files for (e.g., claude, cursor).
+        #[arg(long, value_delimiter = ',')]
+        tools: Vec<String>,
     },
     /// Detect drift between a change and the current codebase state.
     Drift {
@@ -348,8 +351,8 @@ fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
     })
 }
 
-fn cmd_init(root: &Path, adopt: bool, as_json: bool) -> Result<i32> {
-    let outcome = spectra_core::init::init_with_options(root, adopt)?;
+fn cmd_init(root: &Path, adopt: bool, as_json: bool, tools: &[String]) -> Result<i32> {
+    let outcome = spectra_core::init::init_with_tools(root, adopt, tools)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
     } else if outcome.adopted {
@@ -363,6 +366,9 @@ fn cmd_init(root: &Path, adopt: bool, as_json: bool) -> Result<i32> {
             "✓ Initialized at {}",
             outcome.root.join(&outcome.spec_dir).display()
         );
+    }
+    if !as_json && !tools.is_empty() {
+        println!("Generated files for: {}", tools.join(", "));
     }
     Ok(0)
 }
@@ -1199,7 +1205,7 @@ fn run() -> Result<i32> {
     let root = find_root(&cwd);
 
     match &cli.command {
-        Command::Init { adopt, json } => cmd_init(&root, *adopt, *json),
+        Command::Init { adopt, json, tools } => cmd_init(&root, *adopt, *json, tools),
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
