@@ -128,8 +128,9 @@ pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
 }
 
 fn init_resolved_spec_dir(root: &Path, spec_dir: String, adopted: bool) -> Result<InitOutcome> {
-    std::fs::create_dir_all(root.join(&spec_dir).join("changes"))
-        .with_context(|| format!("creating {spec_dir}/changes"))?;
+    // `create_dir_all` on `changes/archive` creates `changes/` too; a single
+    // call keeps the error context on whichever level actually failed being
+    // reported as the archive path, which is where the write happened.
     std::fs::create_dir_all(root.join(&spec_dir).join("changes/archive"))
         .with_context(|| format!("creating {spec_dir}/changes/archive"))?;
     std::fs::create_dir_all(root.join(&spec_dir).join("specs"))
@@ -464,10 +465,10 @@ mod tests {
         assert!(tmp.join("docs/myspecs/config.yaml").is_file());
         let config = std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap();
         assert_eq!(config.lines().nth(5), Some("spec_dir: docs/myspecs"));
-        assert_eq!(
-            config.lines().count(),
-            SPECTRA_CONFIG_TEMPLATE.lines().count()
-        );
+        // 字面 32（不是 SPECTRA_CONFIG_TEMPLATE.lines().count()）：拿產出跟
+        // 同一個常數比是自我參照，模板長度回歸兩邊一起變、斷言恆真。oracle
+        // 實測 .spectra.yaml 為 761 bytes、32 個 \n 結尾行（PR #101 review）。
+        assert_eq!(config.lines().count(), 32);
     }
 
     #[test]
@@ -608,6 +609,23 @@ mod tests {
         assert!(outcome.gitignore_updated);
         let contents = std::fs::read_to_string(tmp.join(".gitignore")).unwrap();
         assert_eq!(contents, "# Spectra app data\n.spectra/\n");
+    }
+
+    #[test]
+    fn init_treats_an_empty_existing_gitignore_like_a_missing_one() {
+        // 分支邊界（PR #101 review NIT）：既有但零位元組的 .gitignore 走
+        // 「空內容不加分隔空行」路徑，產出與全新檔案相同。此案例 oracle
+        // 未 probe（AC-2 未主張），僅釘住 OpenSpectra 自身行為。
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".gitignore"), "").unwrap();
+
+        let outcome = init(&tmp).unwrap();
+
+        assert!(outcome.gitignore_updated);
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".gitignore")).unwrap(),
+            "# Spectra app data\n.spectra/\n"
+        );
     }
 
     #[test]

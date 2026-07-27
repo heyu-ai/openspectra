@@ -6,7 +6,8 @@ have no oracle equivalent.
 ## Verification status
 
 The default init artifacts and human-readable result are oracle-verified.
-Probes P8-P11 and P25/P27/P28 covered:
+Probes P8-P11 and P25/P27/P28 (the issue #94 probe session; reproduction
+recipe below under "Reproducing the oracle") covered:
 
 - the default file set and byte content, including final newlines
 - the empty `openspec/changes/archive/` directory and absence of `.gitkeep`
@@ -165,9 +166,13 @@ node_modules/
 .spectra/
 ```
 
-If any line already equals `.spectra/` after trimming surrounding whitespace,
-the oracle leaves the entire file byte-for-byte unchanged. In particular, it
-does not add an orphaned blank line or comment.
+When the file already contains an exact `.spectra/` line, the oracle leaves
+the entire file byte-for-byte unchanged — in particular it does not add an
+orphaned blank line or comment. That is the probed case. OpenSpectra's
+predicate additionally treats a whitespace-padded line (`.spectra/ `) as
+already present; the padded variant is tested locally
+(`init_does_not_duplicate_an_entry_with_trailing_whitespace`) but is an
+OpenSpectra design choice, **oracle-unverified**.
 
 OpenSpectra additionally preserves an existing CRLF line-ending style. That
 compatibility behavior is tested locally but remains oracle-unverified.
@@ -205,3 +210,42 @@ The JSON shape remains:
 
 `gitignore_updated` records whether init wrote `.gitignore`; the human-readable
 oracle-compatible path no longer prints a second `.gitignore` status line.
+
+## Reproducing the oracle
+
+The probe IDs above (P8-P11, P25/P27/P28) come from the issue #94 probe
+session; each probe is one fresh jail and one operation, following CLAUDE.md's
+probe discipline. The recipe, re-runnable on any macOS machine with the
+reference binary:
+
+```sh
+# one probe = one fresh jail, one operation, then inspect
+JAIL=$(mktemp -d /tmp/probe-oracle-init.XXXXXX)
+git -C "$JAIL" init -q
+/Applications/Spectra.app/Contents/MacOS/spectra init "$JAIL"
+
+# inspect: tree, byte counts, trailing bytes
+find "$JAIL" -not -path "$JAIL/.git" -not -path "$JAIL/.git/*" | sort
+wc -c "$JAIL/.spectra.yaml"        # 761 bytes
+wc -l "$JAIL/.spectra.yaml"        # 32 newline-terminated lines
+tail -c 24 "$JAIL/.spectra.yaml" | xxd   # ends "#   - cursor\n", no blank line
+
+# byte-parity check against a clean openspectra build (separate jail;
+# openspectra has no [PATH] arg -- run from inside the jail)
+JAIL2=$(mktemp -d /tmp/probe-openspectra-init.XXXXXX)
+git -C "$JAIL2" init -q
+(cd "$JAIL2" && /path/to/openspectra/target/release/spectra init)
+diff -r --exclude=.git "$JAIL" "$JAIL2"   # empty output = byte parity
+```
+
+Seeded `.gitignore` variants (P9-P11) pre-write the file into the jail before
+the single init operation. Two counting pitfalls recorded from the PR #101
+review: `find -not -path '*/.git*'` also filters `.gitignore` (glob prefix
+collision) — exclude the `.git` directory explicitly as above; and the template
+is 32 `\n`-terminated lines — an editor's 33rd empty display line after the
+final `\n` is not a file line (`wc -l` is authoritative).
+
+Re-verified 2026-07-27 against Spectra 2.3.1 (Apple Silicon): full-tree
+`diff -r` between the oracle jail and an openspectra jail is empty —
+byte-identical, including `.gitignore`, `.spectra.yaml`, and
+`openspec/config.yaml`.

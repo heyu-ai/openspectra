@@ -93,15 +93,20 @@ writes under `.spectra/` (git-ignored, invisible to OpenSpec tooling).
   discovery is future work. The one content check it does make is a guard: if
   `openspec` already exists as a *file* (not a directory), adoption fails with a
   clear message instead of a generic downstream `create_dir_all` error.
-- Write `.spectra.yaml` (`spec_dir: openspec`) — the one file OpenSpectra needs
-  and an OpenSpec project doesn't have.
+- Write `.spectra.yaml` — the one file OpenSpectra needs and an OpenSpec
+  project doesn't have. Since the oracle-parity realignment (issue #94) this is
+  the full commented template (32 newline-terminated lines; an editor shows a
+  33rd empty display line after the final `\n`): `spec_dir` stays a commented
+  `# spec_dir: docs/specs` line when the resolved value equals the default
+  `openspec`, and is written explicitly only for a non-default directory.
 - Ensure `.spectra/` is in `.gitignore` (same as plain `init`).
-- **Non-destructive:** create `openspec/{changes,specs}/` only if missing
-  (idempotent `create_dir_all`), and never create or overwrite `project.md`,
-  `AGENTS.md`, `config.yaml`, or any existing `changes/`/`specs/` content.
+- **Non-destructive:** create `openspec/{changes/archive,specs}/` and
+  `<spec_dir>/config.yaml` only when missing (idempotent), and never
+  **overwrite** `project.md`, `AGENTS.md`, an existing `config.yaml`, or any
+  existing `changes/`/`specs/` content.
 
 Mechanically, plain `init` and `--adopt` do the same filesystem work — both
-create the two directories idempotently and both refuse only when
+create the scaffold directories idempotently and both refuse only when
 `.spectra.yaml` already exists. `--adopt` differs in **intent and messaging**:
 it signals "wire OpenSpectra into a project that already has OpenSpec content"
 and reports `Adopted …` rather than `Initialized …`. (Plain `init` on a dir

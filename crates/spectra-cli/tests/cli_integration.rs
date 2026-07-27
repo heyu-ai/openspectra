@@ -117,6 +117,9 @@ fn init_text_output_matches_the_oracle() {
     assert!(out.status.success(), "init failed: {out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
 
+    // Canonicalize before comparing: on macOS `std::env::temp_dir()` returns
+    // `/var/...`, a symlink to `/private/var/...`, and the binary reports the
+    // canonical form -- comparing the raw temp path would fail spuriously.
     let canonical_root = tmp.canonicalize().unwrap();
     assert_eq!(
         stdout,
