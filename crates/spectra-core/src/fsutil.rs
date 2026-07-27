@@ -418,8 +418,18 @@ fn read_umask() -> u32 {
     unsafe {
         let old = libc::umask(0o022);
         libc::umask(old);
-        u32::from(old)
+        mode_bits(old)
     }
+}
+
+/// Widen a [`libc::mode_t`] to the `u32` the rest of this module works in.
+/// `mode_t` is `u16` on macOS but already `u32` on Linux, so the conversion is
+/// real on one platform and an identity on the other — Linux clippy flags the
+/// identity as `useless_conversion`, a platform-dependent false positive
+/// confined to this one helper (macOS clippy needs the conversion to compile).
+#[allow(clippy::useless_conversion)]
+fn mode_bits(mode: libc::mode_t) -> u32 {
+    u32::from(mode)
 }
 
 /// Best-effort removal of a [`write_via_temp`] temp file after its write or
@@ -546,7 +556,7 @@ mod tests {
             "read_umask must report the mask actually in effect, not a hardcoded value"
         );
         assert_eq!(
-            u32::from(left_behind),
+            mode_bits(left_behind),
             PROBE,
             "read_umask must leave the process mask exactly as it found it"
         );
