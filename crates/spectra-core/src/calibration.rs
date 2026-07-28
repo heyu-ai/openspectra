@@ -25,9 +25,15 @@
 //! 1/7 CliFlag -> 3; 3/40 FilePath -> 0 but 3/40 CliFlag -> 3. The earlier
 //! decay-only table happened to fit the goldens only because every golden's
 //! broken anchors were CliFlags (so `min` saturated at the `2D+3` cap).
-//! In practice only FilePath and CliFlag are ever broken on a committed change
-//! (Function/Symbol self-match the tracked design.md), so "non-CliFlag broken"
-//! == FilePath here.
+//! In the oracle calibration fixtures only FilePath and CliFlag can remain
+//! broken on a committed change (Function/Symbol self-match the tracked
+//! design.md), so "non-CliFlag broken" == FilePath there.
+//!
+//! OpenSpectra deliberately diverges at the resolver boundary: CliFlags and
+//! unresolvable Functions are reported as unresolved, and never passed as
+//! broken inputs to this oracle-derived formula. Missing FilePaths are likewise
+//! excluded unless they existed at the change baseline. The formula stays
+//! pinned so the score → severity chain is unchanged for actionable anchors.
 //!
 //! Time (score is a function of days since `created`) — boundaries now pinned
 //! exactly (previously interpolated from sparse field samples):
@@ -150,12 +156,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn structure_score_reproduces_real_goldens() {
-        // (broken, broken_cliflags, total) -> score, from the 4 real golden JSONs.
-        assert_eq!(structure_score(0, 0, 16), 0); // add-token-economy
-        assert_eq!(structure_score(3, 3, 40), 3); // enhance-d5 (D0, cap 3)
-        assert_eq!(structure_score(9, 9, 29), 7); // mycelium  (D2, cap 7)
-        assert_eq!(structure_score(12, 12, 25), 7); // pr-control-log (D2, cap 7)
+    fn structure_score_preserves_oracle_goldens_and_pins_unresolved_divergence() {
+        const ORACLE_ADD_TOKEN_ECONOMY: i64 = 0;
+        const ORACLE_ENHANCE_D5: i64 = 3;
+        const ORACLE_MYCELIUM: i64 = 7;
+        const ORACLE_PR_CONTROL_LOG: i64 = 7;
+
+        // Keep the recovered formula and oracle measurements executable.
+        assert_eq!(structure_score(0, 0, 16), ORACLE_ADD_TOKEN_ECONOMY);
+        assert_eq!(structure_score(3, 3, 40), ORACLE_ENHANCE_D5);
+        assert_eq!(structure_score(9, 9, 29), ORACLE_MYCELIUM);
+        assert_eq!(structure_score(12, 12, 25), ORACLE_PR_CONTROL_LOG);
+
+        // The golden fixtures identify every broken anchor in these samples as
+        // a CliFlag. Under #83 those inputs are unresolved rather than broken.
+        assert_eq!(structure_score(0, 0, 16), 0); // oracle 0; no exclusion needed
+        assert_eq!(structure_score(0, 0, 40), 0); // oracle 3; exclude 3 CliFlags
+        assert_eq!(structure_score(0, 0, 29), 0); // oracle 7; exclude 9 CliFlags
+        assert_eq!(structure_score(0, 0, 25), 0); // oracle 7; exclude 12 CliFlags
     }
 
     #[test]

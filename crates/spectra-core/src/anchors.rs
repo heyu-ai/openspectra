@@ -45,6 +45,19 @@ pub struct BrokenAnchor {
     pub reason: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UnresolvedAnchor {
+    pub anchor: String,
+    pub category: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct Resolution {
+    pub broken: Vec<BrokenAnchor>,
+    pub unresolved: Vec<UnresolvedAnchor>,
+}
+
 // --- recovered regexes -------------------------------------------------------
 static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
@@ -131,12 +144,16 @@ pub fn extract(design: &str) -> Vec<Anchor> {
 pub struct Resolver<'a> {
     pub root: &'a Path,
     pub tracked: &'a HashSet<String>,
+    pub baseline_sha: Option<&'a str>,
 }
 
 impl Resolver<'_> {
-    /// Compute the broken anchors among `anchors`, sorted by anchor string
-    /// (matching the reference output ordering).
-    pub fn broken(&self, anchors: &[Anchor]) -> Vec<BrokenAnchor> {
+    /// Classify non-resolving anchors as broken or unresolved.
+    ///
+    /// Both result lists are sorted by anchor string. A missing FilePath is
+    /// broken only when it existed at the change baseline; without a usable
+    /// baseline, it retains the previous broken classification.
+    pub fn resolve(&self, anchors: &[Anchor]) -> Resolution {
         let needles: Vec<&str> = anchors
             .iter()
             .filter_map(|anchor| match anchor.kind {
@@ -146,49 +163,61 @@ impl Resolver<'_> {
             .collect();
         let resolved = git::grep_existing(self.root, &needles);
 
-        let mut broken: Vec<BrokenAnchor> = anchors
-            .iter()
-            .filter_map(|a| {
-                let reason = match a.kind {
-                    AnchorKind::FilePath => {
-                        let on_disk = self.root.join(&a.text).exists();
-                        if self.tracked.contains(&a.text) || on_disk {
-                            None
-                        } else {
-                            Some("file does not exist")
-                        }
+        let mut broken = Vec::new();
+        let mut unresolved = Vec::new();
+        for anchor in anchors {
+            let category = anchor.kind.as_str().to_string();
+            match anchor.kind {
+                AnchorKind::FilePath => {
+                    let on_disk = self.root.join(&anchor.text).exists();
+                    if self.tracked.contains(&anchor.text) || on_disk {
+                        continue;
                     }
-                    AnchorKind::Function => {
-                        if resolved.contains(&a.text) {
-                            None
-                        } else {
-                            Some("function not found in repo")
-                        }
+                    let existed_at_baseline = self
+                        .baseline_sha
+                        .and_then(|sha| git::path_exists_at(self.root, sha, &anchor.text));
+                    if matches!(existed_at_baseline, Some(false)) {
+                        unresolved.push(UnresolvedAnchor {
+                            anchor: anchor.text.clone(),
+                            category,
+                            reason: "forward reference".to_string(),
+                        });
+                    } else {
+                        broken.push(BrokenAnchor {
+                            anchor: anchor.text.clone(),
+                            category,
+                            reason: "file does not exist".to_string(),
+                        });
                     }
-                    AnchorKind::Symbol => {
-                        if resolved.contains(&a.text) {
-                            None
-                        } else {
-                            Some("symbol not found in repo")
-                        }
+                }
+                AnchorKind::Function => {
+                    if !resolved.contains(&anchor.text) {
+                        unresolved.push(UnresolvedAnchor {
+                            anchor: anchor.text.clone(),
+                            category,
+                            reason: "not first-party".to_string(),
+                        });
                     }
-                    // CliFlag verification requires a `--help` to diff against, which is
-                    // unavailable for an arbitrary target project. The reference binary
-                    // therefore reports every design.md flag as broken ("not in --help").
-                    // We reproduce that behavior faithfully.
-                    // TODO(calibration): improve by extracting flags only from fenced
-                    // code blocks or verifying against a configurable target CLI.
-                    AnchorKind::CliFlag => Some("not in --help"),
-                };
-                reason.map(|reason| BrokenAnchor {
-                    anchor: a.text.clone(),
-                    category: a.kind.as_str().to_string(),
-                    reason: reason.to_string(),
-                })
-            })
-            .collect();
+                }
+                AnchorKind::Symbol => {
+                    if !resolved.contains(&anchor.text) {
+                        broken.push(BrokenAnchor {
+                            anchor: anchor.text.clone(),
+                            category,
+                            reason: "symbol not found in repo".to_string(),
+                        });
+                    }
+                }
+                AnchorKind::CliFlag => unresolved.push(UnresolvedAnchor {
+                    anchor: anchor.text.clone(),
+                    category,
+                    reason: "no target --help".to_string(),
+                }),
+            }
+        }
         broken.sort_by(|a, b| a.anchor.cmp(&b.anchor));
-        broken
+        unresolved.sort_by(|a, b| a.anchor.cmp(&b.anchor));
+        Resolution { broken, unresolved }
     }
 }
 
@@ -304,23 +333,42 @@ mod tests {
     }
 
     #[test]
-    fn cli_flags_are_always_broken_not_in_help() {
+    fn cli_flags_are_always_unresolved_without_a_target_help() {
         use std::collections::HashSet;
         let tracked: HashSet<String> = HashSet::new();
         let root = std::path::Path::new(".");
         let r = Resolver {
             root,
             tracked: &tracked,
+            baseline_sha: None,
         };
         let anchors = extract("uses --some-flag");
-        let broken = r.broken(&anchors);
-        assert_eq!(broken.len(), 1);
-        assert_eq!(broken[0].reason, "not in --help");
-        assert_eq!(broken[0].category, "CliFlag");
+        let resolution = r.resolve(&anchors);
+        assert!(resolution.broken.is_empty());
+        assert_eq!(resolution.unresolved.len(), 1);
+        assert_eq!(resolution.unresolved[0].reason, "no target --help");
+        assert_eq!(resolution.unresolved[0].category, "CliFlag");
     }
 
     #[test]
-    fn resolver_broken_batches_large_function_and_symbol_sets() {
+    fn missing_file_without_a_baseline_falls_back_to_broken() {
+        let tracked = HashSet::new();
+        let dir = TempDir::new("resolver-no-baseline");
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+
+        let resolution = resolver.resolve(&extract("src/missing.rs"));
+
+        assert_eq!(resolution.broken.len(), 1);
+        assert_eq!(resolution.broken[0].reason, "file does not exist");
+        assert!(resolution.unresolved.is_empty());
+    }
+
+    #[test]
+    fn resolver_batches_large_function_and_symbol_sets() {
         let function_names: Vec<String> = (0..24).map(|i| format!("alpha_fn_{i:02}")).collect();
         let symbol_names: Vec<String> = (0..20).map(|i| format!("AlphaSym{i:02}")).collect();
 
@@ -367,32 +415,39 @@ mod tests {
         let resolver = Resolver {
             root: &dir,
             tracked: &tracked,
+            baseline_sha: None,
         };
 
-        let broken = resolver.broken(&anchors);
-        let mut expected: Vec<BrokenAnchor> = function_names
+        let resolution = resolver.resolve(&anchors);
+        let mut expected_unresolved: Vec<UnresolvedAnchor> = function_names
             .iter()
             .filter(|name| !present_functions.contains(*name))
-            .map(|name| BrokenAnchor {
+            .map(|name| UnresolvedAnchor {
                 anchor: name.clone(),
                 category: "Function".to_string(),
-                reason: "function not found in repo".to_string(),
+                reason: "not first-party".to_string(),
             })
-            .chain(
-                symbol_names
-                    .iter()
-                    .filter(|name| !present_symbols.contains(*name))
-                    .map(|name| BrokenAnchor {
-                        anchor: name.clone(),
-                        category: "Symbol".to_string(),
-                        reason: "symbol not found in repo".to_string(),
-                    }),
-            )
             .collect();
-        expected.sort_by(|a, b| a.anchor.cmp(&b.anchor));
+        expected_unresolved.sort_by(|a, b| a.anchor.cmp(&b.anchor));
+        let mut expected_broken: Vec<BrokenAnchor> = symbol_names
+            .iter()
+            .filter(|name| !present_symbols.contains(*name))
+            .map(|name| BrokenAnchor {
+                anchor: name.clone(),
+                category: "Symbol".to_string(),
+                reason: "symbol not found in repo".to_string(),
+            })
+            .collect();
+        expected_broken.sort_by(|a, b| a.anchor.cmp(&b.anchor));
 
-        assert_eq!(broken.len(), expected.len());
-        for (actual, expected) in broken.iter().zip(expected.iter()) {
+        assert_eq!(resolution.broken.len(), expected_broken.len());
+        for (actual, expected) in resolution.broken.iter().zip(expected_broken.iter()) {
+            assert_eq!(actual.anchor, expected.anchor);
+            assert_eq!(actual.category, expected.category);
+            assert_eq!(actual.reason, expected.reason);
+        }
+        assert_eq!(resolution.unresolved.len(), expected_unresolved.len());
+        for (actual, expected) in resolution.unresolved.iter().zip(expected_unresolved.iter()) {
             assert_eq!(actual.anchor, expected.anchor);
             assert_eq!(actual.category, expected.category);
             assert_eq!(actual.reason, expected.reason);

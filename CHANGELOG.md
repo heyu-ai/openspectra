@@ -10,6 +10,20 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **`spectra drift` now separates unresolvable design anchors from broken
+  anchors** (#83). JSON reports them in a new additive
+  `unresolved_anchors` array with the same `{ anchor, category, reason }`
+  shape as `broken_anchors`; human output uses a separate heading. CliFlags,
+  repository-missing Functions, and FilePaths that never existed at the
+  change's `.started` baseline are unresolved. A missing FilePath that did
+  exist at baseline remains broken, and a missing/unusable baseline preserves
+  the prior broken fallback. Unresolved anchors no longer increment the
+  Structure broken count or contribute to its score, `total_score`, severity,
+  or exit-code inputs. This is a deliberate divergence from the v2.3.1 oracle,
+  which counts these references as broken.
+
 ## [0.5.0] - 2026-07-24
 
 ### Added
