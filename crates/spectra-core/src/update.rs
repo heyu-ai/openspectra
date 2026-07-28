@@ -131,8 +131,23 @@ pub fn update_instruction_files(cfg: &Config) -> Result<Vec<&'static str>> {
     Ok(tools.iter().map(|t| t.id).collect())
 }
 
-/// 更新已偵測到的工具。獨立出來讓 gate 機制可用 synthetic `ToolDef` 測試，
-/// 不必依賴尚未由 reference binary 重生的 generated manifest。
+/// Generate instruction files for the requested tool ids.
+///
+/// Unlike [`update_instruction_files`], selection comes directly from the
+/// caller rather than filesystem detection. Unknown ids are ignored, while
+/// valid ids retain request order. This is the write path used by
+/// `spectra init --tools`.
+pub fn generate_instruction_files(cfg: &Config, tool_ids: &[String]) -> Result<()> {
+    let tools: Vec<_> = tool_ids
+        .iter()
+        .filter_map(|id| update_manifest::TOOLS.iter().find(|tool| tool.id == id))
+        .collect();
+    update_detected_tools(cfg, &tools)
+}
+
+/// 更新指定工具集合。獨立出來讓 gate 機制可用 synthetic `ToolDef` 測試
+/// （不必依賴 generated manifest），也是 `spectra init --tools` 的共用
+/// 寫入路徑（#89 與 update 逐位元相同的依據）。
 fn update_detected_tools(cfg: &Config, tools: &[&ToolDef]) -> Result<()> {
     // RE'd 怪癖（對 2.3.1 成對 probe，見 update.md）：gemini 同時被偵測到
     // 時，codex 只寫 AGENTS.md、整組 .agents/skills/* 被抑制。其他工具
@@ -840,6 +855,42 @@ mod tests {
         let tmp = TempDir::new("update-none");
         let ids = update_instruction_files(&init_cfg(&tmp)).unwrap();
         assert!(ids.is_empty());
+        assert_eq!(std::fs::read_dir(&*tmp).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn requested_tools_ignore_unknown_ids_and_do_not_require_detection_paths() {
+        let tmp = TempDir::new("update-requested");
+        let cfg = init_cfg(&tmp);
+        let requested = vec!["claude".to_string(), "bogus".to_string()];
+
+        generate_instruction_files(&cfg, &requested).unwrap();
+
+        for file in update_manifest::TOOLS[0].files {
+            // #102 之後 manifest 含 gated 條目：`--tools` 走與 update 相同的
+            // 寫入語義，預設 config（開關關閉）下 gated 檔案不寫。
+            let should_exist = gate_allows(file.kind.gate, &cfg);
+            assert_eq!(
+                tmp.join(file.relpath).is_file(),
+                should_exist,
+                "{} should{} exist",
+                file.relpath,
+                if should_exist { "" } else { " not" }
+            );
+        }
+        assert!(!tmp.join("bogus").exists());
+    }
+
+    #[test]
+    fn requested_unknown_and_space_separated_ids_write_nothing() {
+        let tmp = TempDir::new("update-requested-noop");
+        let requested = vec![
+            "definitely-not-a-tool".to_string(),
+            "claude cursor".to_string(),
+        ];
+
+        generate_instruction_files(&init_cfg(&tmp), &requested).unwrap();
+
         assert_eq!(std::fs::read_dir(&*tmp).unwrap().count(), 0);
     }
 

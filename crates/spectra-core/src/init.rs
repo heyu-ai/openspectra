@@ -103,6 +103,18 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
     init_with_options(root, false)
 }
 
+/// Scaffold a project and generate instruction files for explicitly requested
+/// AI tools. Tool selection and all file-write semantics are shared with
+/// `spectra update`; unknown ids are accepted and generate nothing.
+pub fn init_with_tools(root: &Path, adopt: bool, tools: &[String]) -> Result<InitOutcome> {
+    let outcome = init_with_options(root, adopt)?;
+    if !tools.is_empty() {
+        let cfg = Config::load(root)?;
+        crate::update::generate_instruction_files(&cfg, tools)?;
+    }
+    Ok(outcome)
+}
+
 /// Variant of [`init`] that can adopt an existing OpenSpec-style project.
 ///
 /// Plain `init` keeps its original "fresh project" contract. `adopt` is the
@@ -404,6 +416,17 @@ mod tests {
         let archive = tmp.join("openspec/changes/archive");
         assert!(archive.is_dir());
         assert_eq!(std::fs::read_dir(archive).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn init_with_tools_generates_requested_files_without_detection_setup() {
+        let tmp = TempDir::new();
+
+        init_with_tools(&tmp, false, &["claude".to_string()]).unwrap();
+
+        assert!(tmp.join("CLAUDE.md").is_file());
+        assert!(tmp.join(".claude/settings.json").is_file());
+        assert!(tmp.join(".claude/skills/spectra-drift/SKILL.md").is_file());
     }
 
     #[test]
