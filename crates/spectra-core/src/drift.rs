@@ -1,12 +1,12 @@
-//! Drift detection: assembles the four dimensions into a [`DriftReport`] whose
-//! JSON serialization matches the reference `spectra drift --json` schema
-//! field-for-field.
+//! Drift detection: assembles the four dimensions into a [`DriftReport`].
+//! Existing JSON fields preserve the reference `spectra drift --json` schema;
+//! OpenSpectra adds `unresolved_anchors` for issue #83.
 
 use anyhow::Result;
 use chrono::{Local, NaiveDate};
 use serde::Serialize;
 
-use crate::anchors::{self, BrokenAnchor, Resolver};
+use crate::anchors::{self, BrokenAnchor, Resolver, UnresolvedAnchor};
 use crate::calibration;
 use crate::change::Change;
 use crate::config::Config;
@@ -29,7 +29,8 @@ pub struct Dimension {
     pub contributes_to_total: bool,
 }
 
-/// Field order here is intentional: it matches the reference JSON byte-for-byte.
+/// Field order is intentional: the additive unresolved list follows the
+/// reference schema's existing broken-anchor list.
 #[derive(Debug, Clone, Serialize)]
 pub struct DriftReport {
     pub change_id: String,
@@ -39,6 +40,7 @@ pub struct DriftReport {
     pub last_commit: Option<String>,
     pub dimensions: Vec<Dimension>,
     pub broken_anchors: Vec<BrokenAnchor>,
+    pub unresolved_anchors: Vec<UnresolvedAnchor>,
     pub tasks_maybe_resolved: Vec<TaskCollision>,
     pub tasks_blocked_external: Vec<TaskCollision>,
     pub commits_since_created: u64,
@@ -80,7 +82,7 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
 
     // --- Structure (broken anchors) -----------------------------------------
     let design_path = change.design_md();
-    let (structure, broken_anchors, decay) = if design_path.exists() {
+    let (structure, broken_anchors, unresolved_anchors, decay) = if design_path.exists() {
         let design = std::fs::read_to_string(&design_path)?;
         let anchors = anchors::extract(&design);
         let total = anchors.len();
@@ -88,8 +90,10 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
         let resolver = Resolver {
             root: &cfg.root,
             tracked: &tracked,
+            baseline_sha: change.started_sha.as_deref(),
         };
-        let broken = resolver.broken(&anchors);
+        let resolution = resolver.resolve(&anchors);
+        let broken = resolution.broken;
         let decay = if total == 0 {
             0.0
         } else {
@@ -108,6 +112,7 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
                 contributes_to_total: true,
             },
             broken,
+            resolution.unresolved,
             decay,
         )
     } else {
@@ -118,6 +123,7 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
                 score: 0,
                 contributes_to_total: true,
             },
+            Vec::new(),
             Vec::new(),
             0.0,
         )
@@ -174,6 +180,7 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
         last_commit: None,
         dimensions,
         broken_anchors,
+        unresolved_anchors,
         tasks_maybe_resolved: analysis.maybe_resolved,
         tasks_blocked_external: analysis.blocked_external,
         commits_since_created,

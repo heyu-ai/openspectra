@@ -75,6 +75,7 @@ fn init_then_new_change_then_drift_runs_end_to_end() {
     // A metadata-only new change has no broken anchors or task collisions.
     assert_eq!(report.severity, "light");
     assert!(report.broken_anchors.is_empty());
+    assert!(report.unresolved_anchors.is_empty());
 }
 
 #[test]

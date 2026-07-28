@@ -45,6 +45,31 @@ pub fn head_sha(root: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Whether `path`, relative to `root`, existed at the baseline `revision`.
+///
+/// Returns `None` when the revision is not a full SHA, the repository cannot
+/// be inspected, or the revision is unavailable. A definite missing path is
+/// `Some(false)`, allowing callers to distinguish a forward reference from a
+/// deleted file without turning an unusable baseline into a false negative.
+pub fn path_exists_at(root: &Path, revision: &str, path: &str) -> Option<bool> {
+    let valid_sha =
+        matches!(revision.len(), 40 | 64) && revision.bytes().all(|byte| byte.is_ascii_hexdigit());
+    if !valid_sha {
+        return None;
+    }
+
+    // `ls-tree --full-tree` expects a repository-root-relative path. `root`
+    // may itself be a project nested below the repository root, so preserve
+    // git's own prefix rather than assuming the two roots coincide.
+    let prefix = git(root, &["rev-parse", "--show-prefix"])?;
+    let repo_path = format!("{}{}", prefix.trim_end_matches('\n'), path);
+    let out = git(
+        root,
+        &["ls-tree", "-z", "--full-tree", revision, "--", &repo_path],
+    )?;
+    Some(!out.is_empty())
+}
+
 /// Last commit date for `path` in `YYYY-MM-DD` form. Returns `None` when the
 /// repository has no commit for the file or git is unavailable.
 pub fn last_commit_date(root: &Path, path: &str) -> Option<String> {
@@ -482,6 +507,27 @@ mod tests {
         init_repo(&dir);
 
         assert_eq!(head_sha(&dir), None);
+    }
+
+    #[test]
+    fn path_exists_at_distinguishes_present_and_missing_paths() {
+        let dir = TempDir::new("path-at-revision");
+        let baseline = init_repo_with_commit(&dir);
+
+        assert_eq!(path_exists_at(&dir, &baseline, "f.txt"), Some(true));
+        assert_eq!(
+            path_exists_at(&dir, &baseline, "never-existed.txt"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn path_exists_at_returns_none_for_an_unavailable_baseline() {
+        let dir = TempDir::new("path-at-invalid-revision");
+        init_repo_with_commit(&dir);
+
+        assert_eq!(path_exists_at(&dir, "not-a-sha", "f.txt"), None);
+        assert_eq!(path_exists_at(&dir, &"0".repeat(40), "f.txt"), None);
     }
 
     #[test]

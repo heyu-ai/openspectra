@@ -509,10 +509,14 @@ fn print_human(r: &drift::DriftReport, use_color: bool) {
 
     let dim = |k: &str| r.dimensions.iter().find(|d| format!("{:?}", d.kind) == k);
     let time = dim("Time").map(|d| d.status.as_str()).unwrap_or("-");
-    let design = if r.broken_anchors.is_empty() {
+    let design = if r.broken_anchors.is_empty() && r.unresolved_anchors.is_empty() {
         "No broken references".to_string()
     } else {
-        format!("{} broken", r.broken_anchors.len())
+        format!(
+            "{} broken, {} unresolved",
+            r.broken_anchors.len(),
+            r.unresolved_anchors.len()
+        )
     };
     let tasks = if r.tasks_blocked_external.is_empty() && r.tasks_maybe_resolved.is_empty() {
         "No task collisions".to_string()
@@ -539,6 +543,12 @@ fn print_human(r: &drift::DriftReport, use_color: bool) {
     if !r.broken_anchors.is_empty() {
         println!("\n### Broken design references");
         for a in &r.broken_anchors {
+            println!("- `{}` ({}) — {}", a.anchor, a.category, a.reason);
+        }
+    }
+    if !r.unresolved_anchors.is_empty() {
+        println!("\n### Unresolved design references");
+        for a in &r.unresolved_anchors {
             println!("- `{}` ({}) — {}", a.anchor, a.category, a.reason);
         }
     }

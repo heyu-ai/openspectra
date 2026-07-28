@@ -32,7 +32,7 @@ kebab-case (`^[a-z0-9]+(-+[a-z0-9]+)*$`).
 
 ```
 change_id, created, last_commit, dimensions[], broken_anchors[],
-tasks_maybe_resolved[], tasks_blocked_external[],
+unresolved_anchors[], tasks_maybe_resolved[], tasks_blocked_external[],
 commits_since_created, total_score, severity, primary_recommendation
 ```
 
@@ -42,6 +42,9 @@ commits_since_created, total_score, severity, primary_recommendation
   (display-only, e.g. `"93 commits"`).
 * `broken_anchors[]` = `{ anchor, category, reason }`,
   `category ∈ FilePath | Symbol | Function | CliFlag`.
+* `unresolved_anchors[]` has the same entry shape. It is an OpenSpectra
+  extension for references that cannot be classified reliably as broken; the
+  v2.3.1 oracle has no corresponding field.
 * `last_commit` is **always `null`** in observed v2.3.1 output (it is not the
   change dir's last commit — that is non-null in git but the field stays null).
   Semantics of any non-null value are undetermined; OpenSpectra emits `null`.
@@ -98,10 +101,11 @@ alphabetically. Resolution uses `git ls-files` (file existence) and `git grep`
 **The FilePath stack is Rust/TS-specific.** In Python/Go projects almost no file
 paths match, so FilePath anchors are rare and CliFlag dominates the broken set.
 
-**CliFlag is always broken** ("not in --help"): there is no target `--help` to
-diff design flags against in an arbitrary project, so every extracted `--flag`
-is reported broken — even ones written in a *Non-Goal* section. OpenSpectra
-reproduces this faithfully (see Known divergences for the improvement path).
+**The oracle reports every CliFlag broken** ("not in --help"): there is no
+target `--help` to diff design flags against in an arbitrary project, so every
+extracted `--flag` is reported broken — even ones written in a *Non-Goal*
+section. OpenSpectra deliberately classifies these as unresolved instead; see
+Deliberate divergences.
 
 Score is **category-weighted**, not a pure function of decay. Recovered exactly
 via the calibration harness (`scripts/calibrate-structure.py`):
@@ -119,6 +123,12 @@ A broken **CliFlag** adds 1 each (capped by `2·D+3`, global max 7); a broken
 boundaries are exact: `10%` (`10.0%` → D1, `9.1%` → D0) and `30%` (= the heavy
 short-circuit). Verified against every real golden: `0/16` cf0 → 0, `3/40`
 cf3 → 3, `9/29` cf9 → 7, `12/25` cf12 → 7.
+
+OpenSpectra retains this oracle-derived formula but passes only anchors
+classified as broken. Unresolved anchors remain in the extracted-anchor
+denominator and appear in `unresolved_anchors`; they do not increment the
+Structure broken count, score, decay numerator, `total_score`, or severity
+short-circuit.
 
 > An earlier revision modelled this as a decay-only ladder `0,1,3,5,7`. That fit
 > the goldens **only by accident**: every golden's broken anchors were CliFlags,
@@ -169,13 +179,53 @@ modes). Severity is *not* mapped to the exit code. Operational errors (e.g.
 0/1/2 severity mapping (and 3 for errors); both were refuted by probe and now
 match the oracle.
 
+## Deliberate divergences
+
+### Unresolvable anchors are not broken (#83)
+
+Issue #83 was motivated by a real-repository measurement: drift reported 13
+broken anchors, but only one was a genuine deletion — an **8% signal rate**.
+Eleven of the 13 were CliFlags and none of those was actionable. The v2.3.1
+oracle counts all of the cases below as broken; maintainer-approved direction 1
+deliberately reports them in the sibling `unresolved_anchors` array and excludes
+them from Structure scoring:
+
+* **CliFlag:** always unresolved with reason `no target --help`. An extracted
+  flag has no owning binary, so neither third-party flags such as
+  `uv --directory` nor first-party flags can be checked against the right help
+  text.
+* **Function not found by `git grep`:** unresolved with reason
+  `not first-party`. Absence cannot distinguish a deleted project function from
+  a builtin or dependency symbol such as PostgreSQL's
+  `jsonb_array_length`.
+* **Missing FilePath:** consult the change's `.started` baseline SHA. If the
+  path existed at that commit and is now gone, it is broken with reason
+  `file does not exist`; if it did not exist, it is unresolved with reason
+  `forward reference`, because the change may be proposing to create it. If the
+  baseline SHA is absent, malformed, or unavailable locally, OpenSpectra falls
+  back to the prior broken classification rather than hiding a possible
+  deletion.
+* **Symbol:** unchanged and still broken when not found. Its separate extraction
+  divergence remains tracked by #8/#51 and is outside #83.
+
+The JSON change is additive: `broken_anchors` is neither renamed nor removed.
+Human output renders broken and unresolved references under separate headings,
+keeping the actionable deletion class visually distinct. Only the Structure
+inputs change; the score formula, severity bands, recommendations, and exit-code
+mapping remain untouched.
+
+The four real calibration goldens make the divergence explicit. The oracle
+scores remain pinned as `0`, `3`, `7`, and `7`; their recorded broken-category
+composition is respectively 0, 3, 9, and 12 CliFlags. With those CliFlags
+excluded, the OpenSpectra Structure expectations are `0`, `0`, `0`, and `0`.
+
 ## What is verified vs. uncertain
 
 | Area | Status |
 |------|--------|
-| JSON schema, dimension model, `total_score` rule | ✅ exact |
-| FilePath / CliFlag / Function extraction & resolution | ✅ exact (byte-for-byte on golden runs) |
-| Structure score formula (category-weighted), severity bands, recommendation map | ✅ exact — harness-recovered + golden-verified |
+| JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
+| FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; resolution deliberately diverges per #83 |
+| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; unresolved inputs deliberately excluded |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
