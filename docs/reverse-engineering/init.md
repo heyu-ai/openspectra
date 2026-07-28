@@ -5,9 +5,9 @@ have no oracle equivalent.
 
 ## Verification status
 
-The default init artifacts and human-readable result are oracle-verified.
-Probes P8-P11 and P25/P27/P28 (the issue #94 probe session; reproduction
-recipe below under "Reproducing the oracle") covered:
+The default init artifacts, human-readable result, and `--tools` behavior are
+oracle-verified. Probes P8-P11 and P25/P27/P28 (the issue #94 probe session;
+reproduction recipe below under "Reproducing the oracle") covered:
 
 - the default file set and byte content, including final newlines
 - the empty `openspec/changes/archive/` directory and absence of `.gitkeep`
@@ -15,6 +15,19 @@ recipe below under "Reproducing the oracle") covered:
 - the complete `openspec/config.yaml` and `.spectra.yaml` templates
 - default, explicitly-default, and non-default `spec_dir` rendering
 - stdout and a successful zero exit code
+
+The `--tools` matrix and probes P29-P36 additionally cover:
+
+- single and comma-separated tool selection (P31/P32); repeated `--tools`
+  flags equivalent to comma-separated (P34)
+- a standalone unknown id (P35) and a space-separated value (P36) as
+  successful tool-file no-ops with the raw value echoed verbatim
+- mixed valid and unknown ids (P31)
+- user-input message ordering (P32)
+- reuse of update's write strategies and `spec_dir` rendering (P29/P30)
+- the `claude_slash_commands` boundary owned by issue #92 (P33 — probed and
+  answered: with the switch pre-set, oracle `init --tools claude --force`
+  writes the 10 command files on top of the default set)
 
 The reference CLI's `--dir` probes showed that `config.yaml` follows the
 resolved spec directory. They also showed that a non-default directory replaces
@@ -39,8 +52,12 @@ behavior for an existing OpenSpec project.
 ## CLI shape
 
 ```text
-spectra init [--adopt] [--json]
+spectra init [--adopt] [--json] [--tools <TOOLS>]
 ```
+
+The reference CLI additionally accepts `[PATH]`, `--force`, and `--dir`; those
+surfaces remain outside OpenSpectra's current CLI. `--adopt` and `--json` are
+OpenSpectra extensions.
 
 `init` is the only command that does **not** require
 `Config::is_initialized` to already be true. Every other subcommand calls
@@ -56,6 +73,63 @@ For a plain default init, the verified human-readable output is one line:
 The process exits 0 and writes nothing to stderr. `--adopt` retains its
 OpenSpectra-specific `Adopted …` message because the reference CLI has no such
 flag.
+
+## Oracle-verified `--tools`
+
+`--tools` is a comma-delimited, repeatable option. The selected ids are echoed
+in user-input order, with comma-separated values normalized to `, `:
+
+```text
+✓ Initialized at <absolute-project-root>/openspec
+Generated files for: claude, cursor
+```
+
+The process exits 0 and writes nothing to stderr. Selection is deliberately
+permissive:
+
+| Input | Tool-file result | Second stdout line |
+|---|---|---|
+| `--tools claude` | Claude's 14 files | `Generated files for: claude` |
+| `--tools claude,cursor` | 35 files | `Generated files for: claude, cursor` |
+| `--tools claude --tools cursor` | same 35 files | `Generated files for: claude, cursor` |
+| `--tools "claude cursor"` | no tool files | `Generated files for: claude cursor` |
+| `--tools definitely-not-a-tool` | no tool files | `Generated files for: definitely-not-a-tool` |
+| `--tools claude,bogus` | Claude's 14 files; unknown id ignored | `Generated files for: claude, bogus` |
+
+The message is not a report of recognized tools: it echoes every parsed value.
+This is why the unknown and space-separated cases still print a success line.
+Tool ids are not sorted into update's registry order; P32's deliberately
+reversed `cursor,claude` input remained `cursor, claude`.
+
+For every recognized id, the output bytes and paths are the same as detecting
+that tool with `spectra update`. The original single-Claude comparison was
+14/14 byte-identical. Init therefore uses update's generated registry,
+`Plain`/`Managed`/`ClaudeSettings` strategies, symlink stance, bare I/O errors,
+`{{SPEC_DIR}}` renderer, and codex-with-gemini suppression rather than owning a
+second template or writer. The existing update golden TSV is the byte-level
+contract for both commands.
+
+The `tools:` key in `.spectra.yaml` remains commented after init. `--tools`
+selects files for that invocation directly; it does not persist the selection.
+
+### P29-P36 probe records
+
+All probes used
+`/Applications/Spectra.app/Contents/MacOS/spectra` 2.3.1, inherited the normal
+process environment without overrides, and passed `--no-color`. Each row used
+a fresh `mktemp -d` jail, exactly one oracle invocation, then read-only
+inspection. All five commands exited 0 with empty stderr.
+
+| Probe | Cwd and exact command | Setup before the one operation | Observed stdout and state |
+|---|---|---|---|
+| P29 `--force` with existing files | cwd `/tmp/spectra-init89-p1-force.WNYZyJ`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools claude --force` | Seeded `CLAUDE.md` with `USER BEFORE`, an old complete managed block, and `USER AFTER`; seeded `.claude/settings.json` with `userKey` and `includeGitInstructions: true`; seeded the drift skill with a plain sentinel. | stdout was `✓ Initialized at /private/tmp/spectra-init89-p1-force.WNYZyJ/openspec\nGenerated files for: claude\n`. The managed block was upgraded while both user lines survived; settings became sorted pretty JSON with `includeGitInstructions: false` and `userKey: "keep-me"`; the plain skill was replaced. The final tree contained all 14 Claude files. Thus init `--force` uses update's three write strategies rather than forcing every file through full overwrite. |
+| P30 `--dir` substitution | cwd `/tmp/spectra-init89-p2-dir.lXQv1r`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools cursor --dir docs/myspecs` | Empty jail. | stdout was `✓ Initialized at /private/tmp/spectra-init89-p2-dir.lXQv1r/docs/myspecs\nGenerated files for: cursor\n`. `.spectra.yaml` line 6 was `spec_dir: docs/myspecs`; `config.yaml` was under `docs/myspecs/`; generated rules, skills, and commands used `docs/myspecs`. The known update quirk remained: `.cursor/commands/spectra-ask.md` retained literal `description: Query {{SPEC_DIR}}documents and answer questions`, while ordinary placeholders were substituted. |
+| P31 mixed unknown and valid ids | cwd `/tmp/spectra-init89-p3-mixed.rSo0si`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools claude,bogus` | Empty jail. | stdout was `✓ Initialized at /private/tmp/spectra-init89-p3-mixed.rSo0si/openspec\nGenerated files for: claude, bogus\n`. Exactly the 14 Claude tool files were written; `bogus` wrote nothing and did not block the valid id. Including the three default init files, the tree had 17 files. |
+| P32 message ordering | cwd `/tmp/spectra-init89-p4-order.9q4J5l`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools cursor,claude` | Empty jail. | stdout was `✓ Initialized at /private/tmp/spectra-init89-p4-order.9q4J5l/openspec\nGenerated files for: cursor, claude\n`. Both valid sets were written (35 tool files; 38 including default init files). The message follows user input, not registry order. |
+| P33 issue #92 boundary | cwd `/tmp/spectra-init89-p5-slash.iLfFDM`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools claude --force` | Seeded `.spectra.yaml` with exactly `claude_slash_commands: true\n`; `--force` was necessary because the config already marked the jail initialized. | stdout was `✓ Initialized at /private/tmp/spectra-init89-p5-slash.iLfFDM/openspec\nGenerated files for: claude\n`. The pre-existing config remained byte-identical and all 10 `.claude/commands/spectra/{apply,archive,ask,audit,commit,debug,discuss,drift,ingest,propose}.md` files were written in addition to the default Claude set. The gate belongs to issue #92; this branch routes init through the shared update writer so that gate composes after rebase. |
+| P34 repeated `--tools` flags | cwd `/tmp/spectra-init89-p34-repeat.ZX7H2m`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools claude --tools cursor` | Empty jail (git init only). | stdout was `✓ Initialized at /private/tmp/spectra-init89-p34-repeat.ZX7H2m/openspec\nGenerated files for: claude, cursor\n`, exit 0. 35 tool files written — identical count and message to the comma-separated form (P32), so repeated flags and comma separation are equivalent. |
+| P35 standalone unknown id | cwd `/tmp/spectra-init89-p35-unknown.FfADXx`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools definitely-not-a-tool` | Empty jail (git init only). | stdout was `✓ Initialized at /private/tmp/spectra-init89-p35-unknown.FfADXx/openspec\nGenerated files for: definitely-not-a-tool\n`, exit 0, zero tool files — the raw value is echoed verbatim with no validation and no warning. |
+| P36 space-separated value | cwd `/tmp/spectra-init89-p36-space.v2id7e`; `/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --tools "claude cursor"` | Empty jail (git init only). | stdout was `✓ Initialized at /private/tmp/spectra-init89-p36-space.v2id7e/openspec\nGenerated files for: claude cursor\n`, exit 0, zero tool files — the space-joined value is not split into ids; it is treated as one unknown id and echoed verbatim. |
 
 ## Verified default artifacts
 
