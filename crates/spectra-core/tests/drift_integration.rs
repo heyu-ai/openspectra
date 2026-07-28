@@ -139,3 +139,66 @@ fn drift_separates_broken_and_unresolved_anchors() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn drift_falls_back_to_broken_when_the_baseline_is_missing_or_malformed() {
+    // PR #104 review（Codex Important）：baseline fallback 只有 resolver 單元
+    // 測試涵蓋，缺少貫穿 change loading 與 drift::analyze 的整合案例——若
+    // 回歸讓不可用的 baseline 誤用 HEAD 之類的值，缺失 FilePath 會被誤判成
+    // forward reference（unresolved）而不再擋人。兩個變體都必須落在 broken。
+    for (label, started) in [("missing", None), ("malformed", Some("not-a-sha at all\n"))] {
+        let root = std::env::temp_dir().join(format!(
+            "spectra-drift-it-nobase-{label}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "user.email", "t@t.co"]);
+        git(&root, &["config", "user.name", "t"]);
+        write(
+            &root.join(".spectra.yaml"),
+            "spec_dir: openspec\nlocale: tw\n",
+        );
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-qm", "baseline"]);
+
+        let cd = root.join("openspec/changes/synthetic-change");
+        write(&cd.join(".openspec.yaml"), "schema: spec-driven\n");
+        write(&cd.join("proposal.md"), "# proposal\n");
+        write(&cd.join("tasks.md"), "- [x] 1.1 done\n");
+        write(&cd.join("design.md"), "path `src/never-existed.rs`\n");
+        if let Some(contents) = started {
+            write(
+                &root.join(".spectra/changes/synthetic-change.started"),
+                contents,
+            );
+        }
+
+        let cfg = Config::load(&root).unwrap();
+        let ch = change::load(&cfg, "synthetic-change").unwrap();
+        let report = drift::analyze(&cfg, &ch).unwrap();
+
+        let broken: Vec<_> = report
+            .broken_anchors
+            .iter()
+            .map(|a| (a.anchor.as_str(), a.reason.as_str()))
+            .collect();
+        assert_eq!(
+            broken,
+            vec![("src/never-existed.rs", "file does not exist")],
+            "{label} baseline: a missing FilePath must fall back to broken, \
+             not be classified as a forward reference"
+        );
+        assert!(
+            report
+                .unresolved_anchors
+                .iter()
+                .all(|a| a.anchor != "src/never-existed.rs"),
+            "{label} baseline: the path must not appear as unresolved"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
