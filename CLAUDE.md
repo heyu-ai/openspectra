@@ -74,6 +74,14 @@ why; never add a blanket `#[allow]` just to make the check pass.
   truncates the file to `{}`, but running it back-to-back with `reset --all`
   and checking afterwards showed only the delete, so `--all` was misread as an
   inert flag — it is not; `reset` truncates and `--all` deletes).
+- A comment or doc that states an invariant is a claim to verify like code —
+  including while *fixing* another comment. The PR #100-#104 mob reviews'
+  most-hit real-defect class was stated-but-false invariants (4 findings: a
+  security-rationale constraint the code didn't hold, a lock instruction other
+  tests couldn't follow, a test's false no-lock justification, probe records
+  attributed to cases they didn't cover), and one was reintroduced *by the fix*
+  for another. When you touch a comment, check every claim it makes against
+  the implementation before committing.
 
 ## Agent conduct
 
