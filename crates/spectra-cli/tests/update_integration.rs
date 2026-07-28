@@ -172,9 +172,14 @@ fn golden_rows() -> Vec<GoldenRow> {
                 tool: it.next().unwrap().to_string(),
                 relpath: it.next().unwrap().to_string(),
                 sha256: it.next().unwrap().to_string(),
-                // Backward-compatible only until the reviewer reruns capture:
-                // the current generated TSV predates gate measurement.
-                gate: it.next().unwrap_or("Always").to_string(),
+                // 第四欄為必填：TSV 已於 capture 重跑時全面帶上 gate 欄。
+                // 不留 "Always" fallback —— 缺欄的資料列必須大聲失敗，否則
+                // 一列漏了 gate 會被靜默當成 Always 而通過（PR #102 review，
+                // Codex）。
+                gate: it
+                    .next()
+                    .unwrap_or_else(|| panic!("golden row missing gate column: {l}"))
+                    .to_string(),
             };
             assert!(
                 matches!(row.gate.as_str(), "Always" | "ClaudeSlashCommands"),

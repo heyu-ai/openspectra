@@ -337,6 +337,31 @@ def main() -> None:
             "claude_slash_commands produced no additional files -- "
             "the on/off gate probe is not discriminating"
         )
+    # 驗證契約（CLAUDE.md：calibration script 比對 pinned expectation）：
+    # gated 集合仍由 on/off 差集「量」出來，但量出來的結果必須等於已釘住的
+    # 預期 —— 只驗非空會讓契約漂移（例如其他工具被誤納入 gate）而不觸發
+    # 失敗（PR #102 review，Codex）。oracle 若刻意擴大 gated 面，請在重新
+    # 生成 manifest 的同一個 commit 更新這份 pin。
+    expected_gates = sorted(
+        ("claude", f".claude/commands/spectra/{name}.md")
+        for name in (
+            "apply",
+            "archive",
+            "ask",
+            "audit",
+            "commit",
+            "debug",
+            "discuss",
+            "drift",
+            "ingest",
+            "propose",
+        )
+    )
+    if measured_gates != expected_gates:
+        fail(
+            "measured gated set diverged from the pinned expectation of "
+            f"{len(expected_gates)} claude command files; got: {measured_gates!r}"
+        )
     print(f"[OK] measured {len(measured_gates)} gated files from on/off differences")
     for tool_id, rel in measured_gates:
         print(f"     [gate] {tool_id}:{rel}")
