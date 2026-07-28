@@ -136,6 +136,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(&cfg.specs_dir().join("auth").join("spec.md"), "# Auth\n");
         write(
@@ -156,6 +157,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         assert_eq!(list(&cfg).unwrap(), Vec::<String>::new());
@@ -168,6 +170,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         fs::create_dir_all(cfg.specs_dir().join("empty-dir")).unwrap();
 
@@ -181,6 +184,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         fs::create_dir_all(cfg.specs_dir().join("ghost")).unwrap();
 
@@ -195,6 +199,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         // A spec.md outside specs_dir() that a traversal attempt could reach.
         write(&tmp.join("secret.md"), "outside\n");
@@ -212,6 +217,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(&cfg.specs_dir().join("auth").join("spec.md"), "# Auth\n");
 
@@ -228,6 +234,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         let real_dir = tmp.join("real-auth");
         write(&real_dir.join("spec.md"), "# Auth\n");
@@ -251,6 +258,7 @@ mod tests {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
         write(&cfg.specs_dir().join("auth").join("spec.md"), "# Auth\n");
         let bad_name = std::ffi::OsStr::from_bytes(b"bad-\xFF-name");

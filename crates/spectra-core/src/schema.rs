@@ -953,6 +953,7 @@ mod tests {
             root: root.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         let err = status(&cfg, None, Some("bogus")).unwrap_err();
@@ -970,6 +971,7 @@ mod tests {
             root: root.to_path_buf(),
             spec_dir: "openspec".to_string(),
             locale: None,
+            claude_slash_commands: false,
         };
 
         let err = status(&cfg, Some("nope"), None).unwrap_err();

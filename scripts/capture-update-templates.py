@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Capture `spectra update` instruction templates from the reference binary.
 
-macOS only（oracle 是 arm64 app）。對 23 個 AI 工具各跑兩個沙盒：
+macOS only（oracle 是 arm64 app）。對 23 個 AI 工具各跑四個沙盒：
 
-- default 沙盒：`spectra init`（spec_dir=openspec）→ 建偵測目錄 → `spectra update`
-- token 沙盒：`spectra init --dir <token>` → 同上
+- default/token spec_dir 各自跑 `claude_slash_commands` off/on
+- on/off 的寫檔集合差分量出逐檔 gate；default/token 的差分必須相同
 
 兩份輸出差分還原 `{{SPEC_DIR}}` placeholder（直接搜 "openspec" 會誤傷
 "OpenSpec" 品牌字串；token 是唯一字串所以替換位置無歧義）。
 
 這是 verification contract 不是印表機：
 - template 以 openspec 代回後必須與 default 沙盒逐位元一致，否則 [FAIL]
-  exit 2 並保留兩個沙盒供檢查。
+  exit 2 並保留四個沙盒供檢查。
 - 每個工具的 update stdout 必須逐字等於預期訊息，否則 [FAIL]。
 - 最後用全工具沙盒驗證 registry 順序訊息，不符 [FAIL]。
 
@@ -100,8 +100,23 @@ def snapshot_tree(root: Path) -> dict[str, bytes]:
     }
 
 
+def enable_claude_slash_commands(root: Path) -> None:
+    """在 update baseline 快照前開啟 Claude slash commands。"""
+    config = root / ".spectra.yaml"
+    text = config.read_text(encoding="utf-8")
+    separator = "" if not text or text.endswith("\n") else "\n"
+    config.write_text(
+        f"{text}{separator}claude_slash_commands: true\n", encoding="utf-8"
+    )
+
+
 def run_update_sandbox(
-    spectra: str, tmp: Path, tool_id: str, detect_dir: str, spec_dir: str | None
+    spectra: str,
+    tmp: Path,
+    tool_id: str,
+    detect_dir: str,
+    spec_dir: str | None,
+    slash_commands: bool,
 ) -> tuple[Path, dict[str, bytes], str]:
     """建沙盒 → init → 快照 → mkdir 偵測目錄 → update → 差分。
 
@@ -111,7 +126,9 @@ def run_update_sandbox(
     而 update 若動到 baseline 三件套，也不會有人發現（PR #86 review 由
     Codex 與 Claude/code-reviewer 各自指出）。
     """
-    tag = "default" if spec_dir is None else "token"
+    spec_tag = "default" if spec_dir is None else "token"
+    switch_tag = "slash-on" if slash_commands else "slash-off"
+    tag = f"{spec_tag}-{switch_tag}"
     root = tmp / f"{tool_id}-{tag}"
     root.mkdir(parents=True)
     init_argv = [spectra, "init", str(root), "--no-color"]
@@ -121,6 +138,10 @@ def run_update_sandbox(
     if r.returncode != 0:
         fail(f"{tool_id}/{tag}: init failed: {r.stderr.strip()}")
 
+    # 必須在 baseline 快照前寫。放到 snapshot_tree 之後會被下方的
+    # 「update 不得修改 pre-existing file」契約誤判成 oracle update 的 mutation。
+    if slash_commands:
+        enable_claude_slash_commands(root)
     before = snapshot_tree(root)
     (root / detect_dir).mkdir(parents=True)
     r = run([spectra, "update", str(root), "--no-color"])
@@ -142,7 +163,14 @@ def run_update_sandbox(
     return root, written, r.stdout
 
 
-def probe_file_kind(spectra: str, tmp: Path, tool_id: str, detect_dir: str, relpath: str) -> str:
+def probe_file_kind(
+    spectra: str,
+    tmp: Path,
+    tool_id: str,
+    detect_dir: str,
+    relpath: str,
+    slash_commands: bool,
+) -> str:
     """實測某個檔案是 Managed（保留 marker 區塊外的內容）還是 Plain（整檔覆寫）。
 
     做法：先讓 oracle 寫一次，在檔尾附加 sentinel，再跑一次 update，看
@@ -161,6 +189,8 @@ def probe_file_kind(spectra: str, tmp: Path, tool_id: str, detect_dir: str, relp
     r = run([spectra, "init", str(root), "--no-color"])
     if r.returncode != 0:
         fail(f"{tool_id}: kind-probe init failed: {r.stderr.strip()}")
+    if slash_commands:
+        enable_claude_slash_commands(root)
     (root / detect_dir).mkdir(parents=True, exist_ok=True)
     if run([spectra, "update", str(root), "--no-color"]).returncode != 0:
         fail(f"{tool_id}: kind-probe seed update failed")
@@ -213,15 +243,47 @@ def main() -> None:
     # tool_id → [(relpath, template_text)]；blob 去重表 sha → (filename, text)
     per_tool: dict[str, list[tuple[str, str]]] = {}
     blobs: dict[str, tuple[str, str]] = {}
-    golden_rows: list[tuple[str, str, str]] = []
+    golden_rows: list[tuple[str, str, str, str]] = []
+    gates: dict[tuple[str, str], str] = {}
 
     for tool_id, detect_dir in TOOLS:
+        _, default_off, _ = run_update_sandbox(
+            spectra, tmp, tool_id, detect_dir, None, False
+        )
         _, default_tree, _ = run_update_sandbox(
-            spectra, tmp, tool_id, detect_dir, None
+            spectra, tmp, tool_id, detect_dir, None, True
+        )
+        _, token_off, _ = run_update_sandbox(
+            spectra, tmp, tool_id, detect_dir, TOKEN, False
         )
         _, token_tree, _ = run_update_sandbox(
-            spectra, tmp, tool_id, detect_dir, TOKEN
+            spectra, tmp, tool_id, detect_dir, TOKEN, True
         )
+
+        if not set(default_off) <= set(default_tree):
+            fail(
+                f"{tool_id}: enabling slash commands removed files: "
+                f"{sorted(set(default_off) - set(default_tree))}"
+            )
+        if not set(token_off) <= set(token_tree):
+            fail(
+                f"{tool_id}: enabling slash commands removed token files: "
+                f"{sorted(set(token_off) - set(token_tree))}"
+            )
+        for rel in default_off:
+            if default_off[rel] != default_tree[rel]:
+                fail(f"{tool_id}:{rel}: slash switch changed an existing file")
+        for rel in token_off:
+            if token_off[rel] != token_tree[rel]:
+                fail(f"{tool_id}:{rel}: slash switch changed an existing token file")
+
+        default_gated = set(default_tree) - set(default_off)
+        token_gated = set(token_tree) - set(token_off)
+        if default_gated != token_gated:
+            fail(
+                f"{tool_id}: gated file set differs between spec_dirs: "
+                f"{sorted(default_gated ^ token_gated)}"
+            )
         if set(default_tree) != set(token_tree):
             fail(
                 f"{tool_id}: file sets differ between spec_dirs: "
@@ -251,11 +313,58 @@ def main() -> None:
             if sha not in blobs:
                 blobs[sha] = (f"{sha[:12]}.{blob_ext(rel)}", template)
             entries.append((rel, blobs[sha][0]))
+            gate = (
+                "ClaudeSlashCommands" if rel in default_gated else "Always"
+            )
+            gates[(tool_id, rel)] = gate
             golden_rows.append(
-                (tool_id, rel, hashlib.sha256(default_tree[rel]).hexdigest())
+                (
+                    tool_id,
+                    rel,
+                    hashlib.sha256(default_tree[rel]).hexdigest(),
+                    gate,
+                )
             )
         per_tool[tool_id] = entries
-        print(f"[OK] {tool_id}: {len(entries)} files")
+        print(
+            f"[OK] {tool_id}: {len(entries)} files "
+            f"({len(default_gated)} gated by claude_slash_commands)"
+        )
+
+    measured_gates = sorted(key for key, gate in gates.items() if gate != "Always")
+    if not measured_gates:
+        fail(
+            "claude_slash_commands produced no additional files -- "
+            "the on/off gate probe is not discriminating"
+        )
+    # 驗證契約（CLAUDE.md：calibration script 比對 pinned expectation）：
+    # gated 集合仍由 on/off 差集「量」出來，但量出來的結果必須等於已釘住的
+    # 預期 —— 只驗非空會讓契約漂移（例如其他工具被誤納入 gate）而不觸發
+    # 失敗（PR #102 review，Codex）。oracle 若刻意擴大 gated 面，請在重新
+    # 生成 manifest 的同一個 commit 更新這份 pin。
+    expected_gates = sorted(
+        ("claude", f".claude/commands/spectra/{name}.md")
+        for name in (
+            "apply",
+            "archive",
+            "ask",
+            "audit",
+            "commit",
+            "debug",
+            "discuss",
+            "drift",
+            "ingest",
+            "propose",
+        )
+    )
+    if measured_gates != expected_gates:
+        fail(
+            "measured gated set diverged from the pinned expectation of "
+            f"{len(expected_gates)} claude command files; got: {measured_gates!r}"
+        )
+    print(f"[OK] measured {len(measured_gates)} gated files from on/off differences")
+    for tool_id, rel in measured_gates:
+        print(f"     [gate] {tool_id}:{rel}")
 
     # ---- FileKind：對 oracle 實測，不從模板文字猜 ----
     # 只有「模板本身是完整 marker 區塊」的檔案才需要問；其餘必然是整檔覆寫。
@@ -273,7 +382,12 @@ def main() -> None:
                 continue
             marker_candidates += 1
             kinds[(tool_id, rel)] = probe_file_kind(
-                spectra, tmp, tool_id, detect_dir, rel
+                spectra,
+                tmp,
+                tool_id,
+                detect_dir,
+                rel,
+                gates[(tool_id, rel)] == "ClaudeSlashCommands",
             )
     managed = sorted(k for k, v in kinds.items() if v == "Managed")
     plain_marker_files = sorted(
@@ -315,6 +429,7 @@ def main() -> None:
     r = run([spectra, "init", str(all_root), "--no-color"])
     if r.returncode != 0:
         fail(f"all-tools: init failed: {r.stderr.strip()}")
+    enable_claude_slash_commands(all_root)
     for _, detect_dir in TOOLS:
         (all_root / detect_dir).mkdir(parents=True, exist_ok=True)
     r = run([spectra, "update", str(all_root), "--no-color"])
@@ -349,6 +464,7 @@ def main() -> None:
     r = run([spectra, "init", str(quirk_root), "--no-color"])
     if r.returncode != 0:
         fail(f"codex-gemini: init failed: {r.stderr.strip()}")
+    enable_claude_slash_commands(quirk_root)
     # 與 run_update_sandbox 同樣用 before/after 差分，而不是扣掉三個寫死的
     # baseline 路徑——後者在 init 新增或改名檔案時會為了無關的理由爆掉。
     quirk_before = set(snapshot_tree(quirk_root))
@@ -389,7 +505,7 @@ def main() -> None:
         "//! Registry order and detection directories are oracle behavior;",
         "//! see docs/reverse-engineering/update.md.",
         "",
-        "use crate::update::{FileKind, FileSpec, ToolDef};",
+        "use crate::update::{FileKind, FileSpec, Gate, ToolDef};",
         "",
         "pub static TOOLS: &[ToolDef] = &[",
     ]
@@ -400,6 +516,9 @@ def main() -> None:
         lines.append("        files: &[")
         for rel, blob_name in per_tool[tool_id]:
             kind = f"FileKind::{kinds[(tool_id, rel)]}"
+            gate = gates[(tool_id, rel)]
+            if gate != "Always":
+                kind += f".gated(Gate::{gate})"
             lines.append("            FileSpec {")
             lines.append(f"                relpath: {rust_str(rel)},")
             lines.append(f"                kind: {kind},")
@@ -417,9 +536,11 @@ def main() -> None:
     golden_dir.mkdir(parents=True, exist_ok=True)
     golden_path = golden_dir / f"update-trees-{version}.tsv"
     with golden_path.open("w", encoding="utf-8") as f:
-        f.write("# tool\trelpath\tsha256(bytes with spec_dir=openspec)\n")
-        for tool_id, rel, sha in golden_rows:
-            f.write(f"{tool_id}\t{rel}\t{sha}\n")
+        f.write(
+            "# tool\trelpath\tsha256(bytes with spec_dir=openspec)\tgate\n"
+        )
+        for tool_id, rel, sha, gate in golden_rows:
+            f.write(f"{tool_id}\t{rel}\t{sha}\t{gate}\n")
 
     print(
         f"[OK] {len(blobs)} unique blobs -> {assets_dir}\n"
