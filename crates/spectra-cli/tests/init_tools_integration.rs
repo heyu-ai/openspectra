@@ -72,6 +72,16 @@ fn golden_tool_ids() -> Vec<String> {
     tools
 }
 
+/// 逐 byte 展開，不走 `{:x}`：`sha2` 0.11 起 digest 輸出型別由
+/// `generic-array` 改為 `hybrid-array::Array`，後者沒有 `LowerHex` impl。
+/// 手動編碼在 0.10 與 0.11 下都成立。
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn assert_tool_files_match_golden(root: &Path, tools: &[&str]) {
     let mut expected = golden_rows(tools);
     expected.sort();
@@ -79,11 +89,7 @@ fn assert_tool_files_match_golden(root: &Path, tools: &[&str]) {
     for (relpath, sha) in &expected {
         let bytes = std::fs::read(root.join(relpath))
             .unwrap_or_else(|error| panic!("missing {relpath}: {error}"));
-        assert_eq!(
-            format!("{:x}", Sha256::digest(bytes)),
-            *sha,
-            "{relpath} bytes drifted"
-        );
+        assert_eq!(sha256_hex(&bytes), *sha, "{relpath} bytes drifted");
     }
 
     let mut actual = Vec::new();
