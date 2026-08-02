@@ -28,9 +28,15 @@ bare directory with no `.spectra.yaml`, and OpenSpectra matches that (it skips
 
 The oracle ships exactly one schema, `spec-driven`, reported with
 `source: "package"` (i.e. embedded in the binary, as opposed to a
-project/user-level schema file). OpenSpectra has no project/user schema
-discovery, so its registry — `spectra_core::schema::schemas()` — always returns
-this single entry, built from constants in `schema.rs`:
+project/user-level schema file). **`schemas` lists only this one even when a
+project schema exists** — probed: with `openspec/schemas/mycustom/schema.yaml`
+in place, `schemas` still prints the single `spec-driven (package)` line while
+`schema which mycustom` resolves it and labels it `(project)`. So this listing
+is not the place to look for custom-schema support.
+
+OpenSpectra has no project/user schema discovery, so its registry —
+`spectra_core::schema::schemas()` — always returns this single entry, built
+from constants in `schema.rs`:
 
 | Field | Value |
 |---|---|
@@ -105,6 +111,60 @@ When color is enabled (a TTY, no `--no-color`, no `NO_COLOR`), the oracle wraps:
 The em dash and description are left uncolored. OpenSpectra reuses the shared
 `colorize(text, sgr_code, use_color)` helper with SGR codes `1` (bold) and `2`
 (dim) to reproduce this.
+
+## Which schema a command actually runs (`<spec_dir>/config.yaml`)
+
+`schemas` only lists. The selector every other command obeys is the `schema:`
+key of `<spec_dir>/config.yaml`, which `spectra init` writes as
+`schema: spec-driven`. Probed on v2.3.1:
+
+| setup | oracle |
+|---|---|
+| `schema: mycustom` + `<spec_dir>/schemas/mycustom/schema.yaml` | loads it; `status` and `instructions` use its instructions |
+| the name `status` prints | the **`name:` field inside schema.yaml**, not the directory name |
+| `schema: no-such-schema` | exit 1, `Error: Schema not found: Schema 'no-such-schema' not found in project, user, or built-in locations` |
+| `--schema` given as well | the flag wins |
+
+The `name:` row is a trap worth repeating: `spectra schema fork spec-driven
+mycustom` copies the definition **without rewriting `name:`**, so a freshly
+forked schema loads from `schemas/mycustom/` but still reports itself as
+`spec-driven`.
+
+### OpenSpectra: fail loud rather than fall back (#117)
+
+OpenSpectra cannot load a custom schema yet (tracked by #126). Until it can,
+`status`, `instructions`, and `new artifact` resolve the same selector and
+**refuse to run** on anything but `spec-driven`:
+
+- name resolves nowhere → the oracle's message, byte for byte.
+- `schemas/<name>/schema.yaml` exists → a distinct message naming the file and
+  #126. Reusing the oracle's "not found in project ... locations" wording here
+  would be a false statement, since the schema *is* in the project.
+
+Before #117 the selector had no reader at all: a project naming a custom schema
+silently ran the built-in one, exit 0, and `instructions` emitted the generic
+instructions with the project's own conventions missing — no warning anywhere.
+
+`schema:` is not the only live key in that file. The oracle also reads
+`context:` and `rules:` and surfaces them in `instructions --json` as two extra
+top-level fields, which OpenSpectra does not yet emit (#127):
+
+```yaml
+context: |
+  Tech stack: TypeScript, React
+rules:
+  tasks:
+    - Break tasks into chunks of max 2 hours
+```
+
+```json
+{"context": "Tech stack: TypeScript, React",
+ "rules": ["Break tasks into chunks of max 2 hours"]}
+```
+
+`context` is the trimmed scalar; `rules` is flattened to **just the requested
+artifact's** list (asking for `proposal` returns the `proposal` rules, not the
+whole map). Both keys are absent from the JSON when unset.
 
 ## Consumer
 

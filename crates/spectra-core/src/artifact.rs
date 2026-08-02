@@ -148,6 +148,9 @@ pub fn create(
     stdin_content: Option<&str>,
     force: bool,
 ) -> Result<NewArtifactOutcome> {
+    // Writing a file from the built-in template while `config.yaml` names a
+    // custom schema would produce an artifact from the wrong workflow.
+    crate::schema::require_supported(cfg, None)?;
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let artifact_type = ArtifactType::parse(type_name)?;
     let change = crate::change::try_load(cfg, &change_name)?.ok_or_else(|| {

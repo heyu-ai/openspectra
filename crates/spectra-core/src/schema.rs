@@ -635,17 +635,69 @@ pub fn derive_status(
     })
 }
 
+/// The `schema:` selector in `<spec_dir>/config.yaml`. `None` when the file is
+/// absent, unparseable, or has no `schema` key — an unreadable selector must
+/// not be louder than a missing one, since the built-in schema is the default
+/// either way.
+pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct SpecConfig {
+        schema: Option<String>,
+    }
+    let text = std::fs::read_to_string(cfg.root.join(&cfg.spec_dir).join("config.yaml")).ok()?;
+    let parsed: SpecConfig = serde_yaml::from_str(&text).ok()?;
+    parsed.schema.filter(|s| !s.trim().is_empty())
+}
+
+/// Resolve which schema a command should run under: `--schema` when given,
+/// otherwise `<spec_dir>/config.yaml`'s `schema:`, otherwise the built-in.
+///
+/// Errors on anything but the built-in. OpenSpectra cannot load a custom
+/// schema yet (#126), and *silently* falling back to `spec-driven` was worse
+/// than failing: the project's own artifact instructions vanished from
+/// `instructions` output with exit 0 and no warning (#117).
+pub fn require_supported(cfg: &crate::Config, explicit: Option<&str>) -> anyhow::Result<()> {
+    let configured;
+    let name = match explicit {
+        Some(name) => name,
+        None => match configured_schema_name(cfg) {
+            Some(name) => {
+                configured = name;
+                configured.as_str()
+            }
+            None => return Ok(()),
+        },
+    };
+    if name == SCHEMA_NAME {
+        return Ok(());
+    }
+    let definition = cfg
+        .root
+        .join(&cfg.spec_dir)
+        .join("schemas")
+        .join(name)
+        .join("schema.yaml");
+    if definition.is_file() {
+        return Err(anyhow::anyhow!(
+            "Schema '{name}' is defined at {} but OpenSpectra can only run the built-in \
+             '{SCHEMA_NAME}' schema; loading custom schemas is tracked by issue #126. \
+             Set 'schema: {SCHEMA_NAME}' in {}/config.yaml to proceed with the built-in workflow.",
+            definition.display(),
+            cfg.spec_dir
+        ));
+    }
+    // The oracle's wording, byte for byte, for a name that resolves nowhere.
+    Err(anyhow::anyhow!(
+        "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
+    ))
+}
+
 pub fn status(
     cfg: &crate::Config,
     explicit_change: Option<&str>,
     schema_name: Option<&str>,
 ) -> anyhow::Result<StatusReport> {
-    let schema_name = schema_name.unwrap_or(SCHEMA_NAME);
-    if schema_name != SCHEMA_NAME {
-        return Err(anyhow::anyhow!(
-            "Schema not found: Schema '{schema_name}' not found in project, user, or built-in locations"
-        ));
-    }
+    require_supported(cfg, schema_name)?;
 
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
@@ -657,6 +709,95 @@ pub fn status(
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
+    fn project(label: &str) -> (TempDir, crate::Config) {
+        let tmp = TempDir::new(label);
+        let cfg = crate::Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        };
+        std::fs::create_dir_all(tmp.join("openspec")).unwrap();
+        (tmp, cfg)
+    }
+
+    fn write_spec_config(cfg: &crate::Config, body: &str) {
+        std::fs::write(cfg.root.join(&cfg.spec_dir).join("config.yaml"), body).unwrap();
+    }
+
+    #[test]
+    fn configured_schema_name_reads_the_spec_dir_config() {
+        let (_tmp, cfg) = project("schema-configured");
+        assert_eq!(configured_schema_name(&cfg), None);
+
+        write_spec_config(&cfg, "schema: mycustom\n# a comment\n");
+        assert_eq!(configured_schema_name(&cfg), Some("mycustom".to_string()));
+    }
+
+    #[test]
+    fn configured_schema_name_ignores_blank_and_unparseable_config() {
+        let (_tmp, cfg) = project("schema-configured-blank");
+
+        write_spec_config(&cfg, "schema: \"   \"\n");
+        assert_eq!(configured_schema_name(&cfg), None);
+
+        write_spec_config(&cfg, "schema: [not, a, string\n");
+        assert_eq!(configured_schema_name(&cfg), None);
+    }
+
+    #[test]
+    fn require_supported_accepts_the_builtin_and_an_unconfigured_project() {
+        let (_tmp, cfg) = project("schema-supported-ok");
+        assert!(require_supported(&cfg, None).is_ok());
+
+        write_spec_config(&cfg, "schema: spec-driven\n");
+        assert!(require_supported(&cfg, None).is_ok());
+        assert!(require_supported(&cfg, Some(SCHEMA_NAME)).is_ok());
+    }
+
+    #[test]
+    fn require_supported_uses_the_oracle_wording_for_a_schema_that_resolves_nowhere() {
+        let (_tmp, cfg) = project("schema-supported-missing");
+        write_spec_config(&cfg, "schema: no-such-schema\n");
+
+        assert_eq!(
+            require_supported(&cfg, None).unwrap_err().to_string(),
+            "Schema not found: Schema 'no-such-schema' not found in project, user, \
+             or built-in locations"
+        );
+    }
+
+    #[test]
+    fn require_supported_reports_a_present_custom_schema_as_unsupported_not_missing() {
+        // Claiming a schema is "not found in project ... locations" while it
+        // sits in the project would be a false statement, so this case gets
+        // its own message.
+        let (_tmp, cfg) = project("schema-supported-present");
+        write_spec_config(&cfg, "schema: mycustom\n");
+        let definition = cfg
+            .root
+            .join("openspec")
+            .join("schemas")
+            .join("mycustom")
+            .join("schema.yaml");
+        std::fs::create_dir_all(definition.parent().unwrap()).unwrap();
+        std::fs::write(&definition, "name: mycustom\nartifacts: []\n").unwrap();
+
+        let err = require_supported(&cfg, None).unwrap_err().to_string();
+        assert!(err.contains(&definition.display().to_string()), "{err}");
+        assert!(err.contains("#126"), "{err}");
+        assert!(!err.contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn an_explicit_schema_flag_overrides_the_configured_one() {
+        let (_tmp, cfg) = project("schema-flag-wins");
+        write_spec_config(&cfg, "schema: no-such-schema\n");
+
+        assert!(require_supported(&cfg, Some(SCHEMA_NAME)).is_ok());
+        assert!(require_supported(&cfg, Some("another-missing")).is_err());
+    }
 
     #[test]
     fn spec_driven_artifacts_have_canonical_order_paths_and_dependencies() {

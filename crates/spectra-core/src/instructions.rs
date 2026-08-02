@@ -535,12 +535,7 @@ pub fn get(
     schema_name: Option<&str>,
     artifact_id: Option<&str>,
 ) -> Result<InstructionOutput> {
-    let schema_name = schema_name.unwrap_or(crate::schema::SCHEMA_NAME);
-    if schema_name != crate::schema::SCHEMA_NAME {
-        anyhow::bail!(
-            "Schema not found: Schema '{schema_name}' not found in project, user, or built-in locations"
-        );
-    }
+    crate::schema::require_supported(cfg, schema_name)?;
 
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?

@@ -10,6 +10,27 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A custom `schema:` in `<spec_dir>/config.yaml` no longer silently falls
+  back to the built-in workflow** (#117). That file had no reader at all, so a
+  project selecting its own schema ran `spec-driven` with exit 0, no warning,
+  and normal-looking output — while `instructions` emitted the generic text
+  with the project's own artifact instructions missing entirely. `status`,
+  `instructions`, and `new artifact` now resolve the selector (`--schema`
+  first, then `config.yaml`, then the built-in) and refuse to run on anything
+  else:
+  - a name that resolves nowhere reports the oracle's message byte for byte
+    (`Schema not found: Schema 'X' not found in project, user, or built-in
+    locations`);
+  - a name whose `<spec_dir>/schemas/<name>/schema.yaml` *does* exist gets a
+    distinct message naming that file — claiming it was "not found in project
+    … locations" would be false.
+
+  This is the stopgap half of #117. Actually loading a custom schema is
+  tracked by #126, and the sibling `context:` / `rules:` keys the oracle also
+  reads from that file by #127.
+
 ## [0.6.0] - 2026-08-02
 
 ### Added
