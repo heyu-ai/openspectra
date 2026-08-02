@@ -10,6 +10,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-02
+
+### Added
+
+- **`spectra init --tools <list>`** (#89) writes the instruction files for an
+  explicit set of AI tools at init time, reusing the `update` write path
+  instead of a second implementation. This is the last piece of #55: a brand
+  new project can now be bootstrapped with openspectra alone.
+
 ### Changed
 
 - **`spectra drift` now separates unresolvable design anchors from broken
@@ -23,6 +32,24 @@ changes.
   Structure broken count or contribute to its score, `total_score`, severity,
   or exit-code inputs. This is a deliberate divergence from the v2.3.1 oracle,
   which counts these references as broken.
+
+### Fixed
+
+- **`spectra update` no longer silently skips the Claude slash commands**
+  (#92). With `claude_slash_commands: true` the 10 gated
+  `.claude/commands/spectra/*.md` files were never written -- the flag was
+  read and then ignored, so the whole write set was a silent no-op. They are
+  now written through the same gated path as the other tool files.
+- **`spectra init` default artifacts match the v2.3.1 oracle** (#94), closing
+  6 divergences -- notably the missing `config.yaml` and `changes/archive/`,
+  and a `.spectra.yaml` that was written as a single line.
+- **Newly created files get the oracle's `0666 & ~umask` mode** (#93).
+  `write_via_temp` created its temp file `0600` and only applied the target's
+  mode when the target already existed, so every *new* file kept `0600`. The
+  mode is now probed against the oracle at four umask values (000/002/022/077);
+  022 and 077 alone cannot distinguish an `0666` base from `0644`, so the base
+  was only pinned once 000 and 002 were measured. Existing targets keep their
+  mode, and a symlinked target is no longer replaced at the widened mode.
 
 ## [0.5.0] - 2026-07-24
 
@@ -267,7 +294,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/howie/openspectra/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/howie/openspectra/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/howie/openspectra/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/howie/openspectra/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/howie/openspectra/releases/tag/v0.4.0
 [0.3.0]: https://github.com/howie/openspectra/releases/tag/v0.3.0
