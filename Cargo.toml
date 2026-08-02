@@ -30,4 +30,4 @@ once_cell = "1"
 libc = "0.2"
 # dev-only: integration tests hash `update`'s written trees against the
 # oracle-captured golden TSV (docs/reverse-engineering/golden/update-trees-*).
-sha2 = "0.10"
+sha2 = "0.11"
