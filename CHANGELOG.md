@@ -10,6 +10,29 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`spectra drift` no longer caps the Structure denominator at 50** (#119).
+  `ANCHOR_CAP` was implemented as `truncate(50)`, so every design with more
+  than 50 anchors reported exactly `N/50` and silently dropped everything past
+  index 50 from the broken set. The oracle does not truncate: above the cap it
+  keeps an evenly spaced sample of at most 12 anchors *per category* (index
+  `i * n / 12`), so its denominators are multiples of 12. Pinned by probe at
+  the 50/51 boundary, at n = 53/60/77, and across one to three categories.
+
+### Changed
+
+- **Broken CliFlag and Function anchors are reported as broken again** (#119),
+  reverting that half of #83. Measured over 26 real changes, withholding them
+  put every Structure score out of step with the oracle and let a CI drift
+  gate stay green while drift existed. `--flag` anchors are broken with reason
+  `not in --help` and `git grep`-missing functions with
+  `function not found in repo`, both matching the v2.3.1 oracle byte for byte.
+  The remaining #83 divergence is narrower: a missing FilePath that did not
+  exist at the change's `.started` baseline is still `forward reference` in
+  `unresolved_anchors` rather than broken. `unresolved_anchors` keeps its shape
+  and place in the JSON.
+
 ## [0.6.0] - 2026-08-02
 
 ### Added

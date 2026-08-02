@@ -29,11 +29,12 @@
 //! broken on a committed change (Function/Symbol self-match the tracked
 //! design.md), so "non-CliFlag broken" == FilePath there.
 //!
-//! OpenSpectra deliberately diverges at the resolver boundary: CliFlags and
-//! unresolvable Functions are reported as unresolved, and never passed as
-//! broken inputs to this oracle-derived formula. Missing FilePaths are likewise
-//! excluded unless they existed at the change baseline. The formula stays
-//! pinned so the score → severity chain is unchanged for actionable anchors.
+//! CliFlags and unresolvable Functions were briefly reported as unresolved and
+//! withheld from this formula (#83); #119 restored them as broken, so the
+//! goldens above are now reproduced end-to-end and not only as pure-function
+//! checks. One resolver divergence remains: a missing FilePath that did not
+//! exist at the change baseline is unresolved (`forward reference`) rather than
+//! broken.
 //!
 //! Time (score is a function of days since `created`) — boundaries now pinned
 //! exactly (previously interpolated from sparse field samples):
@@ -53,9 +54,17 @@
 //! this way (the old table read `<21`/`<60` and scored abandoned `3`). See the
 //! Time section of `docs/reverse-engineering/drift.md`.
 
-/// Maximum number of design anchors checked, per `ANCHOR_CAP` in
-/// `spectra_core::drift` (recovered verbatim from the binary).
+/// Anchor count up to which every extracted design anchor is checked. Sets
+/// exclude nothing at `50`; at `51` the oracle switches to the sampled regime
+/// below. Boundary pinned by probe (pure-FilePath designs: `50` → `50/50`,
+/// `51` → `12/12`).
 pub const ANCHOR_CAP: usize = 50;
+
+/// Anchors kept *per category* once the extracted set exceeds [`ANCHOR_CAP`].
+/// The oracle does not truncate the over-cap set — it keeps an evenly spaced
+/// sample of each category, so the reported denominator is a multiple of this
+/// value rather than `ANCHOR_CAP`. See `anchors::extract`.
+pub const ANCHOR_SAMPLE_PER_CATEGORY: usize = 12;
 
 /// Whether the Tasks-dimension collision detectors (blocked / maybe-resolved)
 /// are calibrated. Held `false`: every captured oracle sample was `0 blocked,
@@ -156,24 +165,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn structure_score_preserves_oracle_goldens_and_pins_unresolved_divergence() {
+    fn structure_score_reproduces_the_oracle_goldens() {
         const ORACLE_ADD_TOKEN_ECONOMY: i64 = 0;
         const ORACLE_ENHANCE_D5: i64 = 3;
         const ORACLE_MYCELIUM: i64 = 7;
         const ORACLE_PR_CONTROL_LOG: i64 = 7;
 
-        // Keep the recovered formula and oracle measurements executable.
+        // Every broken anchor in these four golden fixtures is a CliFlag, so
+        // since #119 restored CliFlags to broken these are the inputs the
+        // resolver actually produces — not just formula-level checks.
         assert_eq!(structure_score(0, 0, 16), ORACLE_ADD_TOKEN_ECONOMY);
         assert_eq!(structure_score(3, 3, 40), ORACLE_ENHANCE_D5);
         assert_eq!(structure_score(9, 9, 29), ORACLE_MYCELIUM);
         assert_eq!(structure_score(12, 12, 25), ORACLE_PR_CONTROL_LOG);
-
-        // The golden fixtures identify every broken anchor in these samples as
-        // a CliFlag. Under #83 those inputs are unresolved rather than broken.
-        assert_eq!(structure_score(0, 0, 16), 0); // oracle 0; no exclusion needed
-        assert_eq!(structure_score(0, 0, 40), 0); // oracle 3; exclude 3 CliFlags
-        assert_eq!(structure_score(0, 0, 29), 0); // oracle 7; exclude 9 CliFlags
-        assert_eq!(structure_score(0, 0, 25), 0); // oracle 7; exclude 12 CliFlags
     }
 
     #[test]
