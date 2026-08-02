@@ -151,7 +151,8 @@ fn drift_reports_a_broken_anchor_past_the_cap_on_an_over_cap_design() {
     const TOTAL: usize = 55;
     const MISSING: usize = 50;
 
-    let root = std::env::temp_dir().join(format!("spectra-drift-it-overcap-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("spectra-drift-it-overcap-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
 
