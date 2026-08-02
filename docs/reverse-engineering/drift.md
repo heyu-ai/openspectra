@@ -23,7 +23,7 @@ that uses vector/BM25 indexing, not `drift`). Internally it lives in
 | `<spec_dir>/changes/<name>/` | change dir: `proposal.md`, `design.md`, `tasks.md`, `specs/<cap>/spec.md` |
 | `<spec_dir>/changes/<name>/.openspec.yaml` | `schema, created (YYYY-MM-DD), created_by, created_with, archived_by, archived_at` |
 | `.spectra/changes/<name>.started` | baseline git SHA recorded when work began (optional) |
-| `.spectra/changes/<name>.parked` | parked marker |
+| `<git common dir>/spectra-app/changes/<name>/` | a parked change's directory, moved out of `changes/` (see `park.md`) |
 
 Archived changes use a `YYYY-MM-DD-` name prefix; active change names are
 kebab-case (`^[a-z0-9]+(-+[a-z0-9]+)*$`).

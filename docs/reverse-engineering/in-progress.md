@@ -69,8 +69,10 @@ copy that internal mechanism. It writes an empty sidecar instead:
 .spectra/changes/<name>.in-progress
 ```
 
-This mirrors the existing `.spectra/changes/<name>.parked` convention and
-avoids introducing SQLite solely for opaque state. Because the marker has no
+This mirrors the existing `.spectra/changes/<name>.started` convention and
+avoids introducing SQLite solely for opaque state. (Parked state is *not* a
+sidecar -- like the oracle, `park` moves the change directory; see
+`park.md`.) Because the marker has no
 read path, the choice of storage is not observable through the CLI.
 
 ## Deliberate OpenSpectra differences
@@ -89,6 +91,6 @@ the oracle probes:
 * `clear_stale_sidecar_state` removes the `.in-progress` sidecar during
   archive and before recreating a same-named change. This differs from the
   oracle's orphan-on-archive behavior, but is consistent with OpenSpectra's
-  existing defensive clearing of `.parked`, `.started`, and touched-file
+  existing defensive clearing of `.started` and touched-file
   sidecars. A newly created change therefore cannot inherit opaque state from
   an older change with the same name.

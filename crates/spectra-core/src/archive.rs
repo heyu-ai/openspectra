@@ -1986,7 +1986,7 @@ mod tests {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
-        change::park(&c, "my-feature").unwrap();
+        change::mark_in_progress(&c, "my-feature").unwrap();
 
         archive(&c, "my-feature", true, false).unwrap();
 
@@ -1994,7 +1994,7 @@ mod tests {
             .root
             .join(".spectra")
             .join("changes")
-            .join("my-feature.parked")
+            .join("my-feature.in-progress")
             .exists());
     }
 
