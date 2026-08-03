@@ -152,14 +152,39 @@ jobs:
 ```
 
 `spectra drift` itself always exits `0` on a successful run (matching the
-reference binary), so the gate is the explicit `jq` check — the job fails when
-the Structure dimension found any broken anchor. Each entry names a design
-reference the codebase no longer has, and prints its `anchor`, `category` and
-`reason`, so a red build says what to fix:
+reference binary), so the gate is the explicit `jq` check. Each entry prints its
+`anchor`, `category` and `reason`, so a red build says what to fix:
 
 ```sh
 jq -r '.broken_anchors[] | "\(.category)\t\(.anchor)\t\(.reason)"' drift.json
 ```
+
+#### What this gate actually catches — read before adopting it
+
+On a change whose `design.md` is **committed** (the normal case in a PR), this
+gate fires on exactly one thing: **a `FilePath` anchor whose file existed at the
+change's baseline and is now gone.** That is a real, actionable signal, and it is
+the entire signal. Measured against the reference binary, not inferred:
+
+| category | on a committed change | in the gate? |
+|----------|----------------------|--------------|
+| FilePath | broken when the path existed at baseline and is now absent | **yes** |
+| FilePath | absent at baseline too → `unresolved / forward reference` | no |
+| CliFlag | always `unresolved / no target --help` — there is no binary to diff flags against | no |
+| Function | `unresolved / not first-party` when `git grep` misses it (#83) | no |
+| Symbol / Function | `git grep` searches all tracked files **including the change's own `design.md`**, so an anchor extracted from a committed design always matches itself and never breaks | no |
+
+The last row is the important one and it applies to the reference binary too:
+probed on a committed design citing a function and a struct that exist nowhere
+in the codebase, **both binaries report neither as broken *or* unresolved** —
+they self-resolve. So a gate on `broken_anchors` cannot detect a deleted
+function or type, and no configuration of this tool currently can. Excluding the
+change directory from `git grep` would expose those anchors, but it would also
+make every prose word in a freshly scaffolded `design.md` break (#51), so it is
+not a drop-in fix; it is tracked as a known limitation in the RE doc.
+
+Adopt this gate for what it is — a deleted-file detector for spec artifacts —
+and do not read a green build as "this design still matches the code".
 
 **Do not gate on `severity`.** It is a blend of all three scoring dimensions
 and is dominated by **Time**, which no pull request can fix: a change untouched
@@ -168,14 +193,8 @@ for 61 days scores 4 on Time alone, which is enough to read `medium` or
 ordering a gate needs — the four `medium` changes each had **0** broken
 anchors and were merely 68–82 days old, while the one change that did have
 broken anchors read `light`. Gating on severity therefore blocks PRs for the
-age of a change they did not touch, and lets real drift through.
-
-Note that `unresolved_anchors` is deliberately **not** part of the gate.
-Unresolvable references — CLI flags with no owning binary, functions that may
-belong to a dependency, and paths a change is proposing to create — are
-reported in that sibling array precisely so they cannot fail a build; only
-`broken_anchors` carries the actionable "this used to exist and is now gone"
-signal. See
+age of a change they did not touch, and lets real drift through. Narrow and
+honest beats broad and wrong — but neither is a substitute for review. See
 [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md).
 
 The step above expects a single active change — with several, `spectra drift`

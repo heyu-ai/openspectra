@@ -294,6 +294,25 @@ of 0. Two changes, both confined to extraction:
 
 Every reported FilePath anchor is therefore greppable verbatim in its design.
 
+**The divergence is confined to the reported text, not to which paths resolve.**
+`anchors::path_candidates` tries the oracle's truncated form as a fallback, so a
+project rooted at the sub-project itself keeps working: a design under
+`frontend/` citing the monorepo-relative `frontend/src/x.ts` would otherwise be
+looked up at `frontend/frontend/src/x.ts` and reported broken where the oracle
+resolves it. Probed (2026-08-03): oracle `0/1`, OpenSpectra without the fallback
+`1/1` — a false positive introduced by the first draft of this fix and removed
+by the fallback. Because the fallback only widens what counts as present, it
+cannot manufacture a broken anchor.
+
+Observed edge cases, all measured rather than reasoned about:
+
+| design text | anchor |
+|-------------|--------|
+| `https://github.com/org/repo/src/lib.rs` | none — the `//` fails the boundary check |
+| `github.com/org/repo/src/lib.rs` (bare) | full string; falls back to `src/lib.rs` for resolution |
+| `./src/main.rs`, `../src/main.rs` | kept as written (the match starts at the leading `.`) |
+| `/Users/me/repo/src/main.rs` | none — the leading `/` fails the boundary check |
+
 **Ruling on repo-external references** (the open question in #123's acceptance
 criteria): no special case is added for them. `heyuai/docs/yibi/e02.md` is now
 reported in full, and whether it lands in `broken_anchors` or
@@ -373,6 +392,22 @@ Two resolution behaviours are carried as-is pending a positive oracle decision
    broken and reveal the full set — a different technique for a different goal.)
    A future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
    it is deferred until an oracle run confirms the intended behaviour.
+
+   **This is what bounds the CI gate, so state it where operators read it.**
+   Probed head-to-head on 2026-08-03 with a committed design citing
+   `deleted_helper_fn()` and `DeletedStructName`, neither present anywhere in the
+   codebase: *both* binaries report them in neither `broken_anchors` nor
+   `unresolved_anchors` — they self-resolve and vanish. Combined with #83
+   (CliFlag and unresolvable Function → unresolved), the only category that can
+   reach `broken_anchors` on a committed change is **FilePath**, and only when
+   the path existed at the baseline. The README gate section says this outright
+   rather than implying full-category coverage.
+
+   Note the fix is not a drop-in: excluding the change dir would expose the
+   Symbol anchors that a freshly scaffolded `design.md` extracts from its own
+   template prose, re-opening #51 in a worse form (~20 broken anchors on an
+   untouched scaffold). Any future attempt must land together with a Symbol
+   filter that survives that case.
 2. **FilePath resolves while still in the git index.** A path is considered
    present if it is tracked *or* on disk, so a working-tree `rm` without `git rm`
    still reads as resolved until staged. `drift` describes "current codebase

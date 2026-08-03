@@ -87,6 +87,38 @@ static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")
         .unwrap()
 });
+
+/// The recovered `.rodata` regex, without [`FILE_PATH_RE`]'s prefix head.
+///
+/// Kept because the divergence is confined to the *reported* anchor text: a
+/// path is still resolved against the oracle's truncated form as well as the
+/// text as written (see [`path_candidates`]).
+static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
+});
+
+/// On-disk forms to try for a FilePath anchor: the path as written, plus the
+/// oracle's truncated form when it differs.
+///
+/// Reporting the full path (#123) must not change *which* paths resolve, only
+/// what the finding is called. Without the fallback, a project rooted at the
+/// sub-project itself regresses: a design under `frontend/` citing the
+/// monorepo-relative `frontend/src/x.ts` would be looked up at
+/// `frontend/frontend/src/x.ts` and reported broken, where the oracle's
+/// truncated `src/x.ts` resolves. Probed against v2.3.1 (2026-08-03): oracle
+/// `0/1`, pre-fallback OpenSpectra `1/1` — a false positive this fix removes.
+///
+/// The fallback only ever makes resolution more permissive, so it cannot invent
+/// a broken anchor; at worst it matches the oracle's own behaviour.
+fn path_candidates(anchor: &str) -> Vec<&str> {
+    let mut candidates = vec![anchor];
+    if let Some(m) = ORACLE_FILE_PATH_RE.find(anchor) {
+        if m.as_str() != anchor {
+            candidates.push(m.as_str());
+        }
+    }
+    candidates
+}
 static CLI_FLAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"--[a-z][a-z0-9-]+").unwrap());
 static SNAKE_FN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*_[a-z0-9_]+)\(").unwrap());
@@ -264,13 +296,24 @@ impl Resolver<'_> {
             let category = anchor.kind.as_str().to_string();
             match anchor.kind {
                 AnchorKind::FilePath => {
-                    let on_disk = self.root.join(&anchor.text).exists();
-                    if self.tracked.contains(&anchor.text) || on_disk {
+                    let candidates = path_candidates(&anchor.text);
+                    let present = candidates
+                        .iter()
+                        .any(|p| self.tracked.contains(*p) || self.root.join(p).exists());
+                    if present {
                         continue;
                     }
-                    let existed_at_baseline = self
-                        .baseline_sha
-                        .and_then(|sha| git::path_exists_at(self.root, sha, &anchor.text));
+                    // `forward reference` requires every candidate form to be
+                    // definitely absent at the baseline. One `Some(true)` means
+                    // the path was there and is now gone (broken); one `None`
+                    // means the baseline is unusable, which must not be read as
+                    // proof of absence.
+                    let existed_at_baseline = self.baseline_sha.and_then(|sha| {
+                        candidates
+                            .iter()
+                            .map(|p| git::path_exists_at(self.root, sha, p))
+                            .try_fold(false, |acc, seen| Some(acc || seen?))
+                    });
                     if matches!(existed_at_baseline, Some(false)) {
                         unresolved.push(UnresolvedAnchor {
                             anchor: anchor.text.clone(),
@@ -529,6 +572,55 @@ mod tests {
                 "heyuai/docs/yibi/e02.md"
             ]
         );
+    }
+
+    /// #123 must not trade one false positive for another. When the project
+    /// root *is* the sub-project, a monorepo-relative citation still has to
+    /// resolve — the oracle's truncated form is tried as a fallback, so the
+    /// reported text changes but the resolved/broken verdict does not.
+    /// Probe: oracle `0/1`, OpenSpectra without this fallback `1/1`.
+    #[test]
+    fn monorepo_path_resolves_against_the_oracle_truncation() {
+        let dir = TempDir::new("nested-root");
+        std::fs::create_dir_all(dir.join("src/services")).unwrap();
+        std::fs::write(
+            dir.join("src/services/apiClient.ts"),
+            "export const x = 1;\n",
+        )
+        .unwrap();
+        let tracked = HashSet::new();
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+
+        let resolution = resolver.resolve(&extract("see `frontend/src/services/apiClient.ts`"));
+
+        assert!(
+            resolution.broken.is_empty(),
+            "monorepo-relative path must resolve via the oracle truncation, got {:?}",
+            resolution.broken
+        );
+    }
+
+    /// The fallback must not hide a genuine deletion: when neither the path as
+    /// written nor its truncation exists, the anchor is still broken — and it
+    /// is reported under the text the design actually contains.
+    #[test]
+    fn monorepo_path_still_breaks_when_neither_form_exists() {
+        let tracked = HashSet::new();
+        let dir = TempDir::new("nested-root-missing");
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+
+        let resolution = resolver.resolve(&extract("see `frontend/src/services/gone.ts`"));
+
+        assert_eq!(resolution.broken.len(), 1);
+        assert_eq!(resolution.broken[0].anchor, "frontend/src/services/gone.ts");
     }
 
     /// #123, the other half: a match starting mid-token is not an anchor at
