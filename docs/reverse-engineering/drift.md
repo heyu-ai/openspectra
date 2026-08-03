@@ -233,9 +233,17 @@ The JSON shape is unchanged: `broken_anchors` and `unresolved_anchors` both
 remain, and human output still renders them under separate headings. The score
 formula, severity bands, recommendations, and exit-code mapping are untouched.
 
-The four real calibration goldens are now reproduced end-to-end: oracle scores
-`0`, `3`, `7`, `7`, with broken-category compositions of 0, 3, 9, and 12
-CliFlags respectively. Under #83 those all read `0`.
+The four real calibration goldens read oracle scores `0`, `3`, `7`, `7`, with
+broken-category compositions of 0, 3, 9, and 12 CliFlags respectively. Under #83
+OpenSpectra's expectation for all four was `0`; since #119 the
+`(broken, broken_cliflags, total)` triples the resolver produces for them are
+the oracle's own again.
+
+> **The goldens are still not replayed.** No test reads
+> `golden/drift-*.json` — `calibration.rs`'s golden test asserts
+> `structure_score(...)` on hand-copied triples, so the
+> score → severity → exit-code chain has never been exercised over a real
+> fixture. That is a coverage gap, not a divergence, and it predates #119.
 
 ## What is verified vs. uncertain
 
@@ -244,7 +252,7 @@ CliFlags respectively. Under #83 those all read `0`.
 | JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
 | FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; CliFlag/Function resolution exact since #119; missing-FilePath still diverges on forward references |
 | Over-cap anchor sampling (per category, `i * n / 12`) | ✅ exact — probed at the 50/51 boundary and at n = 53, 60, 77, and across 1–3 categories |
-| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; the four goldens reproduce end-to-end |
+| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; the four goldens' triples are the resolver's real output since #119, but no test replays the fixtures |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
