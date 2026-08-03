@@ -233,17 +233,27 @@ The JSON shape is unchanged: `broken_anchors` and `unresolved_anchors` both
 remain, and human output still renders them under separate headings. The score
 formula, severity bands, recommendations, and exit-code mapping are untouched.
 
-The four real calibration goldens read oracle scores `0`, `3`, `7`, `7`, with
+The four real calibration goldens record oracle scores `0`, `3`, `7`, `7`, with
 broken-category compositions of 0, 3, 9, and 12 CliFlags respectively. Under #83
-OpenSpectra's expectation for all four was `0`; since #119 the
-`(broken, broken_cliflags, total)` triples the resolver produces for them are
-the oracle's own again.
+OpenSpectra's expectation for all four was `0`. #119 makes those
+`(broken, broken_cliflags, total)` triples *reachable* again — under #83 no
+resolver run could yield a non-zero `broken_cliflags` — and that is all it
+establishes.
 
-> **The goldens are still not replayed.** No test reads
-> `golden/drift-*.json` — `calibration.rs`'s golden test asserts
-> `structure_score(...)` on hand-copied triples, so the
-> score → severity → exit-code chain has never been exercised over a real
-> fixture. That is a coverage gap, not a divergence, and it predates #119.
+> **The goldens are not replayed, and cannot be as they stand.** No test reads
+> `golden/drift-*.json`; `calibration.rs`'s golden test asserts
+> `structure_score(...)` on hand-copied literals. The fixtures capture the
+> oracle's *output* only — the input repositories and `design.md` files were
+> never preserved, so there is nothing to feed `drift::analyze`, and building
+> synthetic lookalikes would test equivalent examples rather than replay these
+> four. Closing it needs input snapshots captured first (#132).
+>
+> This is narrower than "the downstream chain is untested". For #119's changed
+> behavior the score → severity → recommendation chain *is* exercised through
+> the real `drift::analyze` in `drift_integration.rs` (on synthetic repos), and
+> the exit-code end by
+> `cli_integration.rs::drift_exits_zero_even_when_severity_is_medium_or_higher`.
+> What is missing is any assertion anchored to these four captured fixtures.
 
 ## What is verified vs. uncertain
 
@@ -252,7 +262,7 @@ the oracle's own again.
 | JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
 | FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; CliFlag/Function resolution exact since #119; missing-FilePath still diverges on forward references |
 | Over-cap anchor sampling (per category, `i * n / 12`) | ✅ exact — probed at the 50/51 boundary and at n = 53, 60, 77, and across 1–3 categories |
-| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; the four goldens' triples are the resolver's real output since #119, but no test replays the fixtures |
+| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; #119 makes the goldens' triples reachable again, but the fixtures are output-only and never replayed (#132) |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |

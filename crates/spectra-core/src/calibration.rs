@@ -30,14 +30,15 @@
 //! design.md), so "non-CliFlag broken" == FilePath there.
 //!
 //! CliFlags and unresolvable Functions were briefly reported as unresolved and
-//! withheld from this formula (#83); #119 restored them as broken, so the
-//! golden `(broken, broken_cliflags, total)` triples above are once again the
-//! ones the resolver actually hands this function. The assertions themselves
-//! are still pure-function: **no test replays the `golden/drift-*.json`
-//! fixtures through `drift::analyze`**, so the score→severity→exit-code chain
-//! over a real fixture is unverified. One resolver divergence remains: a
-//! missing FilePath that did not exist at the change baseline is unresolved
-//! (`forward reference`) rather than broken.
+//! withheld from this formula (#83); #119 restored them as broken, which makes
+//! the golden triples above *reachable* again — under #83 no resolver run could
+//! yield a non-zero `broken_cliflags`. That is the whole of what it
+//! establishes. The golden test asserts this pure function on hand-copied
+//! literals, and the four fixtures record the oracle's **output only** — their
+//! input repos and `design.md` files were never captured, so extraction and
+//! resolution have never run on them and cannot without new snapshots (#132).
+//! One resolver divergence remains: a missing FilePath that did not exist at
+//! the change baseline is unresolved (`forward reference`) rather than broken.
 //!
 //! Time (score is a function of days since `created`) — boundaries now pinned
 //! exactly (previously interpolated from sparse field samples):
@@ -175,10 +176,10 @@ mod tests {
         const ORACLE_PR_CONTROL_LOG: i64 = 7;
 
         // Every broken anchor in these four golden fixtures is a CliFlag, so
-        // since #119 restored CliFlags to broken these triples are the ones the
-        // resolver now really produces (under #83 they were counterfactual).
-        // This is still a formula-level check: nothing here reads the fixtures,
-        // and no test replays them through `drift::analyze`.
+        // #119 (CliFlags broken again) makes these triples reachable; under #83
+        // no resolver run could produce them. This asserts the formula on
+        // hand-copied literals and nothing more — the fixtures are output-only
+        // and are never replayed through `drift::analyze` (#132).
         assert_eq!(structure_score(0, 0, 16), ORACLE_ADD_TOKEN_ECONOMY);
         assert_eq!(structure_score(3, 3, 40), ORACLE_ENHANCE_D5);
         assert_eq!(structure_score(9, 9, 29), ORACLE_MYCELIUM);
