@@ -42,9 +42,11 @@ commits_since_created, total_score, severity, primary_recommendation
   (display-only, e.g. `"93 commits"`).
 * `broken_anchors[]` = `{ anchor, category, reason }`,
   `category ∈ FilePath | Symbol | Function | CliFlag`.
-* `unresolved_anchors[]` has the same entry shape. It is an OpenSpectra
-  extension for references that cannot be classified reliably as broken; the
-  v2.3.1 oracle has no corresponding field.
+* `unresolved_anchors[]` has the same entry shape and is an OpenSpectra
+  extension with no counterpart in the v2.3.1 oracle. Since #119 narrowed #83 it
+  holds exactly one class: a FilePath that did not exist at the change's
+  `.started` baseline (`forward reference`). That is a *confident* exclusion
+  backed by the baseline SHA, not an "unclassifiable" bucket.
 * `last_commit` is **always `null`** in observed v2.3.1 output (it is not the
   change dir's last commit — that is non-null in git but the field stays null).
   Semantics of any non-null value are undetermined; OpenSpectra emits `null`.
@@ -97,9 +99,11 @@ regexes recovered verbatim from `.rodata`:
 Sets of **`ANCHOR_CAP = 50`** anchors or fewer are checked whole. Larger sets
 are **not truncated**: each category independently keeps an evenly spaced sample
 of at most **`ANCHOR_SAMPLE_PER_CATEGORY = 12`**, taking index `i * n / 12` for
-`i` in `0..12`. Denominators above the cap are therefore always a multiple of 12
-(12 for one category present, 24 for two, …) and never a value between 51 and
-the raw extracted count.
+`i` in `0..12`. A category holding 12 or fewer anchors is kept whole, so the
+reported denominator above the cap is `12` per over-cap category plus the full
+count of every under-cap one — e.g. 12, 24, or 36 when each present category is
+over the sample size, but `17` for 60 FilePath + 5 Function. It is never a value
+between 51 and the raw extracted count.
 
 Pinned by probe against v2.3.1 (`spectra drift <change> --json` over synthetic
 designs): pure-FilePath `50` → `50/50` but `51` → `12/12`; `53` and `77` anchors
@@ -250,10 +254,13 @@ establishes.
 >
 > This is narrower than "the downstream chain is untested". For #119's changed
 > behavior the score → severity → recommendation chain *is* exercised through
-> the real `drift::analyze` in `drift_integration.rs` (on synthetic repos), and
-> the exit-code end by
-> `cli_integration.rs::drift_exits_zero_even_when_severity_is_medium_or_higher`.
-> What is missing is any assertion anchored to these four captured fixtures.
+> the real `drift::analyze` in `drift_integration.rs` (on synthetic repos), for
+> both the CliFlag/Function reclassification and the over-cap sampling. The
+> exit-code end is *not* covered for anchors specifically:
+> `cli_integration.rs::drift_exits_zero_even_when_severity_is_medium_or_higher`
+> reaches `medium` through the **Time** dimension (`created: 2020-01-01`), so it
+> pins the always-exit-0 contract but says nothing about Structure. What is
+> missing is any assertion anchored to these four captured fixtures.
 
 ## What is verified vs. uncertain
 
@@ -266,22 +273,41 @@ establishes.
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
-| **Symbol extraction narrowing** | ⚠️ **open** — see below |
+| Symbol extraction | ✅ exact — the apparent "narrowing" was the over-cap sampling, not a semantic filter (#8/#51, see below) |
 | Tasks positive-case predicates | ⚠️ uncalibrated (no positive sample); detection gated off |
 
-### Open problem: the Symbol narrowing filter
-The recovered Symbol regex matches every capitalised token, but the oracle keeps
-only a small subset (e.g. **12 of ~83** prose candidates in one Chinese-prose
-design). The selection is **not** explained by code-context (backtick/fence),
-frequency, position, or pairing: in `Data Model` it keeps `Data`, drops `Model`;
-in `ALTER TABLE ADD COLUMN` it keeps `ADD`, drops the rest — identical context,
-different outcome. In isolation all tokens are kept, so the rule is **global to
-the document** and not visible in strings. Cracking it needs disassembly of the
-extraction routine in `spectra-core::drift`. Until then OpenSpectra extracts the
-full regex set, which **over-counts Symbols on prose-dense designs**, inflating
-`total` and reading Structure decay/score *lower* than the oracle there.
-FilePath/Function/CliFlag — the categories that actually drive real drift
-signals — are exact.
+### Solved: the "Symbol narrowing filter" was the over-cap sampling (#8/#51)
+
+For several releases this was recorded as the single open reverse-engineering
+question: the recovered Symbol regex matches every capitalised token, yet the
+oracle appeared to keep only a small semantic subset — **12 of ~83** prose
+candidates in one Chinese-prose design — and the selection resisted every
+predicate tried (code-context, frequency, position, pairing). `Data Model` kept
+`Data` and dropped `Model`; `ALTER TABLE ADD COLUMN` kept `ADD` and dropped the
+rest, from identical context.
+
+There is **no semantic filter**. The narrowing is the per-category over-cap
+sampling documented above, and the old investigation's own decisive observation
+— *"in isolation all tokens are kept, so the rule is global to the document"* —
+is exactly the signature of a document-global cap, which is what it is. Probed
+on v2.3.1 with a design of `N` bare `WidgetNN` tokens and nothing else:
+
+| Symbol candidates | total anchors | oracle keeps |
+|---|---|---|
+| 30 | 30 (≤ cap) | **all 30**, including `Data`, `Model`, and `The` in the `Data Model` probe |
+| 83 | 83 (> cap) | exactly 12, at indices `floor(i * 83 / 12)` → `Widget{01,07,14,21,28,35,42,49,56,63,70,77}` |
+
+`12 of ~83` is `ANCHOR_SAMPLE_PER_CATEGORY` of 83. The apparently arbitrary
+`Data`-but-not-`Model` outcomes were positional: those designs exceeded the cap,
+so which token survived depended only on its index in the extracted set.
+OpenSpectra reproduces both rows exactly.
+
+Consequence: **Symbol extraction was never divergent**, and the previously
+recorded over-count (OpenSpectra "inflating `total` and reading Structure
+decay/score *lower* than the oracle" on prose-dense designs) was a symptom of
+the missing sampling, fixed by #119. All four categories are now exact on
+extraction, and only the missing-FilePath forward-reference case diverges on
+resolution.
 
 ### Known limitations (resolution side, deferred)
 Two resolution behaviours are carried as-is pending a positive oracle decision

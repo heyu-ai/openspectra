@@ -196,6 +196,74 @@ fn drift_reports_a_broken_anchor_past_the_cap_on_an_over_cap_design() {
         .collect();
     assert_eq!(broken, vec![format!("src/mod{MISSING:03}.rs")]);
 
+    // Probe the downstream chain, not just the recovered constant: 1/12 is 8.3%
+    // decay (D0) with no broken CliFlag, so `min(2*0+3, 2*0+0)` is 0 and the
+    // change must stay `light` with the apply recommendation. Without this, a
+    // sampling change could move the denominator and silently shift severity.
+    assert_eq!(structure.score, 0);
+    assert_eq!(report.total_score, 0);
+    assert_eq!(report.severity, "light");
+    assert_eq!(report.primary_recommendation, "/spectra-apply over-cap");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_committed_design_self_matches_its_own_function_anchors() {
+    // Pins the `git grep` self-match blind spot flagged in PR #1 review. It was
+    // cosmetic while #83 held Function anchors as `unresolved`; since #119 put
+    // them back into `broken` they feed `structure_score`, so a self-match now
+    // suppresses real signal and the behavior needs to be locked either way.
+    //
+    // `drift_separates_broken_and_unresolved_anchors` covers the opposite setup
+    // (an untracked `design.md`, where the same anchor IS reported broken), so
+    // the two together bracket the blind spot rather than hiding it.
+    //
+    // The blind spot is the oracle's own: probed on v2.3.1 with this exact
+    // fixture, it also reports `0/1 anchors broken`. So this locks faithful
+    // reproduction, not a divergence — PR #1's open question ("faithful-repro
+    // vs fix") now has the faithful-repro half measured and pinned.
+    let root =
+        std::env::temp_dir().join(format!("spectra-drift-it-selfmatch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+
+    git(&root, &["init", "-q"]);
+    git(&root, &["config", "user.email", "t@t.co"]);
+    git(&root, &["config", "user.name", "t"]);
+    write(
+        &root.join(".spectra.yaml"),
+        "spec_dir: openspec\nlocale: tw\n",
+    );
+
+    let cd = root.join("openspec/changes/self-match");
+    write(&cd.join("proposal.md"), "# proposal\n");
+    write(&cd.join("tasks.md"), "- [x] 1.1 done\n");
+    // `absent_helper` exists nowhere in the repo except this design.md.
+    write(&cd.join("design.md"), "calls absent_helper()\n");
+    // Committing the change dir is what creates the self-match: `git grep`
+    // searches every tracked file, design.md included.
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-qm", "commit the change dir"]);
+
+    let cfg = Config::load(&root).unwrap();
+    let ch = change::load(&cfg, "self-match").unwrap();
+    let report = drift::analyze(&cfg, &ch).unwrap();
+
+    let structure = report
+        .dimensions
+        .iter()
+        .find(|d| matches!(d.kind, drift::DimensionKind::Structure))
+        .unwrap();
+    assert_eq!(
+        structure.status, "0/1 anchors broken",
+        "a tracked design.md resolves its own Function anchor via git grep, so \
+         the anchor reads healthy even though the function does not exist in \
+         any implementation file"
+    );
+    assert!(report.broken_anchors.is_empty());
+    assert!(report.unresolved_anchors.is_empty());
+
     let _ = std::fs::remove_dir_all(&root);
 }
 

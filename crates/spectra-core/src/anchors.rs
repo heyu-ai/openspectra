@@ -120,15 +120,19 @@ pub fn extract(design: &str) -> Vec<Anchor> {
     for c in CAMEL_FN_RE.captures_iter(design) {
         push(c[1].to_string(), AnchorKind::Function, &mut seen, &mut out);
     }
-    // KNOWN DIVERGENCE: the reference binary applies an additional, undetermined
-    // filter that narrows Symbol candidates to a small subset (e.g. 12 of ~83 in
-    // one Chinese-prose-heavy design). The recovered regex + stop-list below is
-    // exactly what the binary's `.rodata` contains, but the narrowing predicate
-    // is not visible in strings and resisted black-box probing — it is the single
-    // open reverse-engineering question (see docs/reverse-engineering/drift.md).
-    // We extract the full regex match set, which over-counts Symbol anchors on
-    // prose-dense designs and can make Structure decay read lower than the oracle.
-    // FilePath / Function / CliFlag extraction matches the oracle exactly.
+    // The regex + stop-list below is exactly what the binary's `.rodata`
+    // contains, and Symbol extraction matches the oracle for the full match set.
+    //
+    // This used to carry a KNOWN DIVERGENCE note calling the oracle's apparent
+    // "Symbol narrowing" (12 of ~83 candidates in one prose-heavy design) an
+    // undetermined predicate that resisted black-box probing — the repo's single
+    // open RE question (#8/#51). It is not a semantic filter: it is
+    // `sample_over_cap` below. Probed on v2.3.1 with bare `WidgetNN` tokens and
+    // nothing else: 30 candidates (under the cap) keep all 30, and 83 keep
+    // exactly 12 at indices `floor(i * 83 / 12)`. `12 of ~83` is
+    // `ANCHOR_SAMPLE_PER_CATEGORY` of 83, and the old "keeps `Data`, drops
+    // `Model`" observations were positional, not semantic. See
+    // docs/reverse-engineering/drift.md.
     for m in SYMBOL_RE.find_iter(design) {
         let s = m.as_str();
         if SYMBOL_STOPLIST.contains(s) {
@@ -145,14 +149,19 @@ pub fn extract(design: &str) -> Vec<Anchor> {
 /// Sets of [`ANCHOR_CAP`] or fewer anchors are checked whole. Larger sets are
 /// *not* truncated to the cap: each category independently keeps an evenly
 /// spaced sample of at most [`ANCHOR_SAMPLE_PER_CATEGORY`] anchors, taking
-/// index `i * n / 12` for `i` in `0..12`. That is why oracle denominators above
-/// the cap are always a multiple of 12 (12 for one category, 24 for two, …) and
+/// index `i * n / 12` for `i` in `0..12`. A category holding 12 or fewer anchors
+/// is kept whole, so the denominator above the cap is 12 per over-cap category
+/// plus the full count of each under-cap one — 12/24/36 when every present
+/// category is over the sample size, but 17 for 60 FilePath + 5 Function. It is
 /// never a number between 51 and the raw extracted count.
 ///
 /// Pinned by probe against the v2.3.1 oracle: 53 and 77 pure-FilePath anchors
 /// both reproduce the `i * n / 12` index set exactly; a design mixing 20
 /// FilePath, 20 Function and 20 CliFlag anchors (60 total) yields 36, not 12,
 /// so the sample is per category while the trigger is the combined total.
+///
+/// This is also the mechanism behind what was long recorded as the oracle's
+/// unexplained Symbol-narrowing filter (#8/#51) — see the note in `extract`.
 fn sample_over_cap(anchors: Vec<Anchor>) -> Vec<Anchor> {
     if anchors.len() <= ANCHOR_CAP {
         return anchors;
