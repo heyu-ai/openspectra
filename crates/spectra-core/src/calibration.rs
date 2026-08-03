@@ -53,9 +53,27 @@
 //! this way (the old table read `<21`/`<60` and scored abandoned `3`). See the
 //! Time section of `docs/reverse-engineering/drift.md`.
 
-/// Maximum number of design anchors checked, per `ANCHOR_CAP` in
-/// `spectra_core::drift` (recovered verbatim from the binary).
+/// Candidate-anchor count at or below which *every* anchor is checked, per
+/// `ANCHOR_CAP` in `spectra_core::drift` (recovered verbatim from the binary).
+///
+/// This is a trigger, not a truncation length: exceeding it does not clamp the
+/// set to 50, it switches the extractor into the per-category downsampling
+/// described on [`ANCHOR_SAMPLE_PER_CATEGORY`]. Probed at the boundary against
+/// v2.3.1 (2026-08-03): 50 candidates report `50/50`, 51 report `12/12`.
 pub const ANCHOR_CAP: usize = 50;
+
+/// Per-category survivor count once the candidate total exceeds
+/// [`ANCHOR_CAP`]: each of the four categories is independently reduced to at
+/// most this many anchors, evenly spaced over its document-order candidate
+/// list (indices `i * n / 12`).
+///
+/// Recovered by probe against v2.3.1 (2026-08-03) and confirmed on ten cases
+/// spanning all four categories and 40–137 candidates, matching the oracle's
+/// exact anchor *identities* rather than just its counts. It is what produces
+/// the oracle's otherwise-puzzling 12–21 totals on prose-dense designs
+/// (`sum(min(n_category, 12))`), and it resolves the "12 of ~83 symbols"
+/// question tracked as #8. See `anchors::apply_anchor_budget`.
+pub const ANCHOR_SAMPLE_PER_CATEGORY: usize = 12;
 
 /// Whether the Tasks-dimension collision detectors (blocked / maybe-resolved)
 /// are calibrated. Held `false`: every captured oracle sample was `0 blocked,

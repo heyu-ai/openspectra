@@ -89,14 +89,49 @@ regexes recovered verbatim from `.rodata`:
 
 | category | regex | resolution check | broken reason |
 |----------|-------|------------------|---------------|
-| FilePath | `(?:src-tauri\|src\|crates\|docs)/[\w./-]+\.(?:rs\|ts\|svelte\|md\|toml)` | tracked / exists on disk | `file does not exist` |
+| FilePath | `(?:src-tauri\|src\|crates\|docs)/[\w./-]+\.(?:rs\|ts\|svelte\|md\|toml)` — OpenSpectra prepends `(?:[\w.-]+/)*` and requires a left token boundary, see Deliberate divergences | tracked / exists on disk | `file does not exist` |
 | CliFlag | `--[a-z][a-z0-9-]+` | (none available) | `not in --help` |
 | Function | `\b([a-z][a-z0-9]*_[a-z0-9_]+)\(` (snake) and `\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(` (camel) | `git grep` finds it | `function not found in repo` |
 | Symbol | `\b[A-Z][a-zA-Z0-9]+\b` minus a small stop-list | `git grep` finds it | `symbol not found in repo` |
 
-Checks are capped at **`ANCHOR_CAP = 50`**. Broken anchors are sorted
-alphabetically. Resolution uses `git ls-files` (file existence) and `git grep`
-(symbol/function existence).
+Broken anchors are sorted alphabetically. Resolution uses `git ls-files` (file
+existence) and `git grep` (symbol/function existence).
+
+#### The anchor budget (`ANCHOR_CAP = 50` is a trigger, not a truncation)
+
+`ANCHOR_CAP` does **not** clamp the checked set to the first 50 anchors. It is
+the threshold at which the oracle switches to positional downsampling:
+
+```text
+candidates = per-category extraction, deduped, in document order
+if sum(len(c) for c in categories) <= 50:
+    every candidate is checked
+else:
+    each category independently keeps the indices  i * n / 12,  i in 0..11
+    (integer division; a category with n < 12 survives whole)
+```
+
+So the reported total above the cap is `sum(min(n_category, 12))` — 12 when one
+category dominates, up to 48 when all four are large. Category order for the
+purposes of "document order" is the extraction order (FilePath, CliFlag,
+Function, Symbol), and within `Function` the snake-case matches precede the
+camel-case ones.
+
+Recovered by probe against v2.3.1 on 2026-08-03 and confirmed on ten cases
+spanning all four categories at 40–137 candidates, matching the oracle's exact
+anchor *identities* rather than only its counts. Worked examples, verbatim
+oracle output:
+
+| document | oracle total | kept indices |
+|----------|--------------|--------------|
+| 50 distinct `--flagNNN` | `50/50` | all (at the boundary, nothing is dropped) |
+| 51 distinct `--flagNNN` | `12/12` | 0, 4, 8, 12, 17, 21, 25, 29, 34, 38, 42, 46 |
+| 100 distinct `--flagNNN` | `12/12` | 0, 8, 16, 25, 33, 41, 50, 58, 66, 75, 83, 91 |
+| 30 CliFlag + 30 FilePath | `24/24` | 12 of each — the trigger reads the *total*, the sampling is per category |
+| 45 Symbol + 10 CliFlag | `22/22` | 12 Symbols sampled, all 10 CliFlags kept |
+
+This supersedes the earlier `out.truncate(50)` implementation, which was a
+guess that happened to agree with the oracle only below the cap.
 
 **The FilePath stack is Rust/TS-specific.** In Python/Go projects almost no file
 paths match, so FilePath anchors are rare and CliFlag dominates the broken set.
@@ -205,8 +240,9 @@ them from Structure scoring:
   baseline SHA is absent, malformed, or unavailable locally, OpenSpectra falls
   back to the prior broken classification rather than hiding a possible
   deletion.
-* **Symbol:** unchanged and still broken when not found. Its separate extraction
-  divergence remains tracked by #8/#51 and is outside #83.
+* **Symbol:** unchanged and still broken when not found. The separate extraction
+  divergence that #8/#51 tracked is outside #83 and has since been resolved —
+  see "Solved: the Symbol narrowing filter was the anchor budget".
 
 The JSON change is additive: `broken_anchors` is neither renamed nor removed.
 Human output renders broken and unresolved references under separate headings,
@@ -219,32 +255,105 @@ scores remain pinned as `0`, `3`, `7`, and `7`; their recorded broken-category
 composition is respectively 0, 3, 9, and 12 CliFlags. With those CliFlags
 excluded, the OpenSpectra Structure expectations are `0`, `0`, `0`, and `0`.
 
+### FilePath anchors keep their leading path segments (#123)
+
+The recovered FilePath regex has no left boundary, so it matches from the middle
+of a longer path. The oracle turns `frontend/src/services/apiClient.ts` into the
+anchor `src/services/apiClient.ts` and then reports `file does not exist` — for
+a string that appears nowhere in the design that produced it. The finding is
+unactionable by construction: grepping the change for the reported anchor
+returns nothing.
+
+**This is oracle-faithful, and the premise of #123 (that OpenSpectra had ported
+it wrong) is refuted.** Probed against v2.3.1 on 2026-08-03, three jails, one
+operation each:
+
+| jail | on disk | oracle verdict |
+|------|---------|----------------|
+| design cites `frontend/src/services/apiClient.ts` | — | anchor `src/services/apiClient.ts`, broken |
+| same citation | `frontend/src/services/apiClient.ts` **exists** | still broken |
+| same citation | only the stripped `src/services/apiClient.ts` exists | **resolved** |
+
+The third row is decisive: the oracle really does resolve against the truncated
+path, so this is a defect in the oracle rather than in the port. The same probe
+showed `heyuai/docs/yibi/e02.md` reduced to `docs/yibi/e02.md`, which additionally
+makes a deliberately repo-*external* reference look like a missing repo-internal
+file.
+
+Maintainer-approved direction: diverge, because a merge gate cannot consume a
+finding whose text does not exist. On the 29-change corpus in #123 every one of
+the six surviving broken anchors was this false positive — a true-positive rate
+of 0. Two changes, both confined to extraction:
+
+* `(?:[\w.-]+/)*` prepended, so a monorepo sub-project path is reported **and
+  resolved** verbatim. `frontend/src/services/apiClient.ts` now resolves against
+  the file that actually exists, which is what removes the false positive.
+* a left token-boundary check (`anchors::starts_at_path_boundary`; the `regex`
+  crate has no look-behind), so `mysrc/foo.rs` yields **no** anchor rather than a
+  phantom `src/foo.rs`.
+
+Every reported FilePath anchor is therefore greppable verbatim in its design.
+
+**Ruling on repo-external references** (the open question in #123's acceptance
+criteria): no special case is added for them. `heyuai/docs/yibi/e02.md` is now
+reported in full, and whether it lands in `broken_anchors` or
+`unresolved_anchors` is decided by the existing #83 baseline rule — unresolved
+`forward reference` when the change's `.started` SHA shows the path absent at
+baseline, broken otherwise. There is no reliable local signal that separates
+"deliberately outside this repo" from "not created yet", and inventing one
+would trade a visible false positive for an invisible false negative. A change
+that means to reference a sibling repo therefore needs a `.started` baseline to
+be classified as a forward reference; `change::create` writes
+`.spectra/changes/<name>.started` whenever the project root is a git repo, so
+this holds for changes created through `spectra` and not for hand-made ones.
+
 ## What is verified vs. uncertain
 
 | Area | Status |
 |------|--------|
 | JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
-| FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; resolution deliberately diverges per #83 |
+| CliFlag / Function extraction & resolution | ⚠️ extraction exact; resolution deliberately diverges per #83 |
+| FilePath extraction | ⚠️ deliberately diverges per #123 (leading path segments kept, mid-token matches rejected) |
+| Anchor budget (`ANCHOR_CAP` trigger + per-category downsampling) | ✅ exact — anchor identities match on 10 probed cases, 40–137 candidates |
 | Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; unresolved inputs deliberately excluded |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
-| **Symbol extraction narrowing** | ⚠️ **open** — see below |
+| Symbol extraction narrowing | ✅ solved — it was the anchor budget, not a Symbol rule (see below); `JSON` added to the stop-list |
 | Tasks positive-case predicates | ⚠️ uncalibrated (no positive sample); detection gated off |
 
-### Open problem: the Symbol narrowing filter
-The recovered Symbol regex matches every capitalised token, but the oracle keeps
-only a small subset (e.g. **12 of ~83** prose candidates in one Chinese-prose
-design). The selection is **not** explained by code-context (backtick/fence),
-frequency, position, or pairing: in `Data Model` it keeps `Data`, drops `Model`;
-in `ALTER TABLE ADD COLUMN` it keeps `ADD`, drops the rest — identical context,
-different outcome. In isolation all tokens are kept, so the rule is **global to
-the document** and not visible in strings. Cracking it needs disassembly of the
-extraction routine in `spectra-core::drift`. Until then OpenSpectra extracts the
-full regex set, which **over-counts Symbols on prose-dense designs**, inflating
-`total` and reading Structure decay/score *lower* than the oracle there.
-FilePath/Function/CliFlag — the categories that actually drive real drift
-signals — are exact.
+### Solved: the "Symbol narrowing filter" was the anchor budget (#8)
+This was carried for months as the single open RE question: the recovered Symbol
+regex matches every capitalised token, but the oracle kept only **12 of ~83**
+prose candidates in one Chinese-prose design, and the selection resisted every
+content-based explanation — in `Data Model` it kept `Data` and dropped `Model`;
+in `ALTER TABLE ADD COLUMN` it kept `ADD` and dropped the rest, identical
+context, different outcome. In isolation every token was kept.
+
+There is no Symbol predicate. Every one of those observations is the
+[anchor budget](#the-anchor-budget-anchor_cap--50-is-a-trigger-not-a-truncation)
+seen from inside one category:
+
+* **"12 of ~83"** — 12 is `ANCHOR_SAMPLE_PER_CATEGORY`, and ~83 candidates is
+  over the cap, so the Symbol category was downsampled to exactly 12.
+* **Same token, different outcome** — the survivors are chosen by *position*
+  (`i * n / 12`), so whether a given token survives depends on where it sits in
+  the document, not on what it is or what surrounds it.
+* **"In isolation all tokens are kept"** — an isolated token is a document with
+  a handful of candidates, which is under the cap, where nothing is dropped.
+
+Confirmed by probing the same downsampling in the three categories that have
+nothing to do with symbols: 51+ distinct CliFlags, FilePaths or Functions each
+collapse to the same 12 at the same evenly-spaced indices. No disassembly was
+needed — the earlier probes had only ever varied a token's *context*, never the
+document's total candidate count, which is the variable the rule actually reads.
+
+The one genuine Symbol finding from the same probe round: `JSON` is stop-listed
+by the oracle and was missing from the recovered `.rodata` list. It was the last
+remaining divergence on a fresh `design.md` scaffold (#51). The "all-caps
+acronyms are dropped" theory that `ADD` suggested is **refuted** — `ALTER`,
+`TABLE`, `COLUMN`, `README`, `CRITICAL`, `YAML`, `HTTP` and `SQL` are all kept
+by the oracle when probed one per repo.
 
 ### Known limitations (resolution side, deferred)
 Two resolution behaviours are carried as-is pending a positive oracle decision
@@ -280,6 +389,12 @@ unknowns:
    every anchor is reported broken and thus listed.
 3. Vary one input at a time (a symbol in prose vs. backtick vs. fence; a flag in
    each context) and diff the oracle's `broken_anchors` to isolate each rule.
+   **Vary the document's total candidate count too, not just each token's
+   context.** The Symbol "narrowing filter" stayed open for months because every
+   probe held the candidate count small while varying context — and the rule the
+   oracle actually applies reads only the count. When a per-item rule refuses to
+   fit, sweep the size of the collection the item sits in.
+   Reproduce with `python3 scripts/calibrate-anchor-budget.py --oracle <path>`.
 4. To settle **timezone questions** ("does the binary derive `today` from local
    time or UTC?"), run the oracle under a shifted `TZ` env var (e.g.
    `TZ=Etc/GMT+11`) and watch whether its reported day count moves: it moves →

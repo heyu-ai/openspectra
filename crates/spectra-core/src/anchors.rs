@@ -1,8 +1,10 @@
 //! Design anchors: references in `design.md` to concrete code artifacts that
 //! drift can verify still resolve against the current codebase.
 //!
-//! The four extraction regexes and the symbol stop-list are recovered verbatim
-//! from the reference binary's `.rodata`.
+//! The four extraction regexes and the symbol stop-list are recovered from the
+//! reference binary's `.rodata`, with two probe-derived corrections noted at
+//! their definitions ([`FILE_PATH_RE`]'s left boundary and the `JSON`
+//! stop-list entry).
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -10,7 +12,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::calibration::ANCHOR_CAP;
+use crate::calibration::{ANCHOR_CAP, ANCHOR_SAMPLE_PER_CATEGORY};
 use crate::git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -59,8 +61,31 @@ pub struct Resolution {
 }
 
 // --- recovered regexes -------------------------------------------------------
+/// FilePath candidates.
+///
+/// DELIBERATE DIVERGENCE (#123). The recovered `.rodata` regex is the
+/// `(?:src-tauri|src|crates|docs)/…` part alone, with no left boundary, so it
+/// matches from the middle of a longer path: the oracle turns
+/// `frontend/src/services/apiClient.ts` into the anchor
+/// `src/services/apiClient.ts` and then reports "file does not exist" for a
+/// string that appears nowhere in the design. Probed against v2.3.1
+/// (2026-08-03): with `frontend/src/services/apiClient.ts` present on disk the
+/// oracle still reports it broken, and it resolves only when the *stripped*
+/// `src/services/apiClient.ts` exists — so the oracle really does anchor on the
+/// truncated path, and this is a faithful port of an oracle defect rather than
+/// a porting error.
+///
+/// Two corrections, both scoped to extraction:
+/// * the `(?:[\w.-]+/)*` head captures leading path segments, so a monorepo
+///   sub-project path is reported (and resolved) verbatim;
+/// * [`starts_at_path_boundary`] rejects a match that begins mid-token, so
+///   `mysrc/foo.rs` yields no anchor instead of a phantom `src/foo.rs`.
+///
+/// Together they make every reported FilePath anchor greppable verbatim in the
+/// source design, which is what makes the finding actionable.
 static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
+    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")
+        .unwrap()
 });
 static CLI_FLAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"--[a-z][a-z0-9-]+").unwrap());
 static SNAKE_FN_RE: Lazy<Regex> =
@@ -71,20 +96,91 @@ static SYMBOL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[A-Z][a-zA-Z0-9]+\b"
 
 /// Common Rust types / framework words excluded from Symbol anchors so the
 /// extractor does not flag ubiquitous identifiers as "drift" (recovered list).
+///
+/// `JSON` is the one entry not read out of `.rodata`: the oracle drops it and
+/// this list did not, which was the whole remaining divergence on a fresh
+/// `design.md` scaffold (#51). Probed per-token against v2.3.1 (2026-08-03) —
+/// each candidate in its own repo alongside an unresolvable control symbol —
+/// and `JSON` was the only word in the scaffold dropped by the oracle and kept
+/// here. The probe also refuted the "all-caps acronyms are dropped" theory:
+/// `ALTER`, `TABLE`, `COLUMN`, `README`, `CRITICAL`, `YAML`, `HTTP` and `SQL`
+/// are all kept by the oracle in isolation.
 static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         "Context", "State", "Result", "Error", "Option", "Vec", "Box", "String", "HashMap",
         "HashSet", "PathBuf", "Ok", "Err", "Default", "Sized", "Clone", "Debug", "Display", "Fn",
         "FnMut", "FnOnce", "Future", "Pin", "Arc", "Rc", "RefCell", "Mutex", "RwLock", "Trait",
         "Module", "Struct", "Field", "Method", "Value", "Source", "Target", "Given", "Spectra",
-        "CLI", "GUI", "API", "IPC",
+        "CLI", "GUI", "API", "IPC", "JSON",
     ]
     .into_iter()
     .collect()
 });
 
+/// Whether a [`FILE_PATH_RE`] match at `start` begins at a real token boundary
+/// rather than in the middle of a longer path or word.
+///
+/// The `regex` crate has no look-behind, so the boundary is checked here: any
+/// preceding path or word byte (`mysrc/foo.rs`, `…/a/src/b.rs` already consumed
+/// by the head group) means the match is a suffix of something longer and must
+/// not become an anchor. `design` is indexed by byte, and `start` comes from
+/// the regex engine, so it is always a UTF-8 boundary.
+fn starts_at_path_boundary(design: &str, start: usize) -> bool {
+    match design.as_bytes()[..start].last() {
+        None => true,
+        Some(&b) => !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'/' | b'-')),
+    }
+}
+
+/// Reduce the candidate set to the anchors the oracle actually checks.
+///
+/// Recovered by probe against v2.3.1 (2026-08-03), replacing the earlier
+/// `truncate(ANCHOR_CAP)` guess: the cap is a *trigger*, not a length. At or
+/// below [`ANCHOR_CAP`] candidates every anchor is checked; above it each
+/// category is independently downsampled to at most
+/// [`ANCHOR_SAMPLE_PER_CATEGORY`] anchors, evenly spaced over that category's
+/// document-order list at indices `i * n / 12`. A category with fewer than 12
+/// candidates survives whole, so the reported total above the cap is
+/// `sum(min(n_category, 12))` — the 12–21 range seen in oracle output, and the
+/// long-open "12 of ~83 symbols" question (#8).
+///
+/// Extraction order is preserved, so `Function` covers the snake-case matches
+/// followed by the camel-case ones — verified to be the oracle's own intra-
+/// category order by sampling an interleaved 15+15 document.
+fn apply_anchor_budget(candidates: Vec<Anchor>) -> Vec<Anchor> {
+    if candidates.len() <= ANCHOR_CAP {
+        return candidates;
+    }
+    let mut keep = vec![false; candidates.len()];
+    for kind in [
+        AnchorKind::FilePath,
+        AnchorKind::CliFlag,
+        AnchorKind::Function,
+        AnchorKind::Symbol,
+    ] {
+        let positions: Vec<usize> = candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, anchor)| anchor.kind == kind)
+            .map(|(index, _)| index)
+            .collect();
+        let n = positions.len();
+        if n == 0 {
+            continue;
+        }
+        for i in 0..ANCHOR_SAMPLE_PER_CATEGORY {
+            keep[positions[i * n / ANCHOR_SAMPLE_PER_CATEGORY]] = true;
+        }
+    }
+    candidates
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(anchor, keep)| keep.then_some(anchor))
+        .collect()
+}
+
 /// Extract unique anchors from `design.md` text, deduped by string (first
-/// matching category wins) and capped at [`ANCHOR_CAP`].
+/// matching category wins) and reduced by [`apply_anchor_budget`].
 pub fn extract(design: &str) -> Vec<Anchor> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<Anchor> = Vec::new();
@@ -98,6 +194,9 @@ pub fn extract(design: &str) -> Vec<Anchor> {
 
     // Most specific categories first so a string is claimed once.
     for m in FILE_PATH_RE.find_iter(design) {
+        if !starts_at_path_boundary(design, m.start()) {
+            continue;
+        }
         push(
             m.as_str().to_string(),
             AnchorKind::FilePath,
@@ -119,15 +218,12 @@ pub fn extract(design: &str) -> Vec<Anchor> {
     for c in CAMEL_FN_RE.captures_iter(design) {
         push(c[1].to_string(), AnchorKind::Function, &mut seen, &mut out);
     }
-    // KNOWN DIVERGENCE: the reference binary applies an additional, undetermined
-    // filter that narrows Symbol candidates to a small subset (e.g. 12 of ~83 in
-    // one Chinese-prose-heavy design). The recovered regex + stop-list below is
-    // exactly what the binary's `.rodata` contains, but the narrowing predicate
-    // is not visible in strings and resisted black-box probing — it is the single
-    // open reverse-engineering question (see docs/reverse-engineering/drift.md).
-    // We extract the full regex match set, which over-counts Symbol anchors on
-    // prose-dense designs and can make Structure decay read lower than the oracle.
-    // FilePath / Function / CliFlag extraction matches the oracle exactly.
+    // The "Symbol narrowing filter" that used to be flagged here as the single
+    // open reverse-engineering question was not a Symbol rule at all: the
+    // oracle keeps every regex match until the *combined* candidate count
+    // exceeds ANCHOR_CAP, then downsamples every category positionally. That is
+    // why the same token was kept in one document and dropped in another under
+    // identical local context. See `apply_anchor_budget`.
     for m in SYMBOL_RE.find_iter(design) {
         let s = m.as_str();
         if SYMBOL_STOPLIST.contains(s) {
@@ -136,8 +232,7 @@ pub fn extract(design: &str) -> Vec<Anchor> {
         push(s.to_string(), AnchorKind::Symbol, &mut seen, &mut out);
     }
 
-    out.truncate(ANCHOR_CAP);
-    out
+    apply_anchor_budget(out)
 }
 
 /// Resolution context: the set of tracked files plus the repo root for grep.
@@ -322,14 +417,146 @@ mod tests {
     }
 
     #[test]
-    fn dedup_and_cap() {
+    fn dedup_by_string() {
         let d = "--flag --flag --flag";
         assert_eq!(extract(d).len(), 1);
-        let many = (0..80)
-            .map(|i| format!("--flag{i}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(extract(&many).len(), ANCHOR_CAP);
+    }
+
+    /// The candidate total, not any single category, decides whether the
+    /// budget applies — and at the boundary nothing is dropped.
+    /// Oracle-probed: 50 candidates -> 50/50, 51 -> 12/12.
+    #[test]
+    fn anchor_budget_triggers_just_above_the_cap() {
+        let flags = |n: usize| {
+            (0..n)
+                .map(|i| format!("--flag{i:03}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(extract(&flags(ANCHOR_CAP)).len(), ANCHOR_CAP);
+        assert_eq!(
+            extract(&flags(ANCHOR_CAP + 1)).len(),
+            ANCHOR_SAMPLE_PER_CATEGORY
+        );
+    }
+
+    /// Above the cap the surviving anchors are evenly spaced at `i * n / 12`,
+    /// not the first 12. Both expectations below are the oracle's verbatim
+    /// output for these documents (v2.3.1, probed 2026-08-03).
+    #[test]
+    fn anchor_budget_samples_evenly_over_document_order() {
+        let flags = |n: usize| {
+            (0..n)
+                .map(|i| format!("--flag{i:03}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let names = |design: &str| {
+            extract(design)
+                .into_iter()
+                .map(|a| a.text)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            names(&flags(51)),
+            [
+                "--flag000",
+                "--flag004",
+                "--flag008",
+                "--flag012",
+                "--flag017",
+                "--flag021",
+                "--flag025",
+                "--flag029",
+                "--flag034",
+                "--flag038",
+                "--flag042",
+                "--flag046",
+            ]
+        );
+        assert_eq!(
+            names(&flags(100)),
+            [
+                "--flag000",
+                "--flag008",
+                "--flag016",
+                "--flag025",
+                "--flag033",
+                "--flag041",
+                "--flag050",
+                "--flag058",
+                "--flag066",
+                "--flag075",
+                "--flag083",
+                "--flag091",
+            ]
+        );
+    }
+
+    /// Each category gets its own budget, so a small category survives whole
+    /// while a large one is sampled: the oracle's totals above the cap are
+    /// `sum(min(n_category, 12))`, which is why they land in the 12–21 range
+    /// rather than at 50 (#119).
+    #[test]
+    fn anchor_budget_is_per_category_and_spares_small_categories() {
+        let mut design = String::from("# design\n\n");
+        for i in 0..45 {
+            design.push_str(&format!("Zsym{i:03} "));
+        }
+        for i in 0..10 {
+            design.push_str(&format!("--flag{i:03} "));
+        }
+        let anchors = extract(&design);
+
+        let count = |kind| anchors.iter().filter(|a| a.kind == kind).count();
+        assert_eq!(count(AnchorKind::Symbol), ANCHOR_SAMPLE_PER_CATEGORY);
+        assert_eq!(count(AnchorKind::CliFlag), 10, "small category kept whole");
+        assert_eq!(anchors.len(), 22);
+    }
+
+    /// #123: a path under a monorepo sub-project keeps its leading segments,
+    /// so the reported anchor is greppable verbatim in the design that
+    /// produced it. The oracle reports the truncated `src/...` here; this is a
+    /// deliberate, probe-documented divergence (see `FILE_PATH_RE`).
+    #[test]
+    fn file_paths_keep_leading_path_segments() {
+        let d = "see `frontend/src/services/apiClient.ts` and `heyuai/docs/yibi/e02.md`";
+        assert_eq!(
+            kinds(d, AnchorKind::FilePath),
+            vec![
+                "frontend/src/services/apiClient.ts",
+                "heyuai/docs/yibi/e02.md"
+            ]
+        );
+    }
+
+    /// #123, the other half: a match starting mid-token is not an anchor at
+    /// all. Without the boundary check `mysrc/foo.rs` yields a phantom
+    /// `src/foo.rs` that appears nowhere in the source document.
+    #[test]
+    fn file_paths_reject_matches_starting_mid_token() {
+        assert!(kinds("see mysrc/foo.rs here", AnchorKind::FilePath).is_empty());
+        assert!(kinds("see xdocs/a.md here", AnchorKind::FilePath).is_empty());
+        // A boundary character before the root still anchors normally.
+        assert_eq!(
+            kinds("see (src/foo.rs) here", AnchorKind::FilePath),
+            vec!["src/foo.rs"]
+        );
+    }
+
+    /// #51: a freshly scaffolded `design.md` must not manufacture broken
+    /// Symbol anchors from its own template prose. `JSON` was the last word
+    /// the oracle stop-lists and this list did not.
+    #[test]
+    fn design_template_symbols_match_the_oracle_stoplist() {
+        let symbols = kinds(crate::schema::DESIGN_TEMPLATE, AnchorKind::Symbol);
+        assert!(
+            !symbols.iter().any(|s| s == "JSON"),
+            "JSON must be stop-listed; extracted symbols: {symbols:?}"
+        );
+        // Oracle-probed on the byte-identical scaffold: 20 anchors total.
+        assert_eq!(extract(crate::schema::DESIGN_TEMPLATE).len(), 20);
     }
 
     #[test]

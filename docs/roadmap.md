@@ -18,7 +18,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **Open issues**：
 
-- #8 Symbol-anchor 縮窄過濾（最大 RE 未解問題，需反組譯 binary）
+- ~~#8 Symbol-anchor 縮窄過濾~~ ✅ 已解（2026-08-03 probe）：不是 Symbol 規則，而是 anchor budget——候選總數 >50 時每個 category 等距降採樣到 12。見 `drift.md`「Solved: the "Symbol narrowing filter" was the anchor budget」
 - #9 Tasks 碰撞偵測（無 positive oracle 樣本，偵測整個 gated off）
 - #10 Time 維度日數邊界（5↔7、19↔25 內插，60 天是猜的）
 - #11 CliFlag 永遠 broken：忠實重現 vs 可設定目標 CLI（設計決策）
@@ -107,9 +107,10 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 2. **#9 Tasks 碰撞 positive 樣本**
    - 依 issue 描述合成強迫碰撞情境（pending task 引用檔案 → baseline 後外部 commit 改該檔）取得 positive golden；釘出 firing predicate 後實作 `tasks::analyze`、翻 `TASKS_DETECTION_CALIBRATED = true`
    - 若 oracle 掃遍情境仍全零：結論記入 drift.md（「偵測極可能是 dead feature」），gate 保持關閉，issue 關閉
-3. **#8 Symbol 縮窄過濾**（最難，需反組譯）
-   - 黑箱探測已窮盡；下一步是對 binary 的 Symbol 抽取函式做反組譯（symbols retained，可從 regex 字串 xref 找到）
-   - 兩種收斂：規則破解 → 實作 + golden 測試；或判定不可恢復 → 更新 `anchors.rs` 的 `// KNOWN DIVERGENCE` 註解與 drift.md，接受高估 Symbol 數的已知分歧
+3. ~~**#8 Symbol 縮窄過濾**~~ ✅ 已解，未動用反組譯
+   - 先前判斷「黑箱探測已窮盡」是錯的：所有探測都只變動單一 token 的 context，從未變動文件的候選總數，而那正是 oracle 唯一讀取的變數
+   - 規則：候選總數 ≤ `ANCHOR_CAP`(50) 全查；超過則每個 category 各保留 `i * n / 12`（i=0..11）的等距索引。`anchors::apply_anchor_budget` 實作，`scripts/calibrate-anchor-budget.py` 為驗證契約（比對 anchor 身分而非僅數量）
+   - 同輪 probe 補上 stoplist 漏收的 `JSON`，fresh scaffold 與 oracle 完全一致（#51）
 4. **golden 回歸自動化**
    - 新增 `tests/golden_regression.rs`：直接載入 `docs/reverse-engineering/golden/*.json`，餵進 scoring 函式比對（目前 golden 值是手抄進 `calibration.rs` 測試，fixture 與測試沒有機器連結）
 
@@ -152,7 +153,7 @@ Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Pha
 | Phase 1 — 基礎修補與可用性 | [#30](https://github.com/howie/openspectra/issues/30) | ✅ 完成（PR #23） | — |
 | Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | ✅ 完成（PR #32） | 格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta |
 | Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | ✅ 完成（v0.2.1） | release workflow、crates.io publish、Docker/GHCR image |
-| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、#8 Symbol 過濾、golden 回歸自動化 |
+| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、~~#8 Symbol 過濾~~（已解）、golden 回歸自動化 |
 | Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | #12 批次 git grep、#11 CliFlag 決策 |
 
 （#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8–#12 沿用既有 issues，並在各 issue 留言連回其 Phase epic。）

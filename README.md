@@ -43,7 +43,8 @@ dimensions and prints a single recommended next step:
 
 It outputs a human-readable, conclusion-first report or `--json` for tooling.
 Like the reference binary, a successful run always exits `0` regardless of
-severity — CI gates on the `severity` field of the JSON output (see below).
+severity, so a CI gate keys on a JSON field — use `broken_anchors`, not
+`severity` (see below).
 
 ## Usage
 
@@ -76,8 +77,9 @@ spectra config <path|list|get|set|unset|reset|edit>  # manages the global user c
 
 Exit codes for `drift` (pinned against the reference binary): `0` on any
 successful run — severity does **not** map to the exit code — and `1` on errors
-(e.g. change not found). To gate CI on drift severity, check the JSON
-`severity` field.
+(e.g. change not found). To gate CI, check the JSON `broken_anchors` array;
+`severity` is reported for humans but makes a poor gate (see
+[CI gate example](#ci-gate-example)).
 
 `validate` is the deliberate exception: it is a pass/fail gate, so it exits
 `0` when every validated change is valid and `1` when any is invalid (also
@@ -146,13 +148,49 @@ jobs:
       - name: Check spec drift
         run: |
           spectra drift --json | tee drift.json
-          jq -e '.severity == "light"' drift.json > /dev/null
+          jq -e '.broken_anchors | length == 0' drift.json > /dev/null
 ```
 
 `spectra drift` itself always exits `0` on a successful run (matching the
-reference binary), so the gate is the explicit `jq` check on the JSON
-`severity` field — the job fails when a change has drifted to `medium` or
-`heavy`.
+reference binary), so the gate is the explicit `jq` check — the job fails when
+the Structure dimension found any broken anchor. Each entry names a design
+reference the codebase no longer has, and prints its `anchor`, `category` and
+`reason`, so a red build says what to fix:
+
+```sh
+jq -r '.broken_anchors[] | "\(.category)\t\(.anchor)\t\(.reason)"' drift.json
+```
+
+**Do not gate on `severity`.** It is a blend of all three scoring dimensions
+and is dominated by **Time**, which no pull request can fix: a change untouched
+for 61 days scores 4 on Time alone, which is enough to read `medium` or
+`heavy` with zero broken anchors. On a 29-change corpus this inverted the
+ordering a gate needs — the four `medium` changes each had **0** broken
+anchors and were merely 68–82 days old, while the one change that did have
+broken anchors read `light`. Gating on severity therefore blocks PRs for the
+age of a change they did not touch, and lets real drift through.
+
+Note that `unresolved_anchors` is deliberately **not** part of the gate.
+Unresolvable references — CLI flags with no owning binary, functions that may
+belong to a dependency, and paths a change is proposing to create — are
+reported in that sibling array precisely so they cannot fail a build; only
+`broken_anchors` carries the actionable "this used to exist and is now gone"
+signal. See
+[`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md).
+
+The step above expects a single active change — with several, `spectra drift`
+exits `1` asking for a change name. Gate a multi-change repo on the union
+instead:
+
+```sh
+fail=0
+for change in $(spectra list --json | jq -r '.changes[].name'); do
+  spectra drift "$change" --json \
+    | jq -r --arg c "$change" '.broken_anchors[] | "\($c)\t\(.category)\t\(.anchor)\t\(.reason)"' \
+    | grep . && fail=1
+done
+exit $fail
+```
 
 For a structural gate, `spectra validate --changes --strict` fails the job
 directly on its own exit code (no `jq` needed) — it exits non-zero when any
@@ -190,7 +228,7 @@ jobs:
 ```
 
 `spectra validate` gates on its own exit code, so no `jq` is needed. For the
-`drift` + `jq` severity gate, use the tarball job above (the runner has `jq`
+`drift` + `jq` broken-anchor gate, use the tarball job above (the runner has `jq`
 preinstalled; the minimal image does not ship it).
 
 ## Build
@@ -202,12 +240,17 @@ cargo test                   # unit + integration tests
 
 ## Fidelity
 
-Verified byte-for-byte against the v2.3.1 oracle for FilePath/Function/CliFlag
-detection, the scoring curves, severity bands, and recommendations. One open
-item — the Symbol-anchor narrowing filter — over-counts symbols on prose-dense
-designs; details and the calibration method are in the RE doc. The reference
-binary is used as a golden oracle to calibrate constants
-(`crates/spectra-core/src/calibration.rs`).
+Verified against the v2.3.1 oracle for FilePath/Function/CliFlag detection, the
+anchor budget, the scoring curves, severity bands, and recommendations. The
+long-open Symbol-anchor "narrowing filter" is solved: the oracle keeps every
+regex match until the combined candidate count exceeds 50, then downsamples
+each category to 12 evenly-spaced anchors — anchor identities now match the
+oracle exactly on prose-dense designs. Two deliberate divergences remain, both
+documented with their probe evidence in the RE doc: unresolvable anchors are
+reported separately from broken ones (#83), and FilePath anchors keep their
+leading path segments instead of being truncated to a string absent from the
+design (#123). The reference binary is used as a golden oracle to calibrate
+constants (`crates/spectra-core/src/calibration.rs`).
 
 ## Layout
 
