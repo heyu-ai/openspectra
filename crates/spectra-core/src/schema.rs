@@ -686,28 +686,55 @@ pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
 /// failing: the project's own artifact instructions vanished from
 /// `instructions` output with exit 0 and no warning (#117).
 ///
-/// One edge case is deliberately not reproduced: an explicit `schema:` with a
-/// null/blank value **in the change's** `.openspec.yaml` makes the oracle report
-/// `Schema '' not found`, whereas `ChangeMetadata`'s `Option<String>` cannot
-/// tell that from an absent key, so OpenSpectra falls through to the project
-/// config. Matching it would need `Option<Option<String>>` on a struct that is
-/// round-tripped by `archive`, for an input no tool writes.
+/// One edge case is deliberately not reproduced: a `schema:` key that is
+/// present but **null** in the change's `.openspec.yaml`. The oracle reports
+/// `Schema '' not found`; `ChangeMetadata`'s `Option<String>` cannot tell null
+/// from an absent key, so OpenSpectra falls through to the project config.
+/// Matching it needs `Option<Option<String>>` on a struct `archive`
+/// round-trips, for an input no tool writes. A *blank string* (`schema: ""` or
+/// `schema: "   "`) is **not** affected — serde yields `Some(..)` and both
+/// binaries error identically (probed).
 pub fn require_supported(
     cfg: &crate::Config,
     explicit: Option<&str>,
     change: Option<&crate::change::Change>,
 ) -> anyhow::Result<()> {
     let resolved;
+    // Which layer produced the name decides what the remediation must say: a
+    // blanket "edit config.yaml" is a no-op whenever a higher layer won, and
+    // the user then hits the identical error after following the advice.
+    let remedy;
     let name = match explicit {
-        Some(name) => name,
+        Some(name) => {
+            remedy = format!("Drop '--schema {name}' to use the built-in workflow.");
+            name
+        }
         None => {
             let from_change = change.and_then(|c| c.metadata.schema.clone());
-            match from_change.or_else(|| configured_schema_name(cfg)) {
+            match from_change {
                 Some(name) => {
+                    remedy = format!(
+                        "Set 'schema: {SCHEMA_NAME}' in {} to proceed with the built-in workflow.",
+                        change
+                            .map(|c| c.dir.join(".openspec.yaml"))
+                            .expect("a change-level schema implies a change")
+                            .display()
+                    );
                     resolved = name;
                     resolved.as_str()
                 }
-                None => return Ok(()),
+                None => match configured_schema_name(cfg) {
+                    Some(name) => {
+                        remedy = format!(
+                            "Set 'schema: {SCHEMA_NAME}' in {}/config.yaml to proceed with the \
+                             built-in workflow.",
+                            cfg.spec_dir
+                        );
+                        resolved = name;
+                        resolved.as_str()
+                    }
+                    None => return Ok(()),
+                },
             }
         }
     };
@@ -723,10 +750,8 @@ pub fn require_supported(
     if definition.is_file() {
         return Err(anyhow::anyhow!(
             "Schema '{name}' is defined at {} but OpenSpectra can only run the built-in \
-             '{SCHEMA_NAME}' schema; loading custom schemas is tracked by issue #126. \
-             Set 'schema: {SCHEMA_NAME}' in {}/config.yaml to proceed with the built-in workflow.",
+             '{SCHEMA_NAME}' schema; loading custom schemas is tracked by issue #126. {remedy}",
             definition.display(),
-            cfg.spec_dir
         ));
     }
     // The oracle's wording, byte for byte, for a name that resolves nowhere.

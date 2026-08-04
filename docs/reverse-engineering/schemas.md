@@ -1,9 +1,13 @@
 # Reverse-engineering `spectra schemas`
 
-How OpenSpectra's `schemas` command mirrors the closed-source reference. Unlike
-`init.md`, this command **is** oracle-verified: every detail below was probed
-against `/Applications/Spectra.app/Contents/MacOS/spectra` (version
-`spectra 2.3.1 (Apple Silicon)`) and pinned to golden fixtures.
+How OpenSpectra's `schemas` command mirrors the closed-source reference, and
+how every command resolves *which* schema to run. Unlike `init.md`, this is
+oracle-verified: every detail below was probed against `spectra 2.3.1 (Apple
+Silicon)`. The **listing output** sections are additionally pinned to golden
+fixtures (`golden/schemas-2.3.1.{json,txt}`); the selector, check-order,
+`new artifact`, project-listing and `context`/`rules` sections below are
+probe-backed only — `golden/schemas-2.3.1.json` still holds just the built-in
+entry.
 
 ## CLI shape
 
@@ -30,26 +34,53 @@ The oracle ships one *built-in* schema, `spec-driven`, reported with
 `source: "package"` (embedded in the binary, as opposed to a project- or
 user-level schema file).
 
-**It does not stop there: `schemas` also lists project schemas.** Probed with
-`openspec/schemas/mycustom/schema.yaml` in place:
+**It does not stop there: `schemas` also lists project schemas.** Probed with a
+single `openspec/schemas/withdesc/schema.yaml` in place, whose contents are
+`name: totally-different`, `description: My very own workflow`, and one
+`proposal` artifact:
 
 ```console
 $ spectra schemas
 Available schemas:
   spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks
-  mycustom (project)
+  withdesc (project)
 
-$ spectra schemas --json     # [(name, source), …]
-[('spec-driven', 'package'), ('mycustom', 'project')]
+$ spectra schemas --json
+[
+  {
+    "artifacts": ["proposal", "specs", "design", "tasks"],
+    "description": "Default OpenSpec workflow - proposal → specs → design → tasks",
+    "name": "spec-driven",
+    "source": "package"
+  },
+  {
+    "artifacts": ["proposal"],
+    "description": null,
+    "name": "withdesc",
+    "source": "project"
+  }
+]
 ```
 
-A project entry carries `source: "project"` and, in the human form, **no
-em-dash description tail** — the forked `schema.yaml` above has no
-`description`, so nothing follows the `(project)` tag.
+Three rules #126 will need, all visible in that one probe:
 
-> An earlier revision of this write-up claimed the opposite ("lists only this
-> one even when a project schema exists"). That came from a probe whose output
-> was piped through `head -2`, which cut the `mycustom (project)` line. Read the
+- **`description` is forced to null** for a project entry — nothing follows the
+  `(project)` tag in the human form, and `--json` says `null`. Not because the
+  file lacks one: this file has `description: My very own workflow`.
+- **the listed `name` is the directory name**, not the file's `name:` field
+  (`withdesc`, not `totally-different`) — the opposite of what `status` prints
+  for the same schema (see below).
+- **`artifacts` *is* read from the file** (`["proposal"]` here), so only `name`
+  and `description` are overridden.
+
+> An earlier revision of this write-up explained the missing description tail as
+> "the forked `schema.yaml` has no `description`". Both halves were wrong:
+> `schema fork` copies the `description:` line, and the tail is absent even when
+> one is present.
+
+> An earlier revision also claimed the opposite of the headline above ("lists
+> only this one even when a project schema exists"). That came from a probe
+> whose output was piped through `head -2`, which cut the project line. Read the
 > whole output before recording a negative.
 
 OpenSpectra has no project/user schema discovery, so its registry —
@@ -177,16 +208,28 @@ No active changes. Create one with: spectra new change <name>   # exit 0
 So a command resolves and loads the change, *then* gates on the schema. Any
 implementation that gates first reports the wrong error for a bad change name.
 
-### `new artifact` is not gated at all
+### `new artifact` never errors on the selector — but it does resolve it
 
 Probed: with the change's `.openspec.yaml` recording `schema: no-such-schema`,
-`spectra new artifact design --change c1` **exits 0 and writes the artifact**
-from the built-in template. `new artifact` resolves no schema and has no
-`--schema` flag. An early revision of #117 added a gate here; it was removed
-because it both diverged from the oracle and inserted a check ahead of this
-command's probed sequence in
+`spectra new artifact design --change c1` **exits 0**. The command has no
+`--schema` flag and no failure path for the selector. An early revision of #117
+added a gate here; it was removed because it both diverged from the oracle and
+inserted a check ahead of this command's probed sequence in
 [`artifact-workflow.md`](artifact-workflow.md) — a reorder PR #48's review had
 already ruled out without a supporting probe.
+
+"Never errors" is not "ignores": the oracle resolves the selector for **template
+lookup**, and the two ends of that are a live divergence:
+
+| change's `schema:` | oracle writes | OpenSpectra writes |
+|---|---|---|
+| resolvable custom schema | that schema's template (probed: a `# MARKER-CUSTOM-TEMPLATE` file in `schemas/mycustom/templates/proposal.md` comes out verbatim) | the built-in template — wrong workflow, until #126 |
+| unresolvable | a **0-byte** file | the built-in template (1213 bytes for `design`) |
+
+The empty-file case is a deliberate divergence: a usable built-in artifact beats
+an empty one, and nothing is destroyed either way. The custom-template case is
+#126. `schema_selector_integration.rs` asserts the OpenSpectra side so neither
+can drift silently.
 
 ### OpenSpectra: fail loud rather than fall back (#117)
 
@@ -206,9 +249,11 @@ oracle reports `Schema '' not found`. Matching it needs `Option<Option<String>>`
 on a struct `archive` round-trips, for an input no tool writes.
 
 `crates/spectra-cli/tests/schema_selector_integration.rs` pins every row of the
-table above through the real CLI. The unit tests in `schema.rs` alone could not:
-they call `require_supported` on a bare `Config` with no change, which is
-exactly how the missing change-level layer went unnoticed.
+table above through the real CLI. The unit tests in `schema.rs` cover the same
+layers with a synthetic `Change`, but they call `require_supported` directly and
+never through a real `.openspec.yaml` on disk — before #117's review the
+pre-existing unit tests passed no change at all, which is exactly how the
+missing change-level layer went unnoticed.
 
 Before #117 the selector had no reader at all: a project naming a custom schema
 silently ran the built-in one, exit 0, and `instructions` emitted the generic
