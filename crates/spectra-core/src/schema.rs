@@ -635,10 +635,21 @@ pub fn derive_status(
     })
 }
 
-/// The `schema:` selector in `<spec_dir>/config.yaml`. `None` when the file is
-/// absent, unparseable, or has no `schema` key — an unreadable selector must
-/// not be louder than a missing one, since the built-in schema is the default
-/// either way.
+/// The `schema:` selector in `<spec_dir>/config.yaml` — the *project-level*
+/// default, consulted only when the change records no schema of its own.
+///
+/// `None` when the file is absent, has no `schema` key, or its value is blank
+/// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
+/// workflow and exits 0, unlike the change-level key — see
+/// [`require_supported`]). A read or parse failure is also `None`: an unreadable
+/// selector must not be louder than a missing one, since the built-in schema is
+/// the default either way.
+///
+/// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
+/// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
+/// mismatch (sequence/map) or a syntax error reaches the `None` path. That is
+/// harmless here — `"123"` is not the built-in name, so `require_supported`
+/// still fails loud — but the value is a coerced scalar, not "unset".
 pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
     #[derive(serde::Deserialize)]
     struct SpecConfig {
@@ -649,24 +660,56 @@ pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
     parsed.schema.filter(|s| !s.trim().is_empty())
 }
 
-/// Resolve which schema a command should run under: `--schema` when given,
-/// otherwise `<spec_dir>/config.yaml`'s `schema:`, otherwise the built-in.
+/// Resolve which schema a command should run under and reject anything but the
+/// built-in.
 ///
-/// Errors on anything but the built-in. OpenSpectra cannot load a custom
-/// schema yet (#126), and *silently* falling back to `spec-driven` was worse
-/// than failing: the project's own artifact instructions vanished from
+/// Resolution order, probed against the v2.3.1 oracle — the **change's own
+/// `.openspec.yaml` dominates the project config**, which is the layer an
+/// earlier revision of this function missed:
+///
+/// 1. `--schema` when given (overrides everything, including a change whose
+///    recorded schema resolves nowhere).
+/// 2. the change's `.openspec.yaml` `schema:`. Probed: with the change
+///    recording `spec-driven`, a project `config.yaml` naming an unknown schema
+///    is **ignored** and `status` exits 0; with the two swapped, `status`
+///    exits 1. Since `spectra new change` stamps this key, it is set on
+///    essentially every real change.
+/// 3. `<spec_dir>/config.yaml`'s `schema:`, used only when the change records
+///    none (a hand-made change directory, or one predating the metadata file).
+/// 4. otherwise the built-in.
+///
+/// Callers must resolve and load the change **before** calling this: the oracle
+/// reports `Change 'X' not found.` ahead of any schema error (probed).
+///
+/// Errors on anything but the built-in. OpenSpectra cannot load a custom schema
+/// yet (#126), and *silently* falling back to `spec-driven` was worse than
+/// failing: the project's own artifact instructions vanished from
 /// `instructions` output with exit 0 and no warning (#117).
-pub fn require_supported(cfg: &crate::Config, explicit: Option<&str>) -> anyhow::Result<()> {
-    let configured;
+///
+/// One edge case is deliberately not reproduced: an explicit `schema:` with a
+/// null/blank value **in the change's** `.openspec.yaml` makes the oracle report
+/// `Schema '' not found`, whereas `ChangeMetadata`'s `Option<String>` cannot
+/// tell that from an absent key, so OpenSpectra falls through to the project
+/// config. Matching it would need `Option<Option<String>>` on a struct that is
+/// round-tripped by `archive`, for an input no tool writes.
+pub fn require_supported(
+    cfg: &crate::Config,
+    explicit: Option<&str>,
+    change: Option<&crate::change::Change>,
+) -> anyhow::Result<()> {
+    let resolved;
     let name = match explicit {
         Some(name) => name,
-        None => match configured_schema_name(cfg) {
-            Some(name) => {
-                configured = name;
-                configured.as_str()
+        None => {
+            let from_change = change.and_then(|c| c.metadata.schema.clone());
+            match from_change.or_else(|| configured_schema_name(cfg)) {
+                Some(name) => {
+                    resolved = name;
+                    resolved.as_str()
+                }
+                None => return Ok(()),
             }
-            None => return Ok(()),
-        },
+        }
     };
     if name == SCHEMA_NAME {
         return Ok(());
@@ -697,11 +740,13 @@ pub fn status(
     explicit_change: Option<&str>,
     schema_name: Option<&str>,
 ) -> anyhow::Result<StatusReport> {
-    require_supported(cfg, schema_name)?;
-
+    // Change resolution first: the oracle reports `Change 'X' not found.`
+    // ahead of any schema error, and the change's own `.openspec.yaml` is the
+    // dominant schema selector (probed) — so the gate needs the loaded change.
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
+    require_supported(cfg, schema_name, Some(&change))?;
     derive_status(&change.name, &change.dir)
 }
 
@@ -724,6 +769,22 @@ mod tests {
 
     fn write_spec_config(cfg: &crate::Config, body: &str) {
         std::fs::write(cfg.root.join(&cfg.spec_dir).join("config.yaml"), body).unwrap();
+    }
+
+    /// A change whose `.openspec.yaml` records `schema`, for the dominant
+    /// resolution layer. Only `metadata.schema` is read by `require_supported`,
+    /// so the other fields are placeholders.
+    fn change_with_schema(schema: Option<&str>) -> crate::change::Change {
+        crate::change::Change {
+            name: "c1".to_string(),
+            dir: std::path::PathBuf::from("openspec/changes/c1"),
+            metadata: crate::change::ChangeMetadata {
+                schema: schema.map(str::to_string),
+                ..Default::default()
+            },
+            started_sha: None,
+            parked: false,
+        }
     }
 
     #[test]
@@ -749,11 +810,11 @@ mod tests {
     #[test]
     fn require_supported_accepts_the_builtin_and_an_unconfigured_project() {
         let (_tmp, cfg) = project("schema-supported-ok");
-        assert!(require_supported(&cfg, None).is_ok());
+        assert!(require_supported(&cfg, None, None).is_ok());
 
         write_spec_config(&cfg, "schema: spec-driven\n");
-        assert!(require_supported(&cfg, None).is_ok());
-        assert!(require_supported(&cfg, Some(SCHEMA_NAME)).is_ok());
+        assert!(require_supported(&cfg, None, None).is_ok());
+        assert!(require_supported(&cfg, Some(SCHEMA_NAME), None).is_ok());
     }
 
     #[test]
@@ -762,7 +823,7 @@ mod tests {
         write_spec_config(&cfg, "schema: no-such-schema\n");
 
         assert_eq!(
-            require_supported(&cfg, None).unwrap_err().to_string(),
+            require_supported(&cfg, None, None).unwrap_err().to_string(),
             "Schema not found: Schema 'no-such-schema' not found in project, user, \
              or built-in locations"
         );
@@ -784,7 +845,7 @@ mod tests {
         std::fs::create_dir_all(definition.parent().unwrap()).unwrap();
         std::fs::write(&definition, "name: mycustom\nartifacts: []\n").unwrap();
 
-        let err = require_supported(&cfg, None).unwrap_err().to_string();
+        let err = require_supported(&cfg, None, None).unwrap_err().to_string();
         assert!(err.contains(&definition.display().to_string()), "{err}");
         assert!(err.contains("#126"), "{err}");
         assert!(!err.contains("not found"), "{err}");
@@ -795,8 +856,57 @@ mod tests {
         let (_tmp, cfg) = project("schema-flag-wins");
         write_spec_config(&cfg, "schema: no-such-schema\n");
 
-        assert!(require_supported(&cfg, Some(SCHEMA_NAME)).is_ok());
-        assert!(require_supported(&cfg, Some("another-missing")).is_err());
+        assert!(require_supported(&cfg, Some(SCHEMA_NAME), None).is_ok());
+        assert!(require_supported(&cfg, Some("another-missing"), None).is_err());
+    }
+
+    #[test]
+    fn the_changes_own_schema_outranks_the_project_config() {
+        // The layer an earlier revision missed. Probed on v2.3.1: a change
+        // recording `spec-driven` runs fine even when the project config names
+        // an unknown schema, and `spectra new change` stamps that key -- so
+        // reading only config.yaml hard-failed changes the oracle accepts.
+        let (_tmp, cfg) = project("schema-change-wins");
+        write_spec_config(&cfg, "schema: no-such-schema\n");
+
+        let builtin_change = change_with_schema(Some(SCHEMA_NAME));
+        assert!(
+            require_supported(&cfg, None, Some(&builtin_change)).is_ok(),
+            "a change recording the built-in schema must not be blocked by an \
+             unrelated project config"
+        );
+
+        // ...and the reverse: the change's own bad name blocks even with a
+        // healthy project config.
+        write_spec_config(&cfg, "schema: spec-driven\n");
+        let custom_change = change_with_schema(Some("no-such-schema"));
+        assert_eq!(
+            require_supported(&cfg, None, Some(&custom_change))
+                .unwrap_err()
+                .to_string(),
+            "Schema not found: Schema 'no-such-schema' not found in project, user, \
+             or built-in locations"
+        );
+    }
+
+    #[test]
+    fn the_project_config_applies_only_when_the_change_records_no_schema() {
+        let (_tmp, cfg) = project("schema-change-absent");
+        write_spec_config(&cfg, "schema: no-such-schema\n");
+
+        let no_metadata_schema = change_with_schema(None);
+        assert!(
+            require_supported(&cfg, None, Some(&no_metadata_schema)).is_err(),
+            "with no change-level schema the project config is the selector"
+        );
+    }
+
+    #[test]
+    fn an_explicit_flag_overrides_even_the_changes_own_schema() {
+        let (_tmp, cfg) = project("schema-flag-beats-change");
+        let custom_change = change_with_schema(Some("no-such-schema"));
+
+        assert!(require_supported(&cfg, Some(SCHEMA_NAME), Some(&custom_change)).is_ok());
     }
 
     #[test]
@@ -1089,6 +1199,11 @@ mod tests {
 
     #[test]
     fn status_rejects_an_unknown_schema_with_oracle_error() {
+        // Change resolution precedes the schema gate, so an unknown schema
+        // needs a resolvable change to surface at all. Probed on v2.3.1: in a
+        // project with no changes, `status --schema bogus` prints
+        // `No active changes.` and never reaches the schema error -- an earlier
+        // revision of this test asserted the opposite order.
         let root = TempDir::new("unknown-schema");
         let cfg = crate::Config {
             root: root.to_path_buf(),
@@ -1096,6 +1211,8 @@ mod tests {
             locale: None,
             claude_slash_commands: false,
         };
+        std::fs::create_dir_all(cfg.changes_dir().join("c1")).unwrap();
+        std::fs::write(cfg.changes_dir().join("c1").join("proposal.md"), "# p\n").unwrap();
 
         let err = status(&cfg, None, Some("bogus")).unwrap_err();
 
@@ -1103,6 +1220,23 @@ mod tests {
             err.to_string(),
             "Schema not found: Schema 'bogus' not found in project, user, or built-in locations"
         );
+    }
+
+    #[test]
+    fn status_reports_a_missing_change_before_an_unknown_schema() {
+        // The order itself, pinned: probed, the oracle emits
+        // `Change 'X' not found.` ahead of any schema error.
+        let root = TempDir::new("order-change-first");
+        let cfg = crate::Config {
+            root: root.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        };
+
+        let err = status(&cfg, Some("ghost"), Some("bogus")).unwrap_err();
+
+        assert_eq!(err.to_string(), "Change 'ghost' not found.");
     }
 
     #[test]

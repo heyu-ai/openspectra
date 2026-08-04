@@ -36,8 +36,10 @@ changes.
   and normal-looking output — while `instructions` emitted the generic text
   with the project's own artifact instructions missing entirely. `status`,
   `instructions`, and `new artifact` now resolve the selector (`--schema`
-  first, then `config.yaml`, then the built-in) and refuse to run on anything
-  else:
+  first, then the change's own `.openspec.yaml`, then the project
+  `config.yaml`, then the built-in — the change-level key dominates, and since
+  `spectra new change` stamps it, it is set on essentially every real change)
+  and refuse to run on anything else:
   - a name that resolves nowhere reports the oracle's message byte for byte
     (`Schema not found: Schema 'X' not found in project, user, or built-in
     locations`);
@@ -45,9 +47,15 @@ changes.
     distinct message naming that file — claiming it was "not found in project
     … locations" would be false.
 
-  This is the stopgap half of #117. Actually loading a custom schema is
-  tracked by #126, and the sibling `context:` / `rules:` keys the oracle also
-  reads from that file by #127.
+  Resolution runs **after** the change is loaded, matching the oracle's probed
+  order (`Change 'X' not found.` precedes any schema error), and `new artifact`
+  is deliberately **not** gated — probed, the oracle writes the artifact from
+  its built-in template even when the change records an unresolvable schema.
+
+  This is the stopgap half of #117. Actually loading a custom schema (and
+  listing project schemas in `spectra schemas`, which the oracle does) is
+  tracked by #126; the sibling `context:` / `rules:` keys the oracle also reads
+  from `config.yaml` by #127.
 ### Changed
 
 - **Broken CliFlag and Function anchors are reported as broken again** (#119),

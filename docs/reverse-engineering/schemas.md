@@ -26,17 +26,35 @@ bare directory with no `.spectra.yaml`, and OpenSpectra matches that (it skips
 
 ## Built-in registry
 
-The oracle ships exactly one schema, `spec-driven`, reported with
-`source: "package"` (i.e. embedded in the binary, as opposed to a
-project/user-level schema file). **`schemas` lists only this one even when a
-project schema exists** — probed: with `openspec/schemas/mycustom/schema.yaml`
-in place, `schemas` still prints the single `spec-driven (package)` line while
-`schema which mycustom` resolves it and labels it `(project)`. So this listing
-is not the place to look for custom-schema support.
+The oracle ships one *built-in* schema, `spec-driven`, reported with
+`source: "package"` (embedded in the binary, as opposed to a project- or
+user-level schema file).
+
+**It does not stop there: `schemas` also lists project schemas.** Probed with
+`openspec/schemas/mycustom/schema.yaml` in place:
+
+```console
+$ spectra schemas
+Available schemas:
+  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks
+  mycustom (project)
+
+$ spectra schemas --json     # [(name, source), …]
+[('spec-driven', 'package'), ('mycustom', 'project')]
+```
+
+A project entry carries `source: "project"` and, in the human form, **no
+em-dash description tail** — the forked `schema.yaml` above has no
+`description`, so nothing follows the `(project)` tag.
+
+> An earlier revision of this write-up claimed the opposite ("lists only this
+> one even when a project schema exists"). That came from a probe whose output
+> was piped through `head -2`, which cut the `mycustom (project)` line. Read the
+> whole output before recording a negative.
 
 OpenSpectra has no project/user schema discovery, so its registry —
-`spectra_core::schema::schemas()` — always returns this single entry, built
-from constants in `schema.rs`:
+`spectra_core::schema::schemas()` — returns only the built-in entry, built from
+constants in `schema.rs`. Listing project schemas is part of #126:
 
 | Field | Value |
 |---|---|
@@ -112,34 +130,85 @@ The em dash and description are left uncolored. OpenSpectra reuses the shared
 `colorize(text, sgr_code, use_color)` helper with SGR codes `1` (bold) and `2`
 (dim) to reproduce this.
 
-## Which schema a command actually runs (`<spec_dir>/config.yaml`)
+## Which schema a command actually runs
 
-`schemas` only lists. The selector every other command obeys is the `schema:`
-key of `<spec_dir>/config.yaml`, which `spectra init` writes as
-`schema: spec-driven`. Probed on v2.3.1:
+`schemas` only lists. The selector is resolved per command, and it has **three
+layers, not one** — the change's own metadata dominates the project config.
+Probed on v2.3.1 by varying the two files independently:
 
-| setup | oracle |
-|---|---|
-| `schema: mycustom` + `<spec_dir>/schemas/mycustom/schema.yaml` | loads it; `status` and `instructions` use its instructions |
-| the name `status` prints | the **`name:` field inside schema.yaml**, not the directory name |
-| `schema: no-such-schema` | exit 1, `Error: Schema not found: Schema 'no-such-schema' not found in project, user, or built-in locations` |
-| `--schema` given as well | the flag wins |
+| `<change>/.openspec.yaml` `schema:` | `<spec_dir>/config.yaml` `schema:` | `spectra status --change c1` |
+|---|---|---|
+| `spec-driven` | `no-such-schema` | **exit 0**, `Schema: spec-driven` — the project config is ignored outright |
+| `no-such-schema` | `spec-driven` | exit 1, `Schema not found: …` |
+| *key absent* | `no-such-schema` | exit 1 — this is the only case the project config decides |
+| `no-such-schema` | `no-such-schema`, plus `--schema spec-driven` | **exit 0** — the flag beats both |
 
-The `name:` row is a trap worth repeating: `spectra schema fork spec-driven
-mycustom` copies the definition **without rewriting `name:`**, so a freshly
-forked schema loads from `schemas/mycustom/` but still reports itself as
-`spec-driven`.
+So the order is **`--schema` → the change's `.openspec.yaml` → `<spec_dir>/config.yaml` → built-in**.
+
+This matters more than it looks: `spectra new change` stamps
+`schema: <whatever config.yaml said at creation time>` into every change, so in
+any real project the change-level key is set and the project config is dead
+weight for existing changes. Reading only `config.yaml` therefore looks correct
+on a hand-made change directory and is wrong on every generated one.
+
+Two further probed details:
+
+- **Blank values are asymmetric.** A bare `schema:` in the *change's* metadata
+  is an explicit empty name — the oracle reports `Schema '' not found`. A bare
+  `schema:` in the *project* `config.yaml` is treated as unset and exits 0.
+- **The reported name comes from inside the file.** `status` prints the `name:`
+  field of the resolved `schema.yaml`, not the directory name. That is a trap:
+  `spectra schema fork spec-driven mycustom` copies the definition **without
+  rewriting `name:`**, so a freshly forked schema loads from
+  `schemas/mycustom/` yet still reports itself as `spec-driven`.
+
+### Check order: the change comes first
+
+The schema error is **not** the first thing a command reports. Probed:
+
+```console
+$ spectra status --change ghost        # config.yaml names an unknown schema
+Error: Change 'ghost' not found.       # exit 1 — schema never mentioned
+
+$ spectra status --schema bogus        # project with no changes at all
+No active changes. Create one with: spectra new change <name>   # exit 0
+```
+
+So a command resolves and loads the change, *then* gates on the schema. Any
+implementation that gates first reports the wrong error for a bad change name.
+
+### `new artifact` is not gated at all
+
+Probed: with the change's `.openspec.yaml` recording `schema: no-such-schema`,
+`spectra new artifact design --change c1` **exits 0 and writes the artifact**
+from the built-in template. `new artifact` resolves no schema and has no
+`--schema` flag. An early revision of #117 added a gate here; it was removed
+because it both diverged from the oracle and inserted a check ahead of this
+command's probed sequence in
+[`artifact-workflow.md`](artifact-workflow.md) — a reorder PR #48's review had
+already ruled out without a supporting probe.
 
 ### OpenSpectra: fail loud rather than fall back (#117)
 
 OpenSpectra cannot load a custom schema yet (tracked by #126). Until it can,
-`status`, `instructions`, and `new artifact` resolve the same selector and
+`status` and `instructions` resolve the selector in the order above and
 **refuse to run** on anything but `spec-driven`:
 
 - name resolves nowhere → the oracle's message, byte for byte.
 - `schemas/<name>/schema.yaml` exists → a distinct message naming the file and
   #126. Reusing the oracle's "not found in project ... locations" wording here
   would be a false statement, since the schema *is* in the project.
+
+One edge case is deliberately not reproduced: a change whose `schema:` key is
+present but null. `ChangeMetadata`'s `Option<String>` cannot distinguish that
+from an absent key, so OpenSpectra falls through to the project config where the
+oracle reports `Schema '' not found`. Matching it needs `Option<Option<String>>`
+on a struct `archive` round-trips, for an input no tool writes.
+
+`crates/spectra-cli/tests/schema_selector_integration.rs` pins every row of the
+table above through the real CLI. The unit tests in `schema.rs` alone could not:
+they call `require_supported` on a bare `Config` with no change, which is
+exactly how the missing change-level layer went unnoticed.
 
 Before #117 the selector had no reader at all: a project naming a custom schema
 silently ran the built-in one, exit 0, and `instructions` emitted the generic
