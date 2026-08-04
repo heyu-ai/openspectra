@@ -188,8 +188,9 @@ and do not read a green build as "this design still matches the code".
 
 **Do not gate on `severity`.** It is a blend of all three scoring dimensions
 and is dominated by **Time**, which no pull request can fix: a change untouched
-for 61 days scores 4 on Time alone, which is enough to read `medium` or
-`heavy` with zero broken anchors. On a 29-change corpus this inverted the
+for 61 days scores 4 on Time alone, which is already enough to read `medium`
+with zero broken anchors (and `heavy` once any other dimension pushes the total
+past 8). On a 29-change corpus this inverted the
 ordering a gate needs — the four `medium` changes each had **0** broken
 anchors and were merely 68–82 days old, while the one change that did have
 broken anchors read `light`. Gating on severity therefore blocks PRs for the
@@ -204,7 +205,10 @@ instead:
 ```sh
 fail=0
 for change in $(spectra list --json | jq -r '.changes[].name'); do
-  spectra drift "$change" --json \
+  # Capture first: piping straight into jq would swallow a drift failure
+  # (non-JSON in, nothing out, grep finds nothing) and leave the job green.
+  report=$(spectra drift "$change" --json) || { echo "drift failed: $change"; exit 1; }
+  printf '%s' "$report" \
     | jq -r --arg c "$change" '.broken_anchors[] | "\($c)\t\(.category)\t\(.anchor)\t\(.reason)"' \
     | grep . && fail=1
 done
@@ -267,9 +271,10 @@ to 12 evenly-spaced anchors — anchor identities now match the oracle exactly o
 prose-dense designs. Two deliberate divergences remain, both documented with
 their probe evidence in the RE doc: unresolvable anchors are reported
 separately from broken ones (#83), and FilePath anchors keep their leading path
-segments instead of being truncated to a string absent from the design (#123) —
-that one changes the reported anchor *text* only, since a path is still
-resolved against the oracle's truncated form as well. The reference binary is
+segments instead of being truncated to a string absent from the design (#123).
+That one also widens resolution: a path resolves if *either* the written form or
+the oracle's truncation is present, which trades #123's measured 0/6
+true-positive false positives for a rarer false negative. The reference binary is
 used as a golden oracle to calibrate
 constants (`crates/spectra-core/src/calibration.rs`).
 

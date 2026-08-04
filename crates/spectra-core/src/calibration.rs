@@ -67,8 +67,9 @@ pub const ANCHOR_CAP: usize = 50;
 /// most this many anchors, evenly spaced over its document-order candidate
 /// list (indices `i * n / 12`).
 ///
-/// Recovered by probe against v2.3.1 (2026-08-03) and confirmed on ten cases
-/// spanning all four categories and 40–137 candidates, matching the oracle's
+/// Recovered by probe against v2.3.1 (2026-08-03) and confirmed on the twelve
+/// cases in `scripts/calibrate-anchor-budget.py`, spanning all four categories
+/// and 40–137 candidates, matching the oracle's
 /// exact anchor *identities* rather than just its counts. It is what produces
 /// the oracle's otherwise-puzzling 12–21 totals on prose-dense designs
 /// (`sum(min(n_category, 12))`), and it resolves the "12 of ~83 symbols"

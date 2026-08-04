@@ -22,7 +22,7 @@ step can overwrite the state an earlier one produced.
         each category keeps indices  i * n // 12,  i in 0..11
 
 `ANCHOR_CAP` is a TRIGGER, not a truncation length: 51 candidates yield 12
-checked anchors, not 50. A category with fewer than 12 candidates survives
+checked anchors, not 50. A category with at most 12 candidates survives
 whole, so the total above the cap is `sum(min(n_category, 12))` -- the 12-21
 range seen in real oracle output. See
 `crates/spectra-core/src/calibration.rs::ANCHOR_SAMPLE_PER_CATEGORY` and
@@ -116,14 +116,20 @@ def model(categories):
     return {(k, name) for k, v in categories for name in sample(v)}
 
 
-def render(categories):
-    """Emit a design.md that produces exactly `categories` as candidates."""
+def render(categories, document_order=None):
+    """Emit a design.md that produces exactly `categories` as candidates.
+
+    `document_order` overrides the Function line's textual order. The model
+    reasons over extraction order (snake then camel); writing the document in a
+    different order is what makes the ordering claim falsifiable.
+    """
     lines = ["# design", ""]
     for kind, names in categories:
+        emit = document_order if (kind == "Function" and document_order) else names
         if kind == "Function":
-            lines.append(" ".join(f"{n}()" for n in names))
+            lines.append(" ".join(f"{n}()" for n in emit))
         else:
-            lines.append(" ".join(names))
+            lines.append(" ".join(emit))
     return "\n".join(lines) + "\n"
 
 
@@ -141,6 +147,20 @@ def syms(n):
 
 def fns(n):
     return ("Function", [f"zfn_{i:03d}" for i in range(n)])
+
+
+def interleaved_fns(pairs):
+    """snake/camel calls alternating in DOCUMENT order.
+
+    The budget samples each category in *extraction* order, and for Function
+    that is every snake-case match followed by every camel-case one -- not the
+    order they appear in the document. This is the only place the two differ,
+    so it is the only ordering claim worth a case of its own.
+    """
+    snake = [f"zfn_{i:03d}" for i in range(pairs)]
+    camel = [f"zFnCamel{i:03d}" for i in range(pairs)]
+    document_order = [name for pair in zip(snake, camel) for name in pair]
+    return ("Function", snake + camel), document_order
 
 
 CASES = [
@@ -163,6 +183,12 @@ CASES = [
     ("cliflag-137", [flags(137)]),
 ]
 
+# Function is the one category whose extraction order differs from document
+# order (all snake matches, then all camel). Emit them interleaved so a model
+# that sampled document order would pick a visibly different set.
+_interleaved, _document_order = interleaved_fns(15)
+CASES.append(("interleaved-functions", [_interleaved, flags(30)]))
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -173,8 +199,10 @@ def main():
 
     failures = []
     for label, categories in CASES:
+        order = _document_order if label == "interleaved-functions" else None
         expected = model(categories)
-        observed = oracle_anchors(args.oracle, render(categories), keep_on_failure=False)
+        observed = oracle_anchors(args.oracle, render(categories, order),
+                                  keep_on_failure=False)
         ok = expected == observed
         total = sum(len(v) for _, v in categories)
         print(f"{'PASS' if ok else 'FAIL'}  {label:<20} candidates={total:<4} "
@@ -184,7 +212,7 @@ def main():
             print(f"        model-only : {sorted(expected - observed)[:12]}")
             print(f"        oracle-only: {sorted(observed - expected)[:12]}")
             # re-run this case keeping the jail, so the divergence is inspectable
-            oracle_anchors(args.oracle, render(categories), keep_on_failure=True)
+            oracle_anchors(args.oracle, render(categories, order), keep_on_failure=True)
 
     print()
     if failures:

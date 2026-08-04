@@ -6,9 +6,11 @@
 //! probe-derived corrections are documented at their definitions:
 //!
 //! * `FILE_PATH_RE` is **not** the `.rodata` regex — it adds a prefix head and
-//!   a left-boundary check so a reported anchor exists in the design (#123).
+//!   a left-boundary check so a reported anchor exists in the design (#123),
+//!   and drops paths that would escape the project root.
 //!   `ORACLE_FILE_PATH_RE` keeps the verbatim form, and `path_candidates`
-//!   resolves against both, so the divergence is confined to the reported text.
+//!   resolves against the union of both, which is deliberately more permissive
+//!   than the oracle — see its doc comment.
 //! * `JSON` in `SYMBOL_STOPLIST` was recovered by probe, not from `.rodata`.
 //!
 //! The anchor budget in `apply_anchor_budget` is likewise probe-recovered
@@ -83,14 +85,17 @@ pub struct Resolution {
 /// truncated path, and this is a faithful port of an oracle defect rather than
 /// a porting error.
 ///
-/// Two corrections, both scoped to extraction:
+/// Three extraction corrections:
 /// * the `(?:[\w.-]+/)*` head captures leading path segments, so a monorepo
-///   sub-project path is reported (and resolved) verbatim;
+///   sub-project path is reported verbatim;
 /// * [`starts_at_path_boundary`] rejects a match that begins mid-token, so
-///   `mysrc/foo.rs` yields no anchor instead of a phantom `src/foo.rs`.
+///   `mysrc/foo.rs` yields no anchor instead of a phantom `src/foo.rs`;
+/// * [`escapes_project_root`] drops a path with a `..` segment, which the head
+///   would otherwise let resolve against a file outside the project.
 ///
 /// Together they make every reported FilePath anchor greppable verbatim in the
-/// source design, which is what makes the finding actionable.
+/// source design, which is what makes the finding actionable. Resolution is
+/// separately widened — see [`path_candidates`].
 static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")
         .unwrap()
@@ -98,9 +103,9 @@ static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
 
 /// The recovered `.rodata` regex, without [`FILE_PATH_RE`]'s prefix head.
 ///
-/// Kept because the divergence is confined to the *reported* anchor text: a
-/// path is still resolved against the oracle's truncated form as well as the
-/// text as written (see [`path_candidates`]).
+/// Kept so resolution can still consult the form the oracle would have used
+/// (see [`path_candidates`]), which is what stops the #123 divergence from
+/// regressing a project rooted at its own sub-project.
 static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
 });
@@ -108,16 +113,21 @@ static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
 /// On-disk forms to try for a FilePath anchor: the path as written, plus the
 /// oracle's truncated form when it differs.
 ///
-/// Reporting the full path (#123) must not change *which* paths resolve, only
-/// what the finding is called. Without the fallback, a project rooted at the
-/// sub-project itself regresses: a design under `frontend/` citing the
-/// monorepo-relative `frontend/src/x.ts` would be looked up at
-/// `frontend/frontend/src/x.ts` and reported broken, where the oracle's
-/// truncated `src/x.ts` resolves. Probed against v2.3.1 (2026-08-03): oracle
-/// `0/1`, pre-fallback OpenSpectra `1/1` — a false positive this fix removes.
+/// Without the fallback, a project rooted at the sub-project itself regresses:
+/// a design under `frontend/` citing the monorepo-relative `frontend/src/x.ts`
+/// would be looked up at `frontend/frontend/src/x.ts` and reported broken,
+/// where the oracle's truncated `src/x.ts` resolves. Probed against v2.3.1
+/// (2026-08-03): oracle `0/1`, pre-fallback OpenSpectra `1/1` — a false
+/// positive this removes.
 ///
-/// The fallback only ever makes resolution more permissive, so it cannot invent
-/// a broken anchor; at worst it matches the oracle's own behaviour.
+/// **This widens resolution; it is not a text-only change.** The candidate list
+/// is a *union*, so a path resolves when either form is present, where the
+/// oracle consults only the truncation. Probed in the mirror case — design
+/// cites `frontend/src/services/apiClient.ts` and that exact file exists —
+/// oracle reports it broken, this resolves it. That is the deliberate trade:
+/// #123's broken-FilePath class measured a 0/6 true-positive rate, so a
+/// false positive is exchanged for a strictly rarer false negative. Because the
+/// union only ever adds ways to be present, it cannot invent a broken anchor.
 fn path_candidates(anchor: &str) -> Vec<&str> {
     let mut candidates = vec![anchor];
     if let Some(m) = ORACLE_FILE_PATH_RE.find(anchor) {
@@ -160,16 +170,41 @@ static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 /// Whether a [`FILE_PATH_RE`] match at `start` begins at a real token boundary
 /// rather than in the middle of a longer path or word.
 ///
-/// The `regex` crate has no look-behind, so the boundary is checked here: any
-/// preceding path or word byte (`mysrc/foo.rs`, `…/a/src/b.rs` already consumed
-/// by the head group) means the match is a suffix of something longer and must
-/// not become an anchor. `design` is indexed by byte, and `start` comes from
-/// the regex engine, so it is always a UTF-8 boundary.
+/// The `regex` crate has no look-behind, so the boundary is checked here: a
+/// preceding **ASCII** word or path byte (`mysrc/foo.rs`, `…/a/src/b.rs`
+/// already consumed by the head group) means the match is a suffix of
+/// something longer and must not become an anchor.
+///
+/// Deliberately ASCII-only, unlike the regex head's Unicode-aware `\w`: a
+/// non-ASCII neighbour counts as a boundary, so CJK prose abutting a path
+/// (`說明src/foo.rs`) still yields `src/foo.rs`. The cost is that a Latin-script
+/// non-ASCII prefix is inconsistent — `über/src/x.rs` is consumed whole by the
+/// head, but `Ωsrc/x.rs` still anchors at `src/x.rs`. Prose-abutted paths are
+/// the common case in this corpus; both were measured.
+///
+/// `design` is indexed by byte, and `start` comes from the regex engine, so it
+/// is always a UTF-8 boundary.
 fn starts_at_path_boundary(design: &str, start: usize) -> bool {
     match design.as_bytes()[..start].last() {
         None => true,
         Some(&b) => !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'/' | b'-')),
     }
+}
+
+/// Whether `path` contains a `..` segment.
+///
+/// Such a path is dropped rather than anchored. Resolution joins the anchor
+/// onto the project root, so `../src/main.rs` would stat the root's *parent*
+/// and let an unrelated file outside the project silently satisfy a design
+/// reference. Probed (2026-08-03) before this guard existed: with
+/// `<outer>/src/main.rs` present and the project at `<outer>/proj`, the oracle
+/// reported `src/main.rs` broken while this crate reported nothing at all.
+///
+/// Dropping matches how a leading `/` is already handled — an anchor that
+/// cannot denote a path *inside* the project is not a checkable reference.
+/// `.` segments are left alone: `./src/x.rs` stays within the root.
+fn escapes_project_root(path: &str) -> bool {
+    path.split('/').any(|segment| segment == "..")
 }
 
 /// Reduce the candidate set to the anchors the oracle actually checks.
@@ -179,14 +214,18 @@ fn starts_at_path_boundary(design: &str, start: usize) -> bool {
 /// below [`ANCHOR_CAP`] candidates every anchor is checked; above it each
 /// category is independently downsampled to at most
 /// [`ANCHOR_SAMPLE_PER_CATEGORY`] anchors, evenly spaced over that category's
-/// document-order list at indices `i * n / 12`. A category with fewer than 12
+/// document-order list at indices `i * n / 12`. A category with at most 12
 /// candidates survives whole, so the reported total above the cap is
 /// `sum(min(n_category, 12))` — the 12–21 range seen in oracle output, and the
 /// long-open "12 of ~83 symbols" question (#8).
 ///
-/// Extraction order is preserved, so `Function` covers the snake-case matches
-/// followed by the camel-case ones — verified to be the oracle's own intra-
-/// category order by sampling an interleaved 15+15 document.
+/// Sampling runs over each category's **extraction-order** list, which equals
+/// document order for every category except `Function`: there the snake-case
+/// matches all precede the camel-case ones. That ordering is the oracle's own,
+/// verified by sampling a document interleaving 15 snake and 15 camel calls —
+/// the oracle kept snake 0/2/5/7/10/12 then camel 0/2/5/7/10/12, which is
+/// `i * 30 / 12` over the concatenated list, not over document order. Pinned by
+/// the `interleaved-functions` case in `scripts/calibrate-anchor-budget.py`.
 fn apply_anchor_budget(candidates: Vec<Anchor>) -> Vec<Anchor> {
     if candidates.len() <= ANCHOR_CAP {
         return candidates;
@@ -234,7 +273,7 @@ pub fn extract(design: &str) -> Vec<Anchor> {
 
     // Most specific categories first so a string is claimed once.
     for m in FILE_PATH_RE.find_iter(design) {
-        if !starts_at_path_boundary(design, m.start()) {
+        if !starts_at_path_boundary(design, m.start()) || escapes_project_root(m.as_str()) {
             continue;
         }
         push(
@@ -629,6 +668,21 @@ mod tests {
 
         assert_eq!(resolution.broken.len(), 1);
         assert_eq!(resolution.broken[0].anchor, "frontend/src/services/gone.ts");
+    }
+
+    /// A `..` segment would let resolution stat outside the project root, so
+    /// such a path is dropped instead of anchored. Probed before the guard
+    /// existed: an unrelated `<outer>/src/main.rs` silently satisfied a design
+    /// under `<outer>/proj` citing `../src/main.rs`. `./` stays inside the root
+    /// and is kept.
+    #[test]
+    fn file_paths_reject_segments_that_escape_the_project_root() {
+        assert!(kinds("see ../src/main.rs here", AnchorKind::FilePath).is_empty());
+        assert!(kinds("see a/../../src/main.rs here", AnchorKind::FilePath).is_empty());
+        assert_eq!(
+            kinds("see ./src/main.rs here", AnchorKind::FilePath),
+            vec!["./src/main.rs"]
+        );
     }
 
     /// #123, the other half: a match starting mid-token is not an anchor at

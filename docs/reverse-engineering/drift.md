@@ -89,7 +89,7 @@ regexes recovered verbatim from `.rodata`:
 
 | category | regex | resolution check | broken reason |
 |----------|-------|------------------|---------------|
-| FilePath | `(?:src-tauri\|src\|crates\|docs)/[\w./-]+\.(?:rs\|ts\|svelte\|md\|toml)` — OpenSpectra prepends `(?:[\w.-]+/)*` and requires a left token boundary, see Deliberate divergences | tracked / exists on disk | `file does not exist` |
+| FilePath | `(?:src-tauri\|src\|crates\|docs)/[\w./-]+\.(?:rs\|ts\|svelte\|md\|toml)` — OpenSpectra prepends `(?:[\w.-]+/)*`, requires a left token boundary, and drops `..`-escaping paths; see Deliberate divergences | tracked / exists on disk | `file does not exist` |
 | CliFlag | `--[a-z][a-z0-9-]+` | (none available) | `not in --help` |
 | Function | `\b([a-z][a-z0-9]*_[a-z0-9_]+)\(` (snake) and `\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(` (camel) | `git grep` finds it | `function not found in repo` |
 | Symbol | `\b[A-Z][a-zA-Z0-9]+\b` minus a small stop-list | `git grep` finds it | `symbol not found in repo` |
@@ -108,7 +108,7 @@ if sum(len(c) for c in categories) <= 50:
     every candidate is checked
 else:
     each category independently keeps the indices  i * n / 12,  i in 0..11
-    (integer division; a category with n < 12 survives whole)
+    (integer division; a category with n ≤ 12 survives whole)
 ```
 
 So the reported total above the cap is `sum(min(n_category, 12))` — 12 when one
@@ -117,9 +117,11 @@ purposes of "document order" is the extraction order (FilePath, CliFlag,
 Function, Symbol), and within `Function` the snake-case matches precede the
 camel-case ones.
 
-Recovered by probe against v2.3.1 on 2026-08-03 and confirmed on ten cases
-spanning all four categories at 40–137 candidates, matching the oracle's exact
-anchor *identities* rather than only its counts. Worked examples, verbatim
+Recovered by probe against v2.3.1 on 2026-08-03 and confirmed on the twelve
+cases in `scripts/calibrate-anchor-budget.py`, spanning all four categories at
+40–137 candidates, matching the oracle's exact anchor *identities* rather than
+only its counts. One case emits interleaved snake/camel calls specifically to
+falsify the extraction-order claim below. Worked examples, verbatim
 oracle output:
 
 | document | oracle total | kept indices |
@@ -294,15 +296,29 @@ of 0. Two changes, both confined to extraction:
 
 Every reported FilePath anchor is therefore greppable verbatim in its design.
 
-**The divergence is confined to the reported text, not to which paths resolve.**
-`anchors::path_candidates` tries the oracle's truncated form as a fallback, so a
-project rooted at the sub-project itself keeps working: a design under
-`frontend/` citing the monorepo-relative `frontend/src/x.ts` would otherwise be
-looked up at `frontend/frontend/src/x.ts` and reported broken where the oracle
-resolves it. Probed (2026-08-03): oracle `0/1`, OpenSpectra without the fallback
-`1/1` — a false positive introduced by the first draft of this fix and removed
-by the fallback. Because the fallback only widens what counts as present, it
-cannot manufacture a broken anchor.
+**Resolution is widened too — this is not a text-only divergence.**
+`anchors::path_candidates` resolves a FilePath against the *union* of the path
+as written and the oracle's truncated form. Without that union a project rooted
+at its own sub-project regresses: a design under `frontend/` citing the
+monorepo-relative `frontend/src/x.ts` is looked up at
+`frontend/frontend/src/x.ts` and reported broken where the oracle resolves it
+(probed: oracle `0/1`, first draft of this fix `1/1`).
+
+The union is strictly more permissive than the oracle, so the mirror case
+diverges the other way: with `frontend/src/services/apiClient.ts` present and
+cited verbatim, the oracle reports it **broken** and OpenSpectra resolves it
+(probed 2026-08-03, both binaries, one jail). That is the accepted trade —
+#123's broken-FilePath class measured a 0/6 true-positive rate, so a common
+false positive is exchanged for a rarer false negative. Because the union only
+adds ways to be present, it cannot manufacture a broken anchor.
+
+A path containing a `..` segment is dropped rather than anchored
+(`anchors::escapes_project_root`). Resolution joins the anchor onto the project
+root, so `../src/main.rs` would stat the root's *parent*: probed before the
+guard existed, an unrelated `<outer>/src/main.rs` silently satisfied a design
+under `<outer>/proj`, where the oracle reported its truncated `src/main.rs`
+broken. Dropping matches how a leading `/` is already handled — an anchor that
+cannot denote a path inside the project is not a checkable reference.
 
 Observed edge cases, all measured rather than reasoned about:
 
@@ -310,8 +326,10 @@ Observed edge cases, all measured rather than reasoned about:
 |-------------|--------|
 | `https://github.com/org/repo/src/lib.rs` | none — the `//` fails the boundary check |
 | `github.com/org/repo/src/lib.rs` (bare) | full string; falls back to `src/lib.rs` for resolution |
-| `./src/main.rs`, `../src/main.rs` | kept as written (the match starts at the leading `.`) |
+| `./src/main.rs` | kept as written (the match starts at the leading `.`); stays inside the root |
+| `../src/main.rs` | none — dropped by `escapes_project_root`, else it would stat outside the project |
 | `/Users/me/repo/src/main.rs` | none — the leading `/` fails the boundary check |
+| `[spec](/docs/spec.md)` (root-relative markdown link) | none — same leading-`/` rejection; a deliberate false negative, noted so it is on the record |
 
 **Ruling on repo-external references** (the open question in #123's acceptance
 criteria): no special case is added for them. `heyuai/docs/yibi/e02.md` is now
@@ -332,8 +350,9 @@ this holds for changes created through `spectra` and not for hand-made ones.
 |------|--------|
 | JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
 | CliFlag / Function extraction & resolution | ⚠️ extraction exact; resolution deliberately diverges per #83 |
-| FilePath extraction | ⚠️ deliberately diverges per #123 (leading path segments kept, mid-token matches rejected) |
-| Anchor budget (`ANCHOR_CAP` trigger + per-category downsampling) | ✅ exact — anchor identities match on 10 probed cases, 40–137 candidates |
+| FilePath extraction | ⚠️ deliberately diverges per #123 (leading segments kept; mid-token and `..`-escaping matches dropped) |
+| FilePath **resolution** | ⚠️ deliberately wider than the oracle per #123 — a path resolves if *either* the written form or the oracle truncation is present |
+| Anchor budget (`ANCHOR_CAP` trigger + per-category downsampling) | ✅ exact — anchor identities match on 12 probed cases, 40–137 candidates |
 | Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; unresolved inputs deliberately excluded |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
