@@ -53,7 +53,12 @@ changes.
   would otherwise let a file *outside* the project satisfy a design reference.
   Resolution is deliberately widened to the union of the written path and the
   oracle's truncation, so a project rooted at its own sub-project keeps
-  resolving as before.
+  resolving as before. The same union is applied to the `.started` baseline
+  probe, so both questions use one resolution rule — which does mean a path
+  whose *truncated* form resolved at the baseline is reported broken rather than
+  as a forward reference. Both directions are probed and recorded in the RE doc:
+  restricting the baseline probe instead turns a real nested-root deletion into
+  a missed one.
 
 - **A freshly scaffolded `design.md` matches the oracle exactly** (#51). `JSON`
   was missing from the recovered Symbol stop-list — the last divergence on an
