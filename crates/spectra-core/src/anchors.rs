@@ -121,8 +121,24 @@ static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
 /// and that exact file exists — the oracle reports it broken and this resolves
 /// it. That is the accepted trade: #123's broken-FilePath class measured a 0/6
 /// true-positive rate, so a common false positive is exchanged for a rarer false
-/// negative. Because the union only adds ways to be present, it cannot
-/// manufacture a broken anchor.
+/// negative.
+///
+/// `Resolver::resolve` applies the same union to the `.started` baseline probe,
+/// deliberately: the two questions must be asked with one resolution rule, or
+/// "resolved then, not now" stops meaning anything. The consequence is that the
+/// union **can** move an anchor from `unresolved / forward reference` to
+/// `broken` — an earlier revision of this comment claimed it could not, which
+/// was false. Both directions are probed (2026-08-03):
+///
+/// * nested root, cited file really deleted — union yields `broken`; a
+///   written-path-only baseline probe would call it a forward reference, a false
+///   negative in exactly the layout this fallback exists for;
+/// * repo root, `frontend/src/x.ts` never existed but an unrelated `src/x.ts`
+///   was deleted — union yields `broken`, a false positive.
+///
+/// The two are indistinguishable from the anchor text alone, so the false
+/// positive is accepted as the same coincidental-truncation class already
+/// accepted for the present-day probe, not as a separate risk.
 fn path_candidates(anchor: &str) -> Vec<&str> {
     let mut candidates = vec![anchor];
     if let Some(m) = ORACLE_FILE_PATH_RE.find(anchor) {
@@ -669,6 +685,77 @@ mod tests {
             resolution.broken.is_empty(),
             "monorepo-relative path must resolve via the oracle truncation, got {:?}",
             resolution.broken
+        );
+    }
+
+    /// AC-5's other direction: the union must also resolve when only the path
+    /// **as written** exists. Without this, a mutation that consulted only the
+    /// truncation would pass the rest of the suite (Codex R1 finding).
+    #[test]
+    fn monorepo_path_resolves_when_only_the_written_form_exists() {
+        let dir = TempDir::new("written-form-only");
+        std::fs::create_dir_all(dir.join("frontend/src/services")).unwrap();
+        std::fs::write(
+            dir.join("frontend/src/services/apiClient.ts"),
+            "export const x = 1;\n",
+        )
+        .unwrap();
+        let tracked = HashSet::new();
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+
+        let resolution = resolver.resolve(&extract("see `frontend/src/services/apiClient.ts`"));
+
+        assert!(
+            resolution.broken.is_empty(),
+            "written form exists on disk, must resolve; got {:?}",
+            resolution.broken
+        );
+    }
+
+    /// The union is applied to the `.started` baseline probe as well as the
+    /// present-day one, so an anchor whose *truncated* form resolved at the
+    /// baseline is `broken`, not `forward reference`. This is deliberate — the
+    /// alternative misses a real nested-root deletion — and it is the behaviour
+    /// an earlier doc comment wrongly claimed could not happen, so pin it.
+    #[test]
+    fn baseline_probe_uses_the_same_union_as_the_present_day_probe() {
+        let dir = TempDir::new("baseline-union");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        init_repo_with_file(&dir, "src/x.ts", "export const x = 1;\n");
+        let baseline = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&*dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let baseline = String::from_utf8(baseline.stdout)
+            .unwrap()
+            .trim()
+            .to_string();
+        // The truncation existed at the baseline and is now gone; the written
+        // form never existed in either state.
+        std::fs::remove_file(dir.join("src/x.ts")).unwrap();
+        let tracked = HashSet::new();
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: Some(&baseline),
+        };
+
+        let resolution = resolver.resolve(&extract("see `frontend/src/x.ts`"));
+
+        assert_eq!(resolution.broken.len(), 1, "{resolution:?}");
+        assert_eq!(resolution.broken[0].anchor, "frontend/src/x.ts");
+        assert_eq!(resolution.broken[0].reason, "file does not exist");
+        assert!(
+            resolution.unresolved.is_empty(),
+            "the truncation resolved at the baseline, so this is not a forward \
+             reference; got {:?}",
+            resolution.unresolved
         );
     }
 

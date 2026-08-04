@@ -204,7 +204,8 @@ instruction, preflight?}`.
   here recorded the oracle reporting `Structure 0/20 anchors broken` on a
   template-only `design.md` while OpenSpectra marked ~20 prose Symbol anchors
   broken. Re-probed head-to-head on 2026-08-03, both binaries in the *same*
-  jail: they agree in both states — `0/20` vs `0/21` with `design.md` tracked
+  jail: they agree on the resolved/broken *pattern* in both states, differing
+  by one anchor — `0/20` vs `0/21` with `design.md` tracked
   (`git grep` self-matches the template), and `20/20` vs `21/21` with it
   untracked. The original comparison had the two binaries on different sides of
   that tracked/untracked split, which is what produced the apparent 0-vs-20 gap.

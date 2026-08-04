@@ -290,7 +290,8 @@ file.
 Maintainer-approved direction: diverge, because a merge gate cannot consume a
 finding whose text does not exist. On the 29-change corpus in #123 every one of
 the six surviving broken anchors was this false positive — a true-positive rate
-of 0. Two changes, both confined to extraction:
+of 0. Three extraction changes, plus a deliberate widening of resolution
+(below):
 
 * `(?:[\w.-]+/)*` prepended, so a monorepo sub-project path is reported **and
   resolved** verbatim. `frontend/src/services/apiClient.ts` now resolves against
@@ -315,7 +316,25 @@ cited verbatim, the oracle reports it **broken** and OpenSpectra resolves it
 (probed 2026-08-03, both binaries, one jail). That is the accepted trade —
 #123's broken-FilePath class measured a 0/6 true-positive rate, so a common
 false positive is exchanged for a rarer false negative. Because the union only
-adds ways to be present, it cannot manufacture a broken anchor.
+adds ways to be present, it cannot manufacture a broken anchor **on the
+present-day probe**.
+
+The same union is applied to the `.started` baseline probe, deliberately: both
+questions must use one resolution rule, or "resolved then, not now" stops meaning
+anything. So the union **can** move an anchor from `unresolved / forward
+reference` to `broken`. An earlier revision of this section claimed it could not;
+that was false, and it was the third stated-but-false invariant caught in this
+PR. Both directions probed (2026-08-03):
+
+| layout | what happened | union verdict | written-path-only verdict |
+|---|---|---|---|
+| nested root, project root *is* `frontend/` | the cited `frontend/src/x.ts` really existed and was really deleted | `broken` — correct | `forward reference` — **false negative** |
+| repo root | `frontend/src/x.ts` never existed; an unrelated `src/x.ts` was deleted | `broken` — **false positive** | `forward reference` — correct |
+
+The two cases are indistinguishable from the anchor text alone, so restricting
+the baseline probe only trades one error for the other. The union is kept, and
+its false positive is accepted as the same coincidental-truncation class already
+accepted for the present-day probe rather than as a separate risk.
 
 A path containing a `..` segment is dropped rather than anchored
 (`anchors::escapes_project_root`). Resolution joins the anchor onto the project

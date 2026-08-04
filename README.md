@@ -182,15 +182,28 @@ four `medium` changes each had **0** broken anchors and were merely 68–82 days
 old, while the one change that did have broken anchors read `light`.
 
 Filtering to `FilePath` leaves the one category whose verdict consults the
-change's `.started` baseline, so it means what a gate needs it to mean: **this
-path existed when the change began and is now gone.**
+change's `.started` baseline, so it means close to what a gate needs it to mean:
+**this path resolved when the change began and does not resolve now.** Two
+caveats on "resolved at the baseline", both deliberate and both measured:
+
+* **No usable baseline → broken.** If `.spectra/changes/<name>.started` is
+  absent, malformed, or names a commit this clone does not have, a missing path
+  is reported broken rather than silently excused — the safer default, but it
+  means a hand-assembled change with no baseline can fail the gate for a path
+  that never existed. `spectra new change` writes the baseline, so this affects
+  hand-made changes only.
+* **"Resolved" uses the same widened rule as the present-day check** — the path
+  as written *or* its oracle truncation (#123). A design citing
+  `frontend/src/x.ts` in a repo where an unrelated `src/x.ts` was deleted is
+  therefore reported broken. That keeps both probes consistent instead of
+  asking two different questions; the trade-off is measured in the RE doc.
 
 That is the entire signal. Measured against the reference binary, not inferred:
 
 | category | on a committed change | in the gate? |
 |----------|----------------------|--------------|
-| FilePath | broken when the path existed at baseline and is now absent | **yes** |
-| FilePath | absent at baseline too → `unresolved / forward reference` | no — the change may be proposing to create it |
+| FilePath | broken when it resolved at the baseline (written path *or* truncation) and does not resolve now, or when no usable baseline exists | **yes** |
+| FilePath | resolved at neither → `unresolved / forward reference` | no — the change may be proposing to create it |
 | CliFlag | always broken (`not in --help`), matching the oracle | no — filtered out; unconditional, so it carries no signal |
 | Function / Symbol | `git grep` searches all tracked files **including the change's own `design.md`**, so an anchor extracted from a committed design always matches itself and never breaks | no |
 
@@ -214,7 +227,11 @@ instead:
 
 ```sh
 fail=0
-for change in $(spectra list --json | jq -r '.changes[].name'); do
+# Capture the listing first too: a failing command substitution in a `for` word
+# list does not trip `set -e`, so the loop would run zero times and the job
+# would go green having checked nothing.
+changes=$(spectra list --json) || { echo "list failed"; exit 1; }
+for change in $(printf '%s' "$changes" | jq -r '.changes[].name'); do
   # Capture first: piping straight into jq would swallow a drift failure
   # (non-JSON in, nothing out, grep finds nothing) and leave the job green.
   report=$(spectra drift "$change" --json) || { echo "drift failed: $change"; exit 1; }

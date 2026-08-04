@@ -15,7 +15,9 @@ step can overwrite the state an earlier one produced.
 
 ## Recovered model (this harness verifies it end-to-end)
 
-    candidates = per-category extraction, deduped, in document order
+    candidates = per-category extraction, deduped, in EXTRACTION order
+                 (per-category regex order; for Function, all snake matches
+                  then all camel -- see interleaved_fns)
     if sum(len(c) for c in categories) <= ANCHOR_CAP:   # 50
         every candidate is checked
     else:
@@ -26,7 +28,7 @@ checked anchors, not 50. A category with at most 12 candidates survives
 whole, so the total above the cap is `sum(min(n_category, 12))` -- the 12-21
 range seen in real oracle output. See
 `crates/spectra-core/src/calibration.rs::ANCHOR_SAMPLE_PER_CATEGORY` and
-`anchors::apply_anchor_budget`.
+`anchors::sample_over_cap`.
 
 This is a verification contract, not a printer: every case asserts on the
 oracle's exact anchor *identities* (not just counts), the run exits non-zero on
@@ -110,7 +112,7 @@ def sample(names):
 
 
 def model(categories):
-    """categories: list of (category_name, [anchor strings in document order])."""
+    """categories: list of (category_name, [anchor strings in extraction order])."""
     if sum(len(v) for _, v in categories) <= ANCHOR_CAP:
         return {(k, name) for k, v in categories for name in v}
     return {(k, name) for k, v in categories for name in sample(v)}
@@ -163,31 +165,35 @@ def interleaved_fns(pairs):
     return ("Function", snake + camel), document_order
 
 
+# Each case is (label, categories, document_order). `document_order` is None
+# unless the case deliberately writes a category in an order other than its
+# extraction order -- carried per case rather than re-derived from the label, so
+# renaming a label cannot silently turn the ordering case into a no-op.
 CASES = [
     # the trigger boundary: at the cap nothing is dropped, one past it the
     # whole category collapses to 12 -- this is what rules out "truncate(50)"
-    ("boundary-at-cap", [flags(ANCHOR_CAP)]),
-    ("boundary-past-cap", [flags(ANCHOR_CAP + 1)]),
+    ("boundary-at-cap", [flags(ANCHOR_CAP)], None),
+    ("boundary-past-cap", [flags(ANCHOR_CAP + 1)], None),
     # every category downsamples the same way
-    ("cliflag-100", [flags(100)]),
-    ("filepath-60", [paths(60)]),
-    ("symbol-83", [syms(83)]),
-    ("function-70", [fns(70)]),
+    ("cliflag-100", [flags(100)], None),
+    ("filepath-60", [paths(60)], None),
+    ("symbol-83", [syms(83)], None),
+    ("function-70", [fns(70)], None),
     # the trigger reads the TOTAL; the sampling is per category
-    ("mixed-under-cap", [flags(20), paths(20)]),
-    ("mixed-over-cap", [flags(26), paths(25)]),
+    ("mixed-under-cap", [flags(20), paths(20)], None),
+    ("mixed-over-cap", [flags(26), paths(25)], None),
     # a category below 12 survives whole while a large one is sampled
-    ("uneven-45sym-10cf", [syms(45), flags(10)]),
-    ("all-four-20each", [paths(20), flags(20), fns(20), syms(20)]),
+    ("uneven-45sym-10cf", [syms(45), flags(10)], None),
+    ("all-four-20each", [paths(20), flags(20), fns(20), syms(20)], None),
     # sizes that stress the integer division
-    ("cliflag-137", [flags(137)]),
+    ("cliflag-137", [flags(137)], None),
 ]
 
 # Function is the one category whose extraction order differs from document
 # order (all snake matches, then all camel). Emit them interleaved so a model
 # that sampled document order would pick a visibly different set.
 _interleaved, _document_order = interleaved_fns(15)
-CASES.append(("interleaved-functions", [_interleaved, flags(30)]))
+CASES.append(("interleaved-functions", [_interleaved, flags(30)], _document_order))
 
 
 def main():
@@ -198,8 +204,7 @@ def main():
     args = ap.parse_args()
 
     failures = []
-    for label, categories in CASES:
-        order = _document_order if label == "interleaved-functions" else None
+    for label, categories, order in CASES:
         expected = model(categories)
         observed = oracle_anchors(args.oracle, render(categories, order),
                                   keep_on_failure=False)
@@ -218,7 +223,7 @@ def main():
     if failures:
         print(f"MODEL REJECTED -- {len(failures)} case(s) diverged: {failures}")
         print("Update calibration::ANCHOR_SAMPLE_PER_CATEGORY / "
-              "anchors::apply_anchor_budget and the RE doc together.")
+              "anchors::sample_over_cap and the RE doc together.")
         return 1
     print(f"MODEL CONFIRMED on all {len(CASES)} cases "
           f"(anchor identities, not just counts).")
