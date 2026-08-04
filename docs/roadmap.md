@@ -18,7 +18,9 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **Open issues**：
 
-- ~~#8 Symbol-anchor 縮窄過濾~~ ✅ 已解（2026-08-03 probe）：不是 Symbol 規則，而是 anchor budget——候選總數 >50 時每個 category 等距降採樣到 12。見 `drift.md`「Solved: the "Symbol narrowing filter" was the anchor budget」
+- ~~#8 Symbol-anchor 縮窄過濾~~ **已解**（#119）：不是語意 filter，就是 over-cap 的
+  per-category 抽樣。實測 30 個 Symbol 候選全留、83 個留 `floor(i*83/12)` 的 12 個；
+  「12 of ~83」就是 `ANCHOR_SAMPLE_PER_CATEGORY` of 83，不需反組譯
 - #9 Tasks 碰撞偵測（無 positive oracle 樣本，偵測整個 gated off）
 - #10 Time 維度日數邊界（5↔7、19↔25 內插，60 天是猜的）
 - #11 CliFlag 永遠 broken：忠實重現 vs 可設定目標 CLI（設計決策）
@@ -107,10 +109,16 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 2. **#9 Tasks 碰撞 positive 樣本**
    - 依 issue 描述合成強迫碰撞情境（pending task 引用檔案 → baseline 後外部 commit 改該檔）取得 positive golden；釘出 firing predicate 後實作 `tasks::analyze`、翻 `TASKS_DETECTION_CALIBRATED = true`
    - 若 oracle 掃遍情境仍全零：結論記入 drift.md（「偵測極可能是 dead feature」），gate 保持關閉，issue 關閉
-3. ~~**#8 Symbol 縮窄過濾**~~ ✅ 已解，未動用反組譯
-   - 先前判斷「黑箱探測已窮盡」是錯的：所有探測都只變動單一 token 的 context，從未變動文件的候選總數，而那正是 oracle 唯一讀取的變數
-   - 規則：候選總數 ≤ `ANCHOR_CAP`(50) 全查；超過則每個 category 各保留 `i * n / 12`（i=0..11）的等距索引。`anchors::apply_anchor_budget` 實作，`scripts/calibrate-anchor-budget.py` 為驗證契約（比對 anchor 身分而非僅數量）
-   - 同輪 probe 補上 stoplist 漏收的 `JSON`，fresh scaffold 與 oracle 完全一致（#51）
+3. ~~**#8 Symbol 縮窄過濾**~~ **已解，無需反組譯**（#119）
+   - 「黑箱探測已窮盡」的結論下錯了：當時記下的決定性觀察「in isolation all tokens are
+     kept, so the rule is global to the document」正是 document-global cap 的特徵，卻被
+     讀成神秘的語意 predicate。實際機制是 `sample_over_cap`
+   - 實測：30 個 Symbol 候選（總數未過 cap）全部保留，含當初引為謎題的 `Data`/`Model`
+     組；83 個候選保留 `floor(i*83/12)` 的 12 個。Symbol 抽取從來沒有分歧
+   - 教訓：把「規則是 document-global」當成線索追下去，而不是當成障礙
+   - 後續（本 PR）：同輪 probe 補上 stoplist 漏收的 `JSON`，fresh scaffold 與 oracle 完全
+     一致（#51）；`scripts/calibrate-anchor-budget.py` 把該模型固定成驗證契約（比對 anchor
+     身分而非僅數量，含 snake/camel 交錯的抽取順序案例）
 4. **golden 回歸自動化**
    - 新增 `tests/golden_regression.rs`：直接載入 `docs/reverse-engineering/golden/*.json`，餵進 scoring 函式比對（目前 golden 值是手抄進 `calibration.rs` 測試，fixture 與測試沒有機器連結）
 

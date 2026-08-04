@@ -43,8 +43,8 @@ dimensions and prints a single recommended next step:
 
 It outputs a human-readable, conclusion-first report or `--json` for tooling.
 Like the reference binary, a successful run always exits `0` regardless of
-severity, so a CI gate keys on a JSON field — use `broken_anchors`, not
-`severity` (see below).
+severity, so a CI gate keys on a JSON field — use the **FilePath** entries of
+`broken_anchors`, not `severity` and not the whole array (see below).
 
 ## Usage
 
@@ -77,9 +77,9 @@ spectra config <path|list|get|set|unset|reset|edit>  # manages the global user c
 
 Exit codes for `drift` (pinned against the reference binary): `0` on any
 successful run — severity does **not** map to the exit code — and `1` on errors
-(e.g. change not found). To gate CI, check the JSON `broken_anchors` array;
-`severity` is reported for humans but makes a poor gate (see
-[CI gate example](#ci-gate-example)).
+(e.g. change not found). To gate CI, check the **FilePath** entries of the JSON
+`broken_anchors` array; neither `severity` nor the unfiltered array is usable as
+a gate (see [CI gate example](#ci-gate-example)).
 
 `validate` is the deliberate exception: it is a pass/fail gate, so it exits
 `0` when every validated change is valid and `1` when any is invalid (also
@@ -148,7 +148,7 @@ jobs:
       - name: Check spec drift
         run: |
           spectra drift --json | tee drift.json
-          jq -e '.broken_anchors | length == 0' drift.json > /dev/null
+          jq -e '[.broken_anchors[] | select(.category == "FilePath")] | length == 0' drift.json > /dev/null
 ```
 
 `spectra drift` itself always exits `0` on a successful run (matching the
@@ -156,46 +156,56 @@ reference binary), so the gate is the explicit `jq` check. Each entry prints its
 `anchor`, `category` and `reason`, so a red build says what to fix:
 
 ```sh
-jq -r '.broken_anchors[] | "\(.category)\t\(.anchor)\t\(.reason)"' drift.json
+jq -r '.broken_anchors[] | select(.category == "FilePath")
+       | "\(.anchor)\t\(.reason)"' drift.json
 ```
 
-#### What this gate actually catches — read before adopting it
+#### Why the filter, and what the gate actually catches
 
-On a change whose `design.md` is **committed** (the normal case in a PR), this
-gate fires on exactly one thing: **a `FilePath` anchor whose file existed at the
-change's baseline and is now gone.** That is a real, actionable signal, and it is
-the entire signal. Measured against the reference binary, not inferred:
+**Do not gate on the unfiltered `broken_anchors` array.** Every extracted
+`--flag` is reported broken (`not in --help`) — faithfully, because there is no
+target binary whose `--help` the design could be diffed against. Measured on a
+committed change that is entirely healthy and merely *mentions* two flags in
+prose:
+
+```console
+$ spectra drift c --json | jq -c '{structure: .dimensions[1].status, severity, broken: [.broken_anchors[] | .category + " " + .anchor]}'
+{"structure":"2/4 anchors broken","severity":"heavy","broken":["CliFlag --force","CliFlag --json"]}
+```
+
+An unfiltered gate is red on that change, and stays red for as long as the
+design mentions a flag. **`severity` fails the same probe** — it reads `heavy`
+here — and is separately dominated by **Time**, which no pull request can fix: a
+change untouched for 61 days scores 4 on Time alone, already enough for
+`medium`. On a 29-change corpus that inverted the ordering a gate needs: the
+four `medium` changes each had **0** broken anchors and were merely 68–82 days
+old, while the one change that did have broken anchors read `light`.
+
+Filtering to `FilePath` leaves the one category whose verdict consults the
+change's `.started` baseline, so it means what a gate needs it to mean: **this
+path existed when the change began and is now gone.**
+
+That is the entire signal. Measured against the reference binary, not inferred:
 
 | category | on a committed change | in the gate? |
 |----------|----------------------|--------------|
 | FilePath | broken when the path existed at baseline and is now absent | **yes** |
-| FilePath | absent at baseline too → `unresolved / forward reference` | no |
-| CliFlag | always `unresolved / no target --help` — there is no binary to diff flags against | no |
-| Function | `unresolved / not first-party` when `git grep` misses it (#83) | no |
-| Symbol / Function | `git grep` searches all tracked files **including the change's own `design.md`**, so an anchor extracted from a committed design always matches itself and never breaks | no |
+| FilePath | absent at baseline too → `unresolved / forward reference` | no — the change may be proposing to create it |
+| CliFlag | always broken (`not in --help`), matching the oracle | no — filtered out; unconditional, so it carries no signal |
+| Function / Symbol | `git grep` searches all tracked files **including the change's own `design.md`**, so an anchor extracted from a committed design always matches itself and never breaks | no |
 
-The last row is the important one and it applies to the reference binary too:
+The last row is the important one, and it applies to the reference binary too:
 probed on a committed design citing a function and a struct that exist nowhere
 in the codebase, **both binaries report neither as broken *or* unresolved** —
-they self-resolve. So a gate on `broken_anchors` cannot detect a deleted
-function or type, and no configuration of this tool currently can. Excluding the
-change directory from `git grep` would expose those anchors, but it would also
-make every prose word in a freshly scaffolded `design.md` break (#51), so it is
-not a drop-in fix; it is tracked as a known limitation in the RE doc.
+they self-resolve. So no gate on this tool's output can currently detect a
+deleted function or type. Excluding the change directory from `git grep` would
+expose those anchors, but it would also make every prose word in a freshly
+scaffolded `design.md` break (#51), so it is not a drop-in fix; it is tracked as
+a known limitation in the RE doc.
 
 Adopt this gate for what it is — a deleted-file detector for spec artifacts —
-and do not read a green build as "this design still matches the code".
-
-**Do not gate on `severity`.** It is a blend of all three scoring dimensions
-and is dominated by **Time**, which no pull request can fix: a change untouched
-for 61 days scores 4 on Time alone, which is already enough to read `medium`
-with zero broken anchors (and `heavy` once any other dimension pushes the total
-past 8). On a 29-change corpus this inverted the
-ordering a gate needs — the four `medium` changes each had **0** broken
-anchors and were merely 68–82 days old, while the one change that did have
-broken anchors read `light`. Gating on severity therefore blocks PRs for the
-age of a change they did not touch, and lets real drift through. Narrow and
-honest beats broad and wrong — but neither is a substitute for review. See
+and do not read a green build as "this design still matches the code". Narrow
+and honest beats broad and wrong; neither is a substitute for review. See
 [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md).
 
 The step above expects a single active change — with several, `spectra drift`
@@ -209,7 +219,8 @@ for change in $(spectra list --json | jq -r '.changes[].name'); do
   # (non-JSON in, nothing out, grep finds nothing) and leave the job green.
   report=$(spectra drift "$change" --json) || { echo "drift failed: $change"; exit 1; }
   printf '%s' "$report" \
-    | jq -r --arg c "$change" '.broken_anchors[] | "\($c)\t\(.category)\t\(.anchor)\t\(.reason)"' \
+    | jq -r --arg c "$change" '.broken_anchors[] | select(.category == "FilePath")
+             | "\($c)\t\(.anchor)\t\(.reason)"' \
     | grep . && fail=1
 done
 exit $fail
@@ -263,20 +274,21 @@ cargo test                   # unit + integration tests
 
 ## Fidelity
 
-Verified against the v2.3.1 oracle for Function/CliFlag detection, the anchor
-budget, the scoring curves, severity bands, and recommendations. The long-open
-Symbol-anchor "narrowing filter" is solved: the oracle keeps every regex match
-until the combined candidate count exceeds 50, then downsamples each category
-to 12 evenly-spaced anchors — anchor identities now match the oracle exactly on
-prose-dense designs. Two deliberate divergences remain, both documented with
-their probe evidence in the RE doc: unresolvable anchors are reported
-separately from broken ones (#83), and FilePath anchors keep their leading path
-segments instead of being truncated to a string absent from the design (#123).
-That one also widens resolution: a path resolves if *either* the written form or
-the oracle's truncation is present, which trades #123's measured 0/6
-true-positive false positives for a rarer false negative. The reference binary is
-used as a golden oracle to calibrate
-constants (`crates/spectra-core/src/calibration.rs`).
+Verified byte-for-byte against the v2.3.1 oracle for Function/CliFlag/Symbol
+detection, the over-cap anchor sampling, the scoring curves, severity bands, and
+recommendations. The long-standing "Symbol-anchor narrowing filter" unknown
+turned out not to be a semantic filter at all — it was the per-category over-cap
+sampling, recovered in #119.
+
+Two resolution divergences remain by choice, plus one on extraction. A design
+path that did not exist at the change's baseline is reported as a forward
+reference rather than broken (#83). FilePath anchors keep their leading path
+segments instead of being truncated to a string absent from the design (#123);
+that also widens resolution, since a path resolves if *either* the written form
+or the oracle's truncation is present — trading #123's measured 0/6
+true-positive false positives for a rarer false negative. Details and the
+calibration method are in the RE doc. The reference binary is used as a golden
+oracle to calibrate constants (`crates/spectra-core/src/calibration.rs`).
 
 ## Layout
 
