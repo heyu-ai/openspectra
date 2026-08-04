@@ -202,10 +202,14 @@ cargo test                   # unit + integration tests
 
 ## Fidelity
 
-Verified byte-for-byte against the v2.3.1 oracle for FilePath/Function/CliFlag
-detection, the scoring curves, severity bands, and recommendations. One open
-item — the Symbol-anchor narrowing filter — over-counts symbols on prose-dense
-designs; details and the calibration method are in the RE doc. The reference
+Verified byte-for-byte against the v2.3.1 oracle for all four anchor categories
+(FilePath/Function/CliFlag/Symbol), the over-cap anchor sampling, the scoring
+curves, severity bands, and recommendations. The long-standing "Symbol-anchor
+narrowing filter" unknown turned out not to be a semantic filter at all — it was
+the per-category over-cap sampling, recovered in #119. One resolution divergence
+remains by choice: a design path that did not exist at the change's baseline is
+reported as a forward reference rather than broken. Details and the calibration
+method are in the RE doc. The reference
 binary is used as a golden oracle to calibrate constants
 (`crates/spectra-core/src/calibration.rs`).
 

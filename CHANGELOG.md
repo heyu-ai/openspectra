@@ -12,6 +12,24 @@ changes.
 
 ### Fixed
 
+- **`spectra drift` no longer caps the Structure denominator at 50** (#119).
+  `ANCHOR_CAP` was implemented as `truncate(50)`, so every design with more
+  than 50 anchors reported exactly `N/50` and silently dropped everything past
+  index 50 from the broken set. The oracle does not truncate: above the cap it
+  keeps an evenly spaced sample of at most 12 anchors *per category* (index
+  `i * n / 12`), leaving a category of 12 or fewer whole — so an over-cap
+  denominator is 12 per over-cap category plus the full count of each
+  under-cap one (12/24/36, but 17 for 60 FilePath + 5 Function), never a
+  value between 51 and the raw count. Pinned by probe at the 50/51
+  boundary, at n = 53/60/77, and across one to three categories.
+
+  This also closes the repo's longest-standing reverse-engineering unknown
+  (#8/#51): the oracle's apparent "Symbol narrowing filter" — 12 of ~83
+  prose candidates, with no semantic predicate that explained the selection —
+  is this same per-category sampling. Probed: 30 Symbol candidates keep all
+  30 (including the `Data`/`Model` pair that motivated the mystery), 83 keep
+  exactly 12 at `floor(i * 83 / 12)`. Symbol extraction was never divergent.
+
 - **A custom `schema:` in `<spec_dir>/config.yaml` no longer silently falls
   back to the built-in workflow** (#117). That file had no reader at all, so a
   project selecting its own schema ran `spec-driven` with exit 0, no warning,
@@ -30,6 +48,18 @@ changes.
   This is the stopgap half of #117. Actually loading a custom schema is
   tracked by #126, and the sibling `context:` / `rules:` keys the oracle also
   reads from that file by #127.
+### Changed
+
+- **Broken CliFlag and Function anchors are reported as broken again** (#119),
+  reverting that half of #83. Measured over 26 real changes, withholding them
+  put every Structure score out of step with the oracle and let a CI drift
+  gate stay green while drift existed. `--flag` anchors are broken with reason
+  `not in --help` and `git grep`-missing functions with
+  `function not found in repo`, both matching the v2.3.1 oracle byte for byte.
+  The remaining #83 divergence is narrower: a missing FilePath that did not
+  exist at the change's `.started` baseline is still `forward reference` in
+  `unresolved_anchors` rather than broken. `unresolved_anchors` keeps its shape
+  and place in the JSON.
 
 ## [0.6.0] - 2026-08-02
 

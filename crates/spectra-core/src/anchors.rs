@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::calibration::ANCHOR_CAP;
+use crate::calibration::{ANCHOR_CAP, ANCHOR_SAMPLE_PER_CATEGORY};
 use crate::git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -84,7 +84,8 @@ static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 });
 
 /// Extract unique anchors from `design.md` text, deduped by string (first
-/// matching category wins) and capped at [`ANCHOR_CAP`].
+/// matching category wins) and reduced by [`sample_over_cap`] when the set
+/// exceeds [`ANCHOR_CAP`].
 pub fn extract(design: &str) -> Vec<Anchor> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<Anchor> = Vec::new();
@@ -119,15 +120,19 @@ pub fn extract(design: &str) -> Vec<Anchor> {
     for c in CAMEL_FN_RE.captures_iter(design) {
         push(c[1].to_string(), AnchorKind::Function, &mut seen, &mut out);
     }
-    // KNOWN DIVERGENCE: the reference binary applies an additional, undetermined
-    // filter that narrows Symbol candidates to a small subset (e.g. 12 of ~83 in
-    // one Chinese-prose-heavy design). The recovered regex + stop-list below is
-    // exactly what the binary's `.rodata` contains, but the narrowing predicate
-    // is not visible in strings and resisted black-box probing — it is the single
-    // open reverse-engineering question (see docs/reverse-engineering/drift.md).
-    // We extract the full regex match set, which over-counts Symbol anchors on
-    // prose-dense designs and can make Structure decay read lower than the oracle.
-    // FilePath / Function / CliFlag extraction matches the oracle exactly.
+    // The regex + stop-list below is exactly what the binary's `.rodata`
+    // contains, and Symbol extraction matches the oracle for the full match set.
+    //
+    // This used to carry a KNOWN DIVERGENCE note calling the oracle's apparent
+    // "Symbol narrowing" (12 of ~83 candidates in one prose-heavy design) an
+    // undetermined predicate that resisted black-box probing — the repo's single
+    // open RE question (#8/#51). It is not a semantic filter: it is
+    // `sample_over_cap` below. Probed on v2.3.1 with bare `WidgetNN` tokens and
+    // nothing else: 30 candidates (under the cap) keep all 30, and 83 keep
+    // exactly 12 at indices `floor(i * 83 / 12)`. `12 of ~83` is
+    // `ANCHOR_SAMPLE_PER_CATEGORY` of 83, and the old "keeps `Data`, drops
+    // `Model`" observations were positional, not semantic. See
+    // docs/reverse-engineering/drift.md.
     for m in SYMBOL_RE.find_iter(design) {
         let s = m.as_str();
         if SYMBOL_STOPLIST.contains(s) {
@@ -136,8 +141,50 @@ pub fn extract(design: &str) -> Vec<Anchor> {
         push(s.to_string(), AnchorKind::Symbol, &mut seen, &mut out);
     }
 
-    out.truncate(ANCHOR_CAP);
-    out
+    sample_over_cap(out)
+}
+
+/// Reduce an over-cap anchor set the way the oracle does.
+///
+/// Sets of [`ANCHOR_CAP`] or fewer anchors are checked whole. Larger sets are
+/// *not* truncated to the cap: each category independently keeps an evenly
+/// spaced sample of at most [`ANCHOR_SAMPLE_PER_CATEGORY`] anchors, taking
+/// index `i * n / 12` for `i` in `0..12`. A category holding 12 or fewer anchors
+/// is kept whole, so the denominator above the cap is 12 per over-cap category
+/// plus the full count of each under-cap one — 12/24/36 when every present
+/// category is over the sample size, but 17 for 60 FilePath + 5 Function. It is
+/// never a number between 51 and the raw extracted count.
+///
+/// Pinned by probe against the v2.3.1 oracle: 53 and 77 pure-FilePath anchors
+/// both reproduce the `i * n / 12` index set exactly; a design mixing 20
+/// FilePath, 20 Function and 20 CliFlag anchors (60 total) yields 36, not 12,
+/// so the sample is per category while the trigger is the combined total.
+///
+/// This is also the mechanism behind what was long recorded as the oracle's
+/// unexplained Symbol-narrowing filter (#8/#51) — see the note in `extract`.
+fn sample_over_cap(anchors: Vec<Anchor>) -> Vec<Anchor> {
+    if anchors.len() <= ANCHOR_CAP {
+        return anchors;
+    }
+    let mut kept = Vec::new();
+    // Category order matches the extraction order above, so grouping preserves
+    // the original relative order of the surviving anchors.
+    for kind in [
+        AnchorKind::FilePath,
+        AnchorKind::CliFlag,
+        AnchorKind::Function,
+        AnchorKind::Symbol,
+    ] {
+        let group: Vec<&Anchor> = anchors.iter().filter(|a| a.kind == kind).collect();
+        if group.len() <= ANCHOR_SAMPLE_PER_CATEGORY {
+            kept.extend(group.into_iter().cloned());
+        } else {
+            for i in 0..ANCHOR_SAMPLE_PER_CATEGORY {
+                kept.push(group[i * group.len() / ANCHOR_SAMPLE_PER_CATEGORY].clone());
+            }
+        }
+    }
+    kept
 }
 
 /// Resolution context: the set of tracked files plus the repo root for grep.
@@ -192,10 +239,10 @@ impl Resolver<'_> {
                 }
                 AnchorKind::Function => {
                     if !resolved.contains(&anchor.text) {
-                        unresolved.push(UnresolvedAnchor {
+                        broken.push(BrokenAnchor {
                             anchor: anchor.text.clone(),
                             category,
-                            reason: "not first-party".to_string(),
+                            reason: "function not found in repo".to_string(),
                         });
                     }
                 }
@@ -208,10 +255,10 @@ impl Resolver<'_> {
                         });
                     }
                 }
-                AnchorKind::CliFlag => unresolved.push(UnresolvedAnchor {
+                AnchorKind::CliFlag => broken.push(BrokenAnchor {
                     anchor: anchor.text.clone(),
                     category,
-                    reason: "no target --help".to_string(),
+                    reason: "not in --help".to_string(),
                 }),
             }
         }
@@ -322,18 +369,71 @@ mod tests {
     }
 
     #[test]
-    fn dedup_and_cap() {
+    fn dedup_keeps_one_anchor_per_distinct_string() {
         let d = "--flag --flag --flag";
         assert_eq!(extract(d).len(), 1);
-        let many = (0..80)
-            .map(|i| format!("--flag{i}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        assert_eq!(extract(&many).len(), ANCHOR_CAP);
     }
 
     #[test]
-    fn cli_flags_are_always_unresolved_without_a_target_help() {
+    fn sets_at_the_cap_are_kept_whole() {
+        let at_cap = (0..ANCHOR_CAP)
+            .map(|i| format!("--flag-{i:03}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(extract(&at_cap).len(), ANCHOR_CAP);
+    }
+
+    #[test]
+    fn over_cap_sets_are_sampled_evenly_per_category() {
+        // One category over the cap: the denominator drops to the per-category
+        // sample size, not to ANCHOR_CAP.
+        let flags: Vec<String> = (0..53).map(|i| format!("--flag-{i:03}")).collect();
+        let anchors = extract(&flags.join(" "));
+        assert_eq!(anchors.len(), ANCHOR_SAMPLE_PER_CATEGORY);
+        let kept: Vec<&str> = anchors.iter().map(|a| a.text.as_str()).collect();
+        let expected: Vec<&str> = (0..ANCHOR_SAMPLE_PER_CATEGORY)
+            .map(|i| flags[i * 53 / ANCHOR_SAMPLE_PER_CATEGORY].as_str())
+            .collect();
+        assert_eq!(kept, expected);
+    }
+
+    #[test]
+    fn over_cap_sampling_is_per_category_not_global() {
+        // 26 CliFlags + 26 FilePaths trips the cap on the combined total while
+        // each category stays above the sample size, so both are sampled to 12.
+        let mut design = String::new();
+        for i in 0..26 {
+            design.push_str(&format!("--flag-{i:03} src/mod_{i:03}.rs "));
+        }
+        let anchors = extract(&design);
+        assert_eq!(anchors.len(), 2 * ANCHOR_SAMPLE_PER_CATEGORY);
+        let flags = anchors
+            .iter()
+            .filter(|a| a.kind == AnchorKind::CliFlag)
+            .count();
+        assert_eq!(flags, ANCHOR_SAMPLE_PER_CATEGORY);
+    }
+
+    #[test]
+    fn over_cap_categories_under_the_sample_size_are_kept_whole() {
+        let mut design = String::new();
+        for i in 0..60 {
+            design.push_str(&format!("--flag-{i:03} "));
+        }
+        design.push_str("src/only.rs");
+        let anchors = extract(&design);
+        assert_eq!(anchors.len(), ANCHOR_SAMPLE_PER_CATEGORY + 1);
+        assert_eq!(
+            anchors
+                .iter()
+                .filter(|a| a.kind == AnchorKind::FilePath)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn cli_flags_are_broken_when_no_target_help_can_confirm_them() {
         use std::collections::HashSet;
         let tracked: HashSet<String> = HashSet::new();
         let root = std::path::Path::new(".");
@@ -344,10 +444,10 @@ mod tests {
         };
         let anchors = extract("uses --some-flag");
         let resolution = r.resolve(&anchors);
-        assert!(resolution.broken.is_empty());
-        assert_eq!(resolution.unresolved.len(), 1);
-        assert_eq!(resolution.unresolved[0].reason, "no target --help");
-        assert_eq!(resolution.unresolved[0].category, "CliFlag");
+        assert!(resolution.unresolved.is_empty());
+        assert_eq!(resolution.broken.len(), 1);
+        assert_eq!(resolution.broken[0].reason, "not in --help");
+        assert_eq!(resolution.broken[0].category, "CliFlag");
     }
 
     #[test]
@@ -419,24 +519,24 @@ mod tests {
         };
 
         let resolution = resolver.resolve(&anchors);
-        let mut expected_unresolved: Vec<UnresolvedAnchor> = function_names
+        let mut expected_broken: Vec<BrokenAnchor> = function_names
             .iter()
             .filter(|name| !present_functions.contains(*name))
-            .map(|name| UnresolvedAnchor {
-                anchor: name.clone(),
-                category: "Function".to_string(),
-                reason: "not first-party".to_string(),
-            })
-            .collect();
-        expected_unresolved.sort_by(|a, b| a.anchor.cmp(&b.anchor));
-        let mut expected_broken: Vec<BrokenAnchor> = symbol_names
-            .iter()
-            .filter(|name| !present_symbols.contains(*name))
             .map(|name| BrokenAnchor {
                 anchor: name.clone(),
-                category: "Symbol".to_string(),
-                reason: "symbol not found in repo".to_string(),
+                category: "Function".to_string(),
+                reason: "function not found in repo".to_string(),
             })
+            .chain(
+                symbol_names
+                    .iter()
+                    .filter(|name| !present_symbols.contains(*name))
+                    .map(|name| BrokenAnchor {
+                        anchor: name.clone(),
+                        category: "Symbol".to_string(),
+                        reason: "symbol not found in repo".to_string(),
+                    }),
+            )
             .collect();
         expected_broken.sort_by(|a, b| a.anchor.cmp(&b.anchor));
 
@@ -446,11 +546,6 @@ mod tests {
             assert_eq!(actual.category, expected.category);
             assert_eq!(actual.reason, expected.reason);
         }
-        assert_eq!(resolution.unresolved.len(), expected_unresolved.len());
-        for (actual, expected) in resolution.unresolved.iter().zip(expected_unresolved.iter()) {
-            assert_eq!(actual.anchor, expected.anchor);
-            assert_eq!(actual.category, expected.category);
-            assert_eq!(actual.reason, expected.reason);
-        }
+        assert!(resolution.unresolved.is_empty());
     }
 }
