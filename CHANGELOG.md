@@ -30,6 +30,36 @@ changes.
   30 (including the `Data`/`Model` pair that motivated the mystery), 83 keep
   exactly 12 at `floor(i * 83 / 12)`. Symbol extraction was never divergent.
 
+- **`park` / `unpark` / `list --parked` now interoperate with the oracle**
+  (#118). Parking is a *move*, not a flag: the oracle relocates the whole
+  change directory to `<git common dir>/spectra-app/changes/<name>/`, and
+  OpenSpectra's empty `.spectra/changes/<name>.parked` marker was invisible to
+  it and blind to it — `list --parked` reported `No parked changes.` on a
+  repository with 15. OpenSpectra now uses the same store, so changes parked
+  by either binary are seen by both, including from a linked git worktree
+  (the *common* git dir, not `.git/worktrees/<name>/`).
+
+  A parked change stays addressable by `status`, `show`, `drift`, and
+  `instructions`, matching the oracle; only `list` and `validate` hide it.
+  `list --parked --json` now keys its array on `parked` (was `changes`) with
+  `status: "parked"` on every entry; `park`/`unpark` print
+  `Parked change: <name>` / `Unparked change: <name>` and emit
+  `{"parked": "<name>"}` / `{"unparked": "<name>"}`. Error strings and exit
+  codes match the oracle for unknown, already-active, and already-parked
+  names. `park`/`unpark` accept the oracle's looser id charset
+  (`^[a-z0-9-]+$`), so archived-prefixed names such as `2026-01-01-old` park
+  and list like any other. See
+  [`docs/reverse-engineering/park.md`](docs/reverse-engineering/park.md).
+
+  **Two deliberate divergences**, both where the oracle destroys data: `park`
+  refuses to overwrite an existing parked change of the same name (the oracle
+  replaces it silently — probed), and refuses the name `archive` (the oracle
+  moves the entire `changes/archive/` tree into the parked store).
+
+  **Migration:** a pre-existing `.spectra/changes/<name>.parked` marker is no
+  longer read. Nothing is lost — the change is still in
+  `<spec_dir>/changes/` — but it lists as active again; re-run
+  `spectra park <name>` to move it into the shared store.
 ### Changed
 
 - **Broken CliFlag and Function anchors are reported as broken again** (#119),

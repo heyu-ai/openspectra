@@ -5,7 +5,7 @@
 //! mirroring the reference binary's "git unavailable" status.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Run `git -C <root> <args...>` and return stdout on success (exit 0).
@@ -28,6 +28,27 @@ pub fn is_repo(root: &Path) -> bool {
     git(root, &["rev-parse", "--is-inside-work-tree"])
         .map(|s| s.trim() == "true")
         .unwrap_or(false)
+}
+
+/// The repository's *common* git directory — the shared `.git` even when
+/// `root` is a linked worktree, where `--git-dir` would point at
+/// `.git/worktrees/<name>` instead.
+///
+/// The oracle stores parked changes under this directory, and it resolves to
+/// the same place from every worktree: parking from a linked worktree and
+/// listing from the main checkout show the same change (probed on v2.3.1).
+pub fn common_dir(root: &Path) -> Option<PathBuf> {
+    let out = git(root, &["rev-parse", "--git-common-dir"])?;
+    let path = PathBuf::from(out.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    // git prints a path relative to the work tree for the common case (".git").
+    Some(if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    })
 }
 
 /// All tracked file paths (repo-relative, forward slashes), via `git ls-files`.
