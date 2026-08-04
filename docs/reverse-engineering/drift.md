@@ -91,7 +91,7 @@ regexes recovered verbatim from `.rodata`:
 
 | category | regex | resolution check | broken reason |
 |----------|-------|------------------|---------------|
-| FilePath | `(?:src-tauri\|src\|crates\|docs)/[\w./-]+\.(?:rs\|ts\|svelte\|md\|toml)` | tracked / exists on disk | `file does not exist` |
+| FilePath | `(?:src-tauri\|src\|crates\|docs)/[\w./-]+\.(?:rs\|ts\|svelte\|md\|toml)` — OpenSpectra prepends `(?:[\w.-]+/)*`, requires a left token boundary, and drops `..`-escaping paths; see Deliberate divergences | tracked / exists on disk | `file does not exist` |
 | CliFlag | `--[a-z][a-z0-9-]+` | (none available) | `not in --help` |
 | Function | `\b([a-z][a-z0-9]*_[a-z0-9_]+)\(` (snake) and `\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(` (camel) | `git grep` finds it | `function not found in repo` |
 | Symbol | `\b[A-Z][a-zA-Z0-9]+\b` minus a small stop-list | `git grep` finds it | `symbol not found in repo` |
@@ -262,13 +262,102 @@ establishes.
 > pins the always-exit-0 contract but says nothing about Structure. What is
 > missing is any assertion anchored to these four captured fixtures.
 
+### FilePath anchors keep their leading path segments (#123)
+
+The recovered FilePath regex has no left boundary, so it matches from the middle
+of a longer path. The oracle turns `frontend/src/services/apiClient.ts` into the
+anchor `src/services/apiClient.ts` and then reports `file does not exist` — for
+a string that appears nowhere in the design that produced it. The finding is
+unactionable by construction: grepping the change for the reported anchor
+returns nothing.
+
+**This is oracle-faithful, and the premise of #123 (that OpenSpectra had ported
+it wrong) is refuted.** Probed against v2.3.1 on 2026-08-03, three jails, one
+operation each:
+
+| jail | on disk | oracle verdict |
+|------|---------|----------------|
+| design cites `frontend/src/services/apiClient.ts` | — | anchor `src/services/apiClient.ts`, broken |
+| same citation | `frontend/src/services/apiClient.ts` **exists** | still broken |
+| same citation | only the stripped `src/services/apiClient.ts` exists | **resolved** |
+
+The third row is decisive: the oracle really does resolve against the truncated
+path, so this is a defect in the oracle rather than in the port. The same probe
+showed `heyuai/docs/yibi/e02.md` reduced to `docs/yibi/e02.md`, which additionally
+makes a deliberately repo-*external* reference look like a missing repo-internal
+file.
+
+Maintainer-approved direction: diverge, because a merge gate cannot consume a
+finding whose text does not exist. On the 29-change corpus in #123 every one of
+the six surviving broken anchors was this false positive — a true-positive rate
+of 0. Two changes, both confined to extraction:
+
+* `(?:[\w.-]+/)*` prepended, so a monorepo sub-project path is reported **and
+  resolved** verbatim. `frontend/src/services/apiClient.ts` now resolves against
+  the file that actually exists, which is what removes the false positive.
+* a left token-boundary check (`anchors::starts_at_path_boundary`; the `regex`
+  crate has no look-behind), so `mysrc/foo.rs` yields **no** anchor rather than a
+  phantom `src/foo.rs`.
+
+Every reported FilePath anchor is therefore greppable verbatim in its design.
+
+**Resolution is widened too — this is not a text-only divergence.**
+`anchors::path_candidates` resolves a FilePath against the *union* of the path
+as written and the oracle's truncated form. Without that union a project rooted
+at its own sub-project regresses: a design under `frontend/` citing the
+monorepo-relative `frontend/src/x.ts` is looked up at
+`frontend/frontend/src/x.ts` and reported broken where the oracle resolves it
+(probed: oracle `0/1`, first draft of this fix `1/1`).
+
+The union is strictly more permissive than the oracle, so the mirror case
+diverges the other way: with `frontend/src/services/apiClient.ts` present and
+cited verbatim, the oracle reports it **broken** and OpenSpectra resolves it
+(probed 2026-08-03, both binaries, one jail). That is the accepted trade —
+#123's broken-FilePath class measured a 0/6 true-positive rate, so a common
+false positive is exchanged for a rarer false negative. Because the union only
+adds ways to be present, it cannot manufacture a broken anchor.
+
+A path containing a `..` segment is dropped rather than anchored
+(`anchors::escapes_project_root`). Resolution joins the anchor onto the project
+root, so `../src/main.rs` would stat the root's *parent*: probed before the
+guard existed, an unrelated `<outer>/src/main.rs` silently satisfied a design
+under `<outer>/proj`, where the oracle reported its truncated `src/main.rs`
+broken. Dropping matches how a leading `/` is already handled — an anchor that
+cannot denote a path inside the project is not a checkable reference.
+
+Observed edge cases, all measured rather than reasoned about:
+
+| design text | anchor |
+|-------------|--------|
+| `https://github.com/org/repo/src/lib.rs` | none — the `//` fails the boundary check |
+| `github.com/org/repo/src/lib.rs` (bare) | full string; falls back to `src/lib.rs` for resolution |
+| `./src/main.rs` | kept as written (the match starts at the leading `.`); stays inside the root |
+| `../src/main.rs` | none — dropped by `escapes_project_root`, else it would stat outside the project |
+| `/Users/me/repo/src/main.rs` | none — the leading `/` fails the boundary check |
+| `[spec](/docs/spec.md)` (root-relative markdown link) | none — same leading-`/` rejection; a deliberate false negative, noted so it is on the record |
+
+**Ruling on repo-external references** (the open question in #123's acceptance
+criteria): no special case is added for them. `heyuai/docs/yibi/e02.md` is now
+reported in full, and whether it lands in `broken_anchors` or
+`unresolved_anchors` is decided by the existing #83 baseline rule — unresolved
+`forward reference` when the change's `.started` SHA shows the path absent at
+baseline, broken otherwise. There is no reliable local signal that separates
+"deliberately outside this repo" from "not created yet", and inventing one
+would trade a visible false positive for an invisible false negative. A change
+that means to reference a sibling repo therefore needs a `.started` baseline to
+be classified as a forward reference; `change::create` writes
+`.spectra/changes/<name>.started` whenever the project root is a git repo, so
+this holds for changes created through `spectra` and not for hand-made ones.
+
 ## What is verified vs. uncertain
 
 | Area | Status |
 |------|--------|
 | JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
-| FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; CliFlag/Function resolution exact since #119; missing-FilePath still diverges on forward references |
-| Over-cap anchor sampling (per category, `i * n / 12`) | ✅ exact — probed at the 50/51 boundary and at n = 53, 60, 77, and across 1–3 categories |
+| CliFlag / Function extraction & resolution | ✅ exact since #119 |
+| FilePath extraction | ⚠️ deliberately diverges per #123 — leading path segments kept; mid-token and `..`-escaping matches dropped |
+| FilePath resolution | ⚠️ deliberately wider than the oracle per #123 (resolves on the union of the written path and the oracle truncation), and missing-FilePath still diverges on forward references per #83 |
+| Over-cap anchor sampling (per category, `i * n / 12`) | ✅ exact — probed at the 50/51 boundary and at n = 53, 60, 77, across 1–3 categories, and re-pinned as a verification contract by `scripts/calibrate-anchor-budget.py` (12 cases, anchor identities not counts, non-zero exit on divergence) |
 | Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; #119 makes the goldens' triples reachable again, but the fixtures are output-only and never replayed (#132) |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
@@ -305,9 +394,10 @@ OpenSpectra reproduces both rows exactly.
 Consequence: **Symbol extraction was never divergent**, and the previously
 recorded over-count (OpenSpectra "inflating `total` and reading Structure
 decay/score *lower* than the oracle" on prose-dense designs) was a symptom of
-the missing sampling, fixed by #119. All four categories are now exact on
-extraction, and only the missing-FilePath forward-reference case diverges on
-resolution.
+the missing sampling, fixed by #119. Symbol, CliFlag and Function are now exact on
+extraction; FilePath extraction subsequently diverges on purpose (#123, below),
+and on resolution both the missing-FilePath forward-reference case (#83) and
+#123's union lookup diverge.
 
 ### Known limitations (resolution side, deferred)
 Two resolution behaviours are carried as-is pending a positive oracle decision
@@ -327,6 +417,30 @@ Two resolution behaviours are carried as-is pending a positive oracle decision
    broken and reveal the full set — a different technique for a different goal.)
    A future fix would exclude the change/spec dir from grep (`-- ':!<change-dir>'`);
    it is deferred until an oracle run confirms the intended behaviour.
+
+   **This is what bounds the CI gate, so state it where operators read it.**
+   Probed head-to-head on 2026-08-03 with a committed design citing
+   `deleted_helper_fn()` and `DeletedStructName`, neither present anywhere in the
+   codebase: *both* binaries report them in neither `broken_anchors` nor
+   `unresolved_anchors` — they self-resolve and vanish. This survives #119's
+   revert of #83's Function half: reclassifying a `git grep`-missing Function as
+   broken cannot help when the grep *finds* it in the design itself.
+
+   So on a committed change the only categories reaching `broken_anchors` are
+   **CliFlag** — unconditionally, since every flag is `not in --help` — and
+   **FilePath**. CliFlag therefore carries no signal: a healthy change that
+   merely mentions `--json` and `--force` in prose reports `2/4 anchors broken`
+   and severity `heavy` (probed). That is why the README gate filters to
+   `category == "FilePath"`, the one verdict that consults the change's
+   `.started` baseline and so means "this existed when the change began and is
+   now gone". Verified both directions: the flags-only change passes the
+   filtered gate, and deleting a cited file fails it.
+
+   Note the fix is not a drop-in: excluding the change dir would expose the
+   Symbol anchors that a freshly scaffolded `design.md` extracts from its own
+   template prose, re-opening #51 in a worse form (~20 broken anchors on an
+   untouched scaffold). Any future attempt must land together with a Symbol
+   filter that survives that case.
 2. **FilePath resolves while still in the git index.** A path is considered
    present if it is tracked *or* on disk, so a working-tree `rm` without `git rm`
    still reads as resolved until staged. `drift` describes "current codebase
@@ -343,6 +457,12 @@ unknowns:
    every anchor is reported broken and thus listed.
 3. Vary one input at a time (a symbol in prose vs. backtick vs. fence; a flag in
    each context) and diff the oracle's `broken_anchors` to isolate each rule.
+   **Vary the document's total candidate count too, not just each token's
+   context.** The Symbol "narrowing filter" stayed open for months because every
+   probe held the candidate count small while varying context — and the rule the
+   oracle actually applies reads only the count. When a per-item rule refuses to
+   fit, sweep the size of the collection the item sits in.
+   Reproduce with `python3 scripts/calibrate-anchor-budget.py --oracle <path>`.
 4. To settle **timezone questions** ("does the binary derive `today` from local
    time or UTC?"), run the oracle under a shifted `TZ` env var (e.g.
    `TZ=Etc/GMT+11`) and watch whether its reported day count moves: it moves →

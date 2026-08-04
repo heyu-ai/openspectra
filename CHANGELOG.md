@@ -10,6 +10,15 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/calibrate-anchor-budget.py` — a verification contract for the
+  over-cap sampling model, not a printer. Asserts the oracle's exact anchor
+  *identities* (not just counts) over twelve cases spanning all four categories
+  at 40–137 candidates, including one that would fail if `Function` were
+  sampled in document order rather than extraction order; exits non-zero on
+  divergence and preserves the failing jail.
+
 ### Fixed
 
 - **`spectra drift` no longer caps the Structure denominator at 50** (#119).
@@ -29,6 +38,28 @@ changes.
   is this same per-category sampling. Probed: 30 Symbol candidates keep all
   30 (including the `Data`/`Model` pair that motivated the mystery), 83 keep
   exactly 12 at `floor(i * 83 / 12)`. Symbol extraction was never divergent.
+
+- **`spectra drift` FilePath anchors are reported as written, and no longer
+  name a string absent from the design** (#123). The recovered regex has no
+  left boundary, so the oracle turns `frontend/src/services/apiClient.ts` into
+  the anchor `src/services/apiClient.ts` and reports "file does not exist" for
+  text that appears nowhere in the change — a finding nobody can grep for, and
+  the cause of all six surviving broken anchors on a 29-change corpus (a 0/6
+  true-positive rate). Probed and confirmed oracle-faithful before diverging:
+  with the full path present on disk the oracle still reports it broken, and it
+  resolves only when the truncated path exists. Extraction now keeps leading
+  path segments, drops matches that begin mid-token (`mysrc/foo.rs` no longer
+  yields a phantom `src/foo.rs`), and drops paths with a `..` segment, which
+  would otherwise let a file *outside* the project satisfy a design reference.
+  Resolution is deliberately widened to the union of the written path and the
+  oracle's truncation, so a project rooted at its own sub-project keeps
+  resolving as before.
+
+- **A freshly scaffolded `design.md` matches the oracle exactly** (#51). `JSON`
+  was missing from the recovered Symbol stop-list — the last divergence on an
+  untouched template, now `0/20` on both binaries. Probed per token; the
+  "all-caps acronyms are dropped" theory is refuted (`ALTER`, `TABLE`,
+  `COLUMN`, `README`, `CRITICAL`, `YAML`, `HTTP`, `SQL` are all kept).
 
 - **`park` / `unpark` / `list --parked` now interoperate with the oracle**
   (#118). Parking is a *move*, not a flag: the oracle relocates the whole
@@ -61,6 +92,18 @@ changes.
   `<spec_dir>/changes/` — but it lists as active again; re-run
   `spectra park <name>` to move it into the shared store.
 ### Changed
+
+- **The recommended CI drift gate filters to `FilePath` broken anchors.** The
+  README previously gated on `severity == "light"`; both that and an
+  unfiltered `broken_anchors` check are unusable, and measured to be: a healthy
+  committed change that merely *mentions* `--json` and `--force` in prose
+  reports `2/4 anchors broken` and severity `heavy`, because every extracted
+  flag is unconditionally `not in --help`. Filtering to `FilePath` leaves the
+  one verdict that consults the change's `.started` baseline, so the gate means
+  "this path existed when the change began and is now gone". Verified both
+  directions. The README now also states what the gate cannot catch: on a
+  committed change `git grep` self-matches the design, so a deleted function or
+  type is invisible to *both* binaries.
 
 - **Broken CliFlag and Function anchors are reported as broken again** (#119),
   reverting that half of #83. Measured over 26 real changes, withholding them

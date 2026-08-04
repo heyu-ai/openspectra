@@ -1,8 +1,17 @@
 //! Design anchors: references in `design.md` to concrete code artifacts that
 //! drift can verify still resolve against the current codebase.
 //!
-//! The four extraction regexes and the symbol stop-list are recovered verbatim
-//! from the reference binary's `.rodata`.
+//! The extraction regexes and the symbol stop-list are recovered from the
+//! reference binary's `.rodata`. Two probe-derived corrections are documented
+//! at their definitions:
+//!
+//! * `FILE_PATH_RE` is **not** the `.rodata` regex — it adds a prefix head, a
+//!   left-boundary check, and a `..` guard so a reported anchor exists in the
+//!   design and denotes a path inside the project (#123).
+//!   `ORACLE_FILE_PATH_RE` keeps the verbatim form, and `path_candidates`
+//!   resolves against the union of both, which is deliberately more permissive
+//!   than the oracle — see its doc comment.
+//! * `JSON` in `SYMBOL_STOPLIST` was recovered by probe, not from `.rodata`.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -59,9 +68,70 @@ pub struct Resolution {
 }
 
 // --- recovered regexes -------------------------------------------------------
+/// FilePath candidates.
+///
+/// DELIBERATE DIVERGENCE (#123). The recovered `.rodata` regex is the
+/// `(?:src-tauri|src|crates|docs)/…` part alone, with no left boundary, so it
+/// matches from the middle of a longer path: the oracle turns
+/// `frontend/src/services/apiClient.ts` into the anchor
+/// `src/services/apiClient.ts` and reports "file does not exist" for a string
+/// that appears nowhere in the design. Probed against v2.3.1 (2026-08-03) with
+/// `frontend/src/services/apiClient.ts` present on disk, the oracle still
+/// reports it broken, and it resolves only when the *stripped* path exists — so
+/// this is a faithful port of an oracle defect, not a porting error. On the
+/// reporting corpus all six surviving broken anchors were this false positive.
+///
+/// Three extraction corrections:
+/// * the `(?:[\w.-]+/)*` head captures leading path segments, so a monorepo
+///   sub-project path is reported verbatim;
+/// * `starts_at_path_boundary` rejects a match that begins mid-token, so
+///   `mysrc/foo.rs` yields no anchor instead of a phantom `src/foo.rs`;
+/// * `escapes_project_root` drops a path with a `..` segment, which the head
+///   would otherwise let resolve against a file outside the project.
+///
+/// Together they make every reported FilePath anchor greppable verbatim in the
+/// source design, which is what makes the finding actionable. Resolution is
+/// separately widened — see `path_candidates`.
 static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")
+        .unwrap()
+});
+
+/// The recovered `.rodata` regex, without `FILE_PATH_RE`'s prefix head.
+///
+/// Kept so resolution can still consult the form the oracle would have used
+/// (see `path_candidates`), which is what stops the #123 divergence from
+/// regressing a project rooted at its own sub-project.
+static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
 });
+
+/// On-disk forms to try for a FilePath anchor: the path as written, plus the
+/// oracle's truncated form when it differs.
+///
+/// Without the union a project rooted at its own sub-project regresses: a design
+/// under `frontend/` citing the monorepo-relative `frontend/src/x.ts` is looked
+/// up at `frontend/frontend/src/x.ts` and reported broken, where the oracle's
+/// truncated `src/x.ts` resolves. Probed: oracle `0/1`, first draft of this fix
+/// `1/1`.
+///
+/// **This widens resolution; it is not a text-only change.** A path resolves
+/// when *either* form is present, where the oracle consults only the truncation.
+/// Probed in the mirror case — design cites `frontend/src/services/apiClient.ts`
+/// and that exact file exists — the oracle reports it broken and this resolves
+/// it. That is the accepted trade: #123's broken-FilePath class measured a 0/6
+/// true-positive rate, so a common false positive is exchanged for a rarer false
+/// negative. Because the union only adds ways to be present, it cannot
+/// manufacture a broken anchor.
+fn path_candidates(anchor: &str) -> Vec<&str> {
+    let mut candidates = vec![anchor];
+    if let Some(m) = ORACLE_FILE_PATH_RE.find(anchor) {
+        if m.as_str() != anchor {
+            candidates.push(m.as_str());
+        }
+    }
+    candidates
+}
 static CLI_FLAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"--[a-z][a-z0-9-]+").unwrap());
 static SNAKE_FN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*_[a-z0-9_]+)\(").unwrap());
@@ -71,17 +141,66 @@ static SYMBOL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[A-Z][a-zA-Z0-9]+\b"
 
 /// Common Rust types / framework words excluded from Symbol anchors so the
 /// extractor does not flag ubiquitous identifiers as "drift" (recovered list).
+///
+/// `JSON` is the one entry not read out of `.rodata`: the oracle drops it and
+/// this list did not, which was the whole remaining divergence on a fresh
+/// `design.md` scaffold (#51). Probed per-token against v2.3.1 (2026-08-03) —
+/// each candidate in its own repo alongside an unresolvable control symbol —
+/// and `JSON` was the only word in the scaffold dropped by the oracle and kept
+/// here. The probe also refuted the "all-caps acronyms are dropped" theory:
+/// `ALTER`, `TABLE`, `COLUMN`, `README`, `CRITICAL`, `YAML`, `HTTP` and `SQL`
+/// are all kept by the oracle in isolation.
 static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         "Context", "State", "Result", "Error", "Option", "Vec", "Box", "String", "HashMap",
         "HashSet", "PathBuf", "Ok", "Err", "Default", "Sized", "Clone", "Debug", "Display", "Fn",
         "FnMut", "FnOnce", "Future", "Pin", "Arc", "Rc", "RefCell", "Mutex", "RwLock", "Trait",
         "Module", "Struct", "Field", "Method", "Value", "Source", "Target", "Given", "Spectra",
-        "CLI", "GUI", "API", "IPC",
+        "CLI", "GUI", "API", "IPC", "JSON",
     ]
     .into_iter()
     .collect()
 });
+
+/// Whether a `FILE_PATH_RE` match at `start` begins at a real token boundary
+/// rather than in the middle of a longer path or word.
+///
+/// The `regex` crate has no look-behind, so the boundary is checked here: a
+/// preceding **ASCII** word or path byte (`mysrc/foo.rs`, `…/a/src/b.rs`
+/// already consumed by the head group) means the match is a suffix of something
+/// longer and must not become an anchor.
+///
+/// Deliberately ASCII-only, unlike the regex head's Unicode-aware `\w`: a
+/// non-ASCII neighbour counts as a boundary, so CJK prose abutting a path
+/// (`說明src/foo.rs`) still yields `src/foo.rs`. The cost is that a Latin-script
+/// non-ASCII prefix is inconsistent — `über/src/x.rs` is consumed whole by the
+/// head, but `Ωsrc/x.rs` still anchors at `src/x.rs`. Prose-abutted paths are
+/// the common case in this corpus; both were measured.
+///
+/// `design` is indexed by byte, and `start` comes from the regex engine, so it
+/// is always a UTF-8 boundary.
+fn starts_at_path_boundary(design: &str, start: usize) -> bool {
+    match design.as_bytes()[..start].last() {
+        None => true,
+        Some(&b) => !(b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'/' | b'-')),
+    }
+}
+
+/// Whether `path` contains a `..` segment.
+///
+/// Such a path is dropped rather than anchored. Resolution joins the anchor onto
+/// the project root, so `../src/main.rs` would stat the root's *parent* and let
+/// an unrelated file outside the project silently satisfy a design reference.
+/// Probed (2026-08-03) before this guard existed: with `<outer>/src/main.rs`
+/// present and the project at `<outer>/proj`, the oracle reported `src/main.rs`
+/// broken while this crate reported nothing at all.
+///
+/// Dropping matches how a leading `/` is already handled — an anchor that cannot
+/// denote a path *inside* the project is not a checkable reference. `.` segments
+/// are left alone: `./src/x.rs` stays within the root.
+fn escapes_project_root(path: &str) -> bool {
+    path.split('/').any(|segment| segment == "..")
+}
 
 /// Extract unique anchors from `design.md` text, deduped by string (first
 /// matching category wins) and reduced by [`sample_over_cap`] when the set
@@ -99,6 +218,9 @@ pub fn extract(design: &str) -> Vec<Anchor> {
 
     // Most specific categories first so a string is claimed once.
     for m in FILE_PATH_RE.find_iter(design) {
+        if !starts_at_path_boundary(design, m.start()) || escapes_project_root(m.as_str()) {
+            continue;
+        }
         push(
             m.as_str().to_string(),
             AnchorKind::FilePath,
@@ -216,13 +338,24 @@ impl Resolver<'_> {
             let category = anchor.kind.as_str().to_string();
             match anchor.kind {
                 AnchorKind::FilePath => {
-                    let on_disk = self.root.join(&anchor.text).exists();
-                    if self.tracked.contains(&anchor.text) || on_disk {
+                    let candidates = path_candidates(&anchor.text);
+                    let present = candidates
+                        .iter()
+                        .any(|p| self.tracked.contains(*p) || self.root.join(p).exists());
+                    if present {
                         continue;
                     }
-                    let existed_at_baseline = self
-                        .baseline_sha
-                        .and_then(|sha| git::path_exists_at(self.root, sha, &anchor.text));
+                    // `forward reference` requires every candidate form to be
+                    // definitely absent at the baseline. One `Some(true)` means
+                    // the path was there and is now gone (broken); one `None`
+                    // means the baseline is unusable, which must not be read as
+                    // proof of absence.
+                    let existed_at_baseline = self.baseline_sha.and_then(|sha| {
+                        candidates
+                            .iter()
+                            .map(|p| git::path_exists_at(self.root, sha, p))
+                            .try_fold(false, |acc, seen| Some(acc || seen?))
+                    });
                     if matches!(existed_at_baseline, Some(false)) {
                         unresolved.push(UnresolvedAnchor {
                             anchor: anchor.text.clone(),
@@ -362,6 +495,65 @@ mod tests {
         );
     }
 
+    /// #123: a path under a monorepo sub-project keeps its leading segments, so
+    /// the reported anchor is greppable verbatim in the design that produced it.
+    /// The oracle reports the truncated `src/...` here; this is a deliberate,
+    /// probe-documented divergence (see `FILE_PATH_RE`).
+    #[test]
+    fn file_paths_keep_leading_path_segments() {
+        let d = "see `frontend/src/services/apiClient.ts` and `heyuai/docs/yibi/e02.md`";
+        assert_eq!(
+            kinds(d, AnchorKind::FilePath),
+            vec![
+                "frontend/src/services/apiClient.ts",
+                "heyuai/docs/yibi/e02.md"
+            ]
+        );
+    }
+
+    /// #123, the other half: a match starting mid-token is not an anchor at all.
+    /// Without the boundary check `mysrc/foo.rs` yields a phantom `src/foo.rs`
+    /// that appears nowhere in the source document.
+    #[test]
+    fn file_paths_reject_matches_starting_mid_token() {
+        assert!(kinds("see mysrc/foo.rs here", AnchorKind::FilePath).is_empty());
+        assert!(kinds("see xdocs/a.md here", AnchorKind::FilePath).is_empty());
+        // A boundary character before the root still anchors normally.
+        assert_eq!(
+            kinds("see (src/foo.rs) here", AnchorKind::FilePath),
+            vec!["src/foo.rs"]
+        );
+    }
+
+    /// A `..` segment would let resolution stat outside the project root, so
+    /// such a path is dropped instead of anchored. Probed before the guard
+    /// existed: an unrelated `<outer>/src/main.rs` silently satisfied a design
+    /// under `<outer>/proj` citing `../src/main.rs`. `./` stays inside the root
+    /// and is kept.
+    #[test]
+    fn file_paths_reject_segments_that_escape_the_project_root() {
+        assert!(kinds("see ../src/main.rs here", AnchorKind::FilePath).is_empty());
+        assert!(kinds("see a/../../src/main.rs here", AnchorKind::FilePath).is_empty());
+        assert_eq!(
+            kinds("see ./src/main.rs here", AnchorKind::FilePath),
+            vec!["./src/main.rs"]
+        );
+    }
+
+    /// #51: a freshly scaffolded `design.md` must not manufacture broken Symbol
+    /// anchors from its own template prose. `JSON` was the last word the oracle
+    /// stop-lists and this list did not.
+    #[test]
+    fn design_template_symbols_match_the_oracle_stoplist() {
+        let symbols = kinds(crate::schema::DESIGN_TEMPLATE, AnchorKind::Symbol);
+        assert!(
+            !symbols.iter().any(|s| s == "JSON"),
+            "JSON must be stop-listed; extracted symbols: {symbols:?}"
+        );
+        // Oracle-probed on the byte-identical scaffold: 20 anchors total.
+        assert_eq!(extract(crate::schema::DESIGN_TEMPLATE).len(), 20);
+    }
+
     #[test]
     fn symbol_stoplist_excludes_common_types() {
         let d = "Result and Option and MyType here";
@@ -448,6 +640,55 @@ mod tests {
         assert_eq!(resolution.broken.len(), 1);
         assert_eq!(resolution.broken[0].reason, "not in --help");
         assert_eq!(resolution.broken[0].category, "CliFlag");
+    }
+
+    /// #123 must not trade one false positive for another. When the project root
+    /// *is* the sub-project, a monorepo-relative citation still has to resolve —
+    /// the oracle's truncated form is tried as well, so the reported text
+    /// changes but the resolved/broken verdict does not.
+    /// Probe: oracle `0/1`, OpenSpectra without this fallback `1/1`.
+    #[test]
+    fn monorepo_path_resolves_against_the_oracle_truncation() {
+        let dir = TempDir::new("nested-root");
+        std::fs::create_dir_all(dir.join("src/services")).unwrap();
+        std::fs::write(
+            dir.join("src/services/apiClient.ts"),
+            "export const x = 1;\n",
+        )
+        .unwrap();
+        let tracked = HashSet::new();
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+
+        let resolution = resolver.resolve(&extract("see `frontend/src/services/apiClient.ts`"));
+
+        assert!(
+            resolution.broken.is_empty(),
+            "monorepo-relative path must resolve via the oracle truncation, got {:?}",
+            resolution.broken
+        );
+    }
+
+    /// The union must not hide a genuine deletion: when neither the path as
+    /// written nor its truncation exists, the anchor is still broken — and it is
+    /// reported under the text the design actually contains.
+    #[test]
+    fn monorepo_path_still_breaks_when_neither_form_exists() {
+        let tracked = HashSet::new();
+        let dir = TempDir::new("nested-root-missing");
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+
+        let resolution = resolver.resolve(&extract("see `frontend/src/services/gone.ts`"));
+
+        assert_eq!(resolution.broken.len(), 1);
+        assert_eq!(resolution.broken[0].anchor, "frontend/src/services/gone.ts");
     }
 
     #[test]
