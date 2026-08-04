@@ -2,9 +2,17 @@
 //! drift can verify still resolve against the current codebase.
 //!
 //! The four extraction regexes and the symbol stop-list are recovered from the
-//! reference binary's `.rodata`, with two probe-derived corrections noted at
-//! their definitions ([`FILE_PATH_RE`]'s left boundary and the `JSON`
-//! stop-list entry).
+//! reference binary's `.rodata`. Three of the regexes are verbatim; two
+//! probe-derived corrections are documented at their definitions:
+//!
+//! * `FILE_PATH_RE` is **not** the `.rodata` regex — it adds a prefix head and
+//!   a left-boundary check so a reported anchor exists in the design (#123).
+//!   `ORACLE_FILE_PATH_RE` keeps the verbatim form, and `path_candidates`
+//!   resolves against both, so the divergence is confined to the reported text.
+//! * `JSON` in `SYMBOL_STOPLIST` was recovered by probe, not from `.rodata`.
+//!
+//! The anchor budget in `apply_anchor_budget` is likewise probe-recovered
+//! rather than read out of strings.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -212,7 +220,7 @@ fn apply_anchor_budget(candidates: Vec<Anchor>) -> Vec<Anchor> {
 }
 
 /// Extract unique anchors from `design.md` text, deduped by string (first
-/// matching category wins) and reduced by [`apply_anchor_budget`].
+/// matching category wins) and reduced by `apply_anchor_budget`.
 pub fn extract(design: &str) -> Vec<Anchor> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<Anchor> = Vec::new();

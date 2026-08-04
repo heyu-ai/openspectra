@@ -259,16 +259,18 @@ cargo test                   # unit + integration tests
 
 ## Fidelity
 
-Verified against the v2.3.1 oracle for FilePath/Function/CliFlag detection, the
-anchor budget, the scoring curves, severity bands, and recommendations. The
-long-open Symbol-anchor "narrowing filter" is solved: the oracle keeps every
-regex match until the combined candidate count exceeds 50, then downsamples
-each category to 12 evenly-spaced anchors — anchor identities now match the
-oracle exactly on prose-dense designs. Two deliberate divergences remain, both
-documented with their probe evidence in the RE doc: unresolvable anchors are
-reported separately from broken ones (#83), and FilePath anchors keep their
-leading path segments instead of being truncated to a string absent from the
-design (#123). The reference binary is used as a golden oracle to calibrate
+Verified against the v2.3.1 oracle for Function/CliFlag detection, the anchor
+budget, the scoring curves, severity bands, and recommendations. The long-open
+Symbol-anchor "narrowing filter" is solved: the oracle keeps every regex match
+until the combined candidate count exceeds 50, then downsamples each category
+to 12 evenly-spaced anchors — anchor identities now match the oracle exactly on
+prose-dense designs. Two deliberate divergences remain, both documented with
+their probe evidence in the RE doc: unresolvable anchors are reported
+separately from broken ones (#83), and FilePath anchors keep their leading path
+segments instead of being truncated to a string absent from the design (#123) —
+that one changes the reported anchor *text* only, since a path is still
+resolved against the oracle's truncated form as well. The reference binary is
+used as a golden oracle to calibrate
 constants (`crates/spectra-core/src/calibration.rs`).
 
 ## Layout
