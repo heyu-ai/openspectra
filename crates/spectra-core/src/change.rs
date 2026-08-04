@@ -3,8 +3,12 @@
 //! On disk a change is a directory `<spec_dir>/changes/<name>/` with an
 //! `.openspec.yaml` metadata file and, as its workflow advances, artifact files
 //! such as `proposal.md`, `design.md`, `tasks.md`, and `specs/<cap>/spec.md`.
-//! Spectra tracks per-change state under `.spectra/`:
-//! `.spectra/changes/<name>.parked` mirrors the oracle's on-hold state.
+//! Parking is not a flag: like the oracle, it *moves* the whole change
+//! directory to `<git common dir>/spectra-app/changes/<name>/`, so a parked
+//! change is absent from `<spec_dir>/changes/` while still resolving for
+//! `status`/`show`/`drift`/`instructions`.
+//!
+//! Spectra tracks the rest of its per-change state under `.spectra/`:
 //! `.spectra/changes/<name>.started` records the baseline git SHA drift needs
 //! and is OpenSpectra-only (see `docs/reverse-engineering/artifact-workflow.md`).
 //! `.spectra/changes/<name>.in-progress` is likewise OpenSpectra-only on disk
@@ -16,7 +20,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::names::is_valid_name;
@@ -26,6 +30,10 @@ use crate::names::is_valid_name;
 static CHANGE_NAME_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[a-z0-9]+(-+[a-z0-9]+)*$").unwrap());
 static ARCHIVED_PREFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\d{4}-\d{2}-\d{2}-").unwrap());
+/// What the oracle accepts as a change id in `park`/`unpark` — looser than
+/// [`CHANGE_NAME_RE`], and the source of its
+/// "must contain only lowercase letters, digits, and hyphens" error.
+static ORACLE_CHANGE_ID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-z0-9-]+$").unwrap());
 
 /// Parsed `<change>/.openspec.yaml`. `Serialize` skips `None` fields (rather
 /// than emitting `key: null`) so a round-trip through `archive::
@@ -93,11 +101,36 @@ fn read_started_sha(cfg: &Config, name: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn parked_marker_path(cfg: &Config, name: &str) -> PathBuf {
-    cfg.root
-        .join(".spectra")
-        .join("changes")
-        .join(format!("{name}.parked"))
+/// Where the oracle keeps parked changes: `<git common dir>/spectra-app/changes`.
+/// Parking moves the whole change directory here, so a parked change is absent
+/// from `<spec_dir>/changes/` entirely. `None` when `root` is not a git
+/// repository or git is unavailable, in which case nothing can be parked.
+pub(crate) fn parked_root(cfg: &Config) -> Option<PathBuf> {
+    crate::git::common_dir(&cfg.root).map(|d| d.join("spectra-app").join("changes"))
+}
+
+fn parked_change_dir(cfg: &Config, name: &str) -> Option<PathBuf> {
+    parked_root(cfg).map(|d| d.join(name))
+}
+
+fn is_parked(cfg: &Config, name: &str) -> bool {
+    is_valid_name(name)
+        && parked_change_dir(cfg, name)
+            .map(|d| d.is_dir())
+            .unwrap_or(false)
+}
+
+/// The directory holding `name`'s artifacts: the active change directory when
+/// it exists, otherwise the parked one. `status`, `show`, `drift`, and
+/// `instructions` all keep working on a parked change in the oracle, so
+/// resolution has to see both locations; only the listings (`list`,
+/// `validate`) are split by parked state.
+fn resolve_change_dir(cfg: &Config, name: &str) -> Option<PathBuf> {
+    let active = cfg.changes_dir().join(name);
+    if active.is_dir() {
+        return Some(active);
+    }
+    parked_change_dir(cfg, name).filter(|d| d.is_dir())
 }
 
 fn in_progress_marker_path(cfg: &Config, name: &str) -> PathBuf {
@@ -107,11 +140,7 @@ fn in_progress_marker_path(cfg: &Config, name: &str) -> PathBuf {
         .join(format!("{name}.in-progress"))
 }
 
-fn is_parked(cfg: &Config, name: &str) -> bool {
-    parked_marker_path(cfg, name).exists()
-}
-
-/// Remove any `.parked`/`.in-progress`/`.started`/
+/// Remove any `.in-progress`/`.started`/
 /// `.spectra/touched/<name>.json` sidecar files for `name`. Used by `create`
 /// (a change directory of the same name deleted by hand, rather than via
 /// `spectra archive`, may have left these behind — clearing them stops a
@@ -121,7 +150,7 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
 ///
 /// The oracle does not clear its in-progress marker on archive. OpenSpectra
 /// deliberately diverges here, consistently with its existing defensive
-/// clearing of `.parked`/`.started`, so a recreated same-named change cannot
+/// clearing of `.started`, so a recreated same-named change cannot
 /// inherit a stale marker. A missing file is not an error.
 /// Every sidecar is attempted even when an earlier one fails, and the errors
 /// are reported together. Returning on the first failure would let one
@@ -132,7 +161,6 @@ fn is_parked(cfg: &Config, name: &str) -> bool {
 /// change would inherit the stale baseline SHA this function exists to clear.
 pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> {
     let sidecars = [
-        parked_marker_path(cfg, name),
         in_progress_marker_path(cfg, name),
         started_sha_path(cfg, name),
         crate::touched::touched_path(cfg, name),
@@ -152,38 +180,60 @@ pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> 
     }
 }
 
-/// Errors unless `name` is both an existing change directory *and* passes
-/// the same archive/name filters as `list_active`/`list_parked`
-/// (`walk_change_names`) — otherwise parking a non-canonical or
-/// archived-prefixed name would silently succeed with no visible effect in
-/// any listing.
-fn require_parkable(cfg: &Config, name: &str) -> Result<()> {
-    if try_load(cfg, name)?.is_none() {
+/// The oracle's change-id charset check, applied by `park`/`unpark` before
+/// they look for the change. Looser than [`CHANGE_NAME_RE`]: the oracle parks
+/// archived-prefixed names such as `2026-01-01-old` happily, and lists them.
+///
+/// The `archive` guard is OpenSpectra-only. The oracle accepts
+/// `spectra park archive` and moves the *entire* `changes/archive/` tree into
+/// the parked store, taking every archived change with it — a data-loss bug,
+/// not a feature to reproduce.
+fn require_parkable_name(name: &str, verb: &str) -> Result<()> {
+    if !is_valid_name(name) || !ORACLE_CHANGE_ID_RE.is_match(name) {
         return Err(anyhow!(
-            "change '{name}' not found in {}",
-            cfg.changes_dir().display()
+            "Change ID '{name}' must contain only lowercase letters, digits, and hyphens"
         ));
     }
-    if !walk_change_names(cfg).iter().any(|n| n == name) {
+    if name == "archive" {
         return Err(anyhow!(
-            "'{name}' is an archived or non-canonical change name and can't be parked"
+            "'archive' is the archived-changes directory, not a change; refusing to {verb} it"
         ));
     }
     Ok(())
 }
 
-/// Mark a change as parked (idempotent: parking an already-parked change is
-/// not an error). Errors if `name` doesn't name an existing, active-eligible
-/// change. Note: not safe against concurrent deletion of the change
-/// directory between the existence check and the marker write.
+/// Move a change out of `<spec_dir>/changes/` and into the parked store.
+///
+/// Errors if `name` is not an active change (matching the oracle's
+/// `Change 'X' does not exist`, which is also what parking an already-parked
+/// change reports, since it is no longer under `changes/`).
+///
+/// Not safe against concurrent deletion of the change directory between the
+/// existence check and the rename.
 pub fn park(cfg: &Config, name: &str) -> Result<()> {
-    require_parkable(cfg, name)?;
-    let marker = parked_marker_path(cfg, name);
-    let parent = marker
-        .parent()
-        .expect("parked_marker_path always has a parent");
+    require_parkable_name(name, "park")?;
+    if try_load_at(cfg, &cfg.changes_dir().join(name), name)?.is_none() {
+        return Err(anyhow!("Change '{name}' does not exist"));
+    }
+    let target = parked_change_dir(cfg, name).ok_or_else(|| {
+        anyhow!(
+            "cannot park '{name}': {} is not a git repository",
+            cfg.root.display()
+        )
+    })?;
+    // The oracle silently overwrites an existing parked change of the same
+    // name, destroying it. Refuse instead — same ruling as the hardened
+    // atomic writes in `update`/`config`: a data-loss-only divergence.
+    if target.exists() {
+        return Err(anyhow!(
+            "a parked change named '{name}' already exists at {}; unpark or remove it first",
+            target.display()
+        ));
+    }
+    let parent = target.parent().expect("parked dir always has a parent");
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    std::fs::write(&marker, "").with_context(|| format!("writing {}", marker.display()))?;
+    std::fs::rename(cfg.changes_dir().join(name), &target)
+        .with_context(|| format!("moving change '{name}' to {}", target.display()))?;
     Ok(())
 }
 
@@ -210,17 +260,25 @@ pub fn mark_in_progress(cfg: &Config, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Clear a change's parked marker (idempotent: unparking a change that isn't
-/// parked is not an error). Errors if `name` doesn't name an existing,
-/// active-eligible change.
+/// Move a parked change back into `<spec_dir>/changes/`.
+///
+/// Errors with the oracle's wording: an active change is
+/// `already active (not parked)`, and an unknown name `is not parked`.
 pub fn unpark(cfg: &Config, name: &str) -> Result<()> {
-    require_parkable(cfg, name)?;
-    let marker = parked_marker_path(cfg, name);
-    match std::fs::remove_file(&marker) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| format!("removing {}", marker.display())),
+    require_parkable_name(name, "unpark")?;
+    let active = cfg.changes_dir().join(name);
+    if active.is_dir() {
+        return Err(anyhow!("Change '{name}' is already active (not parked)"));
     }
+    let source = parked_change_dir(cfg, name).filter(|d| d.is_dir());
+    let Some(source) = source else {
+        return Err(anyhow!("Change '{name}' is not parked"));
+    };
+    let parent = active.parent().expect("changes dir always has a parent");
+    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    std::fs::rename(&source, &active)
+        .with_context(|| format!("moving change '{name}' back to {}", active.display()))?;
+    Ok(())
 }
 
 /// Load a change by name if it exists. Returns `Ok(None)` only when the
@@ -233,8 +291,21 @@ pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Change>> {
     if !is_valid_name(name) {
         return Ok(None);
     }
-    let dir = cfg.changes_dir().join(name);
-    match std::fs::metadata(&dir) {
+    match try_load_at(cfg, &cfg.changes_dir().join(name), name)? {
+        Some(change) => Ok(Some(change)),
+        None => match parked_change_dir(cfg, name) {
+            Some(dir) => try_load_at(cfg, &dir, name),
+            None => Ok(None),
+        },
+    }
+}
+
+/// `try_load` restricted to one candidate directory.
+fn try_load_at(cfg: &Config, dir: &Path, name: &str) -> Result<Option<Change>> {
+    if !is_valid_name(name) {
+        return Ok(None);
+    }
+    match std::fs::metadata(dir) {
         Ok(m) if m.is_dir() => {}
         Ok(_) => return Ok(None),
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
@@ -249,13 +320,13 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
     if !is_valid_name(name) {
         return Err(anyhow!("invalid change name '{name}'"));
     }
-    let dir = cfg.changes_dir().join(name);
-    if !dir.is_dir() {
+    let Some(dir) = resolve_change_dir(cfg, name) else {
         return Err(anyhow!(
             "change '{name}' not found in {}",
             cfg.changes_dir().display()
         ));
-    }
+    };
+    let parked = is_parked(cfg, name);
     let meta_path = dir.join(".openspec.yaml");
     let metadata: ChangeMetadata = if meta_path.exists() {
         let text = std::fs::read_to_string(&meta_path)?;
@@ -277,7 +348,7 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
         dir,
         metadata,
         started_sha: read_started_sha(cfg, name),
-        parked: is_parked(cfg, name),
+        parked,
     })
 }
 
@@ -378,11 +449,17 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
 }
 
 /// Change directory names under `changes_dir()` that pass the archive/name
-/// filters (but aren't yet split by parked state), unsorted. Shared by
-/// `list_active`/`list_parked` so the filter set can't drift between them.
+/// filters, unsorted.
 fn walk_change_names(cfg: &Config) -> Vec<String> {
+    walk_names_in(&cfg.changes_dir())
+}
+
+/// The shared directory-name filter behind `list_active` and `list_parked`,
+/// applied to whichever store holds the change directories, so the two
+/// listings can't drift apart on what counts as a change.
+fn walk_names_in(dir: &Path) -> Vec<String> {
     let mut names = Vec::new();
-    let Ok(entries) = std::fs::read_dir(cfg.changes_dir()) else {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return names;
     };
     for entry in entries.flatten() {
@@ -401,22 +478,32 @@ fn walk_change_names(cfg: &Config) -> Vec<String> {
     names
 }
 
-/// List active (non-archived, non-parked) change names, sorted.
+/// List active (non-archived) change names, sorted. Parked changes are not
+/// under `changes_dir()` at all, so no extra filtering is needed.
 pub fn list_active(cfg: &Config) -> Vec<String> {
-    let mut names: Vec<String> = walk_change_names(cfg)
-        .into_iter()
-        .filter(|name| !is_parked(cfg, name))
-        .collect();
+    let mut names = walk_change_names(cfg);
     names.sort();
     names
 }
 
-/// List parked change names (those with a `.spectra/changes/<name>.parked`
-/// marker), sorted.
+/// List parked change names — the directories the oracle moved into
+/// `<git common dir>/spectra-app/changes/` — sorted.
+///
+/// Unlike [`list_active`] this applies no archived-prefix filter: the store
+/// has no `archive/` subdirectory to disambiguate against, and the oracle
+/// parks and lists `2026-01-01-old` like any other name (probed).
 pub fn list_parked(cfg: &Config) -> Vec<String> {
-    let mut names: Vec<String> = walk_change_names(cfg)
-        .into_iter()
-        .filter(|name| is_parked(cfg, name))
+    let Some(dir) = parked_root(cfg) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| is_valid_name(name) && ORACLE_CHANGE_ID_RE.is_match(name))
         .collect();
     names.sort();
     names
@@ -529,34 +616,41 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
+    /// Place a change directory directly in the parked store, the way the
+    /// oracle's `park` leaves it, without going through OpenSpectra's `park`.
+    fn seed_parked(cfg: &Config, name: &str, proposal: &str) {
+        write(
+            &parked_root(cfg).unwrap().join(name).join("proposal.md"),
+            proposal,
+        );
+    }
+
     #[test]
-    fn list_parked_finds_only_marked_changes() {
+    fn list_parked_reads_the_oracles_store_and_active_excludes_it() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
+        let cfg = git_repo_cfg(&tmp);
         write(
             &cfg.changes_dir().join("shipped").join("proposal.md"),
             "# Shipped\n",
         );
-        write(
-            &cfg.changes_dir().join("on-hold").join("proposal.md"),
-            "# On hold\n",
-        );
-        write(
-            &tmp.join(".spectra").join("changes").join("on-hold.parked"),
-            "",
-        );
+        seed_parked(&cfg, "on-hold", "# On hold\n");
 
         assert_eq!(list_parked(&cfg), vec!["on-hold".to_string()]);
         assert_eq!(list_active(&cfg), vec!["shipped".to_string()]);
     }
 
     #[test]
-    fn list_parked_is_empty_when_changes_dir_missing() {
+    fn list_parked_is_empty_when_the_store_is_missing() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+
+        assert_eq!(list_parked(&cfg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn list_parked_is_empty_outside_a_git_repo() {
+        // Without a git dir there is nowhere for the oracle to have parked
+        // anything, and `parked_root` is None.
         let tmp = TempDir::new();
         let cfg = Config {
             root: tmp.to_path_buf(),
@@ -571,28 +665,9 @@ mod tests {
     #[test]
     fn list_parked_sorts_multiple_entries() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
-        write(
-            &cfg.changes_dir().join("zeta").join("proposal.md"),
-            "# Zeta\n",
-        );
-        write(
-            &cfg.changes_dir().join("alpha").join("proposal.md"),
-            "# Alpha\n",
-        );
-        write(
-            &tmp.join(".spectra").join("changes").join("zeta.parked"),
-            "",
-        );
-        write(
-            &tmp.join(".spectra").join("changes").join("alpha.parked"),
-            "",
-        );
+        let cfg = git_repo_cfg(&tmp);
+        seed_parked(&cfg, "zeta", "# Zeta\n");
+        seed_parked(&cfg, "alpha", "# Alpha\n");
 
         assert_eq!(
             list_parked(&cfg),
@@ -601,28 +676,34 @@ mod tests {
     }
 
     #[test]
-    fn list_parked_excludes_archived_prefixed_names_even_when_marked() {
+    fn list_parked_includes_archived_prefixed_names() {
+        // The oracle parks and lists them; only `list_active` needs the
+        // archived-prefix filter, because `changes/` also holds `archive/`.
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
-        write(
-            &cfg.changes_dir()
-                .join("2026-01-01-old-change")
-                .join("proposal.md"),
-            "# Old\n",
-        );
-        write(
-            &tmp.join(".spectra")
-                .join("changes")
-                .join("2026-01-01-old-change.parked"),
-            "",
-        );
+        let cfg = git_repo_cfg(&tmp);
+        seed_parked(&cfg, "2026-01-01-old-change", "# Old\n");
 
-        assert_eq!(list_parked(&cfg), Vec::<String>::new());
+        assert_eq!(list_parked(&cfg), vec!["2026-01-01-old-change".to_string()]);
+    }
+
+    #[test]
+    fn a_parked_change_still_resolves_for_status_and_drift() {
+        // The oracle keeps `status`, `show`, `drift`, and `instructions`
+        // working on a parked change; only the listings hide it.
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        seed_parked(&cfg, "on-hold", "# On hold\n");
+
+        let ch = load(&cfg, "on-hold").unwrap();
+        assert!(ch.parked);
+        assert_eq!(
+            ch.proposal_md(),
+            parked_root(&cfg)
+                .unwrap()
+                .join("on-hold")
+                .join("proposal.md")
+        );
+        assert!(try_load(&cfg, "on-hold").unwrap().is_some());
     }
 
     #[test]
@@ -645,25 +726,67 @@ mod tests {
     }
 
     #[test]
-    fn park_marks_an_existing_change_and_is_idempotent() {
+    fn park_moves_the_change_directory_into_the_parked_store() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
+        let cfg = git_repo_cfg(&tmp);
         write(
             &cfg.changes_dir().join("shipped").join("proposal.md"),
             "# Shipped\n",
         );
 
         park(&cfg, "shipped").unwrap();
-        assert_eq!(list_parked(&cfg), vec!["shipped".to_string()]);
 
-        // Parking an already-parked change is not an error.
-        park(&cfg, "shipped").unwrap();
         assert_eq!(list_parked(&cfg), vec!["shipped".to_string()]);
+        assert!(!cfg.changes_dir().join("shipped").exists());
+        assert_eq!(
+            std::fs::read_to_string(
+                parked_root(&cfg)
+                    .unwrap()
+                    .join("shipped")
+                    .join("proposal.md")
+            )
+            .unwrap(),
+            "# Shipped\n"
+        );
+    }
+
+    #[test]
+    fn parking_an_already_parked_change_reports_it_as_nonexistent() {
+        // Matching the oracle: once parked the change is gone from
+        // `changes/`, so a second park is "does not exist", not a no-op.
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        write(
+            &cfg.changes_dir().join("shipped").join("proposal.md"),
+            "# Shipped\n",
+        );
+
+        park(&cfg, "shipped").unwrap();
+        let err = park(&cfg, "shipped").unwrap_err().to_string();
+
+        assert_eq!(err, "Change 'shipped' does not exist");
+        assert_eq!(list_parked(&cfg), vec!["shipped".to_string()]);
+    }
+
+    #[test]
+    fn park_refuses_to_overwrite_an_existing_parked_change() {
+        // Deliberate divergence: the oracle silently clobbers the parked copy.
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        seed_parked(&cfg, "clash", "# Parked original\n");
+        write(
+            &cfg.changes_dir().join("clash").join("proposal.md"),
+            "# Active namesake\n",
+        );
+
+        assert!(park(&cfg, "clash").is_err());
+        assert_eq!(
+            std::fs::read_to_string(parked_root(&cfg).unwrap().join("clash").join("proposal.md"))
+                .unwrap(),
+            "# Parked original\n",
+            "the parked copy must survive"
+        );
+        assert!(cfg.changes_dir().join("clash").is_dir());
     }
 
     #[test]
@@ -721,64 +844,53 @@ mod tests {
     #[test]
     fn park_errors_when_change_does_not_exist() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
+        let cfg = git_repo_cfg(&tmp);
 
-        assert!(park(&cfg, "ghost").is_err());
+        assert_eq!(
+            park(&cfg, "ghost").unwrap_err().to_string(),
+            "Change 'ghost' does not exist"
+        );
     }
 
     #[test]
-    fn unpark_clears_the_marker_and_is_idempotent() {
+    fn unpark_moves_the_change_back_into_changes_dir() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
-        write(
-            &cfg.changes_dir().join("on-hold").join("proposal.md"),
-            "# On hold\n",
-        );
-        write(
-            &tmp.join(".spectra").join("changes").join("on-hold.parked"),
-            "",
-        );
+        let cfg = git_repo_cfg(&tmp);
+        seed_parked(&cfg, "on-hold", "# On hold\n");
 
         unpark(&cfg, "on-hold").unwrap();
-        assert_eq!(list_active(&cfg), vec!["on-hold".to_string()]);
 
-        // Unparking an already-active change is not an error.
-        unpark(&cfg, "on-hold").unwrap();
         assert_eq!(list_active(&cfg), vec!["on-hold".to_string()]);
+        assert_eq!(list_parked(&cfg), Vec::<String>::new());
+        assert_eq!(
+            std::fs::read_to_string(cfg.changes_dir().join("on-hold").join("proposal.md")).unwrap(),
+            "# On hold\n"
+        );
     }
 
     #[test]
-    fn unpark_errors_when_change_does_not_exist() {
+    fn unpark_errors_on_an_active_change_and_on_an_unknown_name() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
+        let cfg = git_repo_cfg(&tmp);
+        write(
+            &cfg.changes_dir().join("running").join("proposal.md"),
+            "# Running\n",
+        );
 
-        assert!(unpark(&cfg, "ghost").is_err());
+        assert_eq!(
+            unpark(&cfg, "running").unwrap_err().to_string(),
+            "Change 'running' is already active (not parked)"
+        );
+        assert_eq!(
+            unpark(&cfg, "ghost").unwrap_err().to_string(),
+            "Change 'ghost' is not parked"
+        );
     }
 
     #[test]
-    fn park_and_unpark_reject_archived_prefixed_names() {
+    fn park_and_unpark_accept_archived_prefixed_names() {
         let tmp = TempDir::new();
-        let cfg = Config {
-            root: tmp.to_path_buf(),
-            spec_dir: "openspec".to_string(),
-            locale: None,
-            claude_slash_commands: false,
-        };
+        let cfg = git_repo_cfg(&tmp);
         write(
             &cfg.changes_dir()
                 .join("2026-01-01-old-change")
@@ -786,9 +898,50 @@ mod tests {
             "# Old\n",
         );
 
-        assert!(park(&cfg, "2026-01-01-old-change").is_err());
-        assert!(unpark(&cfg, "2026-01-01-old-change").is_err());
-        assert_eq!(list_parked(&cfg), Vec::<String>::new());
+        park(&cfg, "2026-01-01-old-change").unwrap();
+        assert_eq!(list_parked(&cfg), vec!["2026-01-01-old-change".to_string()]);
+
+        unpark(&cfg, "2026-01-01-old-change").unwrap();
+        assert!(cfg.changes_dir().join("2026-01-01-old-change").is_dir());
+    }
+
+    #[test]
+    fn park_rejects_ids_outside_the_oracles_charset() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        write(
+            &cfg.changes_dir().join("BadName").join("proposal.md"),
+            "# Bad\n",
+        );
+
+        assert_eq!(
+            park(&cfg, "BadName").unwrap_err().to_string(),
+            "Change ID 'BadName' must contain only lowercase letters, digits, and hyphens"
+        );
+        assert!(park(&cfg, "../escape").is_err());
+    }
+
+    #[test]
+    fn park_refuses_to_swallow_the_archive_directory() {
+        // Deliberate divergence: `spectra park archive` moves the whole
+        // `changes/archive/` tree into the parked store in the oracle.
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        write(
+            &cfg.changes_dir()
+                .join("archive")
+                .join("2025-01-01-done")
+                .join("proposal.md"),
+            "# Done\n",
+        );
+
+        assert!(park(&cfg, "archive").is_err());
+        assert!(unpark(&cfg, "archive").is_err());
+        assert!(cfg
+            .changes_dir()
+            .join("archive")
+            .join("2025-01-01-done")
+            .is_dir());
     }
 
     #[test]
@@ -879,19 +1032,17 @@ mod tests {
         };
 
         create(&cfg, "reused-name").unwrap();
-        park(&cfg, "reused-name").unwrap();
         mark_in_progress(&cfg, "reused-name").unwrap();
         // Simulate a user manually deleting the change dir (not via `archive`),
         // leaving the sidecar markers behind on disk.
         std::fs::remove_dir_all(cfg.changes_dir().join("reused-name")).unwrap();
-        assert!(parked_marker_path(&cfg, "reused-name").is_file());
         assert!(in_progress_marker_path(&cfg, "reused-name").is_file());
 
         let ch = create(&cfg, "reused-name").unwrap();
 
         assert!(
             !ch.parked,
-            "a freshly created change must not inherit a stale parked marker"
+            "a freshly created change must not read as parked"
         );
         assert!(
             !in_progress_marker_path(&cfg, "reused-name").exists(),
@@ -922,15 +1073,18 @@ mod tests {
         };
 
         create(&cfg, "blocked").unwrap();
-        park(&cfg, "blocked").unwrap();
         mark_in_progress(&cfg, "blocked").unwrap();
+        // `create` only writes `.started` inside a git repo; this scratch dir
+        // is not one, so seed it explicitly — two sidecars must share the
+        // locked directory for a first-error return to be observable.
+        write(&started_sha_path(&cfg, "blocked"), "deadbeef\n");
         crate::touched::record(&cfg, "blocked", 1, "task", vec!["src/lib.rs".to_string()]).unwrap();
         let touched = crate::touched::touched_path(&cfg, "blocked");
         assert!(touched.is_file(), "fixture: touched.json must exist");
 
         // Make removals inside .spectra/changes/ fail while .spectra/touched/
         // stays writable, so a first-error return would be observable.
-        let changes_state_dir = parked_marker_path(&cfg, "blocked")
+        let changes_state_dir = in_progress_marker_path(&cfg, "blocked")
             .parent()
             .unwrap()
             .to_path_buf();
@@ -946,7 +1100,7 @@ mod tests {
         let err = result.expect_err("removal failures must be reported, not swallowed");
         let msg = err.to_string();
         assert!(
-            msg.contains("blocked.parked") && msg.contains("blocked.in-progress"),
+            msg.contains("blocked.in-progress") && msg.contains("blocked.started"),
             "every failing sidecar must be named, not just the first: {msg}"
         );
         assert!(
