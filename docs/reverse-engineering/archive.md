@@ -84,12 +84,12 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    — its delta is skipped with a stderr warning, not dropped silently. The
    oracle also prints "Snapshot created for unarchive support." — **not
    implemented**; see "Known limitations" below.
-6. Clear the change's `.spectra/changes/<name>.{started,parked,in-progress}`
+6. Clear the change's `.spectra/changes/<name>.{started,in-progress}`
    sidecar markers **and** its `.spectra/touched/<name>.json` tracking file, if any
    (best-effort; a failure here only warns, since archiving itself already
    succeeded by this point). Not oracle-confirmed, but a correctness fix:
    without it, a re-created change of the same name could silently inherit a
-   stale `.parked` marker or stale touched-file history from before it was
+   stale baseline SHA or stale touched-file history from before it was
    archived — the same class of bug already fixed for `change::create` (see
    `change.rs`'s `clear_stale_sidecar_state`). Clearing `touched.json` matters
    specifically because `apply_spec_deltas`'s `code:` trace list (below) is

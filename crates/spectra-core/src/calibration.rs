@@ -66,8 +66,15 @@ pub const ANCHOR_CAP: usize = 50;
 
 /// Anchors kept *per category* once the extracted set exceeds [`ANCHOR_CAP`].
 /// The oracle does not truncate the over-cap set — it keeps an evenly spaced
-/// sample of each category, so the reported denominator is a multiple of this
-/// value rather than `ANCHOR_CAP`. See `anchors::extract`.
+/// sample of each category at indices `i * n / 12`. See `anchors::extract`.
+///
+/// The reported denominator above the cap is therefore `sum(min(n_category,
+/// 12))`, **not** a multiple of this value: a category with 12 or fewer
+/// candidates survives whole. Probed — 45 Symbol + 10 CliFlag reports `22/22`,
+/// and 60 FilePath + 5 Function reports `17`. Pinned end-to-end against the
+/// oracle by `scripts/calibrate-anchor-budget.py`, which asserts the exact
+/// anchor *identities* (not just counts) over twelve cases spanning all four
+/// categories at 40–137 candidates, and exits non-zero on divergence.
 pub const ANCHOR_SAMPLE_PER_CATEGORY: usize = 12;
 
 /// Whether the Tasks-dimension collision detectors (blocked / maybe-resolved)

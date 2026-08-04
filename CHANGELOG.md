@@ -10,6 +10,15 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/calibrate-anchor-budget.py` — a verification contract for the
+  over-cap sampling model, not a printer. Asserts the oracle's exact anchor
+  *identities* (not just counts) over twelve cases spanning all four categories
+  at 40–137 candidates, including one that would fail if `Function` were
+  sampled in document order rather than extraction order; exits non-zero on
+  divergence and preserves the failing jail.
+
 ### Fixed
 
 - **`spectra drift` no longer caps the Structure denominator at 50** (#119).
@@ -30,6 +39,58 @@ changes.
   30 (including the `Data`/`Model` pair that motivated the mystery), 83 keep
   exactly 12 at `floor(i * 83 / 12)`. Symbol extraction was never divergent.
 
+- **`spectra drift` FilePath anchors are reported as written, and no longer
+  name a string absent from the design** (#123). The recovered regex has no
+  left boundary, so the oracle turns `frontend/src/services/apiClient.ts` into
+  the anchor `src/services/apiClient.ts` and reports "file does not exist" for
+  text that appears nowhere in the change — a finding nobody can grep for, and
+  the cause of all six surviving broken anchors on a 29-change corpus (a 0/6
+  true-positive rate). Probed and confirmed oracle-faithful before diverging:
+  with the full path present on disk the oracle still reports it broken, and it
+  resolves only when the truncated path exists. Extraction now keeps leading
+  path segments, drops matches that begin mid-token (`mysrc/foo.rs` no longer
+  yields a phantom `src/foo.rs`), and drops paths with a `..` segment, which
+  would otherwise let a file *outside* the project satisfy a design reference.
+  Resolution is deliberately widened to the union of the written path and the
+  oracle's truncation, so a project rooted at its own sub-project keeps
+  resolving as before.
+
+- **A freshly scaffolded `design.md` matches the oracle exactly** (#51). `JSON`
+  was missing from the recovered Symbol stop-list — the last divergence on an
+  untouched template, now `0/20` on both binaries. Probed per token; the
+  "all-caps acronyms are dropped" theory is refuted (`ALTER`, `TABLE`,
+  `COLUMN`, `README`, `CRITICAL`, `YAML`, `HTTP`, `SQL` are all kept).
+
+- **`park` / `unpark` / `list --parked` now interoperate with the oracle**
+  (#118). Parking is a *move*, not a flag: the oracle relocates the whole
+  change directory to `<git common dir>/spectra-app/changes/<name>/`, and
+  OpenSpectra's empty `.spectra/changes/<name>.parked` marker was invisible to
+  it and blind to it — `list --parked` reported `No parked changes.` on a
+  repository with 15. OpenSpectra now uses the same store, so changes parked
+  by either binary are seen by both, including from a linked git worktree
+  (the *common* git dir, not `.git/worktrees/<name>/`).
+
+  A parked change stays addressable by `status`, `show`, `drift`, and
+  `instructions`, matching the oracle; only `list` and `validate` hide it.
+  `list --parked --json` now keys its array on `parked` (was `changes`) with
+  `status: "parked"` on every entry; `park`/`unpark` print
+  `Parked change: <name>` / `Unparked change: <name>` and emit
+  `{"parked": "<name>"}` / `{"unparked": "<name>"}`. Error strings and exit
+  codes match the oracle for unknown, already-active, and already-parked
+  names. `park`/`unpark` accept the oracle's looser id charset
+  (`^[a-z0-9-]+$`), so archived-prefixed names such as `2026-01-01-old` park
+  and list like any other. See
+  [`docs/reverse-engineering/park.md`](docs/reverse-engineering/park.md).
+
+  **Two deliberate divergences**, both where the oracle destroys data: `park`
+  refuses to overwrite an existing parked change of the same name (the oracle
+  replaces it silently — probed), and refuses the name `archive` (the oracle
+  moves the entire `changes/archive/` tree into the parked store).
+
+  **Migration:** a pre-existing `.spectra/changes/<name>.parked` marker is no
+  longer read. Nothing is lost — the change is still in
+  `<spec_dir>/changes/` — but it lists as active again; re-run
+  `spectra park <name>` to move it into the shared store.
 - **A custom `schema:` in `<spec_dir>/config.yaml` no longer silently falls
   back to the built-in workflow** (#117). That file had no reader at all, so a
   project selecting its own schema ran `spec-driven` with exit 0, no warning,
@@ -68,6 +129,18 @@ changes.
   from `config.yaml` by #127.
 
 ### Changed
+
+- **The recommended CI drift gate filters to `FilePath` broken anchors.** The
+  README previously gated on `severity == "light"`; both that and an
+  unfiltered `broken_anchors` check are unusable, and measured to be: a healthy
+  committed change that merely *mentions* `--json` and `--force` in prose
+  reports `2/4 anchors broken` and severity `heavy`, because every extracted
+  flag is unconditionally `not in --help`. Filtering to `FilePath` leaves the
+  one verdict that consults the change's `.started` baseline, so the gate means
+  "this path existed when the change began and is now gone". Verified both
+  directions. The README now also states what the gate cannot catch: on a
+  committed change `git grep` self-matches the design, so a deleted function or
+  type is invisible to *both* binaries.
 
 - **Broken CliFlag and Function anchors are reported as broken again** (#119),
   reverting that half of #83. Measured over 26 real changes, withholding them

@@ -576,7 +576,11 @@ fn list_change_items(cfg: &Config, want_parked: bool) -> Result<Vec<serde_json::
     for name in &names {
         let ch = change::load(cfg, name)?;
         let (done, total) = task_counts(&ch.tasks_md());
-        let status = if total > 0 && done == total {
+        // A parked entry always reports "parked", even with every task ticked
+        // (probed: the oracle reports "done" for the same change while active).
+        let status = if want_parked {
+            "parked"
+        } else if total > 0 && done == total {
             "done"
         } else {
             "in-progress"
@@ -601,10 +605,9 @@ fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) ->
     }
     let items = list_change_items(cfg, want_parked)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({ "changes": items }))?
-        );
+        // The oracle keys the parked listing on "parked", not "changes".
+        let key = if want_parked { "parked" } else { "changes" };
+        println!("{}", serde_json::to_string_pretty(&json!({ key: items }))?);
     } else if items.is_empty() {
         println!(
             "{}",
@@ -716,22 +719,15 @@ fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
-/// The exact wrapper shape is the documented `--json` contract for
-/// `park`/`unpark`; pin it here so a copy/paste between the two (forgetting
-/// to flip `parked`) doesn't ship silently.
-fn park_status_json(name: &str, parked: bool) -> serde_json::Value {
-    json!({ "name": name, "parked": parked })
-}
-
 fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     change::park(cfg, name)?;
     if as_json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&park_status_json(name, true))?
+            serde_json::to_string_pretty(&json!({ "parked": name }))?
         );
     } else {
-        println!("Parked '{name}'.");
+        println!("Parked change: {name}");
     }
     Ok(0)
 }
@@ -741,10 +737,10 @@ fn cmd_unpark(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
     if as_json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&park_status_json(name, false))?
+            serde_json::to_string_pretty(&json!({ "unparked": name }))?
         );
     } else {
-        println!("Unparked '{name}'.");
+        println!("Unparked change: {name}");
     }
     Ok(0)
 }
@@ -1640,6 +1636,15 @@ mod tests {
     #[test]
     fn list_change_items_parked_flag_selects_parked_changes() {
         let tmp = TempDir::new();
+        // The parked store hangs off the git common dir, so this needs a repo.
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(tmp.to_path_buf())
+            .args(["init", "-q"])
+            .output()
+            .unwrap()
+            .status
+            .success());
         let cfg = Config {
             root: tmp.to_path_buf(),
             spec_dir: "openspec".to_string(),
@@ -1652,18 +1657,14 @@ mod tests {
             "# Shipped\n",
         )
         .unwrap();
-        std::fs::create_dir_all(cfg.changes_dir().join("on-hold")).unwrap();
-        std::fs::write(
-            cfg.changes_dir().join("on-hold").join("proposal.md"),
-            "# On hold\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(tmp.join(".spectra").join("changes")).unwrap();
-        std::fs::write(
-            tmp.join(".spectra").join("changes").join("on-hold.parked"),
-            "",
-        )
-        .unwrap();
+        // A parked change lives in the oracle's store, not under changes/.
+        let parked_dir = tmp
+            .join(".git")
+            .join("spectra-app")
+            .join("changes")
+            .join("on-hold");
+        std::fs::create_dir_all(&parked_dir).unwrap();
+        std::fs::write(parked_dir.join("proposal.md"), "# On hold\n").unwrap();
 
         let active = list_change_items(&cfg, false).unwrap();
         assert_eq!(active.len(), 1);
@@ -1797,13 +1798,6 @@ mod tests {
         assert_eq!(value["name"], "auth");
         assert_eq!(value["spec"], "# Auth\n");
         assert!(value.get("proposal").is_none());
-    }
-
-    #[test]
-    fn park_status_json_reflects_parked_true_and_false() {
-        assert_eq!(park_status_json("my-change", true)["parked"], true);
-        assert_eq!(park_status_json("my-change", false)["parked"], false);
-        assert_eq!(park_status_json("my-change", true)["name"], "my-change");
     }
 
     fn sample_change(dir: PathBuf, started_sha: Option<&str>) -> change::Change {

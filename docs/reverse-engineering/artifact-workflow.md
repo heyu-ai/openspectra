@@ -200,9 +200,15 @@ instruction, preflight?}`.
   one:`, mtime-ordered) differs from OpenSpectra's pre-existing
   `change::resolve` wording (alphabetical); unification is tracked in
   issue #50 (operator ruling pending).
-- **Fresh design scaffold vs `drift`** (probed 2026-07-18): after
-  `new artifact design` (template only), the oracle's drift reports
-  `Structure 0/20 anchors broken`, while OpenSpectra's anchor Resolver marks
-  the template's ~20 prose Symbol anchors broken (the known Symbol
-  over-count in anchors.rs). Fix belongs in the Symbol filter/stoplist
-  calibration, not the byte-pinned template; tracked in issue #51.
+- **Fresh design scaffold vs `drift`** — RESOLVED (#51). The 2026-07-18 note
+  here recorded the oracle reporting `Structure 0/20 anchors broken` on a
+  template-only `design.md` while OpenSpectra marked ~20 prose Symbol anchors
+  broken. Re-probed head-to-head on 2026-08-03, both binaries in the *same*
+  jail: they agree in both states — `0/20` vs `0/21` with `design.md` tracked
+  (`git grep` self-matches the template), and `20/20` vs `21/21` with it
+  untracked. The original comparison had the two binaries on different sides of
+  that tracked/untracked split, which is what produced the apparent 0-vs-20 gap.
+  The single real divergence was the `JSON` stop-list entry, now added, taking
+  the scaffold to an exact `0/20` / `20/20` match. Pinned by
+  `anchors::tests::design_template_symbols_match_the_oracle_stoplist`; the
+  byte-pinned template is untouched.

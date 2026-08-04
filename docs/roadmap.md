@@ -116,6 +116,9 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
    - 實測：30 個 Symbol 候選（總數未過 cap）全部保留，含當初引為謎題的 `Data`/`Model`
      組；83 個候選保留 `floor(i*83/12)` 的 12 個。Symbol 抽取從來沒有分歧
    - 教訓：把「規則是 document-global」當成線索追下去，而不是當成障礙
+   - 後續（本 PR）：同輪 probe 補上 stoplist 漏收的 `JSON`，fresh scaffold 與 oracle 完全
+     一致（#51）；`scripts/calibrate-anchor-budget.py` 把該模型固定成驗證契約（比對 anchor
+     身分而非僅數量，含 snake/camel 交錯的抽取順序案例）
 4. **golden 回歸自動化**
    - 新增 `tests/golden_regression.rs`：直接載入 `docs/reverse-engineering/golden/*.json`，餵進 scoring 函式比對（目前 golden 值是手抄進 `calibration.rs` 測試，fixture 與測試沒有機器連結）
 
@@ -158,7 +161,7 @@ Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Pha
 | Phase 1 — 基礎修補與可用性 | [#30](https://github.com/howie/openspectra/issues/30) | ✅ 完成（PR #23） | — |
 | Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | ✅ 完成（PR #32） | 格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta |
 | Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | ✅ 完成（v0.2.1） | release workflow、crates.io publish、Docker/GHCR image |
-| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、#8 Symbol 過濾、golden 回歸自動化 |
+| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、~~#8 Symbol 過濾~~（已解）、golden 回歸自動化 |
 | Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | #12 批次 git grep、#11 CliFlag 決策 |
 
 （#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8–#12 沿用既有 issues，並在各 issue 留言連回其 Phase epic。）
