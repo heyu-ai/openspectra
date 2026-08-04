@@ -75,7 +75,9 @@ enum Command {
         /// Change name (auto-detects if only one exists).
         #[arg(long)]
         change: Option<String>,
-        /// Workflow schema name (only `spec-driven` is built in).
+        /// Workflow schema name; overrides `<spec_dir>/config.yaml`'s
+        /// `schema:`. Only `spec-driven` is built in — any other name is
+        /// an error rather than a silent fallback.
         #[arg(long)]
         schema: Option<String>,
         /// Output as JSON.
@@ -89,7 +91,9 @@ enum Command {
         /// Change name (auto-detects if only one exists).
         #[arg(long)]
         change: Option<String>,
-        /// Workflow schema name (only `spec-driven` is built in).
+        /// Workflow schema name; overrides `<spec_dir>/config.yaml`'s
+        /// `schema:`. Only `spec-driven` is built in — any other name is
+        /// an error rather than a silent fallback.
         #[arg(long)]
         schema: Option<String>,
         /// Output as JSON.

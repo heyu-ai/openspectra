@@ -166,6 +166,22 @@ rules:
 artifact's** list (asking for `proposal` returns the `proposal` rules, not the
 whole map). Both keys are absent from the JSON when unset.
 
+That divergence is sharper than a missing JSON field, because **`spectra init`
+writes the promise itself**. `init.rs`'s `SPEC_CONFIG_TEMPLATE` is byte-identical
+to the oracle's `config.yaml` (verified by diffing both binaries' output in an
+empty jail), and it contains:
+
+```yaml
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+```
+
+True of the oracle, false of OpenSpectra. The template must **not** be edited —
+byte fidelity with the oracle's `init` output is a pinned contract (#94) — so the
+only way to make that comment honest is to implement #127. Until then, a project
+that follows the instructions OpenSpectra itself wrote gets no effect and no
+warning, which is the same failure shape as the `schema:` fallback #117 fixed.
+
 ## Consumer
 
 The `sdd` plugin shells out to `spectra schemas` (and treats
