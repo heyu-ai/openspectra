@@ -42,9 +42,11 @@ commits_since_created, total_score, severity, primary_recommendation
   (display-only, e.g. `"93 commits"`).
 * `broken_anchors[]` = `{ anchor, category, reason }`,
   `category ∈ FilePath | Symbol | Function | CliFlag`.
-* `unresolved_anchors[]` has the same entry shape. It is an OpenSpectra
-  extension for references that cannot be classified reliably as broken; the
-  v2.3.1 oracle has no corresponding field.
+* `unresolved_anchors[]` has the same entry shape and is an OpenSpectra
+  extension with no counterpart in the v2.3.1 oracle. Since #119 narrowed #83 it
+  holds exactly one class: a FilePath that did not exist at the change's
+  `.started` baseline (`forward reference`). That is a *confident* exclusion
+  backed by the baseline SHA, not an "unclassifiable" bucket.
 * `last_commit` is **always `null`** in observed v2.3.1 output (it is not the
   change dir's last commit — that is non-null in git but the field stays null).
   Semantics of any non-null value are undetermined; OpenSpectra emits `null`.
@@ -94,9 +96,28 @@ regexes recovered verbatim from `.rodata`:
 | Function | `\b([a-z][a-z0-9]*_[a-z0-9_]+)\(` (snake) and `\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(` (camel) | `git grep` finds it | `function not found in repo` |
 | Symbol | `\b[A-Z][a-zA-Z0-9]+\b` minus a small stop-list | `git grep` finds it | `symbol not found in repo` |
 
-Checks are capped at **`ANCHOR_CAP = 50`**. Broken anchors are sorted
-alphabetically. Resolution uses `git ls-files` (file existence) and `git grep`
-(symbol/function existence).
+Sets of **`ANCHOR_CAP = 50`** anchors or fewer are checked whole. Larger sets
+are **not truncated**: each category independently keeps an evenly spaced sample
+of at most **`ANCHOR_SAMPLE_PER_CATEGORY = 12`**, taking index `i * n / 12` for
+`i` in `0..12`. A category holding 12 or fewer anchors is kept whole, so the
+reported denominator above the cap is `12` per over-cap category plus the full
+count of every under-cap one — e.g. 12, 24, or 36 when each present category is
+over the sample size, but `17` for 60 FilePath + 5 Function. It is never a value
+between 51 and the raw extracted count.
+
+Pinned by probe against v2.3.1 (`spectra drift <change> --json` over synthetic
+designs): pure-FilePath `50` → `50/50` but `51` → `12/12`; `53` and `77` anchors
+both reproduce the `i * n / 12` index set exactly; `20` FilePath + `20` Function
++ `20` CliFlag (60 total) → `36`, proving the trigger is the combined total
+while the sample is per category; `60` FilePath + `5` Function → `17`, showing
+categories under the sample size are kept whole.
+
+> OpenSpectra originally read `ANCHOR_CAP` as a plain `truncate(50)`. That made
+> every large design report a denominator of exactly 50 and silently dropped
+> anchors past index 50 from the broken set — the miss reported in #119.
+
+Broken anchors are sorted alphabetically. Resolution uses `git ls-files` (file
+existence) and `git grep` (symbol/function existence).
 
 **The FilePath stack is Rust/TS-specific.** In Python/Go projects almost no file
 paths match, so FilePath anchors are rare and CliFlag dominates the broken set.
@@ -104,8 +125,7 @@ paths match, so FilePath anchors are rare and CliFlag dominates the broken set.
 **The oracle reports every CliFlag broken** ("not in --help"): there is no
 target `--help` to diff design flags against in an arbitrary project, so every
 extracted `--flag` is reported broken — even ones written in a *Non-Goal*
-section. OpenSpectra deliberately classifies these as unresolved instead; see
-Deliberate divergences.
+section. OpenSpectra matches this.
 
 Score is **category-weighted**, not a pure function of decay. Recovered exactly
 via the calibration harness (`scripts/calibrate-structure.py`):
@@ -124,11 +144,11 @@ boundaries are exact: `10%` (`10.0%` → D1, `9.1%` → D0) and `30%` (= the hea
 short-circuit). Verified against every real golden: `0/16` cf0 → 0, `3/40`
 cf3 → 3, `9/29` cf9 → 7, `12/25` cf12 → 7.
 
-OpenSpectra retains this oracle-derived formula but passes only anchors
-classified as broken. Unresolved anchors remain in the extracted-anchor
-denominator and appear in `unresolved_anchors`; they do not increment the
-Structure broken count, score, decay numerator, `total_score`, or severity
-short-circuit.
+OpenSpectra uses this formula with the oracle's own broken set. The one input
+it still withholds is a FilePath that did not exist at the change baseline (see
+Deliberate divergences); such anchors stay in the denominator, appear in
+`unresolved_anchors`, and do not increment the broken count, score, decay
+numerator, `total_score`, or severity short-circuit.
 
 > An earlier revision modelled this as a decay-only ladder `0,1,3,5,7`. That fit
 > the goldens **only by accident**: every golden's broken anchors were CliFlags,
@@ -181,70 +201,113 @@ match the oracle.
 
 ## Deliberate divergences
 
-### Unresolvable anchors are not broken (#83)
+### Forward-reference FilePaths are not broken (#83, narrowed by #119)
 
 Issue #83 was motivated by a real-repository measurement: drift reported 13
 broken anchors, but only one was a genuine deletion — an **8% signal rate**.
-Eleven of the 13 were CliFlags and none of those was actionable. The v2.3.1
-oracle counts all of the cases below as broken; maintainer-approved direction 1
-deliberately reports them in the sibling `unresolved_anchors` array and excludes
-them from Structure scoring:
+Eleven of the 13 were CliFlags and none of those was actionable. Direction 1
+(maintainer-approved) moved CliFlags, `git grep`-missing Functions, and
+not-yet-created FilePaths into a sibling `unresolved_anchors` array, excluded
+from Structure scoring.
 
-* **CliFlag:** always unresolved with reason `no target --help`. An extracted
-  flag has no owning binary, so neither third-party flags such as
-  `uv --directory` nor first-party flags can be checked against the right help
-  text.
-* **Function not found by `git grep`:** unresolved with reason
-  `not first-party`. Absence cannot distinguish a deleted project function from
-  a builtin or dependency symbol such as PostgreSQL's
-  `jsonb_array_length`.
-* **Missing FilePath:** consult the change's `.started` baseline SHA. If the
-  path existed at that commit and is now gone, it is broken with reason
-  `file does not exist`; if it did not exist, it is unresolved with reason
-  `forward reference`, because the change may be proposing to create it. If the
-  baseline SHA is absent, malformed, or unavailable locally, OpenSpectra falls
-  back to the prior broken classification rather than hiding a possible
-  deletion.
-* **Symbol:** unchanged and still broken when not found. Its separate extraction
-  divergence remains tracked by #8/#51 and is outside #83.
+Issue #119 then measured the cost of that on 26 real changes: the oracle flagged
+broken anchors OpenSpectra reported as `0`, and a CI drift gate that stays green
+while drift exists is worse than a noisy one. The CliFlag and Function halves of
+#83 were reverted; only the FilePath half survives:
 
-The JSON change is additive: `broken_anchors` is neither renamed nor removed.
-Human output renders broken and unresolved references under separate headings,
-keeping the actionable deletion class visually distinct. Only the Structure
-inputs change; the score formula, severity bands, recommendations, and exit-code
-mapping remain untouched.
+* **CliFlag:** broken with reason `not in --help`, matching the oracle. Reverted
+  by #119 — this is the noisiest category (11 of #83's 13) but withholding it
+  put the score out of step with the oracle on every real change.
+* **Function not found by `git grep`:** broken with reason
+  `function not found in repo`, matching the oracle. Reverted by #119. Absence
+  still cannot distinguish a deleted project function from a builtin or
+  dependency symbol such as PostgreSQL's `jsonb_array_length`, so this category
+  retains a known false-positive rate.
+* **Missing FilePath:** the surviving divergence. Consult the change's
+  `.started` baseline SHA. If the path existed at that commit and is now gone,
+  it is broken with reason `file does not exist`; if it did not exist, it is
+  unresolved with reason `forward reference`, because the change may be
+  proposing to create it. The oracle calls both broken. If the baseline SHA is
+  absent, malformed, or unavailable locally, OpenSpectra falls back to the
+  broken classification rather than hiding a possible deletion.
+* **Symbol:** broken when not found, same as the oracle. Its separate extraction
+  divergence remains tracked by #8/#51.
 
-The four real calibration goldens make the divergence explicit. The oracle
-scores remain pinned as `0`, `3`, `7`, and `7`; their recorded broken-category
-composition is respectively 0, 3, 9, and 12 CliFlags. With those CliFlags
-excluded, the OpenSpectra Structure expectations are `0`, `0`, `0`, and `0`.
+The JSON shape is unchanged: `broken_anchors` and `unresolved_anchors` both
+remain, and human output still renders them under separate headings. The score
+formula, severity bands, recommendations, and exit-code mapping are untouched.
+
+The four real calibration goldens record oracle scores `0`, `3`, `7`, `7`, with
+broken-category compositions of 0, 3, 9, and 12 CliFlags respectively. Under #83
+OpenSpectra's expectation for all four was `0`. #119 makes those
+`(broken, broken_cliflags, total)` triples *reachable* again — under #83 no
+resolver run could yield a non-zero `broken_cliflags` — and that is all it
+establishes.
+
+> **The goldens are not replayed, and cannot be as they stand.** No test reads
+> `golden/drift-*.json`; `calibration.rs`'s golden test asserts
+> `structure_score(...)` on hand-copied literals. The fixtures capture the
+> oracle's *output* only — the input repositories and `design.md` files were
+> never preserved, so there is nothing to feed `drift::analyze`, and building
+> synthetic lookalikes would test equivalent examples rather than replay these
+> four. Closing it needs input snapshots captured first (#132).
+>
+> This is narrower than "the downstream chain is untested". For #119's changed
+> behavior the score → severity → recommendation chain *is* exercised through
+> the real `drift::analyze` in `drift_integration.rs` (on synthetic repos), for
+> both the CliFlag/Function reclassification and the over-cap sampling. The
+> exit-code end is *not* covered for anchors specifically:
+> `cli_integration.rs::drift_exits_zero_even_when_severity_is_medium_or_higher`
+> reaches `medium` through the **Time** dimension (`created: 2020-01-01`), so it
+> pins the always-exit-0 contract but says nothing about Structure. What is
+> missing is any assertion anchored to these four captured fixtures.
 
 ## What is verified vs. uncertain
 
 | Area | Status |
 |------|--------|
 | JSON schema, dimension model, `total_score` rule | ⚠️ additive `unresolved_anchors` divergence; existing fields preserved |
-| FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; resolution deliberately diverges per #83 |
-| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; unresolved inputs deliberately excluded |
+| FilePath / CliFlag / Function extraction & resolution | ⚠️ extraction exact; CliFlag/Function resolution exact since #119; missing-FilePath still diverges on forward references |
+| Over-cap anchor sampling (per category, `i * n / 12`) | ✅ exact — probed at the 50/51 boundary and at n = 53, 60, 77, and across 1–3 categories |
+| Structure score formula (category-weighted), severity bands, recommendation map | ✅ formula/mappings exact; #119 makes the goldens' triples reachable again, but the fixtures are output-only and never replayed (#132) |
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
-| **Symbol extraction narrowing** | ⚠️ **open** — see below |
+| Symbol extraction | ✅ exact — the apparent "narrowing" was the over-cap sampling, not a semantic filter (#8/#51, see below) |
 | Tasks positive-case predicates | ⚠️ uncalibrated (no positive sample); detection gated off |
 
-### Open problem: the Symbol narrowing filter
-The recovered Symbol regex matches every capitalised token, but the oracle keeps
-only a small subset (e.g. **12 of ~83** prose candidates in one Chinese-prose
-design). The selection is **not** explained by code-context (backtick/fence),
-frequency, position, or pairing: in `Data Model` it keeps `Data`, drops `Model`;
-in `ALTER TABLE ADD COLUMN` it keeps `ADD`, drops the rest — identical context,
-different outcome. In isolation all tokens are kept, so the rule is **global to
-the document** and not visible in strings. Cracking it needs disassembly of the
-extraction routine in `spectra-core::drift`. Until then OpenSpectra extracts the
-full regex set, which **over-counts Symbols on prose-dense designs**, inflating
-`total` and reading Structure decay/score *lower* than the oracle there.
-FilePath/Function/CliFlag — the categories that actually drive real drift
-signals — are exact.
+### Solved: the "Symbol narrowing filter" was the over-cap sampling (#8/#51)
+
+For several releases this was recorded as the single open reverse-engineering
+question: the recovered Symbol regex matches every capitalised token, yet the
+oracle appeared to keep only a small semantic subset — **12 of ~83** prose
+candidates in one Chinese-prose design — and the selection resisted every
+predicate tried (code-context, frequency, position, pairing). `Data Model` kept
+`Data` and dropped `Model`; `ALTER TABLE ADD COLUMN` kept `ADD` and dropped the
+rest, from identical context.
+
+There is **no semantic filter**. The narrowing is the per-category over-cap
+sampling documented above, and the old investigation's own decisive observation
+— *"in isolation all tokens are kept, so the rule is global to the document"* —
+is exactly the signature of a document-global cap, which is what it is. Probed
+on v2.3.1 with a design of `N` bare `WidgetNN` tokens and nothing else:
+
+| Symbol candidates | total anchors | oracle keeps |
+|---|---|---|
+| 30 | 30 (≤ cap) | **all 30**, including `Data`, `Model`, and `The` in the `Data Model` probe |
+| 83 | 83 (> cap) | exactly 12, at indices `floor(i * 83 / 12)` → `Widget{01,07,14,21,28,35,42,49,56,63,70,77}` |
+
+`12 of ~83` is `ANCHOR_SAMPLE_PER_CATEGORY` of 83. The apparently arbitrary
+`Data`-but-not-`Model` outcomes were positional: those designs exceeded the cap,
+so which token survived depended only on its index in the extracted set.
+OpenSpectra reproduces both rows exactly.
+
+Consequence: **Symbol extraction was never divergent**, and the previously
+recorded over-count (OpenSpectra "inflating `total` and reading Structure
+decay/score *lower* than the oracle" on prose-dense designs) was a symptom of
+the missing sampling, fixed by #119. All four categories are now exact on
+extraction, and only the missing-FilePath forward-reference case diverges on
+resolution.
 
 ### Known limitations (resolution side, deferred)
 Two resolution behaviours are carried as-is pending a positive oracle decision
