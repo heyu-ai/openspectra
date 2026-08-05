@@ -535,16 +535,13 @@ pub fn get(
     schema_name: Option<&str>,
     artifact_id: Option<&str>,
 ) -> Result<InstructionOutput> {
-    let schema_name = schema_name.unwrap_or(crate::schema::SCHEMA_NAME);
-    if schema_name != crate::schema::SCHEMA_NAME {
-        anyhow::bail!(
-            "Schema not found: Schema '{schema_name}' not found in project, user, or built-in locations"
-        );
-    }
-
+    // Change first, then the schema gate: probed, the oracle reports
+    // `Change 'X' not found.` ahead of the schema error, and the change's own
+    // `.openspec.yaml` outranks the project `config.yaml` as the selector.
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
+    crate::schema::require_supported(cfg, schema_name, Some(&change))?;
     let selected = match artifact_id {
         Some(artifact_id) => Some(artifact_id),
         None => next_artifact(&change.dir)?,

@@ -423,8 +423,18 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     // file we just wrote becomes unparseable and every later command silently
     // degrades the metadata to defaults. Plain values serialize byte-identical
     // to the oracle's output (pinned by `create_writes_only_oracle_metadata`).
+    // Stamp the project's *configured* schema, not the built-in name. The
+    // oracle does this (probed: with `config.yaml` naming `mycustom`,
+    // `spectra new change c9` writes `schema: mycustom`), and it is what makes
+    // #117's gate reachable: the change-level key outranks `config.yaml`, so
+    // hardcoding `spec-driven` here silently re-opened the fallback the gate
+    // exists to close — every change OpenSpectra created in a custom-schema
+    // project recorded a schema it does not use, and `status` then passed.
     let metadata = ChangeMetadata {
-        schema: Some(crate::schema::SCHEMA_NAME.to_string()),
+        schema: Some(
+            crate::schema::configured_schema_name(cfg)
+                .unwrap_or_else(|| crate::schema::SCHEMA_NAME.to_string()),
+        ),
         created: Some(today.to_string()),
         created_by: Some(created_by),
         ..Default::default()
