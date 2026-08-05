@@ -91,6 +91,43 @@ changes.
   longer read. Nothing is lost — the change is still in
   `<spec_dir>/changes/` — but it lists as active again; re-run
   `spectra park <name>` to move it into the shared store.
+- **A custom `schema:` in `<spec_dir>/config.yaml` no longer silently falls
+  back to the built-in workflow** (#117). That file had no reader at all, so a
+  project selecting its own schema ran `spec-driven` with exit 0, no warning,
+  and normal-looking output — while `instructions` emitted the generic text
+  with the project's own artifact instructions missing entirely. `status`,
+  `instructions` now resolve the selector (`--schema` first, then the change's
+  own `.openspec.yaml`, then the project `config.yaml`, then the built-in — the
+  change-level key dominates, and since `spectra new change` stamps it, it is
+  set on essentially every real change) and refuse to run on anything else:
+  - a name that resolves nowhere reports the oracle's message byte for byte
+    (`Schema not found: Schema 'X' not found in project, user, or built-in
+    locations`);
+  - a name whose `<spec_dir>/schemas/<name>/schema.yaml` *does* exist gets a
+    distinct message naming that file — claiming it was "not found in project
+    … locations" would be false.
+
+  Resolution runs **after** the change is loaded, matching the oracle's probed
+  order (`Change 'X' not found.` precedes any schema error). `new artifact` is
+  deliberately **not** gated: probed, the oracle never errors on the selector
+  there and the command has no `--schema` flag. It does resolve it for template
+  lookup though — with a resolvable custom schema the oracle writes *that*
+  schema's template, and with an unresolvable one it writes a **0-byte** file
+  where OpenSpectra writes the built-in template. Both are recorded in
+  `schemas.md`; the custom-template half is #126.
+
+  **`spectra new change` now stamps the project's configured schema** instead of
+  hardcoding `spec-driven`, matching the oracle. That is what keeps the gate
+  reachable: the change-level key outranks `config.yaml`, so the old hardcode
+  meant every change OpenSpectra created in a custom-schema project recorded a
+  schema it does not use and then passed the gate — silently re-opening the
+  fallback this entry is about.
+
+  This is the stopgap half of #117. Actually loading a custom schema (and
+  listing project schemas in `spectra schemas`, which the oracle does) is
+  tracked by #126; the sibling `context:` / `rules:` keys the oracle also reads
+  from `config.yaml` by #127.
+
 ### Changed
 
 - **The recommended CI drift gate filters to `FilePath` broken anchors.** The

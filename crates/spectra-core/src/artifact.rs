@@ -148,6 +148,22 @@ pub fn create(
     stdin_content: Option<&str>,
     force: bool,
 ) -> Result<NewArtifactOutcome> {
+    // No schema gate here, deliberately: probed on v2.3.1, `new artifact`
+    // never *errors* on the selector and has no `--schema` flag. With the
+    // change's `.openspec.yaml` recording an unresolvable `schema:` the oracle
+    // still exits 0. An earlier revision of #117 added a gate here; that both
+    // diverged from the oracle and reordered this function's oracle-probed
+    // check sequence (`docs/reverse-engineering/artifact-workflow.md`), which
+    // PR #48 review had already ruled must not happen without a probe.
+    //
+    // It does not follow that the oracle ignores the schema: it resolves it for
+    // *template lookup*. With a resolvable custom schema it writes that
+    // schema's template (probed with a marker file), and when it cannot resolve
+    // one it writes a **0-byte** artifact. OpenSpectra writes the built-in
+    // template in both cases -- a usable artifact rather than an empty one, and
+    // the wrong template for a custom schema until #126 lands. Recorded in
+    // `docs/reverse-engineering/schemas.md`, asserted by
+    // `schema_selector_integration.rs`.
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let artifact_type = ArtifactType::parse(type_name)?;
     let change = crate::change::try_load(cfg, &change_name)?.ok_or_else(|| {
