@@ -298,7 +298,10 @@ of 0. Three extraction changes, plus a deliberate widening of resolution
   the file that actually exists, which is what removes the false positive.
 * a left token-boundary check (`anchors::starts_at_path_boundary`; the `regex`
   crate has no look-behind), so `mysrc/foo.rs` yields **no** anchor rather than a
-  phantom `src/foo.rs`.
+  phantom `src/foo.rs`;
+* a `..`-segment guard (`anchors::escapes_project_root`), so a path that would
+  resolve against a file *outside* the project yields no anchor at all — detailed
+  with its probe further down.
 
 Every reported FilePath anchor is therefore greppable verbatim in its design.
 
@@ -334,7 +337,10 @@ PR. Both directions probed (2026-08-03):
 The two cases are indistinguishable from the anchor text alone, so restricting
 the baseline probe only trades one error for the other. The union is kept, and
 its false positive is accepted as the same coincidental-truncation class already
-accepted for the present-day probe rather than as a separate risk.
+accepted for the present-day probe rather than as a separate risk — but the two
+point in opposite directions, which matters for a gate. The present-day union
+only ever *suppresses* a finding (a false negative); the baseline union
+*manufactures* one (a false positive), and only the latter turns a build red.
 
 A path containing a `..` segment is dropped rather than anchored
 (`anchors::escapes_project_root`). Resolution joins the anchor onto the project

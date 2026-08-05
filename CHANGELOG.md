@@ -56,9 +56,9 @@ changes.
   resolving as before. The same union is applied to the `.started` baseline
   probe, so both questions use one resolution rule — which does mean a path
   whose *truncated* form resolved at the baseline is reported broken rather than
-  as a forward reference. Both directions are probed and recorded in the RE doc:
-  restricting the baseline probe instead turns a real nested-root deletion into
-  a missed one.
+  as a forward reference (a false positive in a repo-root layout). Both layouts
+  are probed and recorded in the RE doc: restricting the baseline probe instead
+  turns a real nested-root deletion into a missed one, so the union is kept.
 
 - **A freshly scaffolded `design.md` matches the oracle exactly** (#51). `JSON`
   was missing from the recovered Symbol stop-list — the last divergence on an
@@ -105,8 +105,10 @@ changes.
   reports `2/4 anchors broken` and severity `heavy`, because every extracted
   flag is unconditionally `not in --help`. Filtering to `FilePath` leaves the
   one verdict that consults the change's `.started` baseline, so the gate means
-  "this path existed when the change began and is now gone". Verified both
-  directions. The README now also states what the gate cannot catch: on a
+  "does not resolve now, and either resolved at the baseline or has no usable
+  baseline". Verified both directions. Note `spectra init` gitignores
+  `.spectra/`, so CI has no baseline unless the workflow rebuilds one — the
+  README recipe does, from the merge-base. The README now also states what the gate cannot catch: on a
   committed change `git grep` self-matches the design, so a deleted function or
   type is invisible to *both* binaries.
 

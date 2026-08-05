@@ -137,8 +137,10 @@ static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
 ///   was deleted — union yields `broken`, a false positive.
 ///
 /// The two are indistinguishable from the anchor text alone, so the false
-/// positive is accepted as the same coincidental-truncation class already
-/// accepted for the present-day probe, not as a separate risk.
+/// positive is accepted as the same coincidental-truncation *cause* already
+/// accepted for the present-day probe. The directions differ, though: the
+/// present-day union only suppresses findings, while this one manufactures one —
+/// the direction a merge gate feels.
 fn path_candidates(anchor: &str) -> Vec<&str> {
     let mut candidates = vec![anchor];
     if let Some(m) = ORACLE_FILE_PATH_RE.find(anchor) {
@@ -688,9 +690,10 @@ mod tests {
         );
     }
 
-    /// AC-5's other direction: the union must also resolve when only the path
-    /// **as written** exists. Without this, a mutation that consulted only the
-    /// truncation would pass the rest of the suite (Codex R1 finding).
+    /// The other direction of the union, complementing
+    /// `monorepo_path_resolves_against_the_oracle_truncation`: it must also
+    /// resolve when only the path **as written** exists. Without this, a mutation
+    /// that consulted only the truncation would pass the rest of the suite.
     #[test]
     fn monorepo_path_resolves_when_only_the_written_form_exists() {
         let dir = TempDir::new("written-form-only");
