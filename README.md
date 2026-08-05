@@ -127,9 +127,13 @@ docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/howie/openspectra:latest drift 
 name: Spec Drift
 
 on:
+  # Pull requests only, deliberately. This gate asks "did *this branch* delete a
+  # file its design still cites", which needs a fork point to compare against. On
+  # a `push` to the default branch `origin/main` IS the pushed commit, the
+  # merge-base below is HEAD, every non-resolving path reads as a forward
+  # reference, and the gate can never fail — measurably worse than no gate, since
+  # without a baseline it would at least have caught the deletion.
   pull_request:
-  push:
-    branches: [main]
 
 jobs:
   drift:
@@ -151,10 +155,19 @@ jobs:
         # one the change merely PROPOSES to create -- reads as broken. Rebuilding
         # the baseline from the merge-base restores the distinction, and is the
         # right question for a PR anyway: "did this branch delete it?"
+        # Needs the `fetch-depth: 0` above: a shallow checkout has no origin/<base>.
+        env:
+          # Via env, not `${{ }}` inline: a ref name is not guaranteed free of
+          # shell metacharacters, and inline expansion happens before bash parses.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
-          base=$(git merge-base origin/${{ github.event.pull_request.base.ref || 'main' }} HEAD)
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+          # Capture each stage separately. `x=$(a | b) || guard` only ever sees
+          # b's status -- and `jq` on empty stdin exits 0, so a failing
+          # `spectra list` would silently write no baseline at all.
+          changes=$(spectra list --json) || { echo "list failed"; exit 1; }
+          names=$(printf '%s' "$changes" | jq -r '.changes[].name') || { echo "jq failed"; exit 1; }
           mkdir -p .spectra/changes
-          names=$(spectra list --json | jq -r '.changes[].name') || { echo "list failed"; exit 1; }
           for change in $names; do printf '%s' "$base" > ".spectra/changes/$change.started"; done
       - name: Check spec drift
         run: |

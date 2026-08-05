@@ -107,10 +107,12 @@ changes.
   one verdict that consults the change's `.started` baseline, so the gate means
   "does not resolve now, and either resolved at the baseline or has no usable
   baseline". Verified both directions. Note `spectra init` gitignores
-  `.spectra/`, so CI has no baseline unless the workflow rebuilds one — the
-  README recipe does, from the merge-base. The README now also states what the gate cannot catch: on a
-  committed change `git grep` self-matches the design, so a deleted function or
-  type is invisible to *both* binaries.
+  `.spectra/`, so CI has no baseline unless the workflow rebuilds one. The
+  README recipe does, from the merge-base, and is pull-request-only for that
+  reason: on a push to the default branch the merge-base is HEAD itself and the
+  gate could never fail. The README now also states what the gate cannot
+  catch: on a committed change `git grep` self-matches the design, so a deleted
+  function or type is invisible to *both* binaries.
 
 - **Broken CliFlag and Function anchors are reported as broken again** (#119),
   reverting that half of #83. Measured over 26 real changes, withholding them
