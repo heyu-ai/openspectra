@@ -60,6 +60,10 @@ pub struct ArtifactInstructions {
     pub output_path: &'static str,
     pub description: &'static str,
     pub instruction: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<String>>,
     pub locale: &'static str,
     pub template: &'static str,
     pub dependencies: Vec<ArtifactDependency>,
@@ -334,6 +338,13 @@ pub fn artifact_instructions(
         .ok_or_else(|| anyhow::anyhow!("Artifact '{artifact_id}' not found in schema"))?;
     let change_dir = absolute_change_dir(cfg, change);
     let done_ids = done_ids(&change_dir)?;
+    let (context, rules) =
+        crate::schema::read_spec_config(cfg).map_or((None, None), |mut config| {
+            (
+                config.context.map(|context| context.trim().to_string()),
+                config.rules.remove(artifact.id),
+            )
+        });
     let dependencies = artifact
         .deps
         .iter()
@@ -359,6 +370,8 @@ pub fn artifact_instructions(
         output_path: artifact.output_path,
         description: artifact.description,
         instruction: artifact.instruction,
+        context,
+        rules,
         locale: LOCALE,
         template: artifact.template,
         dependencies,
@@ -557,6 +570,102 @@ pub fn get(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
+
+    fn project(label: &str) -> (TempDir, crate::Config, crate::Change) {
+        let tmp = TempDir::new(label);
+        let cfg = crate::Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        };
+        let change = crate::Change {
+            name: "c1".to_string(),
+            dir: std::path::PathBuf::from("openspec/changes/c1"),
+            metadata: crate::change::ChangeMetadata::default(),
+            started_sha: None,
+            parked: false,
+        };
+        std::fs::create_dir_all(cfg.root.join(&change.dir)).unwrap();
+        (tmp, cfg, change)
+    }
+
+    fn write_spec_config(cfg: &crate::Config, body: &str) {
+        std::fs::write(cfg.root.join(&cfg.spec_dir).join("config.yaml"), body).unwrap();
+    }
+
+    #[test]
+    fn artifact_context_is_trimmed_and_preserves_internal_newlines() {
+        let (_tmp, cfg, change) = project("instructions-context");
+        write_spec_config(
+            &cfg,
+            "schema: spec-driven\ncontext: |\n  First line\n  Second line\n",
+        );
+
+        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+
+        assert_eq!(
+            instructions.context.as_deref(),
+            Some("First line\nSecond line")
+        );
+    }
+
+    #[test]
+    fn artifact_rules_are_flattened_for_the_matching_artifact() {
+        let (_tmp, cfg, change) = project("instructions-rules");
+        write_spec_config(
+            &cfg,
+            "schema: spec-driven\nrules:\n  proposal:\n    - Keep it concise\n    - Name the impact\n  tasks:\n    - Keep tasks small\n",
+        );
+
+        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+
+        assert_eq!(
+            instructions.rules,
+            Some(vec![
+                "Keep it concise".to_string(),
+                "Name the impact".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn artifact_rules_key_is_absent_for_a_nonmatching_artifact() {
+        let (_tmp, cfg, change) = project("instructions-nonmatching-rules");
+        write_spec_config(
+            &cfg,
+            "schema: spec-driven\nrules:\n  proposal:\n    - Keep it concise\n",
+        );
+
+        let instructions = artifact_instructions(&cfg, &change, "tasks").unwrap();
+        let value = serde_json::to_value(instructions).unwrap();
+
+        assert!(value.get("rules").is_none());
+    }
+
+    #[test]
+    fn artifact_context_and_rules_keys_are_absent_without_config() {
+        let (_tmp, cfg, change) = project("instructions-no-config");
+
+        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let value = serde_json::to_value(instructions).unwrap();
+
+        assert!(value.get("context").is_none());
+        assert!(value.get("rules").is_none());
+    }
+
+    #[test]
+    fn artifact_context_and_rules_keys_are_absent_for_unparseable_config() {
+        let (_tmp, cfg, change) = project("instructions-bad-config");
+        write_spec_config(&cfg, "schema: [not, valid\n");
+
+        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let value = serde_json::to_value(instructions).unwrap();
+
+        assert!(value.get("context").is_none());
+        assert!(value.get("rules").is_none());
+    }
 
     #[test]
     fn apply_parser_accepts_any_checkbox_state_and_only_x_is_done() {
