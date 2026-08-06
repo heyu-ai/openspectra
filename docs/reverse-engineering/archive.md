@@ -18,8 +18,9 @@ Reference CLI options: `--no-color`, `-y`/`--yes` (skip confirmation),
 `--skip-specs`, `--no-validate`, `--mark-tasks-complete`. OpenSpectra
 implements `[CHANGE]`, `--skip-specs`, `--mark-tasks-complete`, and the
 global `--no-color` — **`-y`/`--yes` and `--no-validate` are deliberately
-not implemented**. OpenSpectra has no interactive confirmation prompt, so a
-confirmation-skip flag would be inert. Separately, archive always validates
+not implemented**. OpenSpectra's `archive` has no interactive confirmation
+prompt, so a confirmation-skip flag would be inert here (`completion
+uninstall` is the one command that does prompt, gated by its own `--yes`). Separately, archive always validates
 every spec delta before moving the change whenever spec application is enabled;
 skipping that safety check is not a supported archive mode. This is independent
 of the implemented top-level `spectra validate` command.
