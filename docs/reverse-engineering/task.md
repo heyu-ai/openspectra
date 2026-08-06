@@ -79,6 +79,14 @@ here for accuracy rather than presented as oracle-verified):
    a dedicated test so enabling that feature later doesn't silently change
    the shape without a failing test.
 
+## No active changes
+
+Probed on 2026-08-06: `task done 1` with zero active changes remains an
+operational error, exiting 1 with the shared no-active-change message prefixed
+by `Error: ` on stderr. This deliberately differs from the four read/report
+commands' successful empty state. See the complete matrix in
+[`artifact-workflow.md`](artifact-workflow.md#no-active-change-command-matrix).
+
 ## JSON schemas
 
 `spectra task done <id> --json`:

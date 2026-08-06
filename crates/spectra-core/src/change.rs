@@ -35,6 +35,9 @@ static ARCHIVED_PREFIX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\d{4}-\d{2}-
 /// "must contain only lowercase letters, digits, and hyphens" error.
 static ORACLE_CHANGE_ID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-z0-9-]+$").unwrap());
 
+pub const NO_ACTIVE_CHANGES_MESSAGE: &str =
+    "No active changes. Create one with: spectra new change <name>";
+
 /// Parsed `<change>/.openspec.yaml`. `Serialize` skips `None` fields (rather
 /// than emitting `key: null`) so a round-trip through `archive::
 /// stamp_archived_metadata` reproduces the sparse-field shape the reference
@@ -519,23 +522,28 @@ pub fn list_parked(cfg: &Config) -> Vec<String> {
     names
 }
 
-/// Resolve a change name: use `explicit` if given, else auto-select when
-/// exactly one active change exists (mirrors `spectra drift`'s auto-detect).
-pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
+/// Resolve a change name without treating an empty active-change set as an
+/// error. Read/report commands use `None` as their normal empty state; commands
+/// that require a change should continue to call [`resolve`].
+pub fn resolve_optional(cfg: &Config, explicit: Option<&str>) -> Result<Option<String>> {
     if let Some(name) = explicit {
-        return Ok(name.to_string());
+        return Ok(Some(name.to_string()));
     }
     let active = list_active(cfg);
     match active.len() {
-        1 => Ok(active.into_iter().next().unwrap()),
-        0 => Err(anyhow!(
-            "No active changes. Create one with: spectra new change <name>"
-        )),
+        1 => Ok(active.into_iter().next()),
+        0 => Ok(None),
         _ => Err(anyhow!(
             "Multiple changes found. Use a change name to specify one: {}",
             active.join(", ")
         )),
     }
+}
+
+/// Resolve a change name: use `explicit` if given, else auto-select when
+/// exactly one active change exists (mirrors `spectra drift`'s auto-detect).
+pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
+    resolve_optional(cfg, explicit)?.ok_or_else(|| anyhow!(NO_ACTIVE_CHANGES_MESSAGE))
 }
 
 /// Outcome of [`mark_task_done`]: enough for the CLI to render both the
@@ -632,6 +640,36 @@ mod tests {
         write(
             &parked_root(cfg).unwrap().join(name).join("proposal.md"),
             proposal,
+        );
+    }
+
+    #[test]
+    fn resolve_optional_exposes_the_empty_state_without_changing_required_resolution() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        };
+
+        assert_eq!(resolve_optional(&cfg, None).unwrap(), None);
+        assert_eq!(
+            resolve(&cfg, None).unwrap_err().to_string(),
+            NO_ACTIVE_CHANGES_MESSAGE
+        );
+        assert_eq!(
+            resolve_optional(&cfg, Some("explicit-change")).unwrap(),
+            Some("explicit-change".to_string())
+        );
+
+        write(
+            &cfg.changes_dir().join("one-change").join("proposal.md"),
+            "# One\n",
+        );
+        assert_eq!(
+            resolve_optional(&cfg, None).unwrap(),
+            Some("one-change".to_string())
         );
     }
 

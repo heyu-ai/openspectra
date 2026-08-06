@@ -3,8 +3,8 @@
 How OpenSpectra's `validate` command was designed, and why it is calibrated
 against a *different* reference than the rest of the CLI.
 
-> **Not oracle-verified — and not calibrated against the Spectra oracle at
-> all.** Unlike `drift.md`/`archive.md`/`task.md`, this command's behavior was
+> **The validation rules are not oracle-verified.** Unlike
+> `drift.md`/`archive.md`/`task.md`, this command's validation behavior was
 > **not** and cannot easily be confirmed against
 > `Spectra.app/Contents/MacOS/spectra`: the reference binary is macOS-only, so
 > a downstream Linux CI (the use case that motivated this command — see
@@ -13,7 +13,9 @@ against a *different* reference than the rest of the CLI.
 > **`@fission-ai/openspec` (OSS) 1.5.0 `validate` contract**, so it can act as
 > a drop-in replacement for that OSS gate. Treat every detail below as
 > OpenSpectra's own design choice against the OSS contract, not a confirmed
-> match to the closed binary.
+> match to the closed binary. The sole exception is the zero-active-change
+> output and exit behavior, probed directly against Spectra 2.3.1 on
+> 2026-08-06.
 
 ## Why this command exists
 
@@ -37,6 +39,11 @@ spectra validate [CHANGE] [--changes] [--strict] [--json]
 - `--changes` — validate every active (non-parked, non-archived) change.
 - `--strict` — escalate content-quality findings to hard errors (see below).
 - `--json` — emit the machine-readable report instead of the human summary.
+
+With no explicit `CHANGE` and zero active changes, the oracle exits 0: human
+mode emits nothing, while `--json` emits `[]`. This special empty-state shape
+precedes the normal report schema below and is included in the complete matrix
+in [`artifact-workflow.md`](artifact-workflow.md#no-active-change-command-matrix).
 
 ## Rules
 

@@ -94,3 +94,8 @@ choice as `instructions`' `contextFiles` ordering (see
 Always `0` on a successful run regardless of findings (gate on the JSON
 severity fields instead); `1` on operational errors
 (`Error: Change '<name>' not found.`).
+
+With zero active changes, both human and `--json` modes are successful and
+print the same plain-text sentinel on stdout. This was probed on 2026-08-06;
+see the complete matrix in
+[`artifact-workflow.md`](artifact-workflow.md#no-active-change-command-matrix).

@@ -199,6 +199,11 @@ modes). Severity is *not* mapped to the exit code. Operational errors (e.g.
 0/1/2 severity mapping (and 3 for errors); both were refuted by probe and now
 match the oracle.
 
+The 2026-08-06 empty-project probe also confirmed that no active changes is a
+successful report state: human and `--json` modes both exit 0 and print the
+same plain-text sentinel on stdout. See the complete matrix in
+[`artifact-workflow.md`](artifact-workflow.md#no-active-change-command-matrix).
+
 ## Deliberate divergences
 
 ### Forward-reference FilePaths are not broken (#83, narrowed by #119)

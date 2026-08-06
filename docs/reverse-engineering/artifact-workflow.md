@@ -98,6 +98,30 @@ line is appended. Errors (exit 1): `Change '<name>' not found.` and
 `Schema not found: Schema '<s>' not found in project, user, or built-in
 locations`.
 
+## No-active-change command matrix
+
+A fresh initialized project with zero active changes was probed against
+Spectra 2.3.1 on 2026-08-06. The read/report commands treat this as a normal
+empty state even in JSON mode; their sentinel remains plain text.
+
+| command | exit | channel | output |
+|---|---:|---|---|
+| `status` / `status --json` | 0 | stdout | `No active changes. Create one with: spectra new change <name>` |
+| `instructions tasks` / `instructions tasks --json` | 0 | stdout | same plain-text sentinel |
+| `drift` / `drift --json` | 0 | stdout | same plain-text sentinel |
+| `analyze` / `analyze --json` | 0 | stdout | same plain-text sentinel |
+| `validate` | 0 | stdout | empty |
+| `validate --json` | 0 | stdout | `[]` |
+| `list` | 0 | stdout | `No active changes.` |
+| `list --json` | 0 | stdout | pretty `{"changes": []}` |
+| `task done 1` | 1 | stderr | `Error: No active changes. Create one with: spectra new change <name>` |
+| `show` | 1 | stderr | `Error: Please specify an item name.` |
+| `park` / `unpark` | 2 | stderr | clap's required-`<NAME>` usage error |
+
+Only the four auto-resolving read commands use the shared plain-text success
+sentinel. Commands that require a concrete change, such as `task done`, keep
+the resolver's operational-error path.
+
 ## `spectra new artifact <TYPE> [CAPABILITY] [--change] [--stdin] [--force] [--json]`
 
 `--json` is a **single compact line** (unlike the other three commands):

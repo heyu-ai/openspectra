@@ -21,6 +21,16 @@ changes.
 
 ### Fixed
 
+- **No active changes is now a successful empty state for auto-resolving read
+  commands** (#134). On an initialized project with no active changes,
+  `status`, `instructions`, `drift`, and `analyze` now exit 0 and print the
+  oracle's plain-text sentinel to stdout, including with `--json`, instead of
+  exiting 1 with an `Error:` prefix on stderr. Required-change operations such
+  as `task done` retain the error path. Plain `validate` now also matches the
+  probed empty output (`[]` under `--json`). This restores reliable exit-code
+  behavior for scripts and CI steps that run read/report commands before a
+  change exists.
+
 - **`spectra drift` no longer caps the Structure denominator at 50** (#119).
   `ANCHOR_CAP` was implemented as `truncate(50)`, so every design with more
   than 50 anchors reported exactly `N/50` and silently dropped everything past
