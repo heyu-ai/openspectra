@@ -34,6 +34,24 @@ fn read_commands_treat_no_active_changes_as_a_normal_empty_state() {
         ("drift --json", &["drift", "--json"]),
         ("analyze", &["analyze"]),
         ("analyze --json", &["analyze", "--json"]),
+        // The empty state outranks the schema gate: probed on 2026-08-06,
+        // the oracle prints the sentinel and exits 0 even with a bogus
+        // --schema on an empty project (pinned in schemas.md "Check order").
+        // These lock the CLI's resolve-first ordering so a refactor that
+        // gates on the schema flag before resolving fails loudly.
+        ("status --schema bogus", &["status", "--schema", "bogus"]),
+        (
+            "status --schema bogus --json",
+            &["status", "--schema", "bogus", "--json"],
+        ),
+        (
+            "instructions tasks --schema bogus",
+            &["instructions", "tasks", "--schema", "bogus"],
+        ),
+        (
+            "instructions tasks --schema bogus --json",
+            &["instructions", "tasks", "--schema", "bogus", "--json"],
+        ),
     ];
 
     for &(label, args) in cases {

@@ -122,6 +122,11 @@ Only the four auto-resolving read commands use the shared plain-text success
 sentinel. Commands that require a concrete change, such as `task done`, keep
 the resolver's operational-error path.
 
+The empty state outranks the schema gate: `status --schema bogus` and
+`instructions tasks --schema bogus` on an empty project still print the
+sentinel and exit 0 (probed 2026-08-06) — the same "change comes first" check
+order pinned in [`schemas.md`](schemas.md)'s "Check order" section.
+
 ## `spectra new artifact <TYPE> [CAPABILITY] [--change] [--stdin] [--force] [--json]`
 
 `--json` is a **single compact line** (unlike the other three commands):
