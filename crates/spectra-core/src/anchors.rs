@@ -1,9 +1,9 @@
 //! Design anchors: references in `design.md` to concrete code artifacts that
 //! drift can verify still resolve against the current codebase.
 //!
-//! The extraction regexes and the symbol stop-list are recovered from the
-//! reference binary's `.rodata`. Two probe-derived corrections are documented
-//! at their definitions:
+//! The extraction regexes and the original 42-entry core of the symbol
+//! stop-list were recovered from the reference binary's `.rodata`.
+//! Probe-derived corrections are documented at their definitions:
 //!
 //! * `FILE_PATH_RE` is **not** the `.rodata` regex — it adds a prefix head, a
 //!   left-boundary check, and a `..` guard so a reported anchor exists in the
@@ -11,7 +11,8 @@
 //!   `ORACLE_FILE_PATH_RE` keeps the verbatim form, and `path_candidates`
 //!   resolves against the union of both, which is deliberately more permissive
 //!   than the oracle — see its doc comment.
-//! * `JSON` in `SYMBOL_STOPLIST` was recovered by probe, not from `.rodata`.
+//! * `SYMBOL_STOPLIST` has 21 probe-recovered entries beyond the `.rodata`
+//!   core: `JSON` plus the 20 additions from the 2026-08-06 sweep (#133).
 
 use once_cell::sync::Lazy;
 use regex::Regex;
@@ -157,17 +158,20 @@ static CAMEL_FN_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"\b([a-z][a-z0-9]*[A-Z][a-zA-Z0-9]+)\(").unwrap());
 static SYMBOL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[A-Z][a-zA-Z0-9]+\b").unwrap());
 
-/// Common Rust types / framework words excluded from Symbol anchors so the
-/// extractor does not flag ubiquitous identifiers as "drift" (recovered list).
+/// Tokens the oracle excludes from Symbol anchors.
 ///
-/// `JSON` is the one entry not read out of `.rodata`: the oracle drops it and
-/// this list did not, which was the whole remaining divergence on a fresh
-/// `design.md` scaffold (#51). Probed per-token against v2.3.1 (2026-08-03) —
-/// each candidate in its own repo alongside an unresolvable control symbol —
-/// and `JSON` was the only word in the scaffold dropped by the oracle and kept
-/// here. The probe also refuted the "all-caps acronyms are dropped" theory:
-/// `ALTER`, `TABLE`, `COLUMN`, `README`, `CRITICAL`, `YAML`, `HTTP` and `SQL`
-/// are all kept by the oracle in isolation.
+/// The original 42-entry core was recovered from `.rodata`. `JSON` was added by
+/// a per-token v2.3.1 probe on 2026-08-03 (#51). A fresh-jail sweep on
+/// 2026-08-06 added 20 more entries (#133), spanning Rust standard-library
+/// types and traits, Rust keywords and idiom, the `Markdown` and `Rust` format
+/// or language names, and the Gherkin words `When` and `Then` (`Given` was
+/// already in the core).
+///
+/// This is an empirical set, not a licence to complete semantic families. The
+/// 2026-08-06 sweep found that all tested common English prose words, including
+/// `This`, `We`, `That`, and `And`, are extracted by the oracle. It also found
+/// adjacent Rust, format, and framework tokens that remain extracted; see the
+/// recorded probe in `docs/reverse-engineering/drift.md`.
 static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         "Context", "State", "Result", "Error", "Option", "Vec", "Box", "String", "HashMap",
@@ -175,6 +179,12 @@ static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "FnMut", "FnOnce", "Future", "Pin", "Arc", "Rc", "RefCell", "Mutex", "RwLock", "Trait",
         "Module", "Struct", "Field", "Method", "Value", "Source", "Target", "Given", "Spectra",
         "CLI", "GUI", "API", "IPC", "JSON",
+        // Rust standard-library types and traits (#133 probe).
+        "Copy", "Send", "Sync", "Drop", "From", "Into", "Iterator", "Cell", "Path",
+        // Rust keywords and idiom (#133 probe).
+        "Self", "Some", "None", "Enum", "Type", "Function", "Item",
+        // Formats, languages, and Gherkin (#133 probe).
+        "Markdown", "Rust", "When", "Then",
     ]
     .into_iter()
     .collect()
@@ -260,8 +270,9 @@ pub fn extract(design: &str) -> Vec<Anchor> {
     for c in CAMEL_FN_RE.captures_iter(design) {
         push(c[1].to_string(), AnchorKind::Function, &mut seen, &mut out);
     }
-    // The regex + stop-list below is exactly what the binary's `.rodata`
-    // contains, and Symbol extraction matches the oracle for the full match set.
+    // The regex below is exactly what the binary's `.rodata` contains. The
+    // stop-list combines its recovered core with the probe-recovered additions
+    // documented at `SYMBOL_STOPLIST`.
     //
     // This used to carry a KNOWN DIVERGENCE note calling the oracle's apparent
     // "Symbol narrowing" (12 of ~83 candidates in one prose-heavy design) an
@@ -576,6 +587,17 @@ mod tests {
     fn symbol_stoplist_excludes_common_types() {
         let d = "Result and Option and MyType here";
         assert_eq!(kinds(d, AnchorKind::Symbol), vec!["MyType"]);
+    }
+
+    /// #133: the 2026-08-06 fresh-jail sweep found these 20 additional tokens
+    /// absent from the oracle's Symbol `broken_anchors`. The sentinel confirms
+    /// that ordinary candidates in the same under-cap input are still extracted.
+    #[test]
+    fn probe_recovered_symbol_stoplist_entries_match_the_oracle() {
+        let d = "Copy Send Sync Drop From Into Iterator Cell Path Self Some None Enum Type \
+                 Function Item Markdown Rust When Then Kumquat";
+        assert_eq!(kinds(d, AnchorKind::Symbol), vec!["Kumquat"]);
+        assert_eq!(SYMBOL_STOPLIST.len(), 63);
     }
 
     #[test]
