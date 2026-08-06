@@ -183,8 +183,10 @@ static SYMBOL_STOPLIST: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "Copy", "Send", "Sync", "Drop", "From", "Into", "Iterator", "Cell", "Path",
         // Rust keywords and idiom (#133 probe).
         "Self", "Some", "None", "Enum", "Type", "Function", "Item",
-        // Formats, languages, and Gherkin (#133 probe).
-        "Markdown", "Rust", "When", "Then",
+        // Formats and languages (#133 probe).
+        "Markdown", "Rust",
+        // Gherkin (#133 probe; `Given` is already in the `.rodata` core).
+        "When", "Then",
     ]
     .into_iter()
     .collect()

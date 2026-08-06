@@ -23,8 +23,8 @@ changes.
 
 - **`spectra drift` now matches the oracle's Symbol stop-list** (#133). A
   fresh-jail v2.3.1 sweep found 20 probe-confirmed omissions across Rust
-  standard-library types and traits, Rust keywords and idiom, formats, and
-  Gherkin terms. Designs using these tokens now produce a smaller Symbol anchor
+  standard-library types and traits, Rust keywords and idiom, formats and
+  languages, and Gherkin terms. Designs using these tokens now produce a smaller Symbol anchor
   set, aligning the Structure denominator with the oracle.
 
 - **`spectra drift` no longer caps the Structure denominator at 50** (#119).
