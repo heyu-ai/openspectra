@@ -12,6 +12,14 @@ changes.
 
 ### Added
 
+- **Artifact `instructions --json` now surfaces `context:` and per-artifact
+  `rules:` from `<spec_dir>/config.yaml`** (#127), between `instruction` and
+  `locale`, matching the oracle's probed contract: context trimmed (a blank
+  value omits the key), rules flattened to the requested artifact's list,
+  both keys entirely absent when unset or unmatched, and apply/human output
+  unchanged. Projects that filled in the tutorial comments `spectra init`
+  itself writes now actually reach the agent, closing the last silent-loss
+  gap in the #117 family.
 - `scripts/calibrate-anchor-budget.py` — a verification contract for the
   over-cap sampling model, not a printer. Asserts the oracle's exact anchor
   *identities* (not just counts) over twelve cases spanning all four categories

@@ -185,10 +185,13 @@ instruction, preflight?}`.
   instruction, context, rules, locale, template, dependencies, unlocks`.
 - Apply JSON and all human-readable output omit both project fields. Read or
   YAML parse failures are lenient and behave as though the keys were absent.
-  Malformed `rules` shapes (a non-map value or a non-list artifact entry) and
-  the context-absent/rules-present symmetry were not probed against the oracle;
-  OpenSpectra assumes malformed values are absent and the two optional fields
-  otherwise behave independently.
+- Edge shapes (all probed against v2.3.1, 2026-08-06): a blank `context`
+  (`""` or whitespace-only) omits the key rather than emitting an empty
+  string; `rules` present with `context` absent emits only `rules` (the two
+  fields are independent); a malformed `rules` value (a non-map, or a
+  non-list artifact entry) drops only the `rules` key while `context` is
+  still emitted — a malformed field never poisons its sibling or the
+  `schema:` selector.
 
 ### Preflight (recovered by disassembly + behaviour matrix)
 

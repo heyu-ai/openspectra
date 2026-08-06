@@ -262,8 +262,8 @@ instructions with the project's own conventions missing — no warning anywhere.
 `schema:` is not the only live key in that file. The oracle also reads
 `context:` and `rules:` and surfaces them in artifact `instructions --json` as
 two extra top-level fields. OpenSpectra implements that contract in #127; the
-full probe record, including key order and absence semantics, is in
-`artifact-workflow.md`:
+probe record — key order, absence semantics, and the malformed-shape edges —
+is in `artifact-workflow.md`:
 
 ```yaml
 context: |

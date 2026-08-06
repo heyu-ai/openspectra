@@ -341,7 +341,13 @@ pub fn artifact_instructions(
     let (context, rules) =
         crate::schema::read_spec_config(cfg).map_or((None, None), |mut config| {
             (
-                config.context.map(|context| context.trim().to_string()),
+                // A blank context is omitted, not emitted as "": probed, the
+                // oracle drops the key for `context: ""` and `context: "   "`
+                // alike (same shape as `configured_schema_name`'s blank filter).
+                config
+                    .context
+                    .map(|context| context.trim().to_string())
+                    .filter(|context| !context.is_empty()),
                 config.rules.remove(artifact.id),
             )
         });
@@ -609,6 +615,19 @@ mod tests {
             instructions.context.as_deref(),
             Some("First line\nSecond line")
         );
+    }
+
+    #[test]
+    fn artifact_blank_context_is_omitted_not_emitted_empty() {
+        // Probed: the oracle drops the `context` key entirely for both
+        // `context: ""` and a whitespace-only value.
+        let (_tmp, cfg, change) = project("instructions-blank-context");
+        write_spec_config(&cfg, "schema: spec-driven\ncontext: \"   \"\n");
+
+        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let value = serde_json::to_value(instructions).unwrap();
+
+        assert!(value.get("context").is_none());
     }
 
     #[test]

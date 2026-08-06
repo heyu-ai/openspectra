@@ -635,21 +635,18 @@ pub fn derive_status(
     })
 }
 
-/// The `schema:` selector in `<spec_dir>/config.yaml` — the *project-level*
-/// default, consulted only when the change records no schema of its own.
+/// The live keys of `<spec_dir>/config.yaml`: the `schema:` selector plus the
+/// two optional instruction extras, `context:` and per-artifact `rules:`
+/// (surfaced by artifact `instructions --json`, #127).
 ///
-/// `None` when the file is absent, has no `schema` key, or its value is blank
-/// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
-/// workflow and exits 0, unlike the change-level key — see
-/// [`require_supported`]). A read or parse failure is also `None`: an unreadable
-/// selector must not be louder than a missing one, since the built-in schema is
-/// the default either way.
-///
-/// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
-/// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
-/// mismatch (sequence/map) or a syntax error reaches the `None` path. That is
-/// harmless here — `"123"` is not the built-in name, so `require_supported`
-/// still fails loud — but the value is a coerced scalar, not "unset".
+/// `context` and `rules` parse leniently *per field*: a malformed shape (a
+/// non-string `context`, a non-map `rules`, a non-list artifact entry) degrades
+/// to unset for that field alone and never fails the whole parse — so it can
+/// never mask the `schema:` key and change [`require_supported`]'s gate
+/// (probed: the oracle emits `context` unchanged while dropping a malformed
+/// `rules`). `schema` deliberately has no such guard: a structurally invalid
+/// `schema:` value fails the whole parse, which is the `None` path
+/// [`configured_schema_name`] documents.
 #[derive(serde::Deserialize)]
 pub(crate) struct SpecConfig {
     pub(crate) schema: Option<String>,
@@ -692,6 +689,21 @@ pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
     serde_yaml::from_str(&text).ok()
 }
 
+/// The `schema:` selector in `<spec_dir>/config.yaml` — the *project-level*
+/// default, consulted only when the change records no schema of its own.
+///
+/// `None` when the file is absent, has no `schema` key, or its value is blank
+/// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
+/// workflow and exits 0, unlike the change-level key — see
+/// [`require_supported`]). A read or parse failure is also `None`: an unreadable
+/// selector must not be louder than a missing one, since the built-in schema is
+/// the default either way.
+///
+/// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
+/// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
+/// mismatch (sequence/map) or a syntax error reaches the `None` path. That is
+/// harmless here — `"123"` is not the built-in name, so `require_supported`
+/// still fails loud — but the value is a coerced scalar, not "unset".
 pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
     read_spec_config(cfg)?
         .schema
