@@ -53,7 +53,12 @@ changes.
   would otherwise let a file *outside* the project satisfy a design reference.
   Resolution is deliberately widened to the union of the written path and the
   oracle's truncation, so a project rooted at its own sub-project keeps
-  resolving as before.
+  resolving as before. The same union is applied to the `.started` baseline
+  probe, so both questions use one resolution rule — which does mean a path
+  whose *truncated* form resolved at the baseline is reported broken rather than
+  as a forward reference (a false positive in a repo-root layout). Both layouts
+  are probed and recorded in the RE doc: restricting the baseline probe instead
+  turns a real nested-root deletion into a missed one, so the union is kept.
 
 - **A freshly scaffolded `design.md` matches the oracle exactly** (#51). `JSON`
   was missing from the recovered Symbol stop-list — the last divergence on an
@@ -137,10 +142,14 @@ changes.
   reports `2/4 anchors broken` and severity `heavy`, because every extracted
   flag is unconditionally `not in --help`. Filtering to `FilePath` leaves the
   one verdict that consults the change's `.started` baseline, so the gate means
-  "this path existed when the change began and is now gone". Verified both
-  directions. The README now also states what the gate cannot catch: on a
-  committed change `git grep` self-matches the design, so a deleted function or
-  type is invisible to *both* binaries.
+  "does not resolve now, and either resolved at the baseline or has no usable
+  baseline". Verified both directions. Note `spectra init` gitignores
+  `.spectra/`, so CI has no baseline unless the workflow rebuilds one. The
+  README recipe does, from the merge-base, and is pull-request-only for that
+  reason: on a push to the default branch the merge-base is HEAD itself and the
+  gate could never fail. The README now also states what the gate cannot
+  catch: on a committed change `git grep` self-matches the design, so a deleted
+  function or type is invisible to *both* binaries.
 
 - **Broken CliFlag and Function anchors are reported as broken again** (#119),
   reverting that half of #83. Measured over 26 real changes, withholding them

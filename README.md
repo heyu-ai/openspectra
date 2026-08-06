@@ -127,9 +127,13 @@ docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/howie/openspectra:latest drift 
 name: Spec Drift
 
 on:
+  # Pull requests only, deliberately. This gate asks "did *this branch* delete a
+  # file its design still cites", which needs a fork point to compare against. On
+  # a `push` to the default branch `origin/main` IS the pushed commit, the
+  # merge-base below is HEAD, every non-resolving path reads as a forward
+  # reference, and the gate can never fail — measurably worse than no gate, since
+  # without a baseline it would at least have caught the deletion.
   pull_request:
-  push:
-    branches: [main]
 
 jobs:
   drift:
@@ -145,6 +149,26 @@ jobs:
           curl -L "https://github.com/howie/openspectra/releases/download/${SPECTRA_VERSION}/spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar xz
           sudo mv "spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl/spectra" /usr/local/bin/spectra
+      - name: Restore drift baselines
+        # `spectra init` gitignores `.spectra/`, so a CI checkout has no
+        # `.started` baseline for any change and every unresolved path -- including
+        # one the change merely PROPOSES to create -- reads as broken. Rebuilding
+        # the baseline from the merge-base restores the distinction, and is the
+        # right question for a PR anyway: "did this branch delete it?"
+        # Needs the `fetch-depth: 0` above: a shallow checkout has no origin/<base>.
+        env:
+          # Via env, not `${{ }}` inline: a ref name is not guaranteed free of
+          # shell metacharacters, and inline expansion happens before bash parses.
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          base=$(git merge-base "origin/$BASE_REF" HEAD)
+          # Capture each stage separately. `x=$(a | b) || guard` only ever sees
+          # b's status -- and `jq` on empty stdin exits 0, so a failing
+          # `spectra list` would silently write no baseline at all.
+          changes=$(spectra list --json) || { echo "list failed"; exit 1; }
+          names=$(printf '%s' "$changes" | jq -r '.changes[].name') || { echo "jq failed"; exit 1; }
+          mkdir -p .spectra/changes
+          for change in $names; do printf '%s' "$base" > ".spectra/changes/$change.started"; done
       - name: Check spec drift
         run: |
           spectra drift --json | tee drift.json
@@ -182,15 +206,35 @@ four `medium` changes each had **0** broken anchors and were merely 68–82 days
 old, while the one change that did have broken anchors read `light`.
 
 Filtering to `FilePath` leaves the one category whose verdict consults the
-change's `.started` baseline, so it means what a gate needs it to mean: **this
-path existed when the change began and is now gone.**
+change's `.started` baseline, so it means close to what a gate needs it to mean:
+**this path resolved when the change began and does not resolve now.** Two
+caveats on "resolved at the baseline", both deliberate and both measured:
+
+* **No usable baseline → broken, and CI has no baseline by default.** The
+  verdict comes from `.spectra/changes/<name>.started`, and `spectra init`
+  gitignores `.spectra/` — so a fresh `actions/checkout` has no baseline for any
+  change, and every non-resolving path reads as broken, *including one the change
+  merely proposes to create*. Measured: the same change that reports
+  `unresolved / forward reference` on the author's machine reports
+  `file does not exist` in a clone. That is why the workflow above rebuilds the
+  baseline from the merge-base before running `drift`; without that step the gate
+  degrades to "does not resolve now" and is red on almost every spec-driven
+  change. (`spectra new change` writes the baseline locally, but only when the
+  project root is already a git repo with a commit.)
+* **"Resolved" uses the same widened rule as the present-day check** — the path
+  as written *or* its oracle truncation (#123). A design citing
+  `frontend/src/x.ts` in a repo where an unrelated `src/x.ts` was deleted is
+  therefore reported broken — a false positive. The alternative was measured and
+  is worse: restricting the baseline probe to the written path turns a *real*
+  deletion into a missed one when the project root is itself the sub-project.
+  Both layouts are tabulated in the RE doc.
 
 That is the entire signal. Measured against the reference binary, not inferred:
 
 | category | on a committed change | in the gate? |
 |----------|----------------------|--------------|
-| FilePath | broken when the path existed at baseline and is now absent | **yes** |
-| FilePath | absent at baseline too → `unresolved / forward reference` | no — the change may be proposing to create it |
+| FilePath | does not resolve now **and** either resolved at the baseline (written path *or* truncation) or has no usable baseline | **yes** |
+| FilePath | resolved at neither → `unresolved / forward reference` | no — the change may be proposing to create it |
 | CliFlag | always broken (`not in --help`), matching the oracle | no — filtered out; unconditional, so it carries no signal |
 | Function / Symbol | `git grep` searches all tracked files **including the change's own `design.md`**, so an anchor extracted from a committed design always matches itself and never breaks | no |
 
@@ -214,14 +258,22 @@ instead:
 
 ```sh
 fail=0
-for change in $(spectra list --json | jq -r '.changes[].name'); do
-  # Capture first: piping straight into jq would swallow a drift failure
-  # (non-JSON in, nothing out, grep finds nothing) and leave the job green.
+# Capture the listing first too: a failing command substitution in a `for` word
+# list does not trip `set -e`, so the loop would run zero times and the job
+# would go green having checked nothing.
+changes=$(spectra list --json) || { echo "list failed"; exit 1; }
+# Capture the parse too. Left inside the `for` word list, a jq failure (bad JSON,
+# or jq simply absent -- the published Docker image does not ship it) expands to
+# nothing: the loop runs zero times and the job goes green having checked nothing.
+names=$(printf '%s' "$changes" | jq -r '.changes[].name') || { echo "jq failed"; exit 1; }
+for change in $names; do
   report=$(spectra drift "$change" --json) || { echo "drift failed: $change"; exit 1; }
-  printf '%s' "$report" \
+  # Same reason again: capture before `grep`, so a jq failure cannot masquerade
+  # as "no broken anchors". `grep .` is only allowed to decide the verdict.
+  broken=$(printf '%s' "$report" \
     | jq -r --arg c "$change" '.broken_anchors[] | select(.category == "FilePath")
-             | "\($c)\t\(.anchor)\t\(.reason)"' \
-    | grep . && fail=1
+             | "\($c)\t\(.anchor)\t\(.reason)"') || { echo "jq failed: $change"; exit 1; }
+  printf '%s' "$broken" | grep . && fail=1
 done
 exit $fail
 ```
