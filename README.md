@@ -4,11 +4,12 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** early. `spectra init` / `drift` / `validate` / `update` (+ minimal
-> `list` / `show` / `park` / `unpark` / `new change` / `task done` /
-> `in-progress add` / `completion` / `archive`) is implemented in Rust and runs
-> on Linux/macOS with zero runtime dependencies
-> (just `git` on `PATH`). The reverse-engineering write-ups are in
+> **Status:** early. The Rust CLI currently ships `init`, `drift`, `analyze`,
+> `completion`, `schemas`, `status`, `instructions`, `validate`, `list`, `show`,
+> `park`, `unpark`, `in-progress add`, `new change`, `new artifact`, `task done`,
+> `update`, `archive`, and `config`. It runs on Linux/macOS with no bundled
+> runtime dependencies (`git` must be on `PATH`). The reverse-engineering
+> write-ups are in
 > [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
 > [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
 > [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
@@ -326,11 +327,16 @@ cargo test                   # unit + integration tests
 
 ## Fidelity
 
-Verified byte-for-byte against the v2.3.1 oracle for Function/CliFlag/Symbol
-detection, the over-cap anchor sampling, the scoring curves, severity bands, and
-recommendations. The long-standing "Symbol-anchor narrowing filter" unknown
-turned out not to be a semantic filter at all — it was the per-category over-cap
-sampling, recovered in #119.
+Probes against the v2.3.1 oracle establish the Function/CliFlag/Symbol extraction
+and resolution rules, per-category over-cap sampling, Structure score formula,
+severity bands, and recommendation mapping. Unit tests and synthetic-repository
+integration tests preserve those formulas and mappings, but they do **not**
+byte-compare complete current reports with the four captured drift JSON files:
+those fixtures contain output only, no test reads them, and `calibration.rs`
+asserts hand-copied score triples. These are oracle-derived rules, not evidence
+that current report bytes match the captured outputs. The long-standing
+"Symbol-anchor narrowing filter" unknown turned out not to be a semantic filter
+at all — it was the per-category over-cap sampling, recovered in #119.
 
 Two resolution divergences remain by choice, plus one on extraction. A design
 path that did not exist at the change's baseline is reported as a forward
@@ -346,7 +352,7 @@ oracle to calibrate constants (`crates/spectra-core/src/calibration.rs`).
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / validate / update / list / show / park / unpark / new change / task done / in-progress add / completion / archive
+crates/spectra-cli/    # clap CLI: init / drift / analyze / completion / schemas / status / instructions / validate / list / show / park / unpark / in-progress add / new change / new artifact / task done / update / archive / config
 crates/spectra-core/assets/update/   # instruction-file templates captured verbatim from the oracle (generated; see update.md)
 docs/reverse-engineering/   # how the original works (each doc separates probed from still-unverified behavior)
 scripts/               # oracle calibration probes + template capture (capture-update-templates.py)

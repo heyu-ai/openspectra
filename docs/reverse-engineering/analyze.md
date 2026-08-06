@@ -60,9 +60,14 @@ With no artifacts at all, every dimension is skipped and `findings` is empty.
 Notes pinned by fixtures:
 
 - Weak-word rule: delta specs only; the list `should`, `may`, `might`,
-  `TBD`, `???` is checked in that priority order per line,
+  `consider`, `possibly`, `TBD`, `TODO`, `???`, `TKTK` is checked in that
+  priority order per line,
   case-insensitive **plain substring** (`mayhem` hits `may`), max one
   finding per line, reporting the list's canonical spelling.
+  `analyze.rs`'s unit test directly exercises seven tokens (`should`, `may`,
+  `TBD`, `consider`, `possibly`, `TODO`, `TKTK`) plus priority, substring, case,
+  and no-match behavior; `might` and `???` have no token-specific assertion.
+  The CLI integration test exercises only `should` end to end.
 - Capabilities extraction takes only the first backtick token per bullet
   inside `## Capabilities`; non-backticked bullets are ignored and the
   `<name>` placeholder is *not* filtered. Only change-local delta paths are

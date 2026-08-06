@@ -1,12 +1,12 @@
 # Reverse-engineering `spectra update`
 
 How `spectra update` (update instruction files for detected AI tools) was
-probed against the closed-source reference binary and ported. Unlike
-`init.md`, everything below **is oracle-verified**: each rule was probed
-against `Spectra.app/Contents/MacOS/spectra` 2.3.1, and the full per-tool
-output trees are pinned byte-for-byte in
-`golden/update-trees-2.3.1.tsv` (445 always-on files across 23 tools, plus
-10 Claude files gated by `claude_slash_commands`).
+probed against the closed-source reference binary and ported. The fresh-write
+file set and bytes are pinned against `Spectra.app/Contents/MacOS/spectra` 2.3.1
+in `golden/update-trees-2.3.1.tsv` (445 always-on files across 23 tools, plus 10
+Claude files gated by `claude_slash_commands`). Individual sections distinguish
+directly probed rules from inferred `FileKind` classifications, deliberate
+divergences, and open questions.
 
 ## CLI shape
 
@@ -359,8 +359,10 @@ away:
 
 ## Deliberate divergences from the oracle
 
-Everything else in this document is parity. These two are not, and both are
-security rulings this repo already made elsewhere:
+These are the two known deliberate implementation divergences, and both are
+security rulings this repo already made elsewhere. Other sections separately
+record unverified classifications and open questions; absence from this table is
+not by itself an oracle-parity claim.
 
 | Behavior | Oracle | OpenSpectra | Why |
 |---|---|---|---|
