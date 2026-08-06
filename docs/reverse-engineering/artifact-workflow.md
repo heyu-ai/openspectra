@@ -187,11 +187,12 @@ instruction, preflight?}`.
   YAML parse failures are lenient and behave as though the keys were absent.
 - Edge shapes (all probed against v2.3.1, 2026-08-06): a blank `context`
   (`""` or whitespace-only) omits the key rather than emitting an empty
-  string; `rules` present with `context` absent emits only `rules` (the two
-  fields are independent); a malformed `rules` value (a non-map, or a
-  non-list artifact entry) drops only the `rules` key while `context` is
-  still emitted — a malformed field never poisons its sibling or the
-  `schema:` selector.
+  string; a non-string scalar `context` (`123`, `true`, `1.5`) also omits
+  the key — no scalar-to-string coercion; `rules` present with `context`
+  absent emits only `rules` (the two fields are independent); a malformed
+  `rules` value (a non-map, or a non-list artifact entry) drops only the
+  `rules` key while `context` is still emitted — a malformed field never
+  poisons its sibling or the `schema:` selector.
 
 ### Preflight (recovered by disassembly + behaviour matrix)
 

@@ -631,6 +631,29 @@ mod tests {
     }
 
     #[test]
+    fn artifact_scalar_context_is_omitted_like_the_oracle() {
+        // Probed (2026-08-06, three jails): the oracle omits the `context` key
+        // for `context: 123`, `context: true`, and `context: 1.5` alike. The
+        // `from_value::<Option<String>>` path fails typed deserialization on
+        // non-string scalars (no from_str-style coercion), so the lenient
+        // reader already maps them to unset — this pins that, so a future
+        // deserializer swap that reintroduces coercion fails loudly.
+        for (label, config) in [
+            ("number", "schema: spec-driven\ncontext: 123\n"),
+            ("bool", "schema: spec-driven\ncontext: true\n"),
+            ("float", "schema: spec-driven\ncontext: 1.5\n"),
+        ] {
+            let (_tmp, cfg, change) = project(&format!("instructions-scalar-context-{label}"));
+            write_spec_config(&cfg, config);
+
+            let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+            let value = serde_json::to_value(instructions).unwrap();
+
+            assert!(value.get("context").is_none(), "case: {label}");
+        }
+    }
+
+    #[test]
     fn artifact_rules_are_flattened_for_the_matching_artifact() {
         let (_tmp, cfg, change) = project("instructions-rules");
         write_spec_config(
