@@ -209,7 +209,10 @@ instruction, preflight?}`.
   (`git grep` self-matches the template), and `20/20` vs `21/21` with it
   untracked. The original comparison had the two binaries on different sides of
   that tracked/untracked split, which is what produced the apparent 0-vs-20 gap.
-  The single real divergence was the `JSON` stop-list entry, now added, taking
-  the scaffold to an exact `0/20` / `20/20` match. Pinned by
+  The single real divergence *on the scaffold's tokens* was the `JSON`
+  stop-list entry, now added, taking the scaffold to an exact `0/20` / `20/20`
+  match. Pinned by
   `anchors::tests::design_template_symbols_match_the_oracle_stoplist`; the
-  byte-pinned template is untouched.
+  byte-pinned template is untouched. (The stop-list had further gaps on tokens
+  the template does not use — 20 more entries recovered by the 2026-08-06
+  sweep; see `drift.md`'s "Symbol stop-list sweep (#133)".)
