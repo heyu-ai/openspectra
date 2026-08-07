@@ -29,6 +29,12 @@ changes.
 
 ### Fixed
 
+- **`spectra drift` now matches the oracle's Symbol stop-list** (#133). A
+  fresh-jail v2.3.1 sweep found 20 probe-confirmed omissions across Rust
+  standard-library types and traits, Rust keywords and idiom, formats and
+  languages, and Gherkin terms. Designs using these tokens now produce a smaller Symbol anchor
+  set, aligning the Structure denominator with the oracle.
+
 - **`spectra drift` no longer caps the Structure denominator at 50** (#119).
   `ANCHOR_CAP` was implemented as `truncate(50)`, so every design with more
   than 50 anchors reported exactly `N/50` and silently dropped everything past
@@ -45,7 +51,8 @@ changes.
   prose candidates, with no semantic predicate that explained the selection —
   is this same per-category sampling. Probed: 30 Symbol candidates keep all
   30 (including the `Data`/`Model` pair that motivated the mystery), 83 keep
-  exactly 12 at `floor(i * 83 / 12)`. Symbol extraction was never divergent.
+  exactly 12 at `floor(i * 83 / 12)`. The apparent narrowing was not a separate
+  semantic filter; #133 later closed an independent stop-list gap.
 
 - **`spectra drift` FilePath anchors are reported as written, and no longer
   name a string absent from the design** (#123). The recovered regex has no
