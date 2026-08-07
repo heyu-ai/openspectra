@@ -635,6 +635,60 @@ pub fn derive_status(
     })
 }
 
+/// The live keys of `<spec_dir>/config.yaml`: the `schema:` selector plus the
+/// two optional instruction extras, `context:` and per-artifact `rules:`
+/// (surfaced by artifact `instructions --json`, #127).
+///
+/// `context` and `rules` parse leniently *per field*: a malformed shape (a
+/// non-string `context`, a non-map `rules`, a non-list artifact entry) degrades
+/// to unset for that field alone and never fails the whole parse — so it can
+/// never mask the `schema:` key and change [`require_supported`]'s gate
+/// (probed: the oracle emits `context` unchanged while dropping a malformed
+/// `rules`). `schema` deliberately has no such guard: a structurally invalid
+/// `schema:` value fails the whole parse, which is the `None` path
+/// [`configured_schema_name`] documents.
+#[derive(serde::Deserialize)]
+pub(crate) struct SpecConfig {
+    pub(crate) schema: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
+    pub(crate) context: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_rules")]
+    pub(crate) rules: std::collections::HashMap<String, Vec<String>>,
+}
+
+fn deserialize_optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde::Deserialize::deserialize(deserializer)?;
+    Ok(serde_yaml::from_value(value).ok().flatten())
+}
+
+fn deserialize_rules<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<String, Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: serde_yaml::Value = serde::Deserialize::deserialize(deserializer)?;
+    let serde_yaml::Value::Mapping(entries) = value else {
+        return Ok(std::collections::HashMap::new());
+    };
+    Ok(entries
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let key = serde_yaml::from_value(key).ok()?;
+            let rules = serde_yaml::from_value(value).ok()?;
+            Some((key, rules))
+        })
+        .collect())
+}
+
+pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
+    let text = std::fs::read_to_string(cfg.root.join(&cfg.spec_dir).join("config.yaml")).ok()?;
+    serde_yaml::from_str(&text).ok()
+}
+
 /// The `schema:` selector in `<spec_dir>/config.yaml` — the *project-level*
 /// default, consulted only when the change records no schema of its own.
 ///
@@ -651,13 +705,9 @@ pub fn derive_status(
 /// harmless here — `"123"` is not the built-in name, so `require_supported`
 /// still fails loud — but the value is a coerced scalar, not "unset".
 pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    struct SpecConfig {
-        schema: Option<String>,
-    }
-    let text = std::fs::read_to_string(cfg.root.join(&cfg.spec_dir).join("config.yaml")).ok()?;
-    let parsed: SpecConfig = serde_yaml::from_str(&text).ok()?;
-    parsed.schema.filter(|s| !s.trim().is_empty())
+    read_spec_config(cfg)?
+        .schema
+        .filter(|s| !s.trim().is_empty())
 }
 
 /// Resolve which schema a command should run under and reject anything but the
@@ -830,6 +880,20 @@ mod tests {
 
         write_spec_config(&cfg, "schema: [not, a, string\n");
         assert_eq!(configured_schema_name(&cfg), None);
+    }
+
+    #[test]
+    fn configured_schema_name_survives_malformed_instruction_fields() {
+        let (_tmp, cfg) = project("schema-configured-malformed-instructions");
+        write_spec_config(
+            &cfg,
+            "schema: mycustom\ncontext: [not, a, string]\nrules:\n  proposal: not-a-list\n",
+        );
+
+        assert_eq!(configured_schema_name(&cfg), Some("mycustom".to_string()));
+        let parsed = read_spec_config(&cfg).unwrap();
+        assert_eq!(parsed.context, None);
+        assert!(parsed.rules.is_empty());
     }
 
     #[test]

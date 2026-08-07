@@ -236,6 +236,77 @@ fn artifact_json_for_all_four_modes_has_canonical_order_constants_and_dag_fields
 }
 
 #[test]
+fn project_context_and_artifact_rules_only_extend_artifact_json() {
+    let root = TempDir::new("project-instructions");
+    init_project_with_change(&root, "demo-feature");
+    let context = "PROJECT-CONTEXT-127 first line\nPROJECT-CONTEXT-127 second line";
+    let rule = "PROJECT-RULE-127 keep proposals concise";
+    std::fs::write(
+        root.join("openspec").join("config.yaml"),
+        format!(
+            "schema: spec-driven\ncontext: |\n  PROJECT-CONTEXT-127 first line\n  PROJECT-CONTEXT-127 second line\nrules:\n  proposal:\n    - {rule}\n"
+        ),
+    )
+    .unwrap();
+
+    let (proposal_text, proposal) = json_output(
+        &root,
+        &[
+            "instructions",
+            "proposal",
+            "--change",
+            "demo-feature",
+            "--json",
+        ],
+    );
+    assert_patterns_in_order(
+        &proposal_text,
+        &[
+            "  \"instruction\":",
+            "  \"context\":",
+            "  \"rules\":",
+            "  \"locale\":",
+        ],
+    );
+    assert_eq!(proposal["context"], context);
+    assert_eq!(proposal["rules"], serde_json::json!([rule]));
+
+    let (tasks_text, tasks) = json_output(
+        &root,
+        &[
+            "instructions",
+            "tasks",
+            "--change",
+            "demo-feature",
+            "--json",
+        ],
+    );
+    assert_eq!(tasks["context"], context);
+    assert!(!tasks_text.contains("\"rules\":"));
+
+    let (apply_text, _) = json_output(
+        &root,
+        &[
+            "instructions",
+            "apply",
+            "--change",
+            "demo-feature",
+            "--json",
+        ],
+    );
+    assert!(!apply_text.contains("\"context\":"));
+    assert!(!apply_text.contains("\"rules\":"));
+
+    let human = run_ok(
+        &root,
+        &["instructions", "proposal", "--change", "demo-feature"],
+    );
+    let human_text = String::from_utf8(human.stdout).unwrap();
+    assert!(!human_text.contains(context));
+    assert!(!human_text.contains(rule));
+}
+
+#[test]
 fn no_artifact_selects_first_incomplete_then_apply_when_all_are_done() {
     let root = TempDir::new("selection");
     init_project_with_change(&root, "demo-feature");
