@@ -1,13 +1,12 @@
 # Reverse-engineering `spectra schemas`
 
 How OpenSpectra's `schemas` command mirrors the closed-source reference, and
-how every command resolves *which* schema to run. Unlike `init.md`, this is
-oracle-verified: every detail below was probed against `spectra 2.3.1 (Apple
-Silicon)`. The **listing output** sections are additionally pinned to golden
-fixtures (`golden/schemas-2.3.1.{json,txt}`); the selector, check-order,
-`new artifact`, project-listing and `context`/`rules` sections below are
-probe-backed only — `golden/schemas-2.3.1.json` still holds just the built-in
-entry.
+how every command resolves *which* schema to run. The text and JSON listing for
+the built-in entry are byte-pinned to `golden/schemas-2.3.1.{json,txt}`. The
+selector, check-order, `new artifact`, project-listing, `context`/`rules`, and
+colored-output sections are backed by targeted `spectra 2.3.1 (Apple Silicon)`
+probes rather than those fixtures. Colored rendering is pinned in a unit test,
+but no PTY integration test exercises terminal detection end to end.
 
 ## CLI shape
 
