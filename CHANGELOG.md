@@ -29,6 +29,16 @@ changes.
 
 ### Fixed
 
+- **No active changes is now a successful empty state for auto-resolving read
+  commands** (#134). On an initialized project with no active changes,
+  `status`, `instructions`, `drift`, and `analyze` now exit 0 and print the
+  oracle's plain-text sentinel to stdout, including with `--json`, instead of
+  exiting 1 with an `Error:` prefix on stderr. Required-change operations such
+  as `task done` retain the error path. Plain `validate` now also matches the
+  probed empty output (`[]` under `--json`). This restores reliable exit-code
+  behavior for scripts and CI steps that run read/report commands before a
+  change exists.
+
 - **`spectra drift` now matches the oracle's Symbol stop-list** (#133). A
   fresh-jail v2.3.1 sweep found 20 probe-confirmed omissions across Rust
   standard-library types and traits, Rust keywords and idiom, formats and

@@ -379,13 +379,23 @@ fn cmd_init(root: &Path, adopt: bool, as_json: bool, tools: &[String]) -> Result
     Ok(0)
 }
 
+fn resolve_read_change(cfg: &Config, explicit: Option<&str>) -> Result<Option<String>> {
+    let name = change::resolve_optional(cfg, explicit)?;
+    if name.is_none() {
+        println!("{}", change::NO_ACTIVE_CHANGES_MESSAGE);
+    }
+    Ok(name)
+}
+
 fn cmd_drift(
     cfg: &Config,
     change_name: Option<&str>,
     as_json: bool,
     use_color: bool,
 ) -> Result<i32> {
-    let name = change::resolve(cfg, change_name)?;
+    let Some(name) = resolve_read_change(cfg, change_name)? else {
+        return Ok(0);
+    };
     let change = change::load(cfg, &name)?;
     let report = drift::analyze(cfg, &change)?;
 
@@ -398,7 +408,9 @@ fn cmd_drift(
 }
 
 fn cmd_analyze(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
-    let name = change::resolve(cfg, change_name)?;
+    let Some(name) = resolve_read_change(cfg, change_name)? else {
+        return Ok(0);
+    };
     let report = analyze::analyze(cfg, &name)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -415,6 +427,12 @@ fn cmd_validate(
     strict: bool,
     as_json: bool,
 ) -> Result<i32> {
+    if !all_changes && change_name.is_none() && change::list_active(cfg).is_empty() {
+        if as_json {
+            println!("[]");
+        }
+        return Ok(0);
+    }
     let report = if all_changes {
         spectra_core::validate::validate_all_active(cfg, strict)?
     } else {
@@ -795,7 +813,10 @@ fn cmd_status(
     schema_name: Option<&str>,
     as_json: bool,
 ) -> Result<i32> {
-    let report = schema::status(cfg, change_name, schema_name)?;
+    let Some(change_name) = resolve_read_change(cfg, change_name)? else {
+        return Ok(0);
+    };
+    let report = schema::status(cfg, Some(&change_name), schema_name)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(0);
@@ -893,7 +914,10 @@ fn cmd_instructions(
     schema_name: Option<&str>,
     as_json: bool,
 ) -> Result<i32> {
-    let report = instructions::get(cfg, change_name, schema_name, artifact_id)?;
+    let Some(change_name) = resolve_read_change(cfg, change_name)? else {
+        return Ok(0);
+    };
+    let report = instructions::get(cfg, Some(&change_name), schema_name, artifact_id)?;
     let output = if as_json {
         format!("{}\n", serde_json::to_string_pretty(&report)?)
     } else {
