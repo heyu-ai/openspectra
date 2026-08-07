@@ -120,13 +120,14 @@ wasn't something the golden-oracle scratch repos needed, because the
 original binary's own `spectra init` writes `.spectra/` into `.gitignore` (a
 `.gitignore/.vector-search.db*.spectra/` string fragment confirms this), so
 `.spectra/` is never dirty from git's perspective when the real CLI runs.
-OpenSpectra doesn't implement `init` yet, so nothing gitignores `.spectra/`
-for it — without this exclusion, `.spectra/touched/<name>.json` would
-recursively record *itself* as a touched file on the very next `task done`
-call after its own creation. Caught via manual end-to-end testing (not by
-any oracle run), fixed by excluding `.spectra/` unconditionally.
+OpenSpectra now implements `init` and likewise adds `.spectra/` to `.gitignore`.
+The touched-file filter still excludes `.spectra/` unconditionally, independent
+of the repository's current ignore rules; without that filter, removing or
+overriding the ignore entry would let `.spectra/touched/<name>.json` record tool
+state as an implementation file. The self-recording case was caught via manual
+end-to-end testing, not an oracle run.
 
-## Known discrepancy: `new change`'s scaffold (affects #7b, not re-litigated here)
+## Resolved discrepancy: `new change`'s scaffold
 
 Running the real binary's `new change <name>` revealed it does **not**
 scaffold `proposal.md`/`design.md`/`tasks.md` — only `.openspec.yaml`. Those
@@ -134,17 +135,10 @@ three files are created individually and later, via a separate
 `spectra new artifact <type> --change <name>` command, with a much richer
 templated `tasks.md` (task-group headers, HTML-comment placeholders) than a
 static string constant could produce. `.openspec.yaml` also carries a
-`created_by` field (git user identity) that OpenSpectra's `new change`
-doesn't set.
+`created_by` field derived from git identity.
 
-OpenSpectra's already-shipped `new change` (see `change.rs::create`)
-deliberately does not match this — it scaffolds all four files immediately,
-matching the original GitHub issue's literal spec rather than the oracle.
-`task done` is implemented against **OpenSpectra's own** `tasks.md` contract
-(a flat, ungrouped checkbox list), which is self-consistent and already
-covered by tests; it also handles the oracle's real (grouped/numbered)
-`tasks.md` shape correctly, since `task done`'s checkbox indexing ignores
-group headers entirely. Revisiting `new change`'s scaffold to match
-`new artifact`'s split is a separate, larger design decision left for a
-future issue — not undertaken here to avoid re-opening an already-merged,
-already-mob-reviewed PR.
+OpenSpectra now matches that split: `change.rs::create` writes only
+`.openspec.yaml` in the change directory (plus its OpenSpectra-only baseline
+sidecar when a git commit is available), and `new artifact` creates each
+artifact later. `task done` handles both flat and grouped/numbered `tasks.md`
+files because its checkbox indexing ignores group headers.

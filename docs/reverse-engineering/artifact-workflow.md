@@ -183,7 +183,8 @@ loudly on non-force creates — not a real scenario for a git-hosted
 Two modes. **Artifact mode** (explicit artifact, or — with no argument —
 the first not-done artifact in schema order): pretty camelCase JSON
 `{changeName, artifactId, schemaName, changeDir, outputPath, description,
-instruction, locale, template, dependencies[{id,done,path,description}],
+instruction, context?, rules?, locale, template,
+dependencies[{id,done,path,description}],
 unlocks}`. `unlocks` lists only direct dependents that are currently blocked
 on this artifact (both sides not-done). **Apply mode** (no argument with all
 four artifacts done, or the literal `apply`): `{changeName, changeDir,
@@ -201,6 +202,26 @@ instruction, preflight?}`.
 - `contextFiles` lists only done artifacts (absolute paths / glob). The
   oracle's key order is hash-map nondeterministic; OpenSpectra fixes schema
   order (documented determinism choice).
+- Artifact JSON reads optional values from `<spec_dir>/config.yaml`. `context`
+  is a plain string with leading and trailing whitespace trimmed; internal
+  newlines are presumed preserved by that trim behavior. `rules` is only the
+  requested artifact's list, flattened from the `rules.<artifact>` map entry
+  to a plain string array.
+- An unset `context`, or a `rules` map with no entry for the requested
+  artifact, omits the corresponding key entirely rather than emitting `null`
+  or `[]`. With both fields present, the probed top-level order is
+  `changeName, artifactId, schemaName, changeDir, outputPath, description,
+  instruction, context, rules, locale, template, dependencies, unlocks`.
+- Apply JSON and all human-readable output omit both project fields. Read or
+  YAML parse failures are lenient and behave as though the keys were absent.
+- Edge shapes (all probed against v2.3.1, 2026-08-06): a blank `context`
+  (`""` or whitespace-only) omits the key rather than emitting an empty
+  string; a non-string scalar `context` (`123`, `true`, `1.5`) also omits
+  the key — no scalar-to-string coercion; `rules` present with `context`
+  absent emits only `rules` (the two fields are independent); a malformed
+  `rules` value (a non-map, or a non-list artifact entry) drops only the
+  `rules` key while `context` is still emitted — a malformed field never
+  poisons its sibling or the `schema:` selector.
 
 ### Preflight (recovered by disassembly + behaviour matrix)
 
@@ -238,7 +259,10 @@ instruction, preflight?}`.
   (`git grep` self-matches the template), and `20/20` vs `21/21` with it
   untracked. The original comparison had the two binaries on different sides of
   that tracked/untracked split, which is what produced the apparent 0-vs-20 gap.
-  The single real divergence was the `JSON` stop-list entry, now added, taking
-  the scaffold to an exact `0/20` / `20/20` match. Pinned by
+  The single real divergence *on the scaffold's tokens* was the `JSON`
+  stop-list entry, now added, taking the scaffold to an exact `0/20` / `20/20`
+  match. Pinned by
   `anchors::tests::design_template_symbols_match_the_oracle_stoplist`; the
-  byte-pinned template is untouched.
+  byte-pinned template is untouched. (The stop-list had further gaps on tokens
+  the template does not use — 20 more entries recovered by the 2026-08-06
+  sweep; see `drift.md`'s "Symbol stop-list sweep (#133)".)

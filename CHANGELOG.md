@@ -12,6 +12,14 @@ changes.
 
 ### Added
 
+- **Artifact `instructions --json` now surfaces `context:` and per-artifact
+  `rules:` from `<spec_dir>/config.yaml`** (#127), between `instruction` and
+  `locale`, matching the oracle's probed contract: context trimmed (a blank
+  value omits the key), rules flattened to the requested artifact's list,
+  both keys entirely absent when unset or unmatched, and apply/human output
+  unchanged. Projects that filled in the tutorial comments `spectra init`
+  itself writes now actually reach the agent, closing the last silent-loss
+  gap in the #117 family.
 - `scripts/calibrate-anchor-budget.py` — a verification contract for the
   over-cap sampling model, not a printer. Asserts the oracle's exact anchor
   *identities* (not just counts) over twelve cases spanning all four categories
@@ -31,6 +39,12 @@ changes.
   behavior for scripts and CI steps that run read/report commands before a
   change exists.
 
+- **`spectra drift` now matches the oracle's Symbol stop-list** (#133). A
+  fresh-jail v2.3.1 sweep found 20 probe-confirmed omissions across Rust
+  standard-library types and traits, Rust keywords and idiom, formats and
+  languages, and Gherkin terms. Designs using these tokens now produce a smaller Symbol anchor
+  set, aligning the Structure denominator with the oracle.
+
 - **`spectra drift` no longer caps the Structure denominator at 50** (#119).
   `ANCHOR_CAP` was implemented as `truncate(50)`, so every design with more
   than 50 anchors reported exactly `N/50` and silently dropped everything past
@@ -47,7 +61,8 @@ changes.
   prose candidates, with no semantic predicate that explained the selection —
   is this same per-category sampling. Probed: 30 Symbol candidates keep all
   30 (including the `Data`/`Model` pair that motivated the mystery), 83 keep
-  exactly 12 at `floor(i * 83 / 12)`. Symbol extraction was never divergent.
+  exactly 12 at `floor(i * 83 / 12)`. The apparent narrowing was not a separate
+  semantic filter; #133 later closed an independent stop-list gap.
 
 - **`spectra drift` FilePath anchors are reported as written, and no longer
   name a string absent from the design** (#123). The recovered regex has no

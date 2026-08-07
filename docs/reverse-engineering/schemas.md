@@ -1,13 +1,12 @@
 # Reverse-engineering `spectra schemas`
 
 How OpenSpectra's `schemas` command mirrors the closed-source reference, and
-how every command resolves *which* schema to run. Unlike `init.md`, this is
-oracle-verified: every detail below was probed against `spectra 2.3.1 (Apple
-Silicon)`. The **listing output** sections are additionally pinned to golden
-fixtures (`golden/schemas-2.3.1.{json,txt}`); the selector, check-order,
-`new artifact`, project-listing and `context`/`rules` sections below are
-probe-backed only — `golden/schemas-2.3.1.json` still holds just the built-in
-entry.
+how every command resolves *which* schema to run. The text and JSON listing for
+the built-in entry are byte-pinned to `golden/schemas-2.3.1.{json,txt}`. The
+selector, check-order, `new artifact`, project-listing, `context`/`rules`, and
+colored-output sections are backed by targeted `spectra 2.3.1 (Apple Silicon)`
+probes rather than those fixtures. Colored rendering is pinned in a unit test,
+but no PTY integration test exercises terminal detection end to end.
 
 ## CLI shape
 
@@ -260,8 +259,10 @@ silently ran the built-in one, exit 0, and `instructions` emitted the generic
 instructions with the project's own conventions missing — no warning anywhere.
 
 `schema:` is not the only live key in that file. The oracle also reads
-`context:` and `rules:` and surfaces them in `instructions --json` as two extra
-top-level fields, which OpenSpectra does not yet emit (#127):
+`context:` and `rules:` and surfaces them in artifact `instructions --json` as
+two extra top-level fields. OpenSpectra implements that contract in #127; the
+probe record — key order, absence semantics, and the malformed-shape edges —
+is in `artifact-workflow.md`:
 
 ```yaml
 context: |
@@ -280,8 +281,8 @@ rules:
 artifact's** list (asking for `proposal` returns the `proposal` rules, not the
 whole map). Both keys are absent from the JSON when unset.
 
-That divergence is sharper than a missing JSON field, because **`spectra init`
-writes the promise itself**. `init.rs`'s `SPEC_CONFIG_TEMPLATE` is byte-identical
+This behavior matters because **`spectra init` writes the promise itself**.
+`init.rs`'s `SPEC_CONFIG_TEMPLATE` is byte-identical
 to the oracle's `config.yaml` (verified by diffing both binaries' output in an
 empty jail), and it contains:
 
@@ -290,11 +291,9 @@ empty jail), and it contains:
 # This is shown to AI when creating artifacts.
 ```
 
-True of the oracle, false of OpenSpectra. The template must **not** be edited —
-byte fidelity with the oracle's `init` output is a pinned contract (#94) — so the
-only way to make that comment honest is to implement #127. Until then, a project
-that follows the instructions OpenSpectra itself wrote gets no effect and no
-warning, which is the same failure shape as the `schema:` fallback #117 fixed.
+The template must **not** be edited — byte fidelity with the oracle's `init`
+output is a pinned contract (#94) — so #127 made the existing tutorial comment
+true without changing the generated file.
 
 ## Consumer
 

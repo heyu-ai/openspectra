@@ -12,9 +12,9 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **Phase 進度以 GitHub issue 追蹤（每個 Phase 一個 epic issue，與本文件雙向連結）**：Phase 1 ✅ [#30](https://github.com/howie/openspectra/issues/30)、Phase 2 ✅ [#26](https://github.com/howie/openspectra/issues/26)、Phase 3 ✅ [#27](https://github.com/howie/openspectra/issues/27)（v0.2.1 發佈）皆已完成；Phase 4 [#28](https://github.com/howie/openspectra/issues/28)、Phase 5 [#29](https://github.com/howie/openspectra/issues/29) open。
 
-**已完成（drift 核心經 oracle 驗證，已合併 PR：#1、#2、#13–#21）**：`drift`（四維度評分、JSON schema 逐欄位吻合、exit code gate）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。
+**已完成（drift 核心的已知規則經 oracle 校準，已合併 PR：#1、#2、#13–#21）**：`drift`（JSON schema、Time／Structure 評分、severity／建議與 exit code；Tasks positive-case predicate 仍未校準）、`list`（--specs/--parked）、`show`（change+spec）、`park`/`unpark`、`new change`、`task done`、`archive`（ADDED delta）。
 
-**Phase 1 已完成（PR #23）**：`spectra init`、`list --changes` 接線、root 環境 3 個 chmod 權限測試改用 runtime probe 跳過、CI fmt/clippy 硬門檻 + ubuntu/macOS build+test matrix。（`spectra init` 為 oracle-unverified，見 `docs/reverse-engineering/init.md`。）
+**Phase 1 已完成（PR #23）**：`spectra init`、`list --changes` 接線、root 環境 3 個 chmod 權限測試改用 runtime probe 跳過、CI fmt/clippy 硬門檻 + ubuntu/macOS build+test matrix。（`spectra init` 的預設檔案樹與人類輸出後續已用 v2.3.1 probe 驗證，完整樹 diff 為空；`--adopt`、`--json` 與部分邊界案例仍未經 oracle 驗證，見 `docs/reverse-engineering/init.md`。）
 
 **Open issues**：
 
@@ -22,9 +22,9 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
   per-category 抽樣。實測 30 個 Symbol 候選全留、83 個留 `floor(i*83/12)` 的 12 個；
   「12 of ~83」就是 `ANCHOR_SAMPLE_PER_CATEGORY` of 83，不需反組譯
 - #9 Tasks 碰撞偵測（無 positive oracle 樣本，偵測整個 gated off）
-- #10 Time 維度日數邊界（5↔7、19↔25 內插，60 天是猜的）
+- ~~#10 Time 維度日數邊界~~ **已解**：`scripts/calibrate-time.py` 已釘死 7、22、61 天三個轉換點，`abandoned` 分數為 4，未來日期歸零
 - #11 CliFlag 永遠 broken：忠實重現 vs 可設定目標 CLI（設計決策）
-- #12 `Resolver::broken` 逐 anchor fork `git grep`（效能，最多 50 次子程序）
+- ~~#12 逐 anchor fork `git grep`~~ **已解**：Function／Symbol needles 已由 `git::grep_existing` 以單次 `git grep` 批次解析，44-anchor 回歸測試固定結果
 
 **Phase 1 已消除的缺口（PR #23）**：~~`spectra init` 不存在~~、~~`list --changes` 收下但無作用~~、~~root 下 3 個 chmod 權限測試誤判~~、~~無跨平台 CI matrix~~。
 
@@ -33,7 +33,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 **尚存缺口（對應後續 Phase）**：
 
 - 無 `unarchive`（快照/還原；已知限制，見 [`docs/reverse-engineering/archive.md`](reverse-engineering/archive.md)）
-- oracle 校準未收尾（Phase 4，[#28](https://github.com/howie/openspectra/issues/28)，子項 #8/#9）
+- oracle 校準未收尾（Phase 4，[#28](https://github.com/howie/openspectra/issues/28)；尚待 #9 Tasks positive case、drift output fixture 接線與完整輸入快照）
 - CliFlag resolution 決策待定（Phase 5，[#11](https://github.com/howie/openspectra/issues/11)）
 
 ### 計畫假設
@@ -97,18 +97,18 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **驗證**：打 `v0.1.0-rc` tag 走一次完整 release；在乾淨的 x86_64 與 aarch64 容器裡下載 binary 跑 e2e smoke（`init → new change → drift`）。
 
-## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）（追蹤 [#28](https://github.com/howie/openspectra/issues/28)，子項 #8/#9/#10）
+## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）（追蹤 [#28](https://github.com/howie/openspectra/issues/28)；#8／#10 已解，#9 尚待 positive case）
 
 目標：把「猜的常數」變成「量測的常數」。工作模式：本專案產生校準腳本 → 操作者在 macOS 跑 → golden 結果帶回來實作。每項改動必須同步更新 `docs/reverse-engineering/drift.md`（CLAUDE.md 規範）。
 
 依 ROI 排序：
 
-1. **#10 Time 邊界**（成本最低、腳本模式已存在）
-   - 仿 `scripts/calibrate-structure.py` 寫 `scripts/calibrate-time.py`：控制 `.openspec.yaml` `created` 日期掃描 oracle，釘死 fresh/aging、aging/stale、stale/abandoned 三個邊界
-   - 完成後更新 `calibration.rs::time_bucket` + 單元測試斷言精確邊界
-2. **#9 Tasks 碰撞 positive 樣本**
+1. **#9 Tasks 碰撞 positive 樣本**
    - 依 issue 描述合成強迫碰撞情境（pending task 引用檔案 → baseline 後外部 commit 改該檔）取得 positive golden；釘出 firing predicate 後實作 `tasks::analyze`、翻 `TASKS_DETECTION_CALIBRATED = true`
    - 若 oracle 掃遍情境仍全零：結論記入 drift.md（「偵測極可能是 dead feature」），gate 保持關閉，issue 關閉
+2. ~~**#10 Time 邊界**~~ **已解**
+   - `scripts/calibrate-time.py --mode boundaries` 已掃出 7、22、61 天三個精確轉換點，並確認 `abandoned` 分數為 4、未來日期歸零
+   - `calibration.rs::time_bucket` 與單元測試已固定上述邊界
 3. ~~**#8 Symbol 縮窄過濾**~~ **已解，無需反組譯**（#119）
    - 「黑箱探測已窮盡」的結論下錯了：當時記下的決定性觀察「in isolation all tokens are
      kept, so the rule is global to the document」正是 document-global cap 的特徵，卻被
@@ -120,13 +120,13 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
      一致（#51）；`scripts/calibrate-anchor-budget.py` 把該模型固定成驗證契約（比對 anchor
      身分而非僅數量，含 snake/camel 交錯的抽取順序案例）
 4. **golden 回歸自動化**
-   - 新增 `tests/golden_regression.rs`：直接載入 `docs/reverse-engineering/golden/*.json`，餵進 scoring 函式比對（目前 golden 值是手抄進 `calibration.rs` 測試，fixture 與測試沒有機器連結）
+   - 先直接載入 `docs/reverse-engineering/golden/drift-*.json`，把其中的輸出值餵進 scoring 函式，取代 `calibration.rs` 手抄的四組分數；若要重播 extraction／resolution／完整 report，仍須依 #132 補抓輸入 repo 與 `design.md` 快照
 
-**無 oracle 降級**：1–3 改為「保守維持現狀 + 文件明確標註已知分歧」，issues 標 `blocked: needs-oracle` 留存。
+**無 oracle 降級**：尚未完成的 #9 維持偵測關閉並在文件標註無 positive sample；需要新 oracle 輸入快照的 golden 回歸工作則保留為 blocked。
 
-## Phase 5 — 品質、效能與改進（忠實期之後）（追蹤 [#29](https://github.com/howie/openspectra/issues/29)，子項 #11/#12）
+## Phase 5 — 品質、效能與改進（忠實期之後）（追蹤 [#29](https://github.com/howie/openspectra/issues/29)；#12 已解，#11 待決策）
 
-1. **#12 批次化 `git grep`**：`Resolver::broken` 從 O(anchors) 子程序降到 O(1)（或改用已載入的 `tracked` 內容做 in-memory 比對）；回歸測試：40+ anchor 的合成 design.md，批次前後 `broken_anchors` byte-identical。**排在 #8 之後或確認獨立**（issue 中已記載兩者共處 resolver，需避免混淆歸因）
+1. ~~**#12 批次化 `git grep`**~~ **已解**：`Resolver::resolve` 收集 Function／Symbol needles 後，以 `git::grep_existing` 的單次 `git grep` 解析；`resolver_batches_large_function_and_symbol_sets` 以 24 個 Function 加 20 個 Symbol 固定 resolved／broken 結果
 2. **#11 CliFlag 決策**（待人類裁決，尚未選定方向）：選項 (a) 預設忠實（永遠 broken），`.spectra.yaml` 新增 opt-in 設定；(b) 只從 fenced code block 抽 flag；(c) 指定目標 CLI 的 `--help` 做真實比對。決策記入 drift.md 的 decision note 後才開始實作與測試
 3. **`drift` 建議文字 UX**：`/spectra-apply`/`/spectra-ingest` 是 Claude Code slash-command skill，非 `spectra` 二進位子指令（issue #7 已用 oracle 證據確認並關閉）；現有建議文字若措辭不夠清楚可改寫，`unarchive`（如有需求）另計
 4. **改進項統一原則**：任何偏離 oracle 的行為改進一律 opt-in + CHANGELOG + drift.md「Deliberate divergences」章節記錄
@@ -139,7 +139,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 |---|---|---|
 | 單元測試 | 131 個（Linux）/ 129 個（macOS），模組內 `#[cfg(test)]` | 維持慣例；root 環境 3 個誤判修掉（Phase 1） |
 | 整合測試 | 1 個（synthetic repo drift） | 加 init 全流程、OpenSpec fixture、golden 回歸（Phase 1/2/4） |
-| Golden 校準 | 4 個 JSON，值手抄進測試 | fixture 機器可讀化 + calibrate-time/tasks 腳本（Phase 4） |
+| Golden 校準 | 4 個 output-only JSON，分數值手抄進測試；Time 邊界已有校準腳本 | 先接上 output fixture 的 scoring 回歸，再補輸入快照以重播完整分析；Tasks positive case 仍待校準（Phase 4） |
 | CI | ubuntu build+test；fmt/clippy 僅提示 | fmt/clippy 硬門檻、+macOS matrix（Phase 1）；release workflow + 容器 smoke（Phase 3） |
 | E2E | 手動 | 每 phase 收尾跑 `./target/release/spectra` 真實專案全流程 |
 
@@ -161,7 +161,7 @@ Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Pha
 | Phase 1 — 基礎修補與可用性 | [#30](https://github.com/howie/openspectra/issues/30) | ✅ 完成（PR #23） | — |
 | Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | ✅ 完成（PR #32） | 格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta |
 | Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | ✅ 完成（v0.2.1） | release workflow、crates.io publish、Docker/GHCR image |
-| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | #10 Time 邊界、#9 Tasks 碰撞、~~#8 Symbol 過濾~~（已解）、golden 回歸自動化 |
-| Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | #12 批次 git grep、#11 CliFlag 決策 |
+| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | ~~#10 Time 邊界~~（已解）、#9 Tasks 碰撞、~~#8 Symbol 過濾~~（已解）、golden 輸入快照與回歸接線 |
+| Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | ~~#12 批次 git grep~~（已解）、#11 CliFlag 決策 |
 
-（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8–#12 沿用既有 issues，並在各 issue 留言連回其 Phase epic。）
+（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8／#10／#12 已解，#9／#11 仍為後續追蹤項。）

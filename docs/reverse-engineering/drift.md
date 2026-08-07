@@ -235,8 +235,9 @@ while drift exists is worse than a noisy one. The CliFlag and Function halves of
   proposing to create it. The oracle calls both broken. If the baseline SHA is
   absent, malformed, or unavailable locally, OpenSpectra falls back to the
   broken classification rather than hiding a possible deletion.
-* **Symbol:** broken when not found, same as the oracle. Its separate extraction
-  divergence remains tracked by #8/#51.
+* **Symbol:** broken when not found, same as the oracle. The regex and over-cap
+  sampling match the oracle, and the stop-list is aligned to the recovered core
+  plus the probe sweeps recorded below (#51/#133).
 
 The JSON shape is unchanged: `broken_anchors` and `unresolved_anchors` both
 remain, and human output still renders them under separate headings. The score
@@ -392,7 +393,7 @@ this holds for changes created through `spectra` and not for hand-made ones.
 | Time score curve + all day boundaries | ✅ exact — pinned via `scripts/calibrate-time.py` (transitions at 7/22/61; `abandoned` scores 4; future dates clamp to 0d) |
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
-| Symbol extraction | ✅ exact — the apparent "narrowing" was the over-cap sampling, not a semantic filter (#8/#51, see below) |
+| Symbol extraction | ✅ matched on the recovered and probed axes — `.rodata` regex, over-cap sampling (#8/#51), and a 63-entry stop-list (42 from `.rodata`, `JSON` from #51, and 20 from the 2026-08-06 #133 sweep; see below) |
 | Tasks positive-case predicates | ⚠️ uncalibrated (no positive sample); detection gated off |
 
 ### Solved: the "Symbol narrowing filter" was the over-cap sampling (#8/#51)
@@ -421,13 +422,46 @@ on v2.3.1 with a design of `N` bare `WidgetNN` tokens and nothing else:
 so which token survived depended only on its index in the extracted set.
 OpenSpectra reproduces both rows exactly.
 
-Consequence: **Symbol extraction was never divergent**, and the previously
-recorded over-count (OpenSpectra "inflating `total` and reading Structure
-decay/score *lower* than the oracle" on prose-dense designs) was a symptom of
-the missing sampling, fixed by #119. Symbol, CliFlag and Function are now exact on
-extraction; FilePath extraction subsequently diverges on purpose (#123, below),
-and on resolution both the missing-FilePath forward-reference case (#83) and
-#123's union lookup diverge.
+Consequence: the apparent **Symbol narrowing** was never a separate semantic
+filter. The previously recorded over-count (OpenSpectra "inflating `total` and
+reading Structure decay/score *lower* than the oracle" on prose-dense designs)
+was a symptom of the missing sampling, fixed by #119. That finding did not prove
+the recovered stop-list complete; #133 later found the separate stop-list gap
+documented next. FilePath extraction subsequently diverges on purpose (#123,
+below), and on resolution both the missing-FilePath forward-reference case
+(#83) and #123's union lookup diverge.
+
+### Symbol stop-list sweep (#133)
+
+On 2026-08-06, a v2.3.1 oracle sweep tested candidate Symbol tokens in eleven
+batches. Every batch used a fresh jail (`git init`, `spectra init`, and
+`spectra new change c1`) and wrote one candidate per line to the untracked
+`openspec/changes/c1/design.md`. Leaving the design untracked prevents
+`git grep` from resolving a token against the probe input itself, so every
+extracted Symbol appears in `drift --json`'s `broken_anchors`; a missing
+candidate is therefore stop-listed by the oracle.
+
+Batches contained at most 45 candidates, below `ANCHOR_CAP = 50`, so over-cap
+sampling could not hide a candidate. Each batch also contained an extracted
+sentinel (`Kumquat`, `Zebra`, or `Widget`). The sweep stopped after the final two
+batches, drawn from diverse token families, produced no new stop-list entries.
+It found these 20 entries missing from OpenSpectra's recovered list:
+
+| Family | Probe-confirmed oracle stop-list entries |
+|---|---|
+| Rust standard-library types and traits | `Copy`, `Send`, `Sync`, `Drop`, `From`, `Into`, `Iterator`, `Cell`, `Path` |
+| Rust keywords and idiom | `Self`, `Some`, `None`, `Enum`, `Type`, `Function`, `Item` |
+| Formats and languages | `Markdown`, `Rust` |
+| Gherkin | `When`, `Then` (`Given` was already in the `.rodata` core) |
+
+The issue #133 candidate list was only 65% correct. Its seven other claimed
+tokens, `Add`, `Example`, `Node`, `React`, `This`, `TypeScript`, and `We`, all
+appear in the oracle's Symbol `broken_anchors` and therefore must remain
+extractable. The same is true of the tested adjacent Rust, language, framework,
+scaffold, domain, and common-prose families. In particular, every tested common
+English prose word (`This`, `We`, `That`, `And`, and the rest of that sweep) was
+extracted. The stop-list is empirical: future changes must be probe-backed
+rather than inferred by completing one of these families.
 
 ### Known limitations (resolution side, deferred)
 Two resolution behaviours are carried as-is pending a positive oracle decision
