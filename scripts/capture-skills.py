@@ -6,6 +6,12 @@ compares the oracle output byte-for-byte with the core assets and validates
 their provenance manifest. ``--write`` regenerates both generated artifacts
 and then verifies them again.
 
+Beyond byte-comparison it also enforces the behavioral contract the RE
+write-up pins: ``--skill`` precedence outside and inside an initialized
+project (including over an unresolvable ``--schema``), ``--json`` inertness,
+the exact unknown-skill stderr/exit contract, the known-absent candidate
+sweep (enumeration drift), and the Rust registry cross-check.
+
 The oracle is macOS-only. ``--spectra-bin`` overrides ``SPECTRA_BIN``, which
 itself overrides the standard application path.
 """
@@ -14,6 +20,7 @@ import argparse
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -184,7 +191,7 @@ def capture_bodies(binary: Path, repo: Path) -> dict[str, bytes]:
             continue
         if not result.stdout:
             failures.append(
-                f"skill {name} 擷取為空（0 bytes）——binary 損壞或列舉錯誤"
+                f"skill {name} 擷取為空（0 bytes）——binary 損壞或列舉錯誤。"
             )
             continue
         bodies[name] = result.stdout
@@ -217,77 +224,66 @@ def verify_unknown_skill(binary: Path, repo: Path) -> None:
         )
 
 
-def verify_behavior_contract(
-    binary: Path, repo: Path, bodies: dict[str, bytes]
-) -> None:
+def verify_behavior_contract(binary: Path, bodies: dict[str, bytes]) -> None:
+    probe_dir = Path(tempfile.mkdtemp(prefix="spectra-skills-probe-"))
+    print(f"[INFO] 行為契約 probe sandbox：{probe_dir}")
     mismatches = []
-    with tempfile.TemporaryDirectory(prefix="spectra-skills-probe-") as path:
-        probe_dir = Path(path)
-        probes = (
-            (
-                "未初始化目錄的 precedence",
-                [
-                    "instructions",
-                    "proposal",
-                    "--skill",
-                    "tdd",
-                    "--change",
-                    "whatever",
-                    "--schema",
-                    "spec-driven",
-                ],
-            ),
-            (
-                "--json inertness",
-                ["instructions", "--json", "--skill", "tdd"],
-            ),
-        )
-        for label, args in probes:
-            result = run(binary, args, probe_dir)
-            if (
-                result.returncode != 0
-                or result.stdout != bodies["tdd"]
-                or result.stderr != b""
-            ):
-                mismatches.append(
-                    f"skill 行為契約不符（{label}）：結束碼為 "
-                    f"{result.returncode}，stdout={result.stdout!r}，"
-                    f"stderr={result.stderr!r}。"
-                )
 
-        init = run(binary, ["init", "--tools", "none", "."], probe_dir)
-        if init.returncode != 0:
-            fail(
-                "skill 行為探針無法初始化專案："
-                f"結束碼為 {init.returncode}，stdout={init.stdout!r}，"
-                f"stderr={init.stderr!r}。"
-            )
-        result = run(
-            binary,
-            [
-                "instructions",
-                "--skill",
-                "tdd",
-                "--schema",
-                "spec-driven",
-            ],
-            probe_dir,
-        )
+    def check(label: str, args: list[str]) -> None:
+        result = run(binary, args, probe_dir)
         if (
             result.returncode != 0
             or result.stdout != bodies["tdd"]
             or result.stderr != b""
         ):
             mismatches.append(
-                "skill 行為契約不符（已初始化專案的 precedence）："
-                f"結束碼為 {result.returncode}，stdout={result.stdout!r}，"
+                f"skill 行為契約不符（{label}）：結束碼為 "
+                f"{result.returncode}，stdout={result.stdout!r}，"
                 f"stderr={result.stderr!r}。"
             )
+
+    check(
+        "未初始化目錄的 precedence",
+        [
+            "instructions",
+            "proposal",
+            "--skill",
+            "tdd",
+            "--change",
+            "whatever",
+            "--schema",
+            "spec-driven",
+        ],
+    )
+    check("--json inertness", ["instructions", "--json", "--skill", "tdd"])
+
+    init = run(binary, ["init", "--tools", "none", "."], probe_dir)
+    if init.returncode != 0:
+        for mismatch in mismatches:
+            print(f"[FAIL] {mismatch}", file=sys.stderr)
+        fail(
+            "skill 行為探針無法初始化專案"
+            f"（sandbox 保留於 {probe_dir}）：結束碼為 {init.returncode}，"
+            f"stdout={init.stdout!r}，stderr={init.stderr!r}。"
+        )
+    check(
+        "已初始化專案的 precedence",
+        ["instructions", "--skill", "tdd", "--schema", "spec-driven"],
+    )
+    check(
+        "已初始化專案的 precedence（無效 schema）",
+        ["instructions", "--skill", "tdd", "--schema", "bogus"],
+    )
 
     if mismatches:
         for mismatch in mismatches:
             print(f"[FAIL] {mismatch}", file=sys.stderr)
+        print(
+            f"[FAIL] 行為契約 probe sandbox 保留於：{probe_dir}",
+            file=sys.stderr,
+        )
         raise SystemExit(2)
+    shutil.rmtree(probe_dir)
 
 
 def verify_known_absent(binary: Path, repo: Path) -> None:
@@ -445,7 +441,7 @@ def main() -> None:
 
     bodies = capture_bodies(binary, repo)
     verify_unknown_skill(binary, repo)
-    verify_behavior_contract(binary, repo, bodies)
+    verify_behavior_contract(binary, bodies)
     verify_known_absent(binary, repo)
     if args.write:
         write_files(repo, bodies)

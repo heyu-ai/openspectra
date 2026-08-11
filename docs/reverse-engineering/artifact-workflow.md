@@ -229,10 +229,12 @@ instruction, preflight?}`.
 the [dated enumeration probe record](#enumeration-probe-record-2026-08-11), in
 canonical registry order: `tdd`, `audit`, `apply`, `archive`, `ask`, `commit`,
 `debug`, `discuss`, `drift`, `ingest`, `propose`, `analyze`, `verify`, `sync`,
-and `clarify`. The first 11 were captured before the complete enumeration
-finding (which is why registry order is not alphabetical); the last four were
-appended after it. A roughly 100-candidate wordlist probe and a binary-registry
-string cross-check then independently yielded the same complete set of 15.
+and `clarify`. Registry order is capture order, not alphabetical: the first 11
+were captured before the complete enumeration finding and the last four were
+appended after it (the binary exposes no observable ordering of its own — the
+raw strings order differs — so "canonical" here means the order this repo
+pins). A wordlist probe and a binary-registry string cross-check independently
+yielded the same complete set of 15.
 
 #### Enumeration probe record (2026-08-11)
 
@@ -241,14 +243,20 @@ used:
 
 1. **Wordlist probe.** Each candidate was run as
    `spectra instructions --skill <name>`; exit 0 meant the skill existed. The
-   complete candidate list is `KNOWN_ABSENT` in `scripts/capture-skills.py`
-   plus the 15 registry names. Exactly 15 names existed.
-2. **Binary registry strings.**
-   `strings <oracle> | grep -oE 'Spectra: [A-Z][A-Za-z-]+'` yielded 13 titled
-   entries: Apply, Ask, Audit, Clarify, Commit, Debug, Discuss, Drift, Ingest,
-   Propose, Sync, TDD, and Verify. `archive` and `analyze` appeared as untitled
-   `<name><Description>` entries. The total was therefore 15, matching the
-   wordlist probe.
+   candidate list as of this date was 113 names: the 98 entries then in
+   `KNOWN_ABSENT` in `scripts/capture-skills.py` plus the 15 registry names.
+   Exactly 15 names existed.
+2. **Binary registry strings.** All 15 skills carry `Spectra: <Title>`-titled
+   registry strings in the binary. The recipe
+   `strings <oracle> | grep -oE 'Spectra: [A-Z][A-Za-z-]+'` surfaces only 13
+   of them (Apply, Ask, Audit, Clarify, Commit, Debug, Discuss, Drift, Ingest,
+   Propose, Sync, TDD, Verify) — a grep artifact: several adjacent titles sit
+   concatenated on one strings line, and `-o`'s greedy, non-overlapping match
+   consumes the `Spectra` token that begins the next title, hiding
+   `Spectra: Archive` and `Spectra: Analyze`. Those two were instead confirmed
+   via their `<name><Description>` registry entries (and both titled strings
+   are present: `strings <oracle> | grep -c 'Spectra: Archive'` → 1). Total:
+   15, matching the wordlist probe.
 
 A known name writes the static body bytes directly to stdout and exits 0,
 including outside an initialized project. Skill selection takes precedence

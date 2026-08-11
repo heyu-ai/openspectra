@@ -28,8 +28,10 @@ this file is agent-facing operational context.
   byte-exact against the oracle, checks their byte lengths and SHA-256 values
   against `docs/reverse-engineering/golden/skills-2.3.1.tsv`, verifies the
   oracle still rejects the known-absent enumeration candidates (fails loud if
-  a new skill appears), cross-checks the Rust registry, and pins the
-  unknown-skill stderr/exit contract. The assets are the oracle captures and
+  any of those candidates becomes a skill — detection is bounded by that
+  wordlist), probes the behavior contract (`--skill` precedence outside and
+  inside an initialized project, `--json` inertness), cross-checks the Rust
+  registry, and pins the unknown-skill stderr/exit contract. The assets are the oracle captures and
   the TSV pins their provenance; both are generated artifacts. Any drift exits
   non-zero; `--write` regenerates both and re-verifies. Never hand-edit them.
 

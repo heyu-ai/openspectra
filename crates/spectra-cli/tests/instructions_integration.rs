@@ -628,15 +628,15 @@ fn skill_manifest() -> Vec<SkillManifestRow> {
             let mut fields = line.split('\t');
             let name = fields
                 .next()
-                .unwrap_or_else(|| panic!("資料列缺少欄位：{line}"));
+                .unwrap_or_else(|| panic!("missing column in row: {line}"));
             let bytes = fields
                 .next()
-                .unwrap_or_else(|| panic!("資料列缺少欄位：{line}"))
+                .unwrap_or_else(|| panic!("missing column in row: {line}"))
                 .parse()
-                .unwrap_or_else(|error| panic!("資料列的 bytes 欄位無效：{line}；{error}"));
+                .unwrap_or_else(|error| panic!("invalid bytes column in row: {line}; {error}"));
             let sha256 = fields
                 .next()
-                .unwrap_or_else(|| panic!("資料列缺少欄位：{line}"));
+                .unwrap_or_else(|| panic!("missing column in row: {line}"));
             let row = SkillManifestRow {
                 name: name.to_string(),
                 bytes,
