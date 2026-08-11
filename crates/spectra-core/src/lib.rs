@@ -16,6 +16,7 @@ pub mod init;
 pub mod instructions;
 mod names;
 pub mod schema;
+pub mod skills;
 pub mod spec;
 pub mod tasks;
 #[cfg(test)]

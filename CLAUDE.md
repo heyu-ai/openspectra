@@ -22,6 +22,18 @@ this file is agent-facing operational context.
   contract, not a printer: template round-trip, per-tool stdout, registry
   order, and the codex×gemini quirk are all re-checked, and any mismatch
   exits non-zero keeping its sandboxes. Never hand-edit its outputs.
+- `scripts/capture-skills.py` — same constraints (macOS + reference binary,
+  version-pinned to 2.3.1); the default application path can be overridden by
+  `--spectra-bin` or `SPECTRA_BIN`. It verifies all 15 embedded skill assets
+  byte-exact against the oracle, checks their byte lengths and SHA-256 values
+  against `docs/reverse-engineering/golden/skills-2.3.1.tsv`, verifies the
+  oracle still rejects the known-absent enumeration candidates (fails loud if
+  any of those candidates becomes a skill — detection is bounded by that
+  wordlist), probes the behavior contract (`--skill` precedence outside and
+  inside an initialized project, `--json` inertness), cross-checks the Rust
+  registry, and pins the unknown-skill stderr/exit contract. The assets are the oracle captures and
+  the TSV pins their provenance; both are generated artifacts. Any drift exits
+  non-zero; `--write` regenerates both and re-verifies. Never hand-edit them.
 
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 

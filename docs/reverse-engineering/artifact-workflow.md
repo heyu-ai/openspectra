@@ -11,7 +11,7 @@ reproduces them.
 > preflight regexes — by disassembly. Golden captures live in
 > `docs/reverse-engineering/golden/instructions-*-2.3.1.json`; the full probe
 > log (with dates) is in
-> `docs/openspec/changes/fill-artifact-workflow-cli/design.md`. Additional
+> `docs/openspec/changes/archive/2026-08-11-fill-artifact-workflow-cli/design.md`. Additional
 > dispute-resolution probes from the PR #48 mob review (capability handling,
 > symlink glob semantics, stdin ordering, fresh-scaffold drift) are dated
 > 2026-07-18 below.
@@ -223,6 +223,56 @@ instruction, preflight?}`.
   `rules` key while `context` is still emitted — a malformed field never
   poisons its sibling or the `schema:` selector.
 
+### Embedded skills
+
+`--skill <name>` selects one of exactly 15 embedded bodies, as established by
+the [dated enumeration probe record](#enumeration-probe-record-2026-08-11), in
+canonical registry order: `tdd`, `audit`, `apply`, `archive`, `ask`, `commit`,
+`debug`, `discuss`, `drift`, `ingest`, `propose`, `analyze`, `verify`, `sync`,
+and `clarify`. Registry order is capture order, not alphabetical: the first 11
+were captured before the complete enumeration finding and the last four were
+appended after it (the binary exposes no observable ordering of its own — the
+raw strings order differs — so "canonical" here means the order this repo
+pins). A wordlist probe and a binary-registry string cross-check independently
+yielded the same complete set of 15.
+
+#### Enumeration probe record (2026-08-11)
+
+The oracle was Spectra 2.3.1 on Apple Silicon. Two independent methods were
+used:
+
+1. **Wordlist probe.** Each candidate was run as
+   `spectra instructions --skill <name>`; exit 0 meant the skill existed. The
+   candidate list as of this date was 113 names: the 98 entries then in
+   `KNOWN_ABSENT` in `scripts/capture-skills.py` plus the 15 registry names.
+   Exactly 15 names existed.
+2. **Binary registry strings.** All 15 skills carry `Spectra: <Title>`-titled
+   registry strings in the binary. The recipe
+   `strings <oracle> | grep -oE 'Spectra: [A-Z][A-Za-z-]+'` surfaces only 13
+   of them (Apply, Ask, Audit, Clarify, Commit, Debug, Discuss, Drift, Ingest,
+   Propose, Sync, TDD, Verify) — a grep artifact: several adjacent titles sit
+   concatenated on one strings line, and `-o`'s greedy, non-overlapping match
+   consumes the `Spectra` token that begins the next title, hiding
+   `Spectra: Archive` and `Spectra: Analyze`. Those two were instead confirmed
+   via their `<name><Description>` registry entries (and both titled strings
+   are present: `strings <oracle> | grep -c 'Spectra: Archive'` → 1). Total:
+   15, matching the wordlist probe.
+
+A known name writes the static body bytes directly to stdout and exits 0,
+including outside an initialized project. Skill selection takes precedence
+over the artifact argument, `--change`, and `--schema`; `--json` is inert in
+this mode and the output remains raw Markdown. An unknown name writes
+`Error: Unknown skill: <name>` to stderr, writes nothing to stdout, and exits
+1.
+
+The bodies under `crates/spectra-core/assets/skills/` are byte-exact captures
+from the Spectra 2.3.1 oracle. The generated
+`docs/reverse-engineering/golden/skills-2.3.1.tsv` manifest pins their oracle
+provenance by byte length and SHA-256 digest. Both the assets and manifest are
+generated artifacts and must never be hand-edited. By default,
+`scripts/capture-skills.py` re-captures the bodies and verifies both; its
+explicit `--write` mode regenerates both and then re-verifies them.
+
 ### Preflight (recovered by disassembly + behaviour matrix)
 
 - `missingFiles` (`status: critical`): file refs from the proposal's
@@ -242,9 +292,6 @@ instruction, preflight?}`.
 
 ### Deliberate divergences (documented, not bugs)
 
-- `--skill <name>`: the oracle prints large **proprietary embedded skill
-  bodies**; OpenSpectra does not ship that text and answers
-  `Unknown skill: <name>` for every value.
 - `contextFiles` key order fixed to schema order (oracle nondeterministic).
 - The oracle's multiple-active-changes error (`Use --change to specify
   one:`, mtime-ordered) differs from OpenSpectra's pre-existing
