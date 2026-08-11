@@ -1,4 +1,5 @@
 use chrono::{Duration, Local};
+use sha2::{Digest, Sha256};
 use spectra_core::schema;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -600,32 +601,84 @@ fn preflight_reports_a_file_committed_after_the_change_date_as_drifted() {
     );
 }
 
-fn skill_golden(name: &str) -> Vec<u8> {
+fn skill_asset(name: &str) -> Vec<u8> {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap();
     std::fs::read(
-        repo.join("docs/reverse-engineering/golden/skills")
-            .join(format!("{name}-2.3.1.md")),
+        repo.join("crates/spectra-core/assets/skills")
+            .join(format!("{name}.md")),
     )
     .unwrap()
 }
 
+#[derive(Debug)]
+struct SkillManifestRow {
+    name: String,
+    bytes: usize,
+    sha256: String,
+}
+
+fn skill_manifest() -> Vec<SkillManifestRow> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/reverse-engineering/golden/skills-2.3.1.tsv");
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut lines = text.lines();
+    assert_eq!(lines.next(), Some("skill\tbytes\tsha256"));
+    lines
+        .map(|line| {
+            let mut fields = line.split('\t');
+            let row = SkillManifestRow {
+                name: fields.next().unwrap().to_string(),
+                bytes: fields.next().unwrap().parse().unwrap(),
+                sha256: fields.next().unwrap().to_string(),
+            };
+            assert!(fields.next().is_none(), "extra columns in row: {line}");
+            row
+        })
+        .collect()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[test]
-fn embedded_skills_match_the_oracle_goldens_outside_a_project() {
+fn embedded_skills_match_the_assets_and_oracle_manifest_outside_a_project() {
     let root = TempDir::new("skills");
     let names = [
         "tdd", "audit", "apply", "archive", "ask", "commit", "debug", "discuss", "drift", "ingest",
-        "propose",
+        "propose", "analyze", "verify", "sync", "clarify",
     ];
+    let manifest = skill_manifest();
+    assert_eq!(
+        manifest
+            .iter()
+            .map(|row| row.name.as_str())
+            .collect::<Vec<_>>(),
+        names
+    );
 
-    for name in names {
+    for (name, row) in names.into_iter().zip(manifest) {
         let output = run(&root, &["instructions", "--skill", name]);
         assert!(output.status.success(), "skill {name} failed: {output:?}");
         assert!(output.stderr.is_empty(), "skill {name} wrote to stderr");
-        assert_eq!(output.stdout, skill_golden(name), "skill {name} drifted");
+        assert_eq!(output.stdout, skill_asset(name), "skill {name} drifted");
+        assert_eq!(
+            output.stdout.len(),
+            row.bytes,
+            "skill {name} length drifted"
+        );
+        assert_eq!(
+            sha256_hex(&output.stdout),
+            row.sha256,
+            "skill {name} digest drifted"
+        );
     }
 }
 
@@ -648,7 +701,30 @@ fn embedded_skill_takes_precedence_over_artifact_change_and_schema() {
 
     assert!(output.status.success(), "skill failed: {output:?}");
     assert!(output.stderr.is_empty());
-    assert_eq!(output.stdout, skill_golden("tdd"));
+    assert_eq!(output.stdout, skill_asset("tdd"));
+}
+
+#[test]
+fn embedded_skill_wins_inside_an_initialized_project() {
+    let root = TempDir::new("skill-in-project");
+    init_project_with_change(&root, "demo-feature");
+
+    for args in [
+        vec!["instructions", "--skill", "tdd"],
+        vec![
+            "instructions",
+            "proposal",
+            "--skill",
+            "tdd",
+            "--change",
+            "demo-feature",
+        ],
+    ] {
+        let output = run(&root, &args);
+        assert!(output.status.success(), "skill failed: {output:?}");
+        assert!(output.stderr.is_empty());
+        assert_eq!(output.stdout, skill_asset("tdd"));
+    }
 }
 
 #[test]
@@ -658,7 +734,7 @@ fn json_is_inert_when_an_embedded_skill_is_requested() {
 
     assert!(output.status.success(), "skill failed: {output:?}");
     assert!(output.stderr.is_empty());
-    assert_eq!(output.stdout, skill_golden("tdd"));
+    assert_eq!(output.stdout, skill_asset("tdd"));
 }
 
 #[test]
@@ -668,9 +744,7 @@ fn unknown_embedded_skill_fails_outside_a_project() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8(output.stderr)
-        .unwrap()
-        .contains("Unknown skill: bogus"));
+    assert_eq!(output.stderr, b"Error: Unknown skill: bogus\n");
 }
 
 #[test]

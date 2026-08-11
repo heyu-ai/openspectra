@@ -10,6 +10,10 @@ const SKILLS: &[(&str, &str)] = &[
     ("drift", include_str!("../assets/skills/drift.md")),
     ("ingest", include_str!("../assets/skills/ingest.md")),
     ("propose", include_str!("../assets/skills/propose.md")),
+    ("analyze", include_str!("../assets/skills/analyze.md")),
+    ("verify", include_str!("../assets/skills/verify.md")),
+    ("sync", include_str!("../assets/skills/sync.md")),
+    ("clarify", include_str!("../assets/skills/clarify.md")),
 ];
 
 pub fn skill_body(name: &str) -> Option<&'static str> {
@@ -30,7 +34,7 @@ mod tests {
             names,
             [
                 "tdd", "audit", "apply", "archive", "ask", "commit", "debug", "discuss", "drift",
-                "ingest", "propose",
+                "ingest", "propose", "analyze", "verify", "sync", "clarify",
             ]
         );
         assert!(SKILLS.iter().all(|(_, body)| !body.is_empty()));

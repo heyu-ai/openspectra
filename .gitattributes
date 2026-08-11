@@ -1,0 +1,3 @@
+crates/spectra-core/assets/skills/*.md -text
+crates/spectra-core/assets/update/* -text
+docs/reverse-engineering/golden/* -text

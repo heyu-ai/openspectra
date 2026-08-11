@@ -225,21 +225,27 @@ instruction, preflight?}`.
 
 ### Embedded skills
 
-`--skill <name>` selects one of exactly 11 embedded bodies: `tdd`, `audit`,
-`apply`, `archive`, `ask`, `commit`, `debug`, `discuss`, `drift`, `ingest`,
-and `propose`. A known name writes the static body bytes directly to stdout
-and exits 0, including outside an initialized project. Skill selection takes
-precedence over the artifact argument, `--change`, and `--schema`; `--json`
-is inert in this mode and the output remains raw Markdown. An unknown name
-writes `Error: Unknown skill: <name>` to stderr, writes nothing to stdout,
-and exits 1.
+`--skill <name>` selects one of exactly 15 embedded bodies, in canonical
+registry order: `tdd`, `audit`, `apply`, `archive`, `ask`, `commit`, `debug`,
+`discuss`, `drift`, `ingest`, `propose`, `analyze`, `verify`, `sync`, and
+`clarify`. The first 11 shipped before the complete enumeration finding. A
+roughly 100-candidate wordlist probe and a binary-registry string cross-check
+then independently yielded the same complete set of 15.
 
-The bodies were captured byte-exact from the Spectra 2.3.1 oracle with
-`scripts/capture-skills.py`. The files under
-`crates/spectra-core/assets/skills/` and their matching fixtures under
-`docs/reverse-engineering/golden/skills/` are generated artifacts and must
-never be hand-edited. The capture script verifies both copies by default;
-its explicit `--write` mode regenerates both sets and then re-verifies them.
+A known name writes the static body bytes directly to stdout and exits 0,
+including outside an initialized project. Skill selection takes precedence
+over the artifact argument, `--change`, and `--schema`; `--json` is inert in
+this mode and the output remains raw Markdown. An unknown name writes
+`Error: Unknown skill: <name>` to stderr, writes nothing to stdout, and exits
+1.
+
+The bodies under `crates/spectra-core/assets/skills/` are byte-exact captures
+from the Spectra 2.3.1 oracle. The generated
+`docs/reverse-engineering/golden/skills-2.3.1.tsv` manifest pins their oracle
+provenance by byte length and SHA-256 digest. Both the assets and manifest are
+generated artifacts and must never be hand-edited. By default,
+`scripts/capture-skills.py` re-captures the bodies and verifies both; its
+explicit `--write` mode regenerates both and then re-verifies them.
 
 ### Preflight (recovered by disassembly + behaviour matrix)
 
