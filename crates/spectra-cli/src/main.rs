@@ -1,7 +1,7 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
 //! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
 //! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`,
-//! `update`, `config`.
+//! `update`, `config`, `search`.
 
 mod completion;
 
@@ -14,7 +14,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::json;
 
 use spectra_core::{
-    analyze, artifact, change, config::Config, drift, instructions, schema, skills, spec,
+    analyze, artifact, change, config::Config, drift, instructions, schema, search, skills, spec,
 };
 
 #[derive(Parser, Debug)]
@@ -57,6 +57,17 @@ enum Command {
     Analyze {
         #[arg(help = "Change name (auto-detects if only one exists)")]
         change: Option<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search Markdown artifacts using dependency-free lexical ranking.
+    Search {
+        /// Search query string.
+        query: String,
+        /// Maximum number of results.
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
         /// Output as JSON.
         #[arg(long)]
         json: bool,
@@ -418,6 +429,28 @@ fn cmd_analyze(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print!("{}", analyze::format_human(&report));
+    }
+    Ok(0)
+}
+
+fn cmd_search(cfg: &Config, query: &str, limit: usize, as_json: bool) -> Result<i32> {
+    let response = search::search(cfg, query, limit)?;
+    if as_json {
+        println!("{}", serde_json::to_string(&response)?);
+    } else if response.results.is_empty() {
+        println!("No results found.");
+    } else {
+        println!(
+            "Found {} results for \"{}\"",
+            response.results.len(),
+            response.query
+        );
+        for result in response.results {
+            println!("\n{} ({:.4})", result.path, result.score);
+            for snippet in result.snippets {
+                println!("  {snippet}");
+            }
+        }
     }
     Ok(0)
 }
@@ -1251,6 +1284,10 @@ fn run() -> Result<i32> {
         Command::Analyze { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_analyze(&cfg, change.as_deref(), *json)
+        }
+        Command::Search { query, limit, json } => {
+            let cfg = require_initialized(&root)?;
+            cmd_search(&cfg, query, *limit, *json)
         }
         // Completion scripts describe the CLI itself and do not depend on
         // project state, so this deliberately skips `require_initialized`.
