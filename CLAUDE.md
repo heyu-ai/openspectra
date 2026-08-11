@@ -22,6 +22,12 @@ this file is agent-facing operational context.
   contract, not a printer: template round-trip, per-tool stdout, registry
   order, and the codex×gemini quirk are all re-checked, and any mismatch
   exits non-zero keeping its sandboxes. Never hand-edit its outputs.
+- `scripts/capture-skills.py` — same constraints (macOS + reference binary,
+  version-pinned to 2.3.1); verifies the 11 embedded skill bodies in
+  `crates/spectra-core/assets/skills/` and their golden fixtures byte-exact
+  against the oracle, plus the unknown-skill stderr/exit contract. It is a
+  verification contract: any drift exits non-zero; `--write` regenerates
+  both sets and re-verifies. Never hand-edit its outputs.
 
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 

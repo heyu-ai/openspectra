@@ -230,10 +230,9 @@ Template:
 - 未知 artifact：`Artifact '<id>' not found in schema`（無句尾句點）
 - change 不存在：`Change '<name>' not found.`（有句尾句點）
 - 未知 schema：`Schema not found: Schema '<s>' not found in project, user, or built-in locations`
-- `--skill <name>`：11 個 oracle 內建名稱會直接輸出逐位元擷取的 skill body；
-  `--skill` 優先於 artifact、change、schema 與 JSON 模式。其他名稱則回傳
-  `Unknown skill: <name>`，並以結束碼 1 結束。擷取來源與產物契約記錄於
-  `docs/reverse-engineering/artifact-workflow.md`。
+- `--skill <name>`：`Unknown skill: <name>`。oracle 對其內建有效名稱會輸出
+  proprietary embedded skill bodies；openspectra 刻意不移植，所有名稱皆視為
+  unknown。這是已記錄的產品差異；`--skill` 的錯誤優先於其他參數檢查。
 
 （goldens 採集狀態與被釘欄位的 provenance 記錄移至
 `docs/reverse-engineering/artifact-workflow.md`。）
