@@ -16,7 +16,9 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 EXPECTED_VERSION = "2.3.1"
 SKILLS = (
@@ -41,10 +43,22 @@ KNOWN_ABSENT = (
     "plan",
     "test",
     "refactor",
+    "implement",
     "spec",
+    "specs",
     "design",
     "tasks",
+    "task",
     "proposal",
+    "amplify",
+    "amplifier",
+    "estimate",
+    "research",
+    "explore",
+    "document",
+    "doc",
+    "release",
+    "deploy",
     "validate",
     "list",
     "update",
@@ -63,15 +77,70 @@ KNOWN_ABSENT = (
     "templates",
     "feedback",
     "completion",
-    "estimate",
-    "research",
-    "document",
-    "release",
-    "deploy",
+    "in-progress",
+    "qa",
+    "retro",
+    "retrospective",
+    "handover",
+    "onboard",
+    "setup",
+    "fix",
+    "bugfix",
+    "feature",
+    "chore",
+    "lint",
+    "format",
+    "bench",
+    "profile",
+    "security",
+    "scan",
+    "triage",
+    "split",
+    "merge",
+    "rebase",
+    "brainstorm",
+    "scope",
+    "breakdown",
+    "decompose",
+    "prioritize",
+    "groom",
+    "refine",
+    "acceptance",
+    "criteria",
+    "gherkin",
+    "scenario",
+    "testplan",
+    "coverage",
+    "mutation",
+    "context",
+    "memory",
+    "recall",
+    "summarize",
+    "translate",
+    "explain",
+    "teach",
+    "mentor",
+    "pair",
+    "mob",
+    "solo",
+    "checklist",
+    "runbook",
+    "playbook",
+    "workflow",
+    "pipeline",
+    "ci",
+    "cd",
+    "build",
+    "compile",
+    "package",
+    "publish",
+    "version",
+    "bump",
+    "changelog",
 )
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     print(f"[FAIL] {message}", file=sys.stderr)
     raise SystemExit(2)
 
@@ -88,6 +157,8 @@ def run(binary: Path, args: list[str], cwd: Path) -> subprocess.CompletedProcess
         )
     except subprocess.TimeoutExpired as error:
         fail(f"參考執行檔逾時（60 秒）：{args!r}；{error}。")
+    except OSError as error:
+        fail(f"無法執行參考執行檔：{args!r}；{error}。")
 
 
 def oracle_version(binary: Path, repo: Path) -> str:
@@ -109,6 +180,11 @@ def capture_bodies(binary: Path, repo: Path) -> dict[str, bytes]:
             failures.append(
                 f"skill {name} 擷取失敗，結束碼為 {result.returncode}，"
                 f"stderr={result.stderr!r}。"
+            )
+            continue
+        if not result.stdout:
+            failures.append(
+                f"skill {name} 擷取為空（0 bytes）——binary 損壞或列舉錯誤"
             )
             continue
         bodies[name] = result.stdout
@@ -139,6 +215,79 @@ def verify_unknown_skill(binary: Path, repo: Path) -> None:
             f"stderr，實際結束碼為 {result.returncode}，"
             f"stdout={result.stdout!r}，stderr={result.stderr!r}。"
         )
+
+
+def verify_behavior_contract(
+    binary: Path, repo: Path, bodies: dict[str, bytes]
+) -> None:
+    mismatches = []
+    with tempfile.TemporaryDirectory(prefix="spectra-skills-probe-") as path:
+        probe_dir = Path(path)
+        probes = (
+            (
+                "未初始化目錄的 precedence",
+                [
+                    "instructions",
+                    "proposal",
+                    "--skill",
+                    "tdd",
+                    "--change",
+                    "whatever",
+                    "--schema",
+                    "spec-driven",
+                ],
+            ),
+            (
+                "--json inertness",
+                ["instructions", "--json", "--skill", "tdd"],
+            ),
+        )
+        for label, args in probes:
+            result = run(binary, args, probe_dir)
+            if (
+                result.returncode != 0
+                or result.stdout != bodies["tdd"]
+                or result.stderr != b""
+            ):
+                mismatches.append(
+                    f"skill 行為契約不符（{label}）：結束碼為 "
+                    f"{result.returncode}，stdout={result.stdout!r}，"
+                    f"stderr={result.stderr!r}。"
+                )
+
+        init = run(binary, ["init", "--tools", "none", "."], probe_dir)
+        if init.returncode != 0:
+            fail(
+                "skill 行為探針無法初始化專案："
+                f"結束碼為 {init.returncode}，stdout={init.stdout!r}，"
+                f"stderr={init.stderr!r}。"
+            )
+        result = run(
+            binary,
+            [
+                "instructions",
+                "--skill",
+                "tdd",
+                "--schema",
+                "spec-driven",
+            ],
+            probe_dir,
+        )
+        if (
+            result.returncode != 0
+            or result.stdout != bodies["tdd"]
+            or result.stderr != b""
+        ):
+            mismatches.append(
+                "skill 行為契約不符（已初始化專案的 precedence）："
+                f"結束碼為 {result.returncode}，stdout={result.stdout!r}，"
+                f"stderr={result.stderr!r}。"
+            )
+
+    if mismatches:
+        for mismatch in mismatches:
+            print(f"[FAIL] {mismatch}", file=sys.stderr)
+        raise SystemExit(2)
 
 
 def verify_known_absent(binary: Path, repo: Path) -> None:
@@ -195,7 +344,14 @@ def verify_asset_listing(repo: Path) -> list[str]:
 def verify_rust_registry(repo: Path) -> list[str]:
     path = repo / "crates/spectra-core/src/skills.rs"
     text = path.read_text(encoding="utf-8")
-    entries = tuple(re.findall(r'^\s*\("([^"]+)",', text, re.MULTILINE))
+    start = text.find("const SKILLS")
+    end = text.find("];", start)
+    if start == -1 or end == -1:
+        return [f"{path.relative_to(repo)}：找不到 const SKILLS registry。"]
+    registry = text[start : end + 2]
+    entries = tuple(
+        re.findall(r'^\s*\("([^"]+)",', registry, re.MULTILINE)
+    )
     if entries == SKILLS:
         return []
     return [
@@ -238,6 +394,10 @@ def verify_files(repo: Path, bodies: dict[str, bytes]) -> list[str]:
 def write_files(repo: Path, bodies: dict[str, bytes]) -> None:
     assets_dir = repo / "crates/spectra-core/assets/skills"
     assets_dir.mkdir(parents=True, exist_ok=True)
+    expected = {f"{name}.md" for name in SKILLS}
+    for path in assets_dir.glob("*.md"):
+        if path.is_file() and path.name not in expected:
+            path.unlink()
     for name in SKILLS:
         body = bodies[name]
         (assets_dir / f"{name}.md").write_bytes(body)
@@ -285,6 +445,7 @@ def main() -> None:
 
     bodies = capture_bodies(binary, repo)
     verify_unknown_skill(binary, repo)
+    verify_behavior_contract(binary, repo, bodies)
     verify_known_absent(binary, repo)
     if args.write:
         write_files(repo, bodies)

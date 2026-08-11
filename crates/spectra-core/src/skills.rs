@@ -1,3 +1,7 @@
+//! 內嵌內容是從 Spectra 2.3.1 oracle 逐位元擷取的 skill 本文。
+//! Registry 的項目與順序由 `scripts/capture-skills.py` 交叉檢查。
+//! 靜態資產與 `docs/reverse-engineering/golden/skills-2.3.1.tsv` 都是產生物，請勿手動編輯。
+
 const SKILLS: &[(&str, &str)] = &[
     ("tdd", include_str!("../assets/skills/tdd.md")),
     ("audit", include_str!("../assets/skills/audit.md")),

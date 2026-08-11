@@ -8,7 +8,7 @@ across a change's artifacts, and how OpenSpectra reproduces it.
 > binary), then every finding was pinned with positive *and* negative
 > synthetic fixtures (31 fixture changes) run through the binary as a golden
 > oracle. Full probe log:
-> `docs/openspec/changes/fill-artifact-workflow-cli/design.md`.
+> `docs/openspec/changes/archive/2026-08-11-fill-artifact-workflow-cli/design.md`.
 
 ## TL;DR
 

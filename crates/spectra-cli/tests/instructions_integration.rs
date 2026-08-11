@@ -602,11 +602,7 @@ fn preflight_reports_a_file_committed_after_the_change_date_as_drifted() {
 }
 
 fn skill_asset(name: &str) -> Vec<u8> {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     std::fs::read(
         repo.join("crates/spectra-core/assets/skills")
             .join(format!("{name}.md")),
@@ -630,10 +626,21 @@ fn skill_manifest() -> Vec<SkillManifestRow> {
     lines
         .map(|line| {
             let mut fields = line.split('\t');
+            let name = fields
+                .next()
+                .unwrap_or_else(|| panic!("資料列缺少欄位：{line}"));
+            let bytes = fields
+                .next()
+                .unwrap_or_else(|| panic!("資料列缺少欄位：{line}"))
+                .parse()
+                .unwrap_or_else(|error| panic!("資料列的 bytes 欄位無效：{line}；{error}"));
+            let sha256 = fields
+                .next()
+                .unwrap_or_else(|| panic!("資料列缺少欄位：{line}"));
             let row = SkillManifestRow {
-                name: fields.next().unwrap().to_string(),
-                bytes: fields.next().unwrap().parse().unwrap(),
-                sha256: fields.next().unwrap().to_string(),
+                name: name.to_string(),
+                bytes,
+                sha256: sha256.to_string(),
             };
             assert!(fields.next().is_none(), "extra columns in row: {line}");
             row
@@ -718,7 +725,10 @@ fn embedded_skill_wins_inside_an_initialized_project() {
             "tdd",
             "--change",
             "demo-feature",
+            "--schema",
+            "spec-driven",
         ],
+        vec!["instructions", "--skill", "tdd", "--schema", "bogus"],
     ] {
         let output = run(&root, &args);
         assert!(output.status.success(), "skill failed: {output:?}");

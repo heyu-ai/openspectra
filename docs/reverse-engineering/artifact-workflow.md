@@ -11,7 +11,7 @@ reproduces them.
 > preflight regexes — by disassembly. Golden captures live in
 > `docs/reverse-engineering/golden/instructions-*-2.3.1.json`; the full probe
 > log (with dates) is in
-> `docs/openspec/changes/fill-artifact-workflow-cli/design.md`. Additional
+> `docs/openspec/changes/archive/2026-08-11-fill-artifact-workflow-cli/design.md`. Additional
 > dispute-resolution probes from the PR #48 mob review (capability handling,
 > symlink glob semantics, stdin ordering, fresh-scaffold drift) are dated
 > 2026-07-18 below.
@@ -225,12 +225,30 @@ instruction, preflight?}`.
 
 ### Embedded skills
 
-`--skill <name>` selects one of exactly 15 embedded bodies, in canonical
-registry order: `tdd`, `audit`, `apply`, `archive`, `ask`, `commit`, `debug`,
-`discuss`, `drift`, `ingest`, `propose`, `analyze`, `verify`, `sync`, and
-`clarify`. The first 11 shipped before the complete enumeration finding. A
-roughly 100-candidate wordlist probe and a binary-registry string cross-check
-then independently yielded the same complete set of 15.
+`--skill <name>` selects one of exactly 15 embedded bodies, as established by
+the [dated enumeration probe record](#enumeration-probe-record-2026-08-11), in
+canonical registry order: `tdd`, `audit`, `apply`, `archive`, `ask`, `commit`,
+`debug`, `discuss`, `drift`, `ingest`, `propose`, `analyze`, `verify`, `sync`,
+and `clarify`. The first 11 were captured before the complete enumeration
+finding (which is why registry order is not alphabetical); the last four were
+appended after it. A roughly 100-candidate wordlist probe and a binary-registry
+string cross-check then independently yielded the same complete set of 15.
+
+#### Enumeration probe record (2026-08-11)
+
+The oracle was Spectra 2.3.1 on Apple Silicon. Two independent methods were
+used:
+
+1. **Wordlist probe.** Each candidate was run as
+   `spectra instructions --skill <name>`; exit 0 meant the skill existed. The
+   complete candidate list is `KNOWN_ABSENT` in `scripts/capture-skills.py`
+   plus the 15 registry names. Exactly 15 names existed.
+2. **Binary registry strings.**
+   `strings <oracle> | grep -oE 'Spectra: [A-Z][A-Za-z-]+'` yielded 13 titled
+   entries: Apply, Ask, Audit, Clarify, Commit, Debug, Discuss, Drift, Ingest,
+   Propose, Sync, TDD, and Verify. `archive` and `analyze` appeared as untitled
+   `<name><Description>` entries. The total was therefore 15, matching the
+   wordlist probe.
 
 A known name writes the static body bytes directly to stdout and exits 0,
 including outside an initialized project. Skill selection takes precedence
