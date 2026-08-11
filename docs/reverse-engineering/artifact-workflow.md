@@ -223,6 +223,24 @@ instruction, preflight?}`.
   `rules` key while `context` is still emitted — a malformed field never
   poisons its sibling or the `schema:` selector.
 
+### Embedded skills
+
+`--skill <name>` selects one of exactly 11 embedded bodies: `tdd`, `audit`,
+`apply`, `archive`, `ask`, `commit`, `debug`, `discuss`, `drift`, `ingest`,
+and `propose`. A known name writes the static body bytes directly to stdout
+and exits 0, including outside an initialized project. Skill selection takes
+precedence over the artifact argument, `--change`, and `--schema`; `--json`
+is inert in this mode and the output remains raw Markdown. An unknown name
+writes `Error: Unknown skill: <name>` to stderr, writes nothing to stdout,
+and exits 1.
+
+The bodies were captured byte-exact from the Spectra 2.3.1 oracle with
+`scripts/capture-skills.py`. The files under
+`crates/spectra-core/assets/skills/` and their matching fixtures under
+`docs/reverse-engineering/golden/skills/` are generated artifacts and must
+never be hand-edited. The capture script verifies both copies by default;
+its explicit `--write` mode regenerates both sets and then re-verifies them.
+
 ### Preflight (recovered by disassembly + behaviour matrix)
 
 - `missingFiles` (`status: critical`): file refs from the proposal's
@@ -242,9 +260,6 @@ instruction, preflight?}`.
 
 ### Deliberate divergences (documented, not bugs)
 
-- `--skill <name>`: the oracle prints large **proprietary embedded skill
-  bodies**; OpenSpectra does not ship that text and answers
-  `Unknown skill: <name>` for every value.
 - `contextFiles` key order fixed to schema order (oracle nondeterministic).
 - The oracle's multiple-active-changes error (`Use --change to specify
   one:`, mtime-ordered) differs from OpenSpectra's pre-existing

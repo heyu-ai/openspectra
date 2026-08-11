@@ -13,7 +13,9 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::json;
 
-use spectra_core::{analyze, artifact, change, config::Config, drift, instructions, schema, spec};
+use spectra_core::{
+    analyze, artifact, change, config::Config, drift, instructions, schema, skills, spec,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -101,7 +103,7 @@ enum Command {
         /// Output as JSON.
         #[arg(long)]
         json: bool,
-        /// Embedded skill name (not supported in openspectra).
+        /// Embedded skill name (outputs skill body directly).
         #[arg(long)]
         skill: Option<String>,
     },
@@ -1289,11 +1291,15 @@ fn run() -> Result<i32> {
             json,
             skill,
         } => {
-            // Skill bodies are proprietary oracle resources and are not
-            // embedded in openspectra. This check intentionally precedes all
-            // project/change/schema work so --skill always wins.
+            // The skill lookup intentionally precedes all project/change/
+            // schema work (including require_initialized) so --skill always
+            // wins, even outside an initialized project — matching the oracle.
             if let Some(skill) = skill {
-                anyhow::bail!("Unknown skill: {skill}");
+                let Some(body) = skills::skill_body(skill) else {
+                    anyhow::bail!("Unknown skill: {skill}");
+                };
+                std::io::stdout().write_all(body.as_bytes())?;
+                return Ok(0);
             }
             let cfg = require_initialized(&root)?;
             cmd_instructions(

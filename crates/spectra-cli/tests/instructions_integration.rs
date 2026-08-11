@@ -600,6 +600,79 @@ fn preflight_reports_a_file_committed_after_the_change_date_as_drifted() {
     );
 }
 
+fn skill_golden(name: &str) -> Vec<u8> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    std::fs::read(
+        repo.join("docs/reverse-engineering/golden/skills")
+            .join(format!("{name}-2.3.1.md")),
+    )
+    .unwrap()
+}
+
+#[test]
+fn embedded_skills_match_the_oracle_goldens_outside_a_project() {
+    let root = TempDir::new("skills");
+    let names = [
+        "tdd", "audit", "apply", "archive", "ask", "commit", "debug", "discuss", "drift", "ingest",
+        "propose",
+    ];
+
+    for name in names {
+        let output = run(&root, &["instructions", "--skill", name]);
+        assert!(output.status.success(), "skill {name} failed: {output:?}");
+        assert!(output.stderr.is_empty(), "skill {name} wrote to stderr");
+        assert_eq!(output.stdout, skill_golden(name), "skill {name} drifted");
+    }
+}
+
+#[test]
+fn embedded_skill_takes_precedence_over_artifact_change_and_schema() {
+    let root = TempDir::new("skill-precedence");
+    let output = run(
+        &root,
+        &[
+            "instructions",
+            "proposal",
+            "--skill",
+            "tdd",
+            "--change",
+            "whatever",
+            "--schema",
+            "spec-driven",
+        ],
+    );
+
+    assert!(output.status.success(), "skill failed: {output:?}");
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, skill_golden("tdd"));
+}
+
+#[test]
+fn json_is_inert_when_an_embedded_skill_is_requested() {
+    let root = TempDir::new("skill-json");
+    let output = run(&root, &["instructions", "--json", "--skill", "tdd"]);
+
+    assert!(output.status.success(), "skill failed: {output:?}");
+    assert!(output.stderr.is_empty());
+    assert_eq!(output.stdout, skill_golden("tdd"));
+}
+
+#[test]
+fn unknown_embedded_skill_fails_outside_a_project() {
+    let root = TempDir::new("skill-unknown");
+    let output = run(&root, &["instructions", "--skill", "bogus"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("Unknown skill: bogus"));
+}
+
 #[test]
 fn instructions_errors_match_the_oracle_contract() {
     let root = TempDir::new("errors");
