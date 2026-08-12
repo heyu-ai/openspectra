@@ -876,6 +876,9 @@ fn cmd_templates(
     } else {
         println!("{}", templates_header_line(schema::SCHEMA_NAME, use_color));
         for template in templates {
+            // "○" itself is unprobed: every built-in template has content,
+            // so a `has_content: false` case was never reproducible against
+            // the oracle for v2.3.1 (see templates.md's Text section).
             let marker = if template.has_content { "✓" } else { "○" };
             println!(
                 "  {marker} {} → {}",

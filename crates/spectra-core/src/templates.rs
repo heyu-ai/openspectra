@@ -111,6 +111,26 @@ mod tests {
     }
 
     #[test]
+    fn template_name_falls_back_to_output_path_only_when_it_is_not_a_glob() {
+        // `template_name` piggybacks on `output_path` for every artifact
+        // except "specs" (whose `output_path` is the glob
+        // "specs/**/*.md", hence the hardcoded "spec.md" override). This
+        // guards that coupling: a future artifact whose `output_path`
+        // becomes glob-shaped under a different id would otherwise leak
+        // the raw glob string as `templateName` with nothing failing.
+        let root = TempDir::new("templates-output-path-guard");
+        let templates = list(&config(&root), None).unwrap();
+        for template in &templates {
+            assert!(
+                !template.template_name.contains('*'),
+                "artifact {:?}'s template_name leaked a glob: {:?}",
+                template.artifact_id,
+                template.template_name
+            );
+        }
+    }
+
+    #[test]
     fn a_configured_but_unsupported_schema_does_not_block_the_bare_command() {
         // With no explicit `--schema`, `templates` always reports the
         // built-in schema, regardless of what a project's config.yaml
