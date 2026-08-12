@@ -1,7 +1,7 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
 //! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
 //! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`,
-//! `update`, `config`, `templates`.
+//! `update`, `config`.
 
 mod completion;
 
@@ -14,7 +14,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use serde_json::json;
 
 use spectra_core::{
-    analyze, artifact, change, config::Config, drift, instructions, schema, skills, spec, templates,
+    analyze, artifact, change, config::Config, drift, instructions, schema, skills, spec,
 };
 
 #[derive(Parser, Debug)]
@@ -68,15 +68,6 @@ enum Command {
     },
     /// List available workflow schemas (only `spec-driven` is built in).
     Schemas {
-        /// Output as JSON.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Show template paths.
-    Templates {
-        /// Schema name.
-        #[arg(long)]
-        schema: Option<String>,
         /// Output as JSON.
         #[arg(long)]
         json: bool,
@@ -818,23 +809,6 @@ fn cmd_schemas(as_json: bool, use_color: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_templates(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Result<i32> {
-    let templates = templates::list(cfg, schema_name)?;
-    if as_json {
-        println!("{}", serde_json::to_string_pretty(&templates)?);
-    } else {
-        println!("Templates ({})", schema::SCHEMA_NAME);
-        for template in templates {
-            let marker = if template.has_content { "✓" } else { "○" };
-            println!(
-                "  {marker} {} → {}",
-                template.artifact_id, template.template_name
-            );
-        }
-    }
-    Ok(0)
-}
-
 fn cmd_status(
     cfg: &Config,
     change_name: Option<&str>,
@@ -1302,12 +1276,6 @@ fn run() -> Result<i32> {
         // project — the oracle lists it outside an initialized project too, so
         // it deliberately skips `require_initialized` (like `init`).
         Command::Schemas { json } => cmd_schemas(*json, use_color),
-        // Template metadata is embedded in the schema registry and is
-        // available outside an initialized project, matching the oracle.
-        Command::Templates { schema, json } => {
-            let cfg = Config::load(&root)?;
-            cmd_templates(&cfg, schema.as_deref(), *json)
-        }
         Command::Status {
             change,
             schema,
