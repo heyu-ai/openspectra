@@ -20,6 +20,7 @@ pub mod search;
 pub mod skills;
 pub mod spec;
 pub mod tasks;
+pub mod templates;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod touched;
