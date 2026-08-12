@@ -10,6 +10,24 @@ changes.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-12
+
+### Added
+
+- **`spectra templates [--schema NAME] [--json]`** (#58, closes #58) — reports
+  the built-in `spec-driven` schema's template metadata (artifact id,
+  template filename, has-content flag) in schema authoring order, matching
+  the oracle's text and 2-space pretty JSON output byte-for-byte, including
+  colored-TTY output (only the word `Templates` is bolded) and the
+  unknown-schema failure contract. Available outside an initialized
+  project; an explicit `--schema` name is validated against the built-in
+  registry, but with no flag the command always reports the built-in
+  schema's templates regardless of a project's own configured schema — the
+  oracle was probed directly (`/Applications/Spectra.app` via a forced TTY)
+  and confirmed it ignores the project's schema selector entirely for this
+  command. Custom schema template loading remains fail-loud, tracked by
+  #59/#126. Documented in `docs/reverse-engineering/templates.md`.
+
 ## [0.7.0] - 2026-08-12
 
 ### Added
