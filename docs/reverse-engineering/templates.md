@@ -86,6 +86,23 @@ The built-in schema has content for all four templates. A reproducible
 loading belongs to issue #126 and must be probed with that runtime rather than
 inferred here.
 
+### Color
+
+When color is enabled (a TTY, no `--no-color`, no `NO_COLOR`), the oracle
+bolds only the word `Templates` in the header:
+
+```
+\x1b[1mTemplates\x1b[0m (spec-driven)
+```
+
+The `(spec-driven)` suffix and every listing line (marker, artifact id, arrow,
+template name) are left uncolored — unlike `schemas`, whose whole header is
+bolded and whose `(source)` tag is dimmed (see `schemas.md`'s Color section).
+Probed by forcing a TTY (`script -q /dev/null spectra templates`) and
+confirming the exact byte sequence with `xxd`. OpenSpectra reproduces this
+with the shared `colorize(text, sgr_code, use_color)` helper wrapping only
+`"Templates"` with SGR code `1` (bold).
+
 ## OpenSpectra implementation
 
 `spectra_core::templates` derives the four entries from the embedded schema

@@ -86,7 +86,12 @@ enum Command {
     },
     /// Show template paths.
     Templates {
-        /// Schema name.
+        /// Workflow schema name. Only `spec-driven` is built in -- any other
+        /// explicit name is an error rather than a silent fallback. Unlike
+        /// `status`/`instructions`, an *unset* flag does NOT fall back to a
+        /// change's or the project's configured schema: with no flag this
+        /// always reports the built-in schema's templates, since no other
+        /// schema's templates are ever loaded.
         #[arg(long)]
         schema: Option<String>,
         /// Output as JSON.
@@ -852,12 +857,24 @@ fn cmd_schemas(as_json: bool, use_color: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_templates(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Result<i32> {
+// Only the word "Templates" is bolded; the "(schema)" suffix and every
+// listing line are left uncolored -- pinned against the oracle (see
+// docs/reverse-engineering/templates.md "Color").
+fn templates_header_line(schema_name: &str, use_color: bool) -> String {
+    format!("{} ({schema_name})", colorize("Templates", "1", use_color))
+}
+
+fn cmd_templates(
+    cfg: &Config,
+    schema_name: Option<&str>,
+    as_json: bool,
+    use_color: bool,
+) -> Result<i32> {
     let templates = templates::list(cfg, schema_name)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&templates)?);
     } else {
-        println!("Templates ({})", schema::SCHEMA_NAME);
+        println!("{}", templates_header_line(schema::SCHEMA_NAME, use_color));
         for template in templates {
             let marker = if template.has_content { "✓" } else { "○" };
             println!(
@@ -1344,7 +1361,7 @@ fn run() -> Result<i32> {
         // available outside an initialized project, matching the oracle.
         Command::Templates { schema, json } => {
             let cfg = Config::load(&root)?;
-            cmd_templates(&cfg, schema.as_deref(), *json)
+            cmd_templates(&cfg, schema.as_deref(), *json, use_color)
         }
         Command::Status {
             change,
@@ -1522,6 +1539,18 @@ mod tests {
     fn colorize_wraps_text_in_sgr_codes_only_when_enabled() {
         assert_eq!(colorize("hi", "31", true), "\x1b[31mhi\x1b[0m");
         assert_eq!(colorize("hi", "31", false), "hi");
+    }
+
+    #[test]
+    fn templates_header_line_bolds_only_the_word_templates() {
+        assert_eq!(
+            templates_header_line("spec-driven", true),
+            "\x1b[1mTemplates\x1b[0m (spec-driven)"
+        );
+        assert_eq!(
+            templates_header_line("spec-driven", false),
+            "Templates (spec-driven)"
+        );
     }
 
     #[test]
