@@ -153,23 +153,24 @@ pub fn search(cfg: &Config, query: &str, limit: usize) -> Result<SearchResponse>
         })
         .collect::<Vec<_>>();
 
-    // Deterministic ordering, layered: primary by descending score, then by
-    // ascending path so equal-scoring documents have a stable, reproducible
-    // order regardless of filesystem enumeration order. (`paths` was already
-    // sorted and `sort_by` is stable, so the path tiebreak is defense-in-depth
-    // that also survives a future switch to an unstable sort.)
-    ranked.sort_by(|left, right| {
-        right
-            .score
-            .total_cmp(&left.score)
-            .then_with(|| left.path.cmp(&right.path))
-    });
+    ranked.sort_by(compare_results);
     ranked.truncate(limit);
 
     Ok(SearchResponse {
         query: query.to_string(),
         results: ranked,
     })
+}
+
+/// Deterministic result ordering: primary by descending score, then ascending
+/// path so equal-scoring documents have a stable, reproducible order regardless
+/// of filesystem enumeration order. Extracted as a named function so the path
+/// tiebreak can be unit-tested in isolation from the upstream `paths.sort()`.
+fn compare_results(left: &SearchResult, right: &SearchResult) -> std::cmp::Ordering {
+    right
+        .score
+        .total_cmp(&left.score)
+        .then_with(|| left.path.cmp(&right.path))
 }
 
 fn collect_markdown(dir: &Path, canonical_root: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
@@ -261,11 +262,14 @@ fn is_cjk(character: char) -> bool {
     matches!(
         character as u32,
         // CJK ideographs: Extension A, Unified, Compatibility Ideographs, and
-        // Extension B (supplementary plane).
+        // the supplementary-plane extensions (B-I), Compatibility Ideographs
+        // Supplement, and Extensions G-H.
         0x3400..=0x4dbf
             | 0x4e00..=0x9fff
             | 0xf900..=0xfaff
-            | 0x20000..=0x2a6df
+            | 0x20000..=0x2ee5f
+            | 0x2f800..=0x2fa1f
+            | 0x30000..=0x323af
             // Japanese kana: Hiragana, Katakana, and Katakana phonetic extensions.
             | 0x3040..=0x309f
             | 0x30a0..=0x30ff
@@ -416,9 +420,13 @@ mod tests {
     }
 
     #[test]
-    fn symlinked_markdown_inside_spec_dir_is_not_surfaced() {
-        // AC-4: a symlinked `.md` inside a legitimate spec_dir that resolves
-        // outside the root must be excluded, not read and returned.
+    fn symlinked_markdown_entry_is_skipped_as_non_regular() {
+        // AC-4: a symlinked `.md` entry pointing outside the root is skipped.
+        // Note: this exercises the `DirEntry::file_type()` no-follow behavior
+        // (a symlink is neither `is_file()` nor `is_dir()`), NOT the
+        // `resolves_within` file-branch backstop -- the followed-symlink
+        // containment path is locked by
+        // `symlinked_spec_dir_cannot_surface_files_outside_the_root`.
         let root = TempDir::new("search-symlink-file");
         let outside = TempDir::new("search-outside-file");
         std::fs::write(outside.join("secret.md"), "topsecret token value").unwrap();
@@ -428,7 +436,7 @@ mod tests {
         let response = search(&config(&root), "topsecret", 10).unwrap();
         assert!(
             response.results.is_empty(),
-            "containment breach via symlinked file: {:?}",
+            "symlinked file should be skipped: {:?}",
             response.results
         );
     }
@@ -442,14 +450,34 @@ mod tests {
     }
 
     #[test]
+    fn kana_tokenizes_into_unigrams_and_bigrams() {
+        let terms = tokenize("かな");
+        assert!(terms.contains(&"か".to_string()));
+        assert!(terms.contains(&"な".to_string()));
+        assert!(terms.contains(&"かな".to_string()));
+    }
+
+    #[test]
+    fn supplementary_cjk_ideographs_tokenize_into_bigrams() {
+        // U+2A700 (Ext C) + U+2F804 (Compat Supplement): supplementary-plane
+        // ideographs must still form unigram + bigram tokens.
+        let terms = tokenize("\u{2A700}\u{2F804}");
+        assert!(terms.contains(&"\u{2A700}".to_string()));
+        assert!(terms.contains(&"\u{2F804}".to_string()));
+        assert!(terms.contains(&"\u{2A700}\u{2F804}".to_string()));
+    }
+
+    #[test]
     fn kana_and_hangul_queries_match_unspaced_phrases() {
         // AC-3: Japanese/Korean queries must tokenize (unigram/bigram) so a
-        // shorter query matches a longer unspaced phrase.
+        // shorter query matches a LONGER UNSPACED phrase -- the document words
+        // are unspaced so a plain word-token match cannot pass; only kana/Hangul
+        // bigram tokenization makes the query hit.
         let root = TempDir::new("search-jk");
         let specs = root.join("openspec/specs/cap");
         std::fs::create_dir_all(&specs).unwrap();
         std::fs::write(specs.join("ko.md"), "검색기능 설명").unwrap();
-        std::fs::write(specs.join("ja.md"), "ひらがな をどうぞ").unwrap();
+        std::fs::write(specs.join("ja.md"), "ひらがなをどうぞ").unwrap();
 
         let ko = search(&config(&root), "검색", 10).unwrap();
         assert_eq!(ko.results.len(), 1, "Hangul substring query should match");
@@ -460,7 +488,7 @@ mod tests {
             ja.results
                 .iter()
                 .any(|r| r.path == "openspec/specs/cap/ja.md"),
-            "kana query should match: {:?}",
+            "kana substring query should match unspaced phrase: {:?}",
             ja.results
         );
     }
@@ -488,7 +516,11 @@ mod tests {
 
     #[test]
     fn equal_scoring_documents_order_by_path() {
-        // AC-3: identical content -> identical BM25 score -> stable path order.
+        // AC-3 (observable behavior): identical content -> identical BM25 score
+        // -> both documents present with equal scores. The specific path order
+        // is locked by `tiebreak_orders_equal_scores_by_path` below, which
+        // exercises the comparator directly (this search-level test cannot
+        // isolate the tiebreak from the upstream `paths.sort()`).
         let root = TempDir::new("search-tiebreak");
         let specs = root.join("openspec/specs");
         std::fs::create_dir_all(&specs).unwrap();
@@ -497,7 +529,47 @@ mod tests {
         let response = search(&config(&root), "token rotation", 10).unwrap();
         assert_eq!(response.results.len(), 2);
         assert_eq!(response.results[0].score, response.results[1].score);
-        assert_eq!(response.results[0].path, "openspec/specs/a.md");
-        assert_eq!(response.results[1].path, "openspec/specs/b.md");
+    }
+
+    #[test]
+    fn tiebreak_orders_equal_scores_by_path() {
+        // AC-3: the path tiebreak, isolated. Removing `.then_with(path)` from
+        // `compare_results` makes equal scores compare `Equal` and fails this.
+        let lower = SearchResult {
+            path: "openspec/a.md".to_string(),
+            score: 0.5,
+            snippets: vec![],
+        };
+        let higher = SearchResult {
+            path: "openspec/b.md".to_string(),
+            score: 0.5,
+            snippets: vec![],
+        };
+        assert_eq!(
+            compare_results(&lower, &higher),
+            std::cmp::Ordering::Less,
+            "equal scores must order ascending by path regardless of argument order"
+        );
+        assert_eq!(
+            compare_results(&higher, &lower),
+            std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn snippet_anchors_on_the_earliest_match() {
+        // AC-3: the snippet reduces matches with `.min()` so it always anchors
+        // on the EARLIEST match; a mutation to a non-earliest pick would move
+        // the window off `alpha`. Also asserts identical input -> identical
+        // snippet (deterministic within a run).
+        let filler = "x ".repeat(200);
+        let content = format!("alpha {filler} omega");
+        let terms = term_counts("alpha omega");
+        let snip = snippet(&content, terms.keys());
+        assert!(
+            snip.starts_with("alpha"),
+            "snippet must anchor on the earliest match: {snip}"
+        );
+        assert_eq!(snip, snippet(&content, terms.keys()));
     }
 }

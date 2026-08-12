@@ -12,10 +12,21 @@ score and path, and applies `--limit`.
 Scanning all Markdown files below `<spec_dir>` includes canonical specs,
 active changes, and archived changes. Paths in results are relative to the
 project root and use `/` separators. Containment is enforced, not assumed:
-`<spec_dir>` is rejected if it is absolute or contains `..`, and every scanned
-directory and file is canonicalized (following symlinks) and skipped unless it
-resolves inside the canonicalized project root, so a symlinked `spec_dir` or a
-symlinked `.md` cannot surface a file outside the project.
+`<spec_dir>` is rejected if it is absolute or contains `..`; a `<spec_dir>` that
+is itself a symlink is canonicalized and refused unless it resolves inside the
+canonicalized project root; and symlinked entries encountered while walking the
+tree are skipped (`DirEntry::file_type()` does not follow symlinks, so a symlink
+is neither a file nor a directory to the walk), so a symlink can never surface a
+file outside the project.
+
+Residual risk (accepted): the containment check canonicalizes a path and then
+reads it by pathname, leaving a narrow TOCTOU window in which a checked regular
+file could be swapped for a symlink before the read. Fully closing it needs
+`openat`/`O_NOFOLLOW` directory-handle traversal (unsafe FFI), which conflicts
+with the dependency-free, minimal-surface goal; the exposure requires a local
+attacker with write access to the project's spec directory racing a concurrent
+search, and such an attacker can already place content directly. Accepted as a
+documented residual risk (see the PR Review Contract).
 
 ## Tokenization
 

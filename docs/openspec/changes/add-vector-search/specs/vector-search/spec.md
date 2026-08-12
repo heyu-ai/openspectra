@@ -40,17 +40,24 @@ request, model, or persistent index.
 
 ### Requirement: Project-root containment
 
-The system SHALL only read and surface Markdown files that resolve, following
-any symlinks, to a location inside the project root. A `spec_dir` that is
-absolute or contains `..` SHALL be rejected, and a symlinked directory or file
-that resolves outside the project root SHALL be skipped rather than followed.
+The system SHALL only read and surface Markdown files whose real, symlink-
+resolved path is inside the project root. A `spec_dir` that is absolute or
+contains `..` SHALL be rejected. A `spec_dir` that is itself a symlink SHALL be
+refused unless it resolves inside the project root. Symlinked entries
+encountered while walking the tree SHALL be skipped (not followed), so a
+symlink can never surface a file outside the project root.
 
-#### Scenario: Symlink escaping the project root
+#### Scenario: Symlinked spec directory escaping the project root
 
-- **WHEN** the spec directory, or a Markdown file within it, is a symlink that
-  resolves outside the project root
-- **THEN** search does not read or surface that file, and results never include
-  content from outside the project root
+- **WHEN** the spec directory is a symlink that resolves outside the project
+  root
+- **THEN** search refuses it and returns no results from outside the root
+
+#### Scenario: Symlinked file within the tree
+
+- **WHEN** a Markdown entry within the tree is a symlink
+- **THEN** search skips it rather than following it, so its target is never
+  read or surfaced
 
 ### Requirement: JSON consumer contract
 
