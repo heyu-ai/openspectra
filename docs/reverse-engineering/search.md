@@ -1,4 +1,4 @@
-# Reverse-engineering `spectra search`
+# Reverse-engineering and implementing `spectra search`
 
 How the closed-source `spectra search` command answers a natural-language
 query over a project's spec artifacts, and what OpenSpectra would need to
@@ -32,6 +32,9 @@ reproduce it. This is the feature the GUI surfaces as「向量搜尋 / 向量模
 - The index is a local file, **`.vector-search.db`**, gitignored by
   `spectra init`. (Measured: `.gitignore/.vector-search.db` string fragment,
   cross-referenced in `task.md`.)
+- OpenSpectra deliberately implements the same CLI with immediate,
+  dependency-free BM25 search instead. It does not emit model/index errors and
+  does not claim ranking parity with the hybrid oracle.
 
 ## CLI surface (measured)
 
@@ -110,7 +113,7 @@ variant directly and does not need the original's download path.
 5. **Store**: single SQLite-family file `.vector-search.db` at the project
    root, gitignored.
 
-## Why this was deliberately **not** ported (context)
+## Why the hybrid architecture was deliberately **not** ported (context)
 
 `drift.md:13-15` scopes `search` out of the drift reimplementation on purpose.
 The reasons, now concrete:
@@ -138,3 +141,48 @@ The reasons, now concrete:
 Until these are answered by running the oracle with the model present, any
 reimplementation is calibration-blind and can only aim for "reasonable hybrid
 search", not "byte-identical to v2.3.1".
+
+## Reproducing the observable oracle contract (2026-08-11)
+
+These probes used `/Users/doxa/.local/bin/spectra`, which resolves to the
+Spectra.app v2.3.1 arm64 executable. Each case used a separate temporary
+project jail except the limit enumeration, which made no filesystem changes
+after a single initialization.
+
+| Case | Exit | stdout | stderr |
+|---|---:|---|---|
+| Outside a project: `search needle --json` | 1 | empty | `Error: Not initialized. Run 'spectra init' to initialize.` + newline |
+| Fresh initialized project: `search needle --json` | 0 | `{"error":"index_not_built","results":[]}` + newline | empty |
+| `--limit 0`, `1`, or `usize::MAX` without an index | 0 | same `index_not_built` JSON | empty |
+| `--limit usize::MAX + 1` | 2 | empty | clap number-too-large error |
+| `--limit nope` | 2 | empty | clap invalid-digit error |
+
+The empty JSON is compact and exactly 41 bytes including its LF terminator.
+The limit accepts zero and is parsed as a platform `usize`.
+
+Strings in the binary additionally expose the result keys `query`, `results`,
+`path`, `score`, and plural `snippets`, plus the human messages `No results
+found.` and `Found N results for "..."`. A successful oracle result remains
+unobservable on this machine because the desktop-built index is absent, so
+the nesting and field order of a populated response remain inferred.
+
+## OpenSpectra implementation decision (2026-08-11)
+
+The maintainer selected a dependency-free lexical substitute for issue #63.
+OpenSpectra recursively scans Markdown files below `<spec_dir>` on every
+query, ranks whole files with BM25 (`k1=1.2`, `b=0.75`), normalizes scores with
+`s/(s+1)`, and adds CJK unigram/bigram tokens. It emits the inferred consumer
+shape `{query,results:[{path,score,snippets}]}`.
+
+This deliberately diverges in three ways:
+
+1. no persistent index or `index_not_built` prerequisite;
+2. no embedding model, dense arm, or RRF fusion;
+3. lexical relevance rather than semantic/cosine relevance.
+
+The trade keeps the command offline, immediate, and compatible with the
+project's zero-heavy-runtime-dependency distribution model. The generated
+`ask` skill consumes `error`, `results[].path`, and relative score strength;
+it remains compatible because successful OpenSpectra responses omit `error`,
+keep paths within the configured spec directory, and return monotonic scores
+in `(0, 1)`.

@@ -1,53 +1,31 @@
-# Test Plan：add-vector-search
+# Test plan: dependency-free search
 
-TC 表格（Rust 慣例：unit 住模組 `#[cfg(test)]`，integration 住
-`crates/spectra-cli/tests/`）。技法縮寫：EP=Equivalence Partitioning、
-BVA=Boundary Value、DT=Decision Table、ST=State Transition、RB=Risk-Based、
-VL=Validation。TC-ID 前綴：`SRCH`（查詢）、`IDX`（索引）、`MDL`（模型）、`SMK`（冒煙）。
+Techniques: EP = Equivalence Partitioning, BVA = Boundary Value Analysis,
+DT = Decision Table, ST = State Transition, RB = Risk-Based.
 
-## TC 表
+| TC-ID | Test Purpose | Technique | Risk | Precondition | Steps | Test Data | Expected Result | Traces to |
+|---|---|---|---|---|---|---|---|---|
+| TC-01 | Specific multi-term doc outranks a common single-term doc | EP | Med | Two `.md` docs under `spec_dir` | `search("token rotation", 10)` | `auth/spec.md`="token token rotation policy"; `other/spec.md`="general token notes" | Specific doc ranks first | `ranks_specific_document_above_common_match_and_normalizes_score` |
+| TC-02 | Raw BM25 scores normalize to `(0, 1)` | BVA | Med | Matching corpus | Inspect result scores | Same as TC-01 | Every score `> 0.0` and `< 1.0` | `ranks_specific_document_above_common_match_and_normalizes_score` |
+| TC-03 | Chinese CJK query tokenizes to unigrams + bigrams | EP | Med | n/a (unit) | `tokenize("封存變更")` | `封存變更` | Contains `封存`, `存變`, `變更` | `cjk_bigrams_distinguish_phrases` |
+| TC-04 | Korean Hangul splits into unigrams + bigrams | EP | High | n/a (unit) | `tokenize("검색")` | `검색` | Contains `검`, `색`, `검색` | `hangul_tokenizes_into_unigrams_and_bigrams` |
+| TC-05 | Japanese/Korean short query matches longer UNSPACED phrase | EP | High | Corpus with `검색기능`, `ひらがなをどうぞ` docs | `search("검색")`, `search("ひらがな")` | Unspaced Hangul + kana phrases | Each matches its document via bigram tokens | `kana_and_hangul_queries_match_unspaced_phrases` |
+| TC-06 | Corpus spans specs, active changes, and archive | EP | Med | Three docs across the three areas | `search("unique", 10)` | one doc in each area | All three discoverable | `scans_active_and_archived_changes_as_well_as_specs` |
+| TC-07 | Empty / missing spec directory | RB | Med | Missing `spec_dir` | `search("anything", 10)` | none | Successful empty result | `zero_limit_and_empty_corpus_return_no_results` |
+| TC-08 | `--limit 0` short-circuits | BVA | Med | Any corpus | `search("anything", 0)` | limit=0 | Successful empty result | `zero_limit_and_empty_corpus_return_no_results` |
+| TC-09 | `--limit N` caps below match count | BVA | High | Three docs all match `token` | `search("token", 1)` | 3 matching docs | Exactly 1 result returned | `limit_caps_results_below_match_count` |
+| TC-10 | Identical-content docs receive equal scores | ST | Med | Two identical-content docs | `search("token rotation", 10)` | `a.md`, `b.md` identical | Both present with equal scores | `equal_scoring_documents_order_by_path` |
+| TC-11 | Snippet survives Unicode lowercase expansion before a match | BVA | High | Doc with expanding chars before needle | `snippet(content, "needle")` | `İ`×100 + `needle` | No panic; snippet contains `needle` | `snippet_handles_lowercase_expansion_before_a_match` |
+| TC-12 | `spec_dir` lexical escape (`..`, absolute) rejected | RB | Critical | Config with escaping `spec_dir` | `search("secret", 10)` | `../outside`, `/tmp/outside` | Errors "spec_dir must be a relative path within the project root" | `rejects_spec_directories_that_escape_the_project_root` |
+| TC-13 | Symlinked `spec_dir` cannot surface external files | RB | Critical | `spec_dir` is a symlink to a dir outside root | `search("topsecret", 10)` | `openspec -> <outside>/secret.md` | Empty result (no leak) | `symlinked_spec_dir_cannot_surface_files_outside_the_root` |
+| TC-14 | Symlinked `.md` entry is skipped as a non-regular entry | RB | Critical | Symlinked `.md` inside `spec_dir` | `search("topsecret", 10)` | `specs/leak.md -> <outside>/secret.md` | Empty result (symlink skipped) | `symlinked_markdown_entry_is_skipped_as_non_regular` |
+| TC-15 | JSON `--json` consumer contract shape | DT | High | Matching fixture | run CLI `search --json` | fixture doc | Compact JSON, plural `snippets`, no `error` | `search_json_has_consumer_contract_and_honors_limit` (tests/search_integration.rs) |
+| TC-16 | Text mode empty output matches oracle message | EP | Med | No matching documents | run CLI `search` | non-matching query | `No results found.` | `text_mode_matches_observable_oracle_messages` (tests/search_integration.rs) |
+| TC-17 | Search outside an initialized project | RB | Med | Uninitialized cwd | run CLI `search` | none | Exit 1 + `Not initialized` on stderr | `search_requires_init_and_empty_project_is_successful` (tests/search_integration.rs) |
+| TC-18 | Japanese kana splits into unigrams + bigrams | EP | High | n/a (unit) | `tokenize("かな")` | `かな` | Contains `か`, `な`, `かな` | `kana_tokenizes_into_unigrams_and_bigrams` |
+| TC-19 | Supplementary-plane CJK ideographs tokenize | EP | Med | n/a (unit) | `tokenize(U+2A700 U+2F804)` | Ext C + Compat Supplement chars | Unigrams + bigram present | `supplementary_cjk_ideographs_tokenize_into_bigrams` |
+| TC-20 | Path tiebreak orders equal scores (isolated) | ST | High | n/a (unit) | `compare_results` on equal-score results | two equal scores, distinct paths | Ascending path order regardless of arg order | `tiebreak_orders_equal_scores_by_path` |
+| TC-21 | Snippet anchors on the earliest match | BVA | High | n/a (unit) | `snippet` over two far-apart matches | `alpha ... omega` >200 chars apart | Snippet starts at `alpha`; identical across calls | `snippet_anchors_on_the_earliest_match` |
 
-| TC-ID | Test Purpose | Technique | Risk | Precondition | 主要步驟 | Expected Result |
-|-------|--------------|-----------|------|--------------|----------|-----------------|
-| SRCH-VL-001 | query 回排序結果 | VL | 中 | 已建索引、模型就緒、多份 spec | `search "<q>" --limit 5` | ≤5 筆，分數降冪，各含 path+snippet |
-| SRCH-VL-002 | e5 前綴正確 | VL | **高** | 模型就緒 | 攔截送入 tokenizer 的字串 | index 帶 `passage: `、query 帶 `query: `；無省略/互換 |
-| SRCH-DT-001 | 排序為 RRF 非單路 | DT | 高 | 造一組 BM25 與 dense 名次不同的 doc | 比對最終序 vs 兩路各自序 | 最終序 == RRF(兩路)，≠ 任一單路序 |
-| SRCH-VL-003 | --json 契約 | VL | 中 | 已建索引 | `search "<q>" --json` | 合法 JSON，含 query/results/count；results[] 含 path/score/snippet；count==len |
-| SRCH-RB-001 | 查詢零網路 | RB | 高 | 模型+索引就緒，注入式 http client | 查詢並斷言 client 未被呼叫 | 零網路請求 |
-| SRCH-EP-001 | 空 corpus 不崩 | EP | 中 | 已 init、corpus 空、模型就緒 | `search "x" --json` | exit 0、`results:[]`、`count:0`、不 panic |
-| IDX-EP-001 | 索引涵蓋 specs+archived | EP | 中 | 含 active spec + 已封存 change | 建索引後查兩者各自內容 | 兩類文件皆可命中 |
-| IDX-VL-001 | DB 位置與 gitignore | VL | 中 | 已 init 專案 | 建索引 | `.vector-search.db` 在根目錄且被 `.gitignore` 覆蓋 |
-| IDX-ST-001 | 重建冪等 | ST | 中 | corpus 不變 | 連建兩次、同 query 比對 | 兩次結果集一致 |
-| IDX-BVA-001 | 移除文件後不命中 | BVA | 中 | query 原命中 D | 刪 D、重建、再查 | 結果不含 D |
-| IDX-EP-002 | 無索引不靜默回空 | EP | 高 | 模型就緒、無 DB | `search "x"` | 明確錯誤或自動建（design 定案），非靜默空集 |
-| MDL-EP-001 | 首次下載模型 | EP | 中 | 本機無模型（網路） | 觸發需模型操作 | 從 HF 取得 qonnx 資產至快取；下載前告知/opt-in。`#[ignore]`+opt-in job |
-| MDL-RB-001 | 下載完整性 | RB | 高 | 模擬中斷下載 | 偵測不完整資產 | 不當可用；重取或報錯（暫存+atomic rename） |
-| MDL-DT-001 | 未含 feature 訊息 | DT | 中 | 預設 build（無 feature） | `search "x"` | 清楚「未含 search」訊息 + 非 0，非 generic unrecognized |
-| SMK-001 | 有索引查詢命中（e2e） | RB | 高 | 已 init+索引+模型 | `search "<相關句>" --limit 3 --json` | results 非空，top-1 path 指向該 spec，零網路 |
-| SMK-002 | 空 corpus e2e | RB | 中 | 已 init、corpus 空、模型就緒 | `search "anything" --json` | exit 0、空集、不 panic |
-| SMK-003 | feature-off e2e | RB | 中 | 預設 build binary | `search "x"` | 清楚訊息 + 非 0 exit |
-| SRCH-CAL-001 | top-N 集合對齊 oracle | RB | — | macOS + Spectra.app、同 corpus/query | `calibrate-search.py` 跑雙方比對 | 每 query top-N 文件集合一致（順序加分）。oracle-gated |
-
-## Coverage Analysis
-
-| Scenario slug | 狀態 | 對應 TC |
-|---------------|------|---------|
-| `search-ranked-results` | ✓ covered | SRCH-VL-001, SMK-001 |
-| `e5-prefix-applied` | ✓ covered | SRCH-VL-002 |
-| `rrf-fusion-not-single-arm` | ✓ covered | SRCH-DT-001 |
-| `json-shape` | ✓ covered | SRCH-VL-003 |
-| `query-offline` | ✓ covered | SRCH-RB-001, SMK-001 |
-| `empty-corpus-empty-result` | ✓ covered | SRCH-EP-001, SMK-002 |
-| `index-covers-specs-and-archived` | ✓ covered | IDX-EP-001 |
-| `db-gitignored` | ✓ covered | IDX-VL-001 |
-| `reindex-idempotent` | ✓ covered | IDX-ST-001 |
-| `removed-doc-drops-out` | ✓ covered | IDX-BVA-001 |
-| `missing-index-explicit` | ✓ covered | IDX-EP-002 |
-| `model-download-on-first-use` | △ partial | MDL-EP-001（網路依賴，預設 CI 不跑） |
-| `download-integrity` | ✓ covered | MDL-RB-001 |
-| `feature-off-message` | ✓ covered | MDL-DT-001, SMK-003 |
-| `topn-set-parity` | ✗ missing（oracle-gated） | SRCH-CAL-001（需 macOS+oracle） |
-
-**Missing/Partial 說明**：`topn-set-parity` 在無 oracle 時無法驗證，US-004 標
-`blocked: needs-oracle`。`model-download-on-first-use` 依賴網路，以 `#[ignore]` +
-opt-in job 覆蓋，不進預設 gate（避免 CI 對外部 HF 的脆弱依賴）。
+Release verification additionally runs fmt, clippy with warnings denied,
+locked release build, all tests, and a real-project CLI smoke test.

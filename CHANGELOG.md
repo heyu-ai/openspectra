@@ -10,8 +10,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-12
+
 ### Added
 
+- **`spectra search <QUERY> [--limit N] [--json]`** (#63) — a dependency-free
+  lexical search over the project's Markdown artifacts. Ranks whole files with
+  BM25 (`k1=1.2`, `b=0.75`), normalizes scores to `(0, 1)`, and tokenizes Han
+  ideographs (Unified, Ext A/B/C-I, Compatibility, Ext G-H), Japanese kana, and
+  Korean Hangul into unigram + bigram tokens. Deliberately diverges from the
+  oracle's vector/RRF semantic ranking (maintainer-approved Option 2): no
+  embedding model, no persistent index, no network. The `--json` shape
+  (`{query, results:[{path, score, snippets}]}`) matches the consumer contract;
+  successful output omits the oracle's index/model `error` field. Result paths
+  are containment-checked (canonicalized and required to resolve inside the
+  project root; symlinked entries are skipped) so a query can never surface a
+  file outside the project. Documented in `docs/reverse-engineering/search.md`.
 - **Artifact `instructions --json` now surfaces `context:` and per-artifact
   `rules:` from `<spec_dir>/config.yaml`** (#127), between `instruction` and
   `locale`, matching the oracle's probed contract: context trimmed (a blank
