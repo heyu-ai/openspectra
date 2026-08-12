@@ -11,17 +11,24 @@ score and path, and applies `--limit`.
 
 Scanning all Markdown files below `<spec_dir>` includes canonical specs,
 active changes, and archived changes. Paths in results are relative to the
-project root, use `/` separators, and therefore remain inside the configured
-spec directory.
+project root and use `/` separators. Containment is enforced, not assumed:
+`<spec_dir>` is rejected if it is absolute or contains `..`, and every scanned
+directory and file is canonicalized (following symlinks) and skipped unless it
+resolves inside the canonicalized project root, so a symlinked `spec_dir` or a
+symlinked `.md` cannot surface a file outside the project.
 
 ## Tokenization
 
 - Non-CJK letters and numbers form lowercased word tokens.
 - `_` remains part of a word token.
-- CJK Unified Ideographs form both unigram and adjacent bigram tokens.
+- CJK scripts form both unigram and adjacent bigram tokens. "CJK" here covers
+  Han ideographs (Unified, Extension A, Extension B, and Compatibility
+  Ideographs), Japanese kana (Hiragana, Katakana, and phonetic extensions), and
+  Korean Hangul (Jamo, compatibility Jamo, and precomposed syllables).
 
 The CJK representation permits a multi-character query to prefer the same
-phrase without requiring a segmentation dictionary or new dependency.
+phrase without requiring a segmentation dictionary or new dependency, and lets
+a shorter Japanese/Korean query match a longer unspaced phrase.
 
 ## Ranking and scores
 
@@ -37,8 +44,9 @@ without pretending lexical relevance is cosine similarity.
 ## Snippets
 
 Each result contains one whitespace-normalized snippet of at most 200 source
-characters, centered near the earliest literal query-token match when one is
-available. Leading or trailing omissions use an ellipsis.
+characters, beginning a quarter-window before the earliest literal query-token
+match when one is available (so the match sits near the start of the window).
+Leading or trailing omissions use an ellipsis.
 
 ## Failure behavior
 

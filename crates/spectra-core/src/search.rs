@@ -28,7 +28,7 @@ pub struct SearchResponse {
 
 #[derive(Debug)]
 struct Document {
-    path: PathBuf,
+    rel: String,
     content: String,
     terms: HashMap<String, usize>,
     len: usize,
@@ -56,18 +56,35 @@ pub fn search(cfg: &Config, query: &str, limit: usize) -> Result<SearchResponse>
         anyhow::bail!("spec_dir must be a relative path within the project root");
     }
 
+    // Resolve the real project root once. Every scanned file must stay under it
+    // even when `spec_dir` -- or a directory/file entry -- is a symlink that
+    // resolves elsewhere: the lexical check above stops `..`/absolute strings
+    // but not a symlink, which `read_dir` would otherwise follow outside the
+    // root (AC-4, repo security baseline).
+    let canonical_root = cfg
+        .root
+        .canonicalize()
+        .with_context(|| format!("resolving project root {}", cfg.root.display()))?;
+
     let mut paths = Vec::new();
-    collect_markdown(&cfg.root.join(spec_dir), &mut paths)?;
+    collect_markdown(&cfg.root.join(spec_dir), &canonical_root, &mut paths)?;
     paths.sort();
 
     let mut documents = Vec::with_capacity(paths.len());
     for path in paths {
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("reading search document {}", path.display()))?;
+        // Containment holds by construction (see `collect_markdown`), so a
+        // failure here is a broken invariant, not a silent absolute-path leak.
+        let rel = path
+            .strip_prefix(&cfg.root)
+            .with_context(|| format!("search hit {} escaped project root", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
         let terms = term_counts(&content);
         let len = terms.values().sum();
         documents.push(Document {
-            path,
+            rel,
             content,
             terms,
             len,
@@ -95,11 +112,18 @@ pub fn search(cfg: &Config, query: &str, limit: usize) -> Result<SearchResponse>
         })
         .collect::<HashMap<_, _>>();
 
+    // Iterate query terms in a fixed order so the f64 accumulation below is
+    // reproducible across process runs: `HashMap` iteration order is randomized
+    // per process (SipHash seed) and float addition is non-associative, which
+    // would otherwise vary the serialized `score` bit-for-bit (AC-3).
+    let mut ordered_query_terms = query_terms.iter().collect::<Vec<_>>();
+    ordered_query_terms.sort_by(|left, right| left.0.cmp(right.0));
+
     let mut ranked = documents
         .into_iter()
         .filter_map(|doc| {
             let mut raw_score = 0.0;
-            for (term, query_frequency) in &query_terms {
+            for &(term, query_frequency) in &ordered_query_terms {
                 let frequency = *doc.terms.get(term).unwrap_or(&0) as f64;
                 if frequency == 0.0 {
                     continue;
@@ -119,21 +143,21 @@ pub fn search(cfg: &Config, query: &str, limit: usize) -> Result<SearchResponse>
                     * (1.0 + (*query_frequency as f64).ln());
             }
             (raw_score > 0.0).then(|| {
-                let path = doc
-                    .path
-                    .strip_prefix(&cfg.root)
-                    .unwrap_or(&doc.path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
+                let snippets = vec![snippet(&doc.content, query_terms.keys())];
                 SearchResult {
-                    path,
+                    path: doc.rel,
                     score: raw_score / (raw_score + 1.0),
-                    snippets: vec![snippet(&doc.content, query_terms.keys())],
+                    snippets,
                 }
             })
         })
         .collect::<Vec<_>>();
 
+    // Deterministic ordering, layered: primary by descending score, then by
+    // ascending path so equal-scoring documents have a stable, reproducible
+    // order regardless of filesystem enumeration order. (`paths` was already
+    // sorted and `sort_by` is stable, so the path tiebreak is defense-in-depth
+    // that also survives a future switch to an unstable sort.)
     ranked.sort_by(|left, right| {
         right
             .score
@@ -148,7 +172,15 @@ pub fn search(cfg: &Config, query: &str, limit: usize) -> Result<SearchResponse>
     })
 }
 
-fn collect_markdown(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_markdown(dir: &Path, canonical_root: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+    // A directory that resolves (following symlinks) outside the project root
+    // -- e.g. a symlinked `spec_dir` -- is refused rather than followed; a
+    // missing directory is simply an empty corpus. Either way, nothing to
+    // collect (AC-4). This is checked before `read_dir` so we never even
+    // enumerate an out-of-root directory.
+    if !resolves_within(dir, canonical_root) {
+        return Ok(());
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -160,14 +192,24 @@ fn collect_markdown(dir: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
             .file_type()
             .with_context(|| format!("reading file type for {}", entry.path().display()))?;
         if file_type.is_dir() {
-            collect_markdown(&entry.path(), output)?;
+            collect_markdown(&entry.path(), canonical_root, output)?;
         } else if file_type.is_file()
             && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+            && resolves_within(&entry.path(), canonical_root)
         {
             output.push(entry.path());
         }
     }
     Ok(())
+}
+
+/// True only when `path` resolves (following any symlinks) to a location inside
+/// `canonical_root`. A path that cannot be canonicalized (deleted mid-walk, a
+/// dangling symlink) or that escapes the root is treated as out of bounds and
+/// excluded, so a symlinked entry can never surface a file outside the project
+/// root (AC-4).
+fn resolves_within(path: &Path, canonical_root: &Path) -> bool {
+    matches!(path.canonicalize(), Ok(real) if real.starts_with(canonical_root))
 }
 
 fn term_counts(text: &str) -> HashMap<String, usize> {
@@ -218,7 +260,20 @@ fn tokenize(text: &str) -> Vec<String> {
 fn is_cjk(character: char) -> bool {
     matches!(
         character as u32,
-        0x3400..=0x4dbf | 0x4e00..=0x9fff | 0xf900..=0xfaff
+        // CJK ideographs: Extension A, Unified, Compatibility Ideographs, and
+        // Extension B (supplementary plane).
+        0x3400..=0x4dbf
+            | 0x4e00..=0x9fff
+            | 0xf900..=0xfaff
+            | 0x20000..=0x2a6df
+            // Japanese kana: Hiragana, Katakana, and Katakana phonetic extensions.
+            | 0x3040..=0x309f
+            | 0x30a0..=0x30ff
+            | 0x31f0..=0x31ff
+            // Korean Hangul: Jamo, compatibility Jamo, and precomposed syllables.
+            | 0x1100..=0x11ff
+            | 0x3130..=0x318f
+            | 0xac00..=0xd7af
     )
 }
 
@@ -342,5 +397,107 @@ mod tests {
         }
         let response = search(&config(&root), "unique", 10).unwrap();
         assert_eq!(response.results.len(), 3);
+    }
+
+    #[test]
+    fn symlinked_spec_dir_cannot_surface_files_outside_the_root() {
+        // AC-4: `spec_dir` passes the lexical check but is a symlink pointing
+        // outside the project; a query must not surface the external file.
+        let root = TempDir::new("search-symlink-specdir");
+        let outside = TempDir::new("search-outside-secret");
+        std::fs::write(outside.join("secret.md"), "topsecret credentials leak").unwrap();
+        std::os::unix::fs::symlink(&*outside, root.join("openspec")).unwrap();
+        let response = search(&config(&root), "topsecret", 10).unwrap();
+        assert!(
+            response.results.is_empty(),
+            "containment breach via symlinked spec_dir: {:?}",
+            response.results
+        );
+    }
+
+    #[test]
+    fn symlinked_markdown_inside_spec_dir_is_not_surfaced() {
+        // AC-4: a symlinked `.md` inside a legitimate spec_dir that resolves
+        // outside the root must be excluded, not read and returned.
+        let root = TempDir::new("search-symlink-file");
+        let outside = TempDir::new("search-outside-file");
+        std::fs::write(outside.join("secret.md"), "topsecret token value").unwrap();
+        let specs = root.join("openspec/specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.md"), specs.join("leak.md")).unwrap();
+        let response = search(&config(&root), "topsecret", 10).unwrap();
+        assert!(
+            response.results.is_empty(),
+            "containment breach via symlinked file: {:?}",
+            response.results
+        );
+    }
+
+    #[test]
+    fn hangul_tokenizes_into_unigrams_and_bigrams() {
+        let terms = tokenize("검색");
+        assert!(terms.contains(&"검".to_string()));
+        assert!(terms.contains(&"색".to_string()));
+        assert!(terms.contains(&"검색".to_string()));
+    }
+
+    #[test]
+    fn kana_and_hangul_queries_match_unspaced_phrases() {
+        // AC-3: Japanese/Korean queries must tokenize (unigram/bigram) so a
+        // shorter query matches a longer unspaced phrase.
+        let root = TempDir::new("search-jk");
+        let specs = root.join("openspec/specs/cap");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(specs.join("ko.md"), "검색기능 설명").unwrap();
+        std::fs::write(specs.join("ja.md"), "ひらがな をどうぞ").unwrap();
+
+        let ko = search(&config(&root), "검색", 10).unwrap();
+        assert_eq!(ko.results.len(), 1, "Hangul substring query should match");
+        assert_eq!(ko.results[0].path, "openspec/specs/cap/ko.md");
+
+        let ja = search(&config(&root), "ひらがな", 10).unwrap();
+        assert!(
+            ja.results
+                .iter()
+                .any(|r| r.path == "openspec/specs/cap/ja.md"),
+            "kana query should match: {:?}",
+            ja.results
+        );
+    }
+
+    #[test]
+    fn limit_caps_results_below_match_count() {
+        // AC-2: with more matches than the limit, `--limit` must cap the count.
+        let root = TempDir::new("search-limit-cap");
+        let specs = root.join("openspec/specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(specs.join("a.md"), "token").unwrap();
+        std::fs::write(specs.join("b.md"), "token token filler words here").unwrap();
+        std::fs::write(
+            specs.join("c.md"),
+            "token among many other unrelated filler words here now",
+        )
+        .unwrap();
+        let response = search(&config(&root), "token", 1).unwrap();
+        assert_eq!(
+            response.results.len(),
+            1,
+            "limit must cap the result count below the match count"
+        );
+    }
+
+    #[test]
+    fn equal_scoring_documents_order_by_path() {
+        // AC-3: identical content -> identical BM25 score -> stable path order.
+        let root = TempDir::new("search-tiebreak");
+        let specs = root.join("openspec/specs");
+        std::fs::create_dir_all(&specs).unwrap();
+        std::fs::write(specs.join("b.md"), "token rotation policy").unwrap();
+        std::fs::write(specs.join("a.md"), "token rotation policy").unwrap();
+        let response = search(&config(&root), "token rotation", 10).unwrap();
+        assert_eq!(response.results.len(), 2);
+        assert_eq!(response.results[0].score, response.results[1].score);
+        assert_eq!(response.results[0].path, "openspec/specs/a.md");
+        assert_eq!(response.results[1].path, "openspec/specs/b.md");
     }
 }

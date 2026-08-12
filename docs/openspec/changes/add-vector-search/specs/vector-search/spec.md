@@ -28,13 +28,29 @@ request, model, or persistent index.
 
 #### Scenario: Search CJK content
 
-- **WHEN** a CJK phrase occurs in a document
-- **THEN** unigram and bigram tokens make that document eligible for a match
+- **WHEN** a CJK phrase (Han ideograph, Japanese kana, or Korean Hangul) occurs
+  in a document
+- **THEN** unigram and bigram tokens make that document eligible for a match,
+  so a shorter unspaced query matches a longer unspaced phrase
 
 #### Scenario: Empty corpus
 
 - **WHEN** the spec directory contains no Markdown files
 - **THEN** search exits zero and returns no results
+
+### Requirement: Project-root containment
+
+The system SHALL only read and surface Markdown files that resolve, following
+any symlinks, to a location inside the project root. A `spec_dir` that is
+absolute or contains `..` SHALL be rejected, and a symlinked directory or file
+that resolves outside the project root SHALL be skipped rather than followed.
+
+#### Scenario: Symlink escaping the project root
+
+- **WHEN** the spec directory, or a Markdown file within it, is a symlink that
+  resolves outside the project root
+- **THEN** search does not read or surface that file, and results never include
+  content from outside the project root
 
 ### Requirement: JSON consumer contract
 
