@@ -876,7 +876,7 @@ pub fn derive_status(
 /// `context` and `rules` parse leniently *per field*: a malformed shape (a
 /// non-string `context`, a non-map `rules`, a non-list artifact entry) degrades
 /// to unset for that field alone and never fails the whole parse — so it can
-/// never mask the `schema:` key and change [`require_supported`]'s gate
+/// never mask the `schema:` key and change [`resolve_schema`]'s gate
 /// (probed: the oracle emits `context` unchanged while dropping a malformed
 /// `rules`). `schema` deliberately has no such guard: a structurally invalid
 /// `schema:` value fails the whole parse, which is the `None` path
@@ -929,14 +929,14 @@ pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
 /// `None` when the file is absent, has no `schema` key, or its value is blank
 /// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
 /// workflow and exits 0, unlike the change-level key — see
-/// [`require_supported`]). A read or parse failure is also `None`: an unreadable
+/// [`resolve_schema`]). A read or parse failure is also `None`: an unreadable
 /// selector must not be louder than a missing one, since the built-in schema is
 /// the default either way.
 ///
 /// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
 /// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
 /// mismatch (sequence/map) or a syntax error reaches the `None` path. That is
-/// harmless here — `"123"` is not the built-in name, so `require_supported`
+/// harmless here — `"123"` is not the built-in name, so `resolve_schema`
 /// still fails loud — but the value is a coerced scalar, not "unset".
 pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
     read_spec_config(cfg)?
@@ -978,70 +978,15 @@ pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
 /// round-trips, for an input no tool writes. A *blank string* (`schema: ""` or
 /// `schema: "   "`) is **not** affected — serde yields `Some(..)` and both
 /// binaries error identically (probed).
+/// Thin wrapper around [`resolve_schema`] for callers that only need the
+/// gate (accept/reject) without the loaded schema data.
 pub fn require_supported(
     cfg: &crate::Config,
     explicit: Option<&str>,
     change: Option<&crate::change::Change>,
 ) -> anyhow::Result<()> {
-    let resolved;
-    // Which layer produced the name decides what the remediation must say: a
-    // blanket "edit config.yaml" is a no-op whenever a higher layer won, and
-    // the user then hits the identical error after following the advice.
-    let remedy;
-    let name = match explicit {
-        Some(name) => {
-            remedy = format!("Drop '--schema {name}' to use the built-in workflow.");
-            name
-        }
-        None => {
-            let from_change = change.and_then(|c| c.metadata.schema.clone());
-            match from_change {
-                Some(name) => {
-                    remedy = format!(
-                        "Set 'schema: {SCHEMA_NAME}' in {} to proceed with the built-in workflow.",
-                        change
-                            .map(|c| c.dir.join(".openspec.yaml"))
-                            .expect("a change-level schema implies a change")
-                            .display()
-                    );
-                    resolved = name;
-                    resolved.as_str()
-                }
-                None => match configured_schema_name(cfg) {
-                    Some(name) => {
-                        remedy = format!(
-                            "Set 'schema: {SCHEMA_NAME}' in {}/config.yaml to proceed with the \
-                             built-in workflow.",
-                            cfg.spec_dir
-                        );
-                        resolved = name;
-                        resolved.as_str()
-                    }
-                    None => return Ok(()),
-                },
-            }
-        }
-    };
-    if name == SCHEMA_NAME {
-        return Ok(());
-    }
-    let definition = cfg
-        .root
-        .join(&cfg.spec_dir)
-        .join("schemas")
-        .join(name)
-        .join("schema.yaml");
-    if definition.is_file() {
-        return Err(anyhow::anyhow!(
-            "Schema '{name}' is defined at {} but OpenSpectra can only run the built-in \
-             '{SCHEMA_NAME}' schema; loading custom schemas is tracked by issue #126. {remedy}",
-            definition.display(),
-        ));
-    }
-    // The oracle's wording, byte for byte, for a name that resolves nowhere.
-    Err(anyhow::anyhow!(
-        "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
-    ))
+    resolve_schema(cfg, explicit, change)?;
+    Ok(())
 }
 
 pub fn status(
@@ -1081,7 +1026,7 @@ mod tests {
     }
 
     /// A change whose `.openspec.yaml` records `schema`, for the dominant
-    /// resolution layer. Only `metadata.schema` is read by `require_supported`,
+    /// resolution layer. Only `metadata.schema` is read by `resolve_schema`,
     /// so the other fields are placeholders.
     fn change_with_schema(schema: Option<&str>) -> crate::change::Change {
         crate::change::Change {
@@ -1153,25 +1098,18 @@ mod tests {
     }
 
     #[test]
-    fn require_supported_reports_a_present_custom_schema_as_unsupported_not_missing() {
-        // Claiming a schema is "not found in project ... locations" while it
-        // sits in the project would be a false statement, so this case gets
-        // its own message.
+    fn require_supported_accepts_a_present_custom_schema() {
         let (_tmp, cfg) = project("schema-supported-present");
         write_spec_config(&cfg, "schema: mycustom\n");
-        let definition = cfg
-            .root
-            .join("openspec")
-            .join("schemas")
-            .join("mycustom")
-            .join("schema.yaml");
-        std::fs::create_dir_all(definition.parent().unwrap()).unwrap();
-        std::fs::write(&definition, "name: mycustom\nartifacts: []\n").unwrap();
+        let schema_dir = cfg.root.join("openspec").join("schemas").join("mycustom");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: mycustom\nartifacts: []\napply:\n  requires: []\n  instruction: do it\n",
+        )
+        .unwrap();
 
-        let err = require_supported(&cfg, None, None).unwrap_err().to_string();
-        assert!(err.contains(&definition.display().to_string()), "{err}");
-        assert!(err.contains("#126"), "{err}");
-        assert!(!err.contains("not found"), "{err}");
+        assert!(require_supported(&cfg, None, None).is_ok());
     }
 
     #[test]
