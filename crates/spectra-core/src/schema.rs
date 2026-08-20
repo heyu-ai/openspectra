@@ -511,7 +511,22 @@ impl ResolvedSchema {
             apply_instruction: crate::instructions::APPLY_INSTRUCTION.to_string(),
         }
     }
+}
 
+fn reject_path_traversal(path: &str, field: &str) -> anyhow::Result<()> {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        anyhow::bail!("schema {field} '{path}' must be a relative path");
+    }
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            anyhow::bail!("schema {field} '{path}' must not contain '..'");
+        }
+    }
+    Ok(())
+}
+
+impl ResolvedSchema {
     /// Load a custom schema from `<schema_dir>/schema.yaml`, reading each
     /// artifact's `template:` filename from `<schema_dir>/templates/`.
     ///
@@ -531,6 +546,8 @@ impl ResolvedSchema {
             .artifacts
             .into_iter()
             .map(|a| {
+                reject_path_traversal(&a.template, "template")?;
+                reject_path_traversal(&a.generates, "generates")?;
                 let template_path = templates_dir.join(&a.template);
                 let template_content = if template_path.is_file() {
                     std::fs::read_to_string(&template_path)
@@ -1647,6 +1664,42 @@ mod tests {
             err.to_string()
                 .contains("apply.requires references 'ghost'"),
             "expected an apply.requires-validation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_absolute_template_path() {
+        let tmp = TempDir::new("load-abs-template");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: /etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string().contains("must be a relative path"),
+            "expected path-traversal rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_dotdot_in_template_path() {
+        let tmp = TempDir::new("load-dotdot-template");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: ../../../etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string().contains("must not contain '..'"),
+            "expected path-traversal rejection, got: {err}"
         );
     }
 
