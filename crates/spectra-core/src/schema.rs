@@ -1,5 +1,7 @@
 //! Built-in workflow schema definitions and artifact status derivation.
 
+use anyhow::Context;
+
 #[derive(Debug, Clone, Copy)]
 pub struct ArtifactDefinition {
     pub id: &'static str,
@@ -425,6 +427,217 @@ pub fn schemas() -> Vec<SchemaListing> {
         name: SCHEMA_NAME,
         source: SCHEMA_SOURCE,
     }]
+}
+
+/// Where a [`ResolvedSchema`] came from: the built-in `spec-driven` workflow
+/// shipped inside the binary ("package"), or a `<spec_dir>/schemas/<name>/`
+/// directory loaded from a project ("project"). Mirrors [`SCHEMA_SOURCE`]'s
+/// two oracle-observed values, but as an enum rather than a string constant
+/// since [`ResolvedSchema`] must represent either case at runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaSource {
+    Package,
+    Project,
+}
+
+impl std::fmt::Display for SchemaSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Package => f.write_str("package"),
+            Self::Project => f.write_str("project"),
+        }
+    }
+}
+
+/// Owned counterpart to [`ArtifactDefinition`]: identical shape, but with
+/// `String` fields so it can hold data loaded at runtime from a project's
+/// `schema.yaml` (issue #126), not just the compiled-in `&'static str`
+/// constants.
+#[derive(Debug, Clone)]
+pub struct ResolvedArtifact {
+    pub id: String,
+    pub output_path: String,
+    pub description: String,
+    pub deps: Vec<String>,
+    pub instruction: String,
+    pub template: String,
+}
+
+/// A fully resolved workflow schema: either the built-in `spec-driven`
+/// workflow (via [`ResolvedSchema::builtin`]) or a project's custom schema
+/// loaded from `<spec_dir>/schemas/<name>/schema.yaml` (via
+/// [`ResolvedSchema::load`]). Every consumer that used to reach for the
+/// static `ARTIFACTS`/`SCHEMA_NAME`/etc. constants now takes a
+/// `&ResolvedSchema` instead, so it can run against either source uniformly.
+#[derive(Debug, Clone)]
+pub struct ResolvedSchema {
+    pub name: String,
+    pub source: SchemaSource,
+    pub description: String,
+    pub artifacts: Vec<ResolvedArtifact>,
+    pub artifact_order: Vec<String>,
+    pub apply_requires: Vec<String>,
+    pub apply_instruction: String,
+}
+
+impl ResolvedSchema {
+    /// Wrap the compiled-in `spec-driven` workflow as a [`ResolvedSchema`].
+    pub fn builtin() -> Self {
+        Self {
+            name: SCHEMA_NAME.to_string(),
+            source: SchemaSource::Package,
+            description: SCHEMA_DESCRIPTION.to_string(),
+            artifacts: ARTIFACTS
+                .iter()
+                .map(|a| ResolvedArtifact {
+                    id: a.id.to_string(),
+                    output_path: a.output_path.to_string(),
+                    description: a.description.to_string(),
+                    deps: a.deps.iter().map(|d| d.to_string()).collect(),
+                    instruction: a.instruction.to_string(),
+                    template: a.template.to_string(),
+                })
+                .collect(),
+            artifact_order: SCHEMA_ARTIFACT_ORDER
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            apply_requires: APPLY_REQUIRES.iter().map(|s| s.to_string()).collect(),
+            apply_instruction: crate::instructions::APPLY_INSTRUCTION.to_string(),
+        }
+    }
+
+    /// Load a custom schema from `<schema_dir>/schema.yaml`, reading each
+    /// artifact's `template:` filename from `<schema_dir>/templates/`.
+    ///
+    /// `dir_name` is accepted for parity with the load-site convention (the
+    /// directory name used to locate `schema_dir`) but is not itself read —
+    /// the schema's display `name` comes from the YAML's own `name:` field,
+    /// which need not match the directory name.
+    pub fn load(schema_dir: &std::path::Path, _dir_name: &str) -> anyhow::Result<Self> {
+        let yaml_path = schema_dir.join("schema.yaml");
+        let yaml_text = std::fs::read_to_string(&yaml_path)
+            .with_context(|| format!("reading {}", yaml_path.display()))?;
+        let raw: SchemaYaml = serde_yaml::from_str(&yaml_text)
+            .with_context(|| format!("parsing {}", yaml_path.display()))?;
+
+        let templates_dir = schema_dir.join("templates");
+        let artifacts = raw
+            .artifacts
+            .into_iter()
+            .map(|a| {
+                let template_path = templates_dir.join(&a.template);
+                let template_content = if template_path.is_file() {
+                    std::fs::read_to_string(&template_path)
+                        .with_context(|| format!("reading template {}", template_path.display()))?
+                } else {
+                    String::new()
+                };
+                Ok(ResolvedArtifact {
+                    id: a.id,
+                    output_path: a.generates,
+                    description: a.description,
+                    deps: a.requires,
+                    instruction: a.instruction,
+                    template: template_content,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let artifact_order = artifacts.iter().map(|a| a.id.clone()).collect();
+
+        Ok(Self {
+            name: raw.name,
+            source: SchemaSource::Project,
+            description: raw.description.unwrap_or_default(),
+            artifacts,
+            artifact_order,
+            apply_requires: raw.apply.requires,
+            apply_instruction: raw.apply.instruction,
+        })
+    }
+}
+
+/// Deserialization shape for `<spec_dir>/schemas/<name>/schema.yaml`. `version`
+/// is accepted but unused (no behavior branches on it yet).
+#[derive(serde::Deserialize)]
+struct SchemaYaml {
+    name: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    version: Option<u32>,
+    #[serde(default)]
+    description: Option<String>,
+    artifacts: Vec<SchemaYamlArtifact>,
+    apply: SchemaYamlApply,
+}
+
+#[derive(serde::Deserialize)]
+struct SchemaYamlArtifact {
+    id: String,
+    generates: String,
+    description: String,
+    template: String,
+    instruction: String,
+    #[serde(default)]
+    requires: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct SchemaYamlApply {
+    requires: Vec<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    tracks: Option<String>,
+    instruction: String,
+}
+
+/// Resolve which schema a command should run under, loading a custom schema
+/// from disk instead of rejecting it (replacing [`require_supported`]'s
+/// reject-everything-but-built-in behavior for callers that can act on a
+/// [`ResolvedSchema`]).
+///
+/// Resolution order matches `require_supported` exactly: `--schema` >
+/// the change's own `.openspec.yaml` `schema:` > `<spec_dir>/config.yaml`'s
+/// `schema:` > the built-in. See `require_supported`'s doc comment for the
+/// full probed rationale behind that order.
+pub fn resolve_schema(
+    cfg: &crate::Config,
+    explicit: Option<&str>,
+    change: Option<&crate::change::Change>,
+) -> anyhow::Result<ResolvedSchema> {
+    let resolved_name;
+    let name = match explicit {
+        Some(name) => name,
+        None => {
+            let from_change = change.and_then(|c| c.metadata.schema.clone());
+            match from_change {
+                Some(name) => {
+                    resolved_name = name;
+                    resolved_name.as_str()
+                }
+                None => match configured_schema_name(cfg) {
+                    Some(name) => {
+                        resolved_name = name;
+                        resolved_name.as_str()
+                    }
+                    None => return Ok(ResolvedSchema::builtin()),
+                },
+            }
+        }
+    };
+    if name == SCHEMA_NAME {
+        return Ok(ResolvedSchema::builtin());
+    }
+    let schema_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(name);
+    let definition = schema_dir.join("schema.yaml");
+    if definition.is_file() {
+        return ResolvedSchema::load(&schema_dir, name);
+    }
+    // The oracle's wording, byte for byte, for a name that resolves nowhere.
+    Err(anyhow::anyhow!(
+        "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -1341,5 +1554,82 @@ mod tests {
         let err = status(&cfg, Some("nope"), None).unwrap_err();
 
         assert_eq!(err.to_string(), "Change 'nope' not found.");
+    }
+
+    #[test]
+    fn resolved_builtin_matches_static_constants() {
+        let schema = ResolvedSchema::builtin();
+        assert_eq!(schema.name, SCHEMA_NAME);
+        assert_eq!(schema.artifacts.len(), ARTIFACTS.len());
+        for (resolved, static_def) in schema.artifacts.iter().zip(ARTIFACTS.iter()) {
+            assert_eq!(resolved.id, static_def.id);
+            assert_eq!(resolved.output_path, static_def.output_path);
+            assert_eq!(resolved.description, static_def.description);
+            assert_eq!(resolved.instruction, static_def.instruction);
+            assert_eq!(resolved.template, static_def.template);
+            assert_eq!(resolved.deps, static_def.deps);
+        }
+        assert_eq!(schema.apply_requires, APPLY_REQUIRES);
+    }
+
+    #[test]
+    fn resolved_load_parses_a_custom_schema_from_disk() {
+        let tmp = TempDir::new("load-custom-schema");
+        let schema_dir = tmp.join("openspec").join("schemas").join("mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: My Custom\nversion: 1\ndescription: A test schema\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: Custom proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  tracks: tasks.md\n  instruction: Do the work.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            schema_dir.join("templates").join("proposal.md"),
+            "## Custom Template\n",
+        )
+        .unwrap();
+
+        let schema = ResolvedSchema::load(&schema_dir, "mycustom").unwrap();
+        assert_eq!(schema.name, "My Custom");
+        assert_eq!(schema.source, SchemaSource::Project);
+        assert_eq!(schema.artifacts.len(), 1);
+        assert_eq!(schema.artifacts[0].id, "proposal");
+        assert_eq!(schema.artifacts[0].template, "## Custom Template\n");
+        // `instruction:` is a plain (unquoted) YAML scalar here, so its
+        // trailing newline is stripped per YAML scalar-folding rules --
+        // unlike a `template:` file read straight off disk, which keeps
+        // whatever trailing bytes the file itself has.
+        assert_eq!(schema.artifacts[0].instruction, "Write it.");
+        assert_eq!(schema.apply_requires, vec!["proposal"]);
+        assert_eq!(schema.apply_instruction, "Do the work.");
+    }
+
+    #[test]
+    fn resolve_schema_loads_a_present_custom_schema_instead_of_rejecting_it() {
+        let (_tmp, cfg) = project("resolve-custom");
+        write_spec_config(&cfg, "schema: mycustom\n");
+        let schema_dir = cfg.root.join("openspec").join("schemas").join("mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: My Custom\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  tracks: tasks.md\n  instruction: Do it.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            schema_dir.join("templates").join("proposal.md"),
+            "## Template\n",
+        )
+        .unwrap();
+
+        let schema = resolve_schema(&cfg, None, None).unwrap();
+        assert_eq!(schema.name, "My Custom");
+        assert_eq!(schema.source, SchemaSource::Project);
+    }
+
+    #[test]
+    fn resolve_schema_returns_builtin_for_unconfigured_project() {
+        let (_tmp, cfg) = project("resolve-builtin");
+        let schema = resolve_schema(&cfg, None, None).unwrap();
+        assert_eq!(schema.name, SCHEMA_NAME);
+        assert_eq!(schema.source, SchemaSource::Package);
     }
 }
