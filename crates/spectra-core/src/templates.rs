@@ -13,6 +13,12 @@ pub struct TemplateListing {
     pub template_name: String,
 }
 
+#[derive(Debug)]
+pub struct TemplateListResult {
+    pub schema_name: String,
+    pub templates: Vec<TemplateListing>,
+}
+
 /// Return template metadata in the schema's authoring order.
 ///
 /// Only an explicit `--schema` name is resolved (and, for a custom schema,
@@ -21,12 +27,12 @@ pub struct TemplateListing {
 /// schema — matching the command's "available outside an initialized
 /// project" contract: a bare `templates` never consults `config.yaml`, since
 /// oracle parity for it was never about the project's configured default.
-pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<Vec<TemplateListing>> {
+pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<TemplateListResult> {
     let schema = match schema_name {
         Some(name) => schema::resolve_schema(cfg, Some(name), None)?,
         None => schema::ResolvedSchema::builtin(),
     };
-    Ok(schema
+    let templates = schema
         .artifact_order
         .iter()
         .map(|artifact_id| {
@@ -47,7 +53,11 @@ pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<Vec<TemplateListi
                 },
             }
         })
-        .collect())
+        .collect();
+    Ok(TemplateListResult {
+        schema_name: schema.name,
+        templates,
+    })
 }
 
 fn has_content(template: &str) -> bool {
@@ -71,9 +81,10 @@ mod tests {
     #[test]
     fn built_in_templates_match_oracle_order_names_and_content_flags() {
         let root = TempDir::new("templates-built-in");
-        let templates = list(&config(&root), None).unwrap();
+        let result = list(&config(&root), None).unwrap();
+        assert_eq!(result.schema_name, "spec-driven");
         assert_eq!(
-            templates,
+            result.templates,
             vec![
                 TemplateListing {
                     artifact_id: "proposal".to_string(),
@@ -123,8 +134,8 @@ mod tests {
         // becomes glob-shaped under a different id would otherwise leak
         // the raw glob string as `templateName` with nothing failing.
         let root = TempDir::new("templates-output-path-guard");
-        let templates = list(&config(&root), None).unwrap();
-        for template in &templates {
+        let result = list(&config(&root), None).unwrap();
+        for template in &result.templates {
             assert!(
                 !template.template_name.contains('*'),
                 "artifact {:?}'s template_name leaked a glob: {:?}",
@@ -149,8 +160,8 @@ mod tests {
         )
         .unwrap();
 
-        let templates = list(&config(&root), None).unwrap();
-        assert_eq!(templates.len(), 4);
-        assert_eq!(templates[0].artifact_id, "proposal");
+        let result = list(&config(&root), None).unwrap();
+        assert_eq!(result.templates.len(), 4);
+        assert_eq!(result.templates[0].artifact_id, "proposal");
     }
 }

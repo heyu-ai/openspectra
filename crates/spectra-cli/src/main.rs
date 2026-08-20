@@ -870,20 +870,12 @@ fn cmd_templates(
     as_json: bool,
     use_color: bool,
 ) -> Result<i32> {
-    let templates = templates::list(cfg, schema_name)?;
+    let result = templates::list(cfg, schema_name)?;
     if as_json {
-        println!("{}", serde_json::to_string_pretty(&templates)?);
+        println!("{}", serde_json::to_string_pretty(&result.templates)?);
     } else {
-        // Mirrors templates::list's own None-vs-Some split: a bare command
-        // never loads/consults anything beyond the built-in name, while an
-        // explicit --schema is resolved (and, for a custom schema, loaded)
-        // so the header names the schema that was actually listed.
-        let header_name = match schema_name {
-            Some(name) => schema::resolve_schema(cfg, Some(name), None)?.name,
-            None => schema::SCHEMA_NAME.to_string(),
-        };
-        println!("{}", templates_header_line(&header_name, use_color));
-        for template in templates {
+        println!("{}", templates_header_line(&result.schema_name, use_color));
+        for template in &result.templates {
             // "○" itself is unprobed: every built-in template has content,
             // so a `has_content: false` case was never reproducible against
             // the oracle for v2.3.1 (see templates.md's Text section).
