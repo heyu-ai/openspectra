@@ -222,24 +222,25 @@ lookup**, and the two ends of that are a live divergence:
 
 | change's `schema:` | oracle writes | OpenSpectra writes |
 |---|---|---|
-| resolvable custom schema | that schema's template (probed: a `# MARKER-CUSTOM-TEMPLATE` file in `schemas/mycustom/templates/proposal.md` comes out verbatim) | the built-in template — wrong workflow, until #126 |
+| resolvable custom schema | that schema's template (probed: a `# MARKER-CUSTOM-TEMPLATE` file in `schemas/mycustom/templates/proposal.md` comes out verbatim) | the built-in template (custom schemas are loaded for `status`/`instructions` since #126, but `new artifact` still uses the built-in) |
 | unresolvable | a **0-byte** file | the built-in template (1213 bytes for `design`) |
 
 The empty-file case is a deliberate divergence: a usable built-in artifact beats
-an empty one, and nothing is destroyed either way. The custom-template case is
-#126. `schema_selector_integration.rs` asserts the OpenSpectra side so neither
-can drift silently.
+an empty one, and nothing is destroyed either way. `new artifact` still uses the
+built-in template for custom schemas — the schema-aware template lookup is
+deferred to a future PR. `schema_selector_integration.rs` asserts the
+OpenSpectra side so neither can drift silently.
 
-### OpenSpectra: fail loud rather than fall back (#117)
+### OpenSpectra: custom schema loading (#126)
 
-OpenSpectra cannot load a custom schema yet (tracked by #126). Until it can,
-`status` and `instructions` resolve the selector in the order above and
-**refuse to run** on anything but `spec-driven`:
+OpenSpectra loads custom schemas from `<spec_dir>/schemas/<name>/schema.yaml`
+when the selector resolves to a name other than `spec-driven`. `status`,
+`instructions`, and `templates --schema` all use the loaded schema's artifacts,
+instructions, and templates. The resolution order is unchanged:
 
 - name resolves nowhere → the oracle's message, byte for byte.
-- `schemas/<name>/schema.yaml` exists → a distinct message naming the file and
-  #126. Reusing the oracle's "not found in project ... locations" wording here
-  would be a false statement, since the schema *is* in the project.
+- `schemas/<name>/schema.yaml` exists → loaded and used (the `name:` field
+  from the YAML becomes the schema name shown by `status`).
 
 One edge case is deliberately not reproduced: a change whose `schema:` key is
 present but null. `ChangeMetadata`'s `Option<String>` cannot distinguish that

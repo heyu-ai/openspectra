@@ -8,42 +8,53 @@ use crate::{schema, Config};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateListing {
-    pub artifact_id: &'static str,
+    pub artifact_id: String,
     pub has_content: bool,
-    pub template_name: &'static str,
+    pub template_name: String,
+}
+
+#[derive(Debug)]
+pub struct TemplateListResult {
+    pub schema_name: String,
+    pub templates: Vec<TemplateListing>,
 }
 
 /// Return template metadata in the schema's authoring order.
 ///
-/// Only an explicit `--schema` name is validated against the built-in
-/// registry. With no explicit name, this always reports the built-in
-/// schema's templates regardless of a project's *configured* schema —
-/// matching the command's "available outside an initialized project"
-/// contract, since it never loads a custom schema's templates either way.
-pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<Vec<TemplateListing>> {
-    if let Some(name) = schema_name {
-        schema::require_supported(cfg, Some(name), None)?;
-    }
-    Ok(schema::SCHEMA_ARTIFACT_ORDER
+/// Only an explicit `--schema` name is resolved (and, for a custom schema,
+/// actually loaded from disk). With no explicit name, this always reports the
+/// built-in schema's templates regardless of a project's *configured*
+/// schema — matching the command's "available outside an initialized
+/// project" contract: a bare `templates` never consults `config.yaml`, since
+/// oracle parity for it was never about the project's configured default.
+pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<TemplateListResult> {
+    let schema = match schema_name {
+        Some(name) => schema::resolve_schema(cfg, Some(name), None)?,
+        None => schema::ResolvedSchema::builtin(),
+    };
+    let templates = schema
+        .artifact_order
         .iter()
         .map(|artifact_id| {
-            // Guarded by schema.rs's own permutation test tying
-            // SCHEMA_ARTIFACT_ORDER to ARTIFACTS -- a desync there fails CI
-            // before it can reach this expect() at runtime.
-            let artifact = schema::artifacts()
+            // Guarded by ResolvedSchema::builtin()/::load() -- both build
+            // artifact_order from the same artifacts they populate, so this
+            // lookup always finds a match.
+            let artifact = schema
+                .artifacts
                 .iter()
-                .find(|artifact| artifact.id == *artifact_id)
+                .find(|artifact| &artifact.id == artifact_id)
                 .expect("schema artifact order must reference a definition");
             TemplateListing {
-                artifact_id: artifact.id,
-                has_content: has_content(artifact.template),
-                template_name: match artifact.id {
-                    "specs" => "spec.md",
-                    _ => artifact.output_path,
-                },
+                artifact_id: artifact.id.clone(),
+                has_content: has_content(&artifact.template),
+                template_name: artifact.template_name.clone(),
             }
         })
-        .collect())
+        .collect();
+    Ok(TemplateListResult {
+        schema_name: schema.name,
+        templates,
+    })
 }
 
 fn has_content(template: &str) -> bool {
@@ -67,29 +78,30 @@ mod tests {
     #[test]
     fn built_in_templates_match_oracle_order_names_and_content_flags() {
         let root = TempDir::new("templates-built-in");
-        let templates = list(&config(&root), None).unwrap();
+        let result = list(&config(&root), None).unwrap();
+        assert_eq!(result.schema_name, "spec-driven");
         assert_eq!(
-            templates,
+            result.templates,
             vec![
                 TemplateListing {
-                    artifact_id: "proposal",
+                    artifact_id: "proposal".to_string(),
                     has_content: true,
-                    template_name: "proposal.md",
+                    template_name: "proposal.md".to_string(),
                 },
                 TemplateListing {
-                    artifact_id: "specs",
+                    artifact_id: "specs".to_string(),
                     has_content: true,
-                    template_name: "spec.md",
+                    template_name: "spec.md".to_string(),
                 },
                 TemplateListing {
-                    artifact_id: "design",
+                    artifact_id: "design".to_string(),
                     has_content: true,
-                    template_name: "design.md",
+                    template_name: "design.md".to_string(),
                 },
                 TemplateListing {
-                    artifact_id: "tasks",
+                    artifact_id: "tasks".to_string(),
                     has_content: true,
-                    template_name: "tasks.md",
+                    template_name: "tasks.md".to_string(),
                 },
             ]
         );
@@ -119,8 +131,8 @@ mod tests {
         // becomes glob-shaped under a different id would otherwise leak
         // the raw glob string as `templateName` with nothing failing.
         let root = TempDir::new("templates-output-path-guard");
-        let templates = list(&config(&root), None).unwrap();
-        for template in &templates {
+        let result = list(&config(&root), None).unwrap();
+        for template in &result.templates {
             assert!(
                 !template.template_name.contains('*'),
                 "artifact {:?}'s template_name leaked a glob: {:?}",
@@ -145,8 +157,8 @@ mod tests {
         )
         .unwrap();
 
-        let templates = list(&config(&root), None).unwrap();
-        assert_eq!(templates.len(), 4);
-        assert_eq!(templates[0].artifact_id, "proposal");
+        let result = list(&config(&root), None).unwrap();
+        assert_eq!(result.templates.len(), 4);
+        assert_eq!(result.templates[0].artifact_id, "proposal");
     }
 }

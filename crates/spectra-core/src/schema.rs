@@ -1,5 +1,7 @@
 //! Built-in workflow schema definitions and artifact status derivation.
 
+use anyhow::Context;
+
 #[derive(Debug, Clone, Copy)]
 pub struct ArtifactDefinition {
     pub id: &'static str,
@@ -427,6 +429,264 @@ pub fn schemas() -> Vec<SchemaListing> {
     }]
 }
 
+/// Where a [`ResolvedSchema`] came from: the built-in `spec-driven` workflow
+/// shipped inside the binary ("package"), or a `<spec_dir>/schemas/<name>/`
+/// directory loaded from a project ("project"). Mirrors [`SCHEMA_SOURCE`]'s
+/// two oracle-observed values, but as an enum rather than a string constant
+/// since [`ResolvedSchema`] must represent either case at runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SchemaSource {
+    Package,
+    Project,
+}
+
+impl std::fmt::Display for SchemaSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Package => f.write_str("package"),
+            Self::Project => f.write_str("project"),
+        }
+    }
+}
+
+/// Owned counterpart to [`ArtifactDefinition`]: identical shape, but with
+/// `String` fields so it can hold data loaded at runtime from a project's
+/// `schema.yaml` (issue #126), not just the compiled-in `&'static str`
+/// constants.
+#[derive(Debug, Clone)]
+pub struct ResolvedArtifact {
+    pub id: String,
+    pub output_path: String,
+    pub description: String,
+    pub deps: Vec<String>,
+    pub instruction: String,
+    pub template: String,
+    pub template_name: String,
+}
+
+/// A fully resolved workflow schema: either the built-in `spec-driven`
+/// workflow (via [`ResolvedSchema::builtin`]) or a project's custom schema
+/// loaded from `<spec_dir>/schemas/<name>/schema.yaml` (via
+/// [`ResolvedSchema::load`]). Every consumer that used to reach for the
+/// static `ARTIFACTS`/`SCHEMA_NAME`/etc. constants now takes a
+/// `&ResolvedSchema` instead, so it can run against either source uniformly.
+#[derive(Debug, Clone)]
+pub struct ResolvedSchema {
+    pub name: String,
+    pub source: SchemaSource,
+    pub description: String,
+    pub artifacts: Vec<ResolvedArtifact>,
+    pub artifact_order: Vec<String>,
+    pub apply_requires: Vec<String>,
+    pub apply_instruction: String,
+}
+
+impl ResolvedSchema {
+    /// Wrap the compiled-in `spec-driven` workflow as a [`ResolvedSchema`].
+    pub fn builtin() -> Self {
+        Self {
+            name: SCHEMA_NAME.to_string(),
+            source: SchemaSource::Package,
+            description: SCHEMA_DESCRIPTION.to_string(),
+            artifacts: ARTIFACTS
+                .iter()
+                .map(|a| ResolvedArtifact {
+                    id: a.id.to_string(),
+                    output_path: a.output_path.to_string(),
+                    description: a.description.to_string(),
+                    deps: a.deps.iter().map(|d| d.to_string()).collect(),
+                    instruction: a.instruction.to_string(),
+                    template: a.template.to_string(),
+                    template_name: match a.id {
+                        "specs" => "spec.md".to_string(),
+                        _ => a.output_path.to_string(),
+                    },
+                })
+                .collect(),
+            artifact_order: SCHEMA_ARTIFACT_ORDER
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            apply_requires: APPLY_REQUIRES.iter().map(|s| s.to_string()).collect(),
+            apply_instruction: crate::instructions::APPLY_INSTRUCTION.to_string(),
+        }
+    }
+}
+
+fn reject_path_traversal(path: &str, field: &str) -> anyhow::Result<()> {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        anyhow::bail!("schema {field} '{path}' must be a relative path");
+    }
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            anyhow::bail!("schema {field} '{path}' must not contain '..'");
+        }
+    }
+    Ok(())
+}
+
+impl ResolvedSchema {
+    /// Load a custom schema from `<schema_dir>/schema.yaml`, reading each
+    /// artifact's `template:` filename from `<schema_dir>/templates/`.
+    ///
+    /// `dir_name` is accepted for parity with the load-site convention (the
+    /// directory name used to locate `schema_dir`) but is not itself read —
+    /// the schema's display `name` comes from the YAML's own `name:` field,
+    /// which need not match the directory name.
+    pub fn load(schema_dir: &std::path::Path, _dir_name: &str) -> anyhow::Result<Self> {
+        let yaml_path = schema_dir.join("schema.yaml");
+        let yaml_text = std::fs::read_to_string(&yaml_path)
+            .with_context(|| format!("reading {}", yaml_path.display()))?;
+        let raw: SchemaYaml = serde_yaml::from_str(&yaml_text)
+            .with_context(|| format!("parsing {}", yaml_path.display()))?;
+
+        let templates_dir = schema_dir.join("templates");
+        let artifacts = raw
+            .artifacts
+            .into_iter()
+            .map(|a| {
+                reject_path_traversal(&a.template, "template")?;
+                reject_path_traversal(&a.generates, "generates")?;
+                let template_path = templates_dir.join(&a.template);
+                let template_content = if template_path.is_file() {
+                    std::fs::read_to_string(&template_path)
+                        .with_context(|| format!("reading template {}", template_path.display()))?
+                } else {
+                    String::new()
+                };
+                Ok(ResolvedArtifact {
+                    id: a.id,
+                    output_path: a.generates,
+                    description: a.description,
+                    deps: a.requires,
+                    instruction: a.instruction,
+                    template: template_content,
+                    template_name: a.template,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let artifact_ids: std::collections::HashSet<&str> =
+            artifacts.iter().map(|a| a.id.as_str()).collect();
+        for artifact in &artifacts {
+            for dep in &artifact.deps {
+                if !artifact_ids.contains(dep.as_str()) {
+                    anyhow::bail!(
+                        "Schema '{}': artifact '{}' requires '{}' which is not defined in this schema",
+                        yaml_path.display(),
+                        artifact.id,
+                        dep
+                    );
+                }
+            }
+        }
+        for req in &raw.apply.requires {
+            if !artifact_ids.contains(req.as_str()) {
+                anyhow::bail!(
+                    "Schema '{}': apply.requires references '{}' which is not defined in this schema",
+                    yaml_path.display(),
+                    req
+                );
+            }
+        }
+
+        let artifact_order = artifacts.iter().map(|a| a.id.clone()).collect();
+
+        Ok(Self {
+            name: raw.name,
+            source: SchemaSource::Project,
+            description: raw.description.unwrap_or_default(),
+            artifacts,
+            artifact_order,
+            apply_requires: raw.apply.requires,
+            apply_instruction: raw.apply.instruction,
+        })
+    }
+}
+
+/// Deserialization shape for `<spec_dir>/schemas/<name>/schema.yaml`. `version`
+/// is accepted but unused (no behavior branches on it yet).
+#[derive(serde::Deserialize)]
+struct SchemaYaml {
+    name: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    version: Option<u32>,
+    #[serde(default)]
+    description: Option<String>,
+    artifacts: Vec<SchemaYamlArtifact>,
+    apply: SchemaYamlApply,
+}
+
+#[derive(serde::Deserialize)]
+struct SchemaYamlArtifact {
+    id: String,
+    generates: String,
+    description: String,
+    template: String,
+    instruction: String,
+    #[serde(default)]
+    requires: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct SchemaYamlApply {
+    requires: Vec<String>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    tracks: Option<String>,
+    instruction: String,
+}
+
+/// Resolve which schema a command should run under, loading a custom schema
+/// from disk instead of rejecting it (replacing [`require_supported`]'s
+/// reject-everything-but-built-in behavior for callers that can act on a
+/// [`ResolvedSchema`]).
+///
+/// Resolution order matches `require_supported` exactly: `--schema` >
+/// the change's own `.openspec.yaml` `schema:` > `<spec_dir>/config.yaml`'s
+/// `schema:` > the built-in. See `require_supported`'s doc comment for the
+/// full probed rationale behind that order.
+pub fn resolve_schema(
+    cfg: &crate::Config,
+    explicit: Option<&str>,
+    change: Option<&crate::change::Change>,
+) -> anyhow::Result<ResolvedSchema> {
+    let resolved_name;
+    let name = match explicit {
+        Some(name) => name,
+        None => {
+            let from_change = change.and_then(|c| c.metadata.schema.clone());
+            match from_change {
+                Some(name) => {
+                    resolved_name = name;
+                    resolved_name.as_str()
+                }
+                None => match configured_schema_name(cfg) {
+                    Some(name) => {
+                        resolved_name = name;
+                        resolved_name.as_str()
+                    }
+                    None => return Ok(ResolvedSchema::builtin()),
+                },
+            }
+        }
+    };
+    if name == SCHEMA_NAME {
+        return Ok(ResolvedSchema::builtin());
+    }
+    let schema_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(name);
+    let definition = schema_dir.join("schema.yaml");
+    if definition.is_file() {
+        return ResolvedSchema::load(&schema_dir, name);
+    }
+    // The oracle's wording, byte for byte, for a name that resolves nowhere.
+    Err(anyhow::anyhow!(
+        "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
+    ))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArtifactState {
@@ -438,34 +698,37 @@ pub enum ArtifactState {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactStatus {
-    pub id: &'static str,
-    pub output_path: &'static str,
+    pub id: String,
+    pub output_path: String,
     pub status: ArtifactState,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub missing_deps: Option<Vec<&'static str>>,
+    pub missing_deps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusReport {
     pub change_name: String,
-    pub schema_name: &'static str,
+    pub schema_name: String,
     pub is_complete: bool,
-    pub apply_requires: &'static [&'static str],
+    pub apply_requires: Vec<String>,
     pub artifacts: Vec<ArtifactStatus>,
 }
 
-fn artifact_status(
-    artifact: &'static ArtifactDefinition,
-    done_ids: &std::collections::HashSet<&'static str>,
+/// Derive one artifact's [`ArtifactStatus`] from a [`ResolvedSchema`]'s
+/// [`ResolvedArtifact`], working over `String` ids so it runs the same for
+/// the built-in schema and a custom one loaded from disk.
+fn artifact_status_resolved(
+    artifact: &ResolvedArtifact,
+    done_ids: &std::collections::HashSet<String>,
 ) -> ArtifactStatus {
-    let missing_deps: Vec<_> = artifact
+    let missing_deps: Vec<String> = artifact
         .deps
         .iter()
-        .copied()
-        .filter(|dep| !done_ids.contains(dep))
+        .filter(|dep| !done_ids.contains(*dep))
+        .cloned()
         .collect();
-    let (status, missing_deps) = if done_ids.contains(artifact.id) {
+    let (status, missing_deps) = if done_ids.contains(&artifact.id) {
         (ArtifactState::Done, None)
     } else if missing_deps.is_empty() {
         (ArtifactState::Ready, None)
@@ -474,8 +737,8 @@ fn artifact_status(
     };
 
     ArtifactStatus {
-        id: artifact.id,
-        output_path: artifact.output_path,
+        id: artifact.id.clone(),
+        output_path: artifact.output_path.clone(),
         status,
         missing_deps,
     }
@@ -485,20 +748,36 @@ pub fn artifact_done(
     artifact: &ArtifactDefinition,
     change_dir: &std::path::Path,
 ) -> anyhow::Result<bool> {
+    artifact_done_at(artifact.output_path, change_dir)
+}
+
+/// Same "is this artifact's output present" check as [`artifact_done`], for a
+/// [`ResolvedArtifact`] (owned `String` output path) instead of the static
+/// [`ArtifactDefinition`]. Both delegate to [`artifact_done_at`] so the
+/// glob-vs-file logic lives in one place.
+pub fn artifact_done_resolved(
+    artifact: &ResolvedArtifact,
+    change_dir: &std::path::Path,
+) -> anyhow::Result<bool> {
+    artifact_done_at(&artifact.output_path, change_dir)
+}
+
+/// Shared "is this artifact's output present" check backing both
+/// [`artifact_done`] and [`artifact_done_resolved`].
+fn artifact_done_at(output_path: &str, change_dir: &std::path::Path) -> anyhow::Result<bool> {
     // A globbed output path ("specs/**/*.md") marks a directory-shaped
     // artifact: done = at least one .md anywhere under the glob's root
     // directory. Derived from the data instead of matching a hardcoded id so
     // a future directory-shaped artifact doesn't have to be named "specs".
-    if artifact.output_path.contains('*') {
-        let root = artifact
-            .output_path
+    if output_path.contains('*') {
+        let root = output_path
             .split('/')
             .next()
             .expect("split always yields at least one segment");
         let mut visited = std::collections::HashSet::new();
         return contains_markdown_file(&change_dir.join(root), &mut visited);
     }
-    Ok(change_dir.join(artifact.output_path).is_file())
+    Ok(change_dir.join(output_path).is_file())
 }
 
 /// Recursive "any .md file under this directory" scan backing the specs
@@ -614,23 +893,25 @@ fn scan_for_markdown(
 pub fn derive_status(
     change_name: &str,
     change_dir: &std::path::Path,
+    schema: &ResolvedSchema,
 ) -> anyhow::Result<StatusReport> {
     let mut done_ids = std::collections::HashSet::new();
-    for artifact in ARTIFACTS.iter() {
-        if artifact_done(artifact, change_dir)? {
-            done_ids.insert(artifact.id);
+    for artifact in &schema.artifacts {
+        if artifact_done_resolved(artifact, change_dir)? {
+            done_ids.insert(artifact.id.clone());
         }
     }
-    let artifacts = ARTIFACTS
+    let artifacts = schema
+        .artifacts
         .iter()
-        .map(|artifact| artifact_status(artifact, &done_ids))
+        .map(|artifact| artifact_status_resolved(artifact, &done_ids))
         .collect();
 
     Ok(StatusReport {
         change_name: change_name.to_string(),
-        schema_name: SCHEMA_NAME,
-        is_complete: done_ids.len() == ARTIFACTS.len(),
-        apply_requires: APPLY_REQUIRES,
+        schema_name: schema.name.clone(),
+        is_complete: done_ids.len() == schema.artifacts.len(),
+        apply_requires: schema.apply_requires.clone(),
         artifacts,
     })
 }
@@ -642,7 +923,7 @@ pub fn derive_status(
 /// `context` and `rules` parse leniently *per field*: a malformed shape (a
 /// non-string `context`, a non-map `rules`, a non-list artifact entry) degrades
 /// to unset for that field alone and never fails the whole parse — so it can
-/// never mask the `schema:` key and change [`require_supported`]'s gate
+/// never mask the `schema:` key and change [`resolve_schema`]'s gate
 /// (probed: the oracle emits `context` unchanged while dropping a malformed
 /// `rules`). `schema` deliberately has no such guard: a structurally invalid
 /// `schema:` value fails the whole parse, which is the `None` path
@@ -695,14 +976,14 @@ pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
 /// `None` when the file is absent, has no `schema` key, or its value is blank
 /// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
 /// workflow and exits 0, unlike the change-level key — see
-/// [`require_supported`]). A read or parse failure is also `None`: an unreadable
+/// [`resolve_schema`]). A read or parse failure is also `None`: an unreadable
 /// selector must not be louder than a missing one, since the built-in schema is
 /// the default either way.
 ///
 /// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
 /// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
 /// mismatch (sequence/map) or a syntax error reaches the `None` path. That is
-/// harmless here — `"123"` is not the built-in name, so `require_supported`
+/// harmless here — `"123"` is not the built-in name, so `resolve_schema`
 /// still fails loud — but the value is a coerced scalar, not "unset".
 pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
     read_spec_config(cfg)?
@@ -728,13 +1009,8 @@ pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
 ///    none (a hand-made change directory, or one predating the metadata file).
 /// 4. otherwise the built-in.
 ///
-/// Callers must resolve and load the change **before** calling this: the oracle
-/// reports `Change 'X' not found.` ahead of any schema error (probed).
-///
-/// Errors on anything but the built-in. OpenSpectra cannot load a custom schema
-/// yet (#126), and *silently* falling back to `spec-driven` was worse than
-/// failing: the project's own artifact instructions vanished from
-/// `instructions` output with exit 0 and no warning (#117).
+/// Thin wrapper around [`resolve_schema`] for callers that only need the
+/// gate (accept/reject) without the loaded schema data.
 ///
 /// One edge case is deliberately not reproduced: a `schema:` key that is
 /// present but **null** in the change's `.openspec.yaml`. The oracle reports
@@ -749,65 +1025,8 @@ pub fn require_supported(
     explicit: Option<&str>,
     change: Option<&crate::change::Change>,
 ) -> anyhow::Result<()> {
-    let resolved;
-    // Which layer produced the name decides what the remediation must say: a
-    // blanket "edit config.yaml" is a no-op whenever a higher layer won, and
-    // the user then hits the identical error after following the advice.
-    let remedy;
-    let name = match explicit {
-        Some(name) => {
-            remedy = format!("Drop '--schema {name}' to use the built-in workflow.");
-            name
-        }
-        None => {
-            let from_change = change.and_then(|c| c.metadata.schema.clone());
-            match from_change {
-                Some(name) => {
-                    remedy = format!(
-                        "Set 'schema: {SCHEMA_NAME}' in {} to proceed with the built-in workflow.",
-                        change
-                            .map(|c| c.dir.join(".openspec.yaml"))
-                            .expect("a change-level schema implies a change")
-                            .display()
-                    );
-                    resolved = name;
-                    resolved.as_str()
-                }
-                None => match configured_schema_name(cfg) {
-                    Some(name) => {
-                        remedy = format!(
-                            "Set 'schema: {SCHEMA_NAME}' in {}/config.yaml to proceed with the \
-                             built-in workflow.",
-                            cfg.spec_dir
-                        );
-                        resolved = name;
-                        resolved.as_str()
-                    }
-                    None => return Ok(()),
-                },
-            }
-        }
-    };
-    if name == SCHEMA_NAME {
-        return Ok(());
-    }
-    let definition = cfg
-        .root
-        .join(&cfg.spec_dir)
-        .join("schemas")
-        .join(name)
-        .join("schema.yaml");
-    if definition.is_file() {
-        return Err(anyhow::anyhow!(
-            "Schema '{name}' is defined at {} but OpenSpectra can only run the built-in \
-             '{SCHEMA_NAME}' schema; loading custom schemas is tracked by issue #126. {remedy}",
-            definition.display(),
-        ));
-    }
-    // The oracle's wording, byte for byte, for a name that resolves nowhere.
-    Err(anyhow::anyhow!(
-        "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
-    ))
+    resolve_schema(cfg, explicit, change)?;
+    Ok(())
 }
 
 pub fn status(
@@ -821,8 +1040,8 @@ pub fn status(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    require_supported(cfg, schema_name, Some(&change))?;
-    derive_status(&change.name, &change.dir)
+    let schema = resolve_schema(cfg, schema_name, Some(&change))?;
+    derive_status(&change.name, &change.dir, &schema)
 }
 
 #[cfg(test)]
@@ -847,7 +1066,7 @@ mod tests {
     }
 
     /// A change whose `.openspec.yaml` records `schema`, for the dominant
-    /// resolution layer. Only `metadata.schema` is read by `require_supported`,
+    /// resolution layer. Only `metadata.schema` is read by `resolve_schema`,
     /// so the other fields are placeholders.
     fn change_with_schema(schema: Option<&str>) -> crate::change::Change {
         crate::change::Change {
@@ -919,25 +1138,18 @@ mod tests {
     }
 
     #[test]
-    fn require_supported_reports_a_present_custom_schema_as_unsupported_not_missing() {
-        // Claiming a schema is "not found in project ... locations" while it
-        // sits in the project would be a false statement, so this case gets
-        // its own message.
+    fn require_supported_accepts_a_present_custom_schema() {
         let (_tmp, cfg) = project("schema-supported-present");
         write_spec_config(&cfg, "schema: mycustom\n");
-        let definition = cfg
-            .root
-            .join("openspec")
-            .join("schemas")
-            .join("mycustom")
-            .join("schema.yaml");
-        std::fs::create_dir_all(definition.parent().unwrap()).unwrap();
-        std::fs::write(&definition, "name: mycustom\nartifacts: []\n").unwrap();
+        let schema_dir = cfg.root.join("openspec").join("schemas").join("mycustom");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: mycustom\nartifacts: []\napply:\n  requires: []\n  instruction: do it\n",
+        )
+        .unwrap();
 
-        let err = require_supported(&cfg, None, None).unwrap_err().to_string();
-        assert!(err.contains(&definition.display().to_string()), "{err}");
-        assert!(err.contains("#126"), "{err}");
-        assert!(!err.contains("not found"), "{err}");
+        assert!(require_supported(&cfg, None, None).is_ok());
     }
 
     #[test]
@@ -1109,18 +1321,28 @@ mod tests {
     fn empty_change_has_only_proposal_ready() {
         let change_dir = TempDir::new("empty");
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert!(!report.is_complete);
-        assert_eq!(report.apply_requires, &["tasks"]);
+        assert_eq!(report.apply_requires, vec!["tasks".to_string()]);
         assert_eq!(report.artifacts[0].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[0].missing_deps, None);
         assert_eq!(report.artifacts[1].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[1].missing_deps, Some(vec!["proposal"]));
+        assert_eq!(
+            report.artifacts[1].missing_deps,
+            Some(vec!["proposal".to_string()])
+        );
         assert_eq!(report.artifacts[2].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[2].missing_deps, Some(vec!["proposal"]));
+        assert_eq!(
+            report.artifacts[2].missing_deps,
+            Some(vec!["proposal".to_string()])
+        );
         assert_eq!(report.artifacts[3].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[3].missing_deps, Some(vec!["specs"]));
+        assert_eq!(
+            report.artifacts[3].missing_deps,
+            Some(vec!["specs".to_string()])
+        );
     }
 
     #[test]
@@ -1128,13 +1350,17 @@ mod tests {
         let change_dir = TempDir::new("partial");
         std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[0].status, ArtifactState::Done);
         assert_eq!(report.artifacts[1].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[3].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[3].missing_deps, Some(vec!["specs"]));
+        assert_eq!(
+            report.artifacts[3].missing_deps,
+            Some(vec!["specs".to_string()])
+        );
     }
 
     #[test]
@@ -1147,7 +1373,8 @@ mod tests {
         std::fs::create_dir_all(&nested_specs).unwrap();
         std::fs::write(nested_specs.join("spec.md"), "# Spec\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert!(report.is_complete);
         assert!(report
@@ -1171,7 +1398,8 @@ mod tests {
         std::fs::write(specs.join("spec.md"), "# Spec\n").unwrap();
         std::fs::remove_dir_all(change_dir.join("specs")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert!(!report.is_complete);
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
@@ -1186,7 +1414,8 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("notes.txt"), "scratch\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
     }
@@ -1205,7 +1434,8 @@ mod tests {
         std::fs::create_dir_all(&specs).unwrap();
         std::os::unix::fs::symlink(&*outside, specs.join("cap1")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Done);
     }
@@ -1219,7 +1449,8 @@ mod tests {
         std::fs::create_dir_all(specs.join("sub")).unwrap();
         std::os::unix::fs::symlink(&specs, specs.join("sub").join("loop")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
     }
@@ -1241,7 +1472,7 @@ mod tests {
         std::fs::set_permissions(specs.join("locked"), std::fs::Permissions::from_mode(0o000))
             .unwrap();
 
-        let result = derive_status("demo-feature", &change_dir);
+        let result = derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin());
 
         std::fs::set_permissions(specs.join("locked"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
@@ -1258,7 +1489,7 @@ mod tests {
         std::fs::create_dir_all(&specs).unwrap();
         std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-        let result = derive_status("demo-feature", &change_dir);
+        let result = derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin());
 
         // Restore before asserting so TempDir's Drop can clean up.
         std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1270,20 +1501,28 @@ mod tests {
 
     #[test]
     fn missing_dependencies_preserve_schema_order() {
-        const MULTI_DEP_ARTIFACT: ArtifactDefinition = ArtifactDefinition {
-            id: "example",
-            output_path: "example.md",
-            description: "",
-            deps: &["proposal", "design", "specs"],
-            instruction: "",
-            template: "",
+        let multi_dep_artifact = ResolvedArtifact {
+            id: "example".to_string(),
+            output_path: "example.md".to_string(),
+            description: String::new(),
+            deps: vec![
+                "proposal".to_string(),
+                "design".to_string(),
+                "specs".to_string(),
+            ],
+            instruction: String::new(),
+            template: String::new(),
+            template_name: "example.md".to_string(),
         };
-        let done_ids = std::collections::HashSet::from(["design"]);
+        let done_ids = std::collections::HashSet::from(["design".to_string()]);
 
-        let status = artifact_status(&MULTI_DEP_ARTIFACT, &done_ids);
+        let status = artifact_status_resolved(&multi_dep_artifact, &done_ids);
 
         assert_eq!(status.status, ArtifactState::Blocked);
-        assert_eq!(status.missing_deps, Some(vec!["proposal", "specs"]));
+        assert_eq!(
+            status.missing_deps,
+            Some(vec!["proposal".to_string(), "specs".to_string()])
+        );
     }
 
     #[test]
@@ -1341,5 +1580,156 @@ mod tests {
         let err = status(&cfg, Some("nope"), None).unwrap_err();
 
         assert_eq!(err.to_string(), "Change 'nope' not found.");
+    }
+
+    #[test]
+    fn resolved_builtin_matches_static_constants() {
+        let schema = ResolvedSchema::builtin();
+        assert_eq!(schema.name, SCHEMA_NAME);
+        assert_eq!(schema.artifacts.len(), ARTIFACTS.len());
+        for (resolved, static_def) in schema.artifacts.iter().zip(ARTIFACTS.iter()) {
+            assert_eq!(resolved.id, static_def.id);
+            assert_eq!(resolved.output_path, static_def.output_path);
+            assert_eq!(resolved.description, static_def.description);
+            assert_eq!(resolved.instruction, static_def.instruction);
+            assert_eq!(resolved.template, static_def.template);
+            assert_eq!(resolved.deps, static_def.deps);
+        }
+        assert_eq!(schema.apply_requires, APPLY_REQUIRES);
+    }
+
+    #[test]
+    fn resolved_load_parses_a_custom_schema_from_disk() {
+        let tmp = TempDir::new("load-custom-schema");
+        let schema_dir = tmp.join("openspec").join("schemas").join("mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: My Custom\nversion: 1\ndescription: A test schema\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: Custom proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  tracks: tasks.md\n  instruction: Do the work.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            schema_dir.join("templates").join("proposal.md"),
+            "## Custom Template\n",
+        )
+        .unwrap();
+
+        let schema = ResolvedSchema::load(&schema_dir, "mycustom").unwrap();
+        assert_eq!(schema.name, "My Custom");
+        assert_eq!(schema.source, SchemaSource::Project);
+        assert_eq!(schema.artifacts.len(), 1);
+        assert_eq!(schema.artifacts[0].id, "proposal");
+        assert_eq!(schema.artifacts[0].template, "## Custom Template\n");
+        assert_eq!(schema.artifacts[0].template_name, "proposal.md");
+        // `instruction:` is a plain (unquoted) YAML scalar here, so its
+        // trailing newline is stripped per YAML scalar-folding rules --
+        // unlike a `template:` file read straight off disk, which keeps
+        // whatever trailing bytes the file itself has.
+        assert_eq!(schema.artifacts[0].instruction, "Write it.");
+        assert_eq!(schema.apply_requires, vec!["proposal"]);
+        assert_eq!(schema.apply_instruction, "Do the work.");
+    }
+
+    #[test]
+    fn resolved_load_rejects_an_unknown_requires_id() {
+        let tmp = TempDir::new("load-bad-requires");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: [nonexistent]\napply:\n  requires: [proposal]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string().contains("requires 'nonexistent'"),
+            "expected a requires-validation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_an_unknown_apply_requires_id() {
+        let tmp = TempDir::new("load-bad-apply-requires");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [ghost]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("apply.requires references 'ghost'"),
+            "expected an apply.requires-validation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_absolute_template_path() {
+        let tmp = TempDir::new("load-abs-template");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: /etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string().contains("must be a relative path"),
+            "expected path-traversal rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_dotdot_in_template_path() {
+        let tmp = TempDir::new("load-dotdot-template");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: ../../../etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string().contains("must not contain '..'"),
+            "expected path-traversal rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_schema_loads_a_present_custom_schema_instead_of_rejecting_it() {
+        let (_tmp, cfg) = project("resolve-custom");
+        write_spec_config(&cfg, "schema: mycustom\n");
+        let schema_dir = cfg.root.join("openspec").join("schemas").join("mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: My Custom\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  tracks: tasks.md\n  instruction: Do it.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            schema_dir.join("templates").join("proposal.md"),
+            "## Template\n",
+        )
+        .unwrap();
+
+        let schema = resolve_schema(&cfg, None, None).unwrap();
+        assert_eq!(schema.name, "My Custom");
+        assert_eq!(schema.source, SchemaSource::Project);
+    }
+
+    #[test]
+    fn resolve_schema_returns_builtin_for_unconfigured_project() {
+        let (_tmp, cfg) = project("resolve-builtin");
+        let schema = resolve_schema(&cfg, None, None).unwrap();
+        assert_eq!(schema.name, SCHEMA_NAME);
+        assert_eq!(schema.source, SchemaSource::Package);
     }
 }

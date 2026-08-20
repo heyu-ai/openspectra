@@ -6,11 +6,14 @@
 //! missing: an earlier revision read only `<spec_dir>/config.yaml` and
 //! hard-failed changes the oracle runs fine.
 //!
-//! **Oracle-side expectations here were probed against v2.3.1; the two
-//! OpenSpectra-only divergences are marked as such inline** — the `#126`
-//! rejection message and the built-in-template body of an ungated
-//! `new artifact` have no oracle counterpart (see the Accepted Residual Risks
-//! in the PR and `docs/reverse-engineering/schemas.md`).
+//! **Oracle-side expectations here were probed against v2.3.1; one
+//! OpenSpectra-only divergence is marked as such inline** — the
+//! built-in-template body of an ungated `new artifact` has no oracle
+//! counterpart (see the Accepted Residual Risks in the PR and
+//! `docs/reverse-engineering/schemas.md`). A present custom schema at
+//! `<spec_dir>/schemas/<name>/schema.yaml` used to be rejected with a
+//! `#126`-tagged error; #126 is now implemented (`schema::resolve_schema`),
+//! so a well-formed custom schema loads and runs instead.
 
 mod common;
 
@@ -144,50 +147,43 @@ fn a_missing_change_is_reported_before_the_schema_error() {
     assert!(!err.contains("Schema not found"), "{err}");
 }
 
-/// OpenSpectra-only message (no oracle counterpart): the point is that it names
-/// the file that actually decides the outcome. A blanket "edit config.yaml"
-/// would be a no-op whenever a higher layer supplied the name — the user would
-/// follow the advice and hit the identical error.
+/// #126: a present, well-formed custom schema now loads and runs instead of
+/// being rejected, regardless of which layer (change / `--schema` / project
+/// config) supplied its name. Supersedes the old
+/// `the_rejection_message_names_the_layer_that_actually_selected_the_schema`
+/// test, which pinned the pre-#126 reject-with-remedy behavior for a present
+/// schema -- that behavior no longer exists now that `schema::resolve_schema`
+/// actually loads it.
 #[test]
-fn the_rejection_message_names_the_layer_that_actually_selected_the_schema() {
-    let tmp = project("remedy-layers", Some("mycustom"), "spec-driven");
-    let definition = tmp.join("openspec/schemas/mycustom/schema.yaml");
-    write(&definition, "name: mycustom\nartifacts: []\n");
-
-    // Change layer: point at the change's own metadata, not config.yaml.
-    let err = stderr(&run(&tmp, &["status", "--change", "c1"]));
-    assert!(err.contains(&definition.display().to_string()), "{err}");
-    assert!(err.contains("#126"), "{err}");
-    assert!(
-        err.contains(
-            &tmp.join("openspec/changes/c1/.openspec.yaml")
-                .display()
-                .to_string()
-        ),
-        "the change supplied the name, so the remedy must name its metadata \
-         file: {err}"
+fn a_present_custom_schema_loads_and_runs_regardless_of_the_selecting_layer() {
+    let tmp = project("custom-schema-loads", Some("mycustom"), "spec-driven");
+    let schema_dir = tmp.join("openspec/schemas/mycustom");
+    write(
+        &schema_dir.join("schema.yaml"),
+        "name: mycustom\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  tracks: tasks.md\n  instruction: Do it.\n",
     );
-    assert!(
-        !err.contains("not found in project"),
-        "the schema is in the project, so the oracle's not-found wording would \
-         be a false statement: {err}"
-    );
+    write(&schema_dir.join("templates/proposal.md"), "## Template\n");
 
-    // Explicit layer: tell the user to drop the flag.
-    let err = stderr(&run(
-        &tmp,
-        &["status", "--change", "c1", "--schema", "mycustom"],
-    ));
-    assert!(err.contains("Drop '--schema mycustom'"), "{err}");
+    // Change layer: the change's own `.openspec.yaml` names the schema.
+    let out = run(&tmp, &["status", "--change", "c1"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Schema: mycustom"), "{stdout}");
 
-    // Project layer: only now is config.yaml the right thing to edit.
+    // Explicit layer: --schema also loads it directly.
+    let out = run(&tmp, &["status", "--change", "c1", "--schema", "mycustom"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    // Project layer: config.yaml selects it once the change records none.
     write(
         &tmp.join("openspec/changes/c1/.openspec.yaml"),
         "created: 2026-08-01\n",
     );
     write(&tmp.join("openspec/config.yaml"), "schema: mycustom\n");
-    let err = stderr(&run(&tmp, &["status", "--change", "c1"]));
-    assert!(err.contains("in openspec/config.yaml"), "{err}");
+    let out = run(&tmp, &["status", "--change", "c1"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Schema: mycustom"), "{stdout}");
 }
 
 #[test]

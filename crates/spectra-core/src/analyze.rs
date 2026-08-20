@@ -68,6 +68,14 @@ struct ArtifactPresence {
 }
 
 impl ArtifactPresence {
+    // Deliberately still keyed to the static built-in `ARTIFACTS` (via
+    // `schema::artifacts()`/`schema::artifact_done`), not a `&ResolvedSchema`:
+    // the four analyze dimensions (Coverage/Consistency/Ambiguity/Gaps) are
+    // hardcoded to the spec-driven workflow's proposal/design/specs/tasks
+    // shape, not derived from an arbitrary schema's artifact list. A custom
+    // schema (#126) with different artifact ids has no defined mapping onto
+    // these dimensions yet, so `analyze` keeps running against the built-in
+    // shape regardless of a project's configured schema.
     fn from_change_dir(change_dir: &Path) -> Result<Self> {
         let present = |id| -> Result<bool> {
             let artifact = schema::artifacts()

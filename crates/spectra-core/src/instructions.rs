@@ -44,30 +44,30 @@ pub const APPLY_INSTRUCTION: &str = "Read context files, work through pending ta
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactDependency {
-    pub id: &'static str,
+    pub id: String,
     pub done: bool,
-    pub path: &'static str,
-    pub description: &'static str,
+    pub path: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactInstructions {
     pub change_name: String,
-    pub artifact_id: &'static str,
-    pub schema_name: &'static str,
+    pub artifact_id: String,
+    pub schema_name: String,
     pub change_dir: String,
-    pub output_path: &'static str,
-    pub description: &'static str,
-    pub instruction: &'static str,
+    pub output_path: String,
+    pub description: String,
+    pub instruction: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rules: Option<Vec<String>>,
-    pub locale: &'static str,
-    pub template: &'static str,
+    pub locale: String,
+    pub template: String,
     pub dependencies: Vec<ArtifactDependency>,
-    pub unlocks: Vec<&'static str>,
+    pub unlocks: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -155,15 +155,15 @@ pub struct Preflight {
 pub struct ApplyInstructions {
     pub change_name: String,
     pub change_dir: String,
-    pub schema_name: &'static str,
+    pub schema_name: String,
     pub context_files: ContextFiles,
     pub progress: Progress,
     pub tasks: Vec<ApplyTask>,
     pub state: ApplyState,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub missing_artifacts: Vec<&'static str>,
-    pub locale: &'static str,
-    pub instruction: &'static str,
+    pub missing_artifacts: Vec<String>,
+    pub locale: String,
+    pub instruction: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preflight: Option<Preflight>,
 }
@@ -269,16 +269,20 @@ fn proposal_references(markdown: &str) -> Vec<String> {
 }
 
 fn derive_unlocks(
-    artifact_id: &'static str,
-    done_ids: &HashSet<&'static str>,
-) -> Vec<&'static str> {
+    schema: &crate::schema::ResolvedSchema,
+    artifact_id: &str,
+    done_ids: &HashSet<String>,
+) -> Vec<String> {
     if done_ids.contains(artifact_id) {
         return Vec::new();
     }
-    crate::schema::ARTIFACTS
+    schema
+        .artifacts
         .iter()
-        .filter(|artifact| artifact.deps.contains(&artifact_id) && !done_ids.contains(artifact.id))
-        .map(|artifact| artifact.id)
+        .filter(|artifact| {
+            artifact.deps.iter().any(|dep| dep == artifact_id) && !done_ids.contains(&artifact.id)
+        })
+        .map(|artifact| artifact.id.clone())
         .collect()
 }
 
@@ -308,20 +312,23 @@ fn absolute_change_dir(cfg: &crate::Config, change: &crate::Change) -> PathBuf {
     }
 }
 
-fn done_ids(change_dir: &Path) -> Result<HashSet<&'static str>> {
+fn done_ids(schema: &crate::schema::ResolvedSchema, change_dir: &Path) -> Result<HashSet<String>> {
     let mut ids = HashSet::new();
-    for artifact in crate::schema::ARTIFACTS.iter() {
-        if crate::schema::artifact_done(artifact, change_dir)? {
-            ids.insert(artifact.id);
+    for artifact in &schema.artifacts {
+        if crate::schema::artifact_done_resolved(artifact, change_dir)? {
+            ids.insert(artifact.id.clone());
         }
     }
     Ok(ids)
 }
 
-pub fn next_artifact(change_dir: &Path) -> Result<Option<&'static str>> {
-    for artifact in crate::schema::ARTIFACTS.iter() {
-        if !crate::schema::artifact_done(artifact, change_dir)? {
-            return Ok(Some(artifact.id));
+pub fn next_artifact(
+    schema: &crate::schema::ResolvedSchema,
+    change_dir: &Path,
+) -> Result<Option<String>> {
+    for artifact in &schema.artifacts {
+        if !crate::schema::artifact_done_resolved(artifact, change_dir)? {
+            return Ok(Some(artifact.id.clone()));
         }
     }
     Ok(None)
@@ -331,13 +338,15 @@ pub fn artifact_instructions(
     cfg: &crate::Config,
     change: &crate::Change,
     artifact_id: &str,
+    schema: &crate::schema::ResolvedSchema,
 ) -> Result<ArtifactInstructions> {
-    let artifact = crate::schema::ARTIFACTS
+    let artifact = schema
+        .artifacts
         .iter()
         .find(|artifact| artifact.id == artifact_id)
         .ok_or_else(|| anyhow::anyhow!("Artifact '{artifact_id}' not found in schema"))?;
     let change_dir = absolute_change_dir(cfg, change);
-    let done_ids = done_ids(&change_dir)?;
+    let done_ids = done_ids(schema, &change_dir)?;
     let (context, rules) =
         crate::schema::read_spec_config(cfg).map_or((None, None), |mut config| {
             (
@@ -348,40 +357,42 @@ pub fn artifact_instructions(
                     .context
                     .map(|context| context.trim().to_string())
                     .filter(|context| !context.is_empty()),
-                config.rules.remove(artifact.id),
+                config.rules.remove(&artifact.id),
             )
         });
     let dependencies = artifact
         .deps
         .iter()
         .map(|dependency_id| {
-            let dependency = crate::schema::ARTIFACTS
+            let dependency = schema
+                .artifacts
                 .iter()
-                .find(|candidate| candidate.id == *dependency_id)
+                .find(|candidate| &candidate.id == dependency_id)
                 .expect("schema dependency references a known artifact");
             ArtifactDependency {
-                id: dependency.id,
-                done: done_ids.contains(dependency.id),
-                path: dependency.output_path,
-                description: dependency.description,
+                id: dependency.id.clone(),
+                done: done_ids.contains(&dependency.id),
+                path: dependency.output_path.clone(),
+                description: dependency.description.clone(),
             }
         })
         .collect();
+    let unlocks = derive_unlocks(schema, &artifact.id, &done_ids);
 
     Ok(ArtifactInstructions {
         change_name: change.name.clone(),
-        artifact_id: artifact.id,
-        schema_name: crate::schema::SCHEMA_NAME,
+        artifact_id: artifact.id.clone(),
+        schema_name: schema.name.clone(),
         change_dir: change_dir.to_string_lossy().into_owned(),
-        output_path: artifact.output_path,
-        description: artifact.description,
-        instruction: artifact.instruction,
+        output_path: artifact.output_path.clone(),
+        description: artifact.description.clone(),
+        instruction: artifact.instruction.clone(),
         context,
         rules,
-        locale: LOCALE,
-        template: artifact.template,
+        locale: LOCALE.to_string(),
+        template: artifact.template.clone(),
         dependencies,
-        unlocks: derive_unlocks(artifact.id, &done_ids),
+        unlocks,
     })
 }
 
@@ -393,18 +404,23 @@ fn read_optional(path: &Path) -> Result<Option<String>> {
     }
 }
 
-fn context_files(change_dir: &Path, done_ids: &HashSet<&'static str>) -> ContextFiles {
-    let path = |artifact_id: &'static str| {
+fn context_files(
+    schema: &crate::schema::ResolvedSchema,
+    change_dir: &Path,
+    done_ids: &HashSet<String>,
+) -> ContextFiles {
+    let path = |artifact_id: &str| {
         if !done_ids.contains(artifact_id) {
             return None;
         }
-        let artifact = crate::schema::ARTIFACTS
+        let artifact = schema
+            .artifacts
             .iter()
             .find(|artifact| artifact.id == artifact_id)
             .expect("context file references a known artifact");
         Some(
             change_dir
-                .join(artifact.output_path)
+                .join(&artifact.output_path)
                 .to_string_lossy()
                 .into_owned(),
         )
@@ -500,6 +516,7 @@ fn preflight(
 pub fn apply_instructions(
     cfg: &crate::Config,
     change: &crate::Change,
+    schema: &crate::schema::ResolvedSchema,
 ) -> Result<ApplyInstructions> {
     let change_dir = absolute_change_dir(cfg, change);
     let proposal_text = read_optional(&change_dir.join("proposal.md"))?;
@@ -513,11 +530,12 @@ pub fn apply_instructions(
     let complete = tasks.iter().filter(|task| task.done).count();
     let remaining = total - complete;
     let state = derive_apply_state(total, remaining);
-    let done_ids = done_ids(&change_dir)?;
-    let missing_artifacts = crate::schema::APPLY_REQUIRES
+    let done_ids = done_ids(schema, &change_dir)?;
+    let missing_artifacts = schema
+        .apply_requires
         .iter()
-        .copied()
-        .filter(|artifact_id| !done_ids.contains(artifact_id))
+        .filter(|artifact_id| !done_ids.contains(*artifact_id))
+        .cloned()
         .collect();
     let preflight = (state == ApplyState::Ready).then(|| {
         preflight(
@@ -532,8 +550,8 @@ pub fn apply_instructions(
     Ok(ApplyInstructions {
         change_name: change.name.clone(),
         change_dir: change_dir.to_string_lossy().into_owned(),
-        schema_name: crate::schema::SCHEMA_NAME,
-        context_files: context_files(&change_dir, &done_ids),
+        schema_name: schema.name.clone(),
+        context_files: context_files(schema, &change_dir, &done_ids),
         progress: Progress {
             total,
             complete,
@@ -542,8 +560,8 @@ pub fn apply_instructions(
         tasks,
         state,
         missing_artifacts,
-        locale: LOCALE,
-        instruction: APPLY_INSTRUCTION,
+        locale: LOCALE.to_string(),
+        instruction: schema.apply_instruction.clone(),
         preflight,
     })
 }
@@ -560,16 +578,17 @@ pub fn get(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    crate::schema::require_supported(cfg, schema_name, Some(&change))?;
+    let schema = crate::schema::resolve_schema(cfg, schema_name, Some(&change))?;
     let selected = match artifact_id {
-        Some(artifact_id) => Some(artifact_id),
-        None => next_artifact(&change.dir)?,
+        Some(artifact_id) => Some(artifact_id.to_string()),
+        None => next_artifact(&schema, &change.dir)?,
     };
-    match selected {
-        Some("apply") | None => apply_instructions(cfg, &change).map(InstructionOutput::Apply),
-        Some(artifact_id) => {
-            artifact_instructions(cfg, &change, artifact_id).map(InstructionOutput::Artifact)
+    match selected.as_deref() {
+        Some("apply") | None => {
+            apply_instructions(cfg, &change, &schema).map(InstructionOutput::Apply)
         }
+        Some(artifact_id) => artifact_instructions(cfg, &change, artifact_id, &schema)
+            .map(InstructionOutput::Artifact),
     }
 }
 
@@ -609,7 +628,13 @@ mod tests {
             "schema: spec-driven\ncontext: |\n  First line\n  Second line\n",
         );
 
-        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let instructions = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
 
         assert_eq!(
             instructions.context.as_deref(),
@@ -624,7 +649,13 @@ mod tests {
         let (_tmp, cfg, change) = project("instructions-blank-context");
         write_spec_config(&cfg, "schema: spec-driven\ncontext: \"   \"\n");
 
-        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let instructions = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
         let value = serde_json::to_value(instructions).unwrap();
 
         assert!(value.get("context").is_none());
@@ -646,7 +677,13 @@ mod tests {
             let (_tmp, cfg, change) = project(&format!("instructions-scalar-context-{label}"));
             write_spec_config(&cfg, config);
 
-            let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+            let instructions = artifact_instructions(
+                &cfg,
+                &change,
+                "proposal",
+                &crate::schema::ResolvedSchema::builtin(),
+            )
+            .unwrap();
             let value = serde_json::to_value(instructions).unwrap();
 
             assert!(value.get("context").is_none(), "case: {label}");
@@ -661,7 +698,13 @@ mod tests {
             "schema: spec-driven\nrules:\n  proposal:\n    - Keep it concise\n    - Name the impact\n  tasks:\n    - Keep tasks small\n",
         );
 
-        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let instructions = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
 
         assert_eq!(
             instructions.rules,
@@ -680,7 +723,13 @@ mod tests {
             "schema: spec-driven\nrules:\n  proposal:\n    - Keep it concise\n",
         );
 
-        let instructions = artifact_instructions(&cfg, &change, "tasks").unwrap();
+        let instructions = artifact_instructions(
+            &cfg,
+            &change,
+            "tasks",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
         let value = serde_json::to_value(instructions).unwrap();
 
         assert!(value.get("rules").is_none());
@@ -690,7 +739,13 @@ mod tests {
     fn artifact_context_and_rules_keys_are_absent_without_config() {
         let (_tmp, cfg, change) = project("instructions-no-config");
 
-        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let instructions = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
         let value = serde_json::to_value(instructions).unwrap();
 
         assert!(value.get("context").is_none());
@@ -702,7 +757,13 @@ mod tests {
         let (_tmp, cfg, change) = project("instructions-bad-config");
         write_spec_config(&cfg, "schema: [not, valid\n");
 
-        let instructions = artifact_instructions(&cfg, &change, "proposal").unwrap();
+        let instructions = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
         let value = serde_json::to_value(instructions).unwrap();
 
         assert!(value.get("context").is_none());
@@ -818,15 +879,18 @@ mod tests {
 
     #[test]
     fn unlocks_are_direct_unfinished_dependents_of_an_unfinished_artifact() {
+        let schema = crate::schema::ResolvedSchema::builtin();
+        let done: fn(&[&str]) -> HashSet<String> =
+            |ids| ids.iter().map(|id| id.to_string()).collect();
         assert_eq!(
-            derive_unlocks("proposal", &HashSet::new()),
+            derive_unlocks(&schema, "proposal", &done(&[])),
             vec!["design", "specs"]
         );
-        assert!(derive_unlocks("proposal", &HashSet::from(["proposal"])).is_empty());
-        assert!(derive_unlocks("specs", &HashSet::from(["tasks"])).is_empty());
-        assert!(derive_unlocks("proposal", &HashSet::from(["design", "specs"])).is_empty());
+        assert!(derive_unlocks(&schema, "proposal", &done(&["proposal"])).is_empty());
+        assert!(derive_unlocks(&schema, "specs", &done(&["tasks"])).is_empty());
+        assert!(derive_unlocks(&schema, "proposal", &done(&["design", "specs"])).is_empty());
         assert_eq!(
-            derive_unlocks("proposal", &HashSet::from(["specs"])),
+            derive_unlocks(&schema, "proposal", &done(&["specs"])),
             vec!["design"]
         );
     }
