@@ -161,7 +161,8 @@ pub fn create(
     // schema's template (probed with a marker file), and when it cannot resolve
     // one it writes a **0-byte** artifact. OpenSpectra writes the built-in
     // template in both cases -- a usable artifact rather than an empty one, and
-    // the wrong template for a custom schema until #126 lands. Recorded in
+    // the wrong template for a custom schema (#126 landed schema loading for
+    // status/instructions but `new artifact` still uses the built-in). Recorded in
     // `docs/reverse-engineering/schemas.md`, asserted by
     // `schema_selector_integration.rs`.
     let change_name = crate::change::resolve(cfg, explicit_change)?;

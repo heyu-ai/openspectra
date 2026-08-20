@@ -82,9 +82,9 @@ Error: Schema not found: Schema 'bogus' not found in project, user, or built-in 
 ```
 
 The built-in schema has content for all four templates. A reproducible
-`hasContent:false` case was not established for v2.3.1; custom-schema template
-loading belongs to issue #126 and must be probed with that runtime rather than
-inferred here.
+`hasContent:false` case was not established for v2.3.1. Custom-schema template
+loading is implemented (#126): `templates --schema <name>` resolves and loads
+the custom schema's template files from `<spec_dir>/schemas/<name>/templates/`.
 
 ### Color
 

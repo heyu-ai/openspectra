@@ -962,13 +962,8 @@ pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
 ///    none (a hand-made change directory, or one predating the metadata file).
 /// 4. otherwise the built-in.
 ///
-/// Callers must resolve and load the change **before** calling this: the oracle
-/// reports `Change 'X' not found.` ahead of any schema error (probed).
-///
-/// Errors on anything but the built-in. OpenSpectra cannot load a custom schema
-/// yet (#126), and *silently* falling back to `spec-driven` was worse than
-/// failing: the project's own artifact instructions vanished from
-/// `instructions` output with exit 0 and no warning (#117).
+/// Thin wrapper around [`resolve_schema`] for callers that only need the
+/// gate (accept/reject) without the loaded schema data.
 ///
 /// One edge case is deliberately not reproduced: a `schema:` key that is
 /// present but **null** in the change's `.openspec.yaml`. The oracle reports
@@ -978,8 +973,6 @@ pub fn configured_schema_name(cfg: &crate::Config) -> Option<String> {
 /// round-trips, for an input no tool writes. A *blank string* (`schema: ""` or
 /// `schema: "   "`) is **not** affected — serde yields `Some(..)` and both
 /// binaries error identically (probed).
-/// Thin wrapper around [`resolve_schema`] for callers that only need the
-/// gate (accept/reject) without the loaded schema data.
 pub fn require_supported(
     cfg: &crate::Config,
     explicit: Option<&str>,
