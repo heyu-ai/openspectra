@@ -874,7 +874,15 @@ fn cmd_templates(
     if as_json {
         println!("{}", serde_json::to_string_pretty(&templates)?);
     } else {
-        println!("{}", templates_header_line(schema::SCHEMA_NAME, use_color));
+        // Mirrors templates::list's own None-vs-Some split: a bare command
+        // never loads/consults anything beyond the built-in name, while an
+        // explicit --schema is resolved (and, for a custom schema, loaded)
+        // so the header names the schema that was actually listed.
+        let header_name = match schema_name {
+            Some(name) => schema::resolve_schema(cfg, Some(name), None)?.name,
+            None => schema::SCHEMA_NAME.to_string(),
+        };
+        println!("{}", templates_header_line(&header_name, use_color));
         for template in templates {
             // "○" itself is unprobed: every built-in template has content,
             // so a `has_content: false` case was never reproducible against
@@ -949,7 +957,7 @@ fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> S
         output.push('\n');
     }
     output.push_str("Template:\n");
-    output.push_str(report.template);
+    output.push_str(&report.template);
     output.push('\n');
     output
 }
@@ -984,7 +992,7 @@ fn apply_instructions_human(report: &instructions::ApplyInstructions) -> String 
     // The oracle's zero-checkbox human layout was not probed. Keep both
     // optional sections absent when neither parsed tasks nor artifacts exist.
     output.push_str("Instruction:\n");
-    output.push_str(report.instruction);
+    output.push_str(&report.instruction);
     output.push('\n');
     output
 }

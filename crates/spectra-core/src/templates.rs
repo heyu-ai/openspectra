@@ -8,38 +8,42 @@ use crate::{schema, Config};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateListing {
-    pub artifact_id: &'static str,
+    pub artifact_id: String,
     pub has_content: bool,
-    pub template_name: &'static str,
+    pub template_name: String,
 }
 
 /// Return template metadata in the schema's authoring order.
 ///
-/// Only an explicit `--schema` name is validated against the built-in
-/// registry. With no explicit name, this always reports the built-in
-/// schema's templates regardless of a project's *configured* schema —
-/// matching the command's "available outside an initialized project"
-/// contract, since it never loads a custom schema's templates either way.
+/// Only an explicit `--schema` name is resolved (and, for a custom schema,
+/// actually loaded from disk). With no explicit name, this always reports the
+/// built-in schema's templates regardless of a project's *configured*
+/// schema — matching the command's "available outside an initialized
+/// project" contract: a bare `templates` never consults `config.yaml`, since
+/// oracle parity for it was never about the project's configured default.
 pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<Vec<TemplateListing>> {
-    if let Some(name) = schema_name {
-        schema::require_supported(cfg, Some(name), None)?;
-    }
-    Ok(schema::SCHEMA_ARTIFACT_ORDER
+    let schema = match schema_name {
+        Some(name) => schema::resolve_schema(cfg, Some(name), None)?,
+        None => schema::ResolvedSchema::builtin(),
+    };
+    Ok(schema
+        .artifact_order
         .iter()
         .map(|artifact_id| {
-            // Guarded by schema.rs's own permutation test tying
-            // SCHEMA_ARTIFACT_ORDER to ARTIFACTS -- a desync there fails CI
-            // before it can reach this expect() at runtime.
-            let artifact = schema::artifacts()
+            // Guarded by ResolvedSchema::builtin()/::load() -- both build
+            // artifact_order from the same artifacts they populate, so this
+            // lookup always finds a match.
+            let artifact = schema
+                .artifacts
                 .iter()
-                .find(|artifact| artifact.id == *artifact_id)
+                .find(|artifact| &artifact.id == artifact_id)
                 .expect("schema artifact order must reference a definition");
             TemplateListing {
-                artifact_id: artifact.id,
-                has_content: has_content(artifact.template),
-                template_name: match artifact.id {
-                    "specs" => "spec.md",
-                    _ => artifact.output_path,
+                artifact_id: artifact.id.clone(),
+                has_content: has_content(&artifact.template),
+                template_name: match artifact.id.as_str() {
+                    "specs" => "spec.md".to_string(),
+                    _ => artifact.output_path.clone(),
                 },
             }
         })
@@ -72,24 +76,24 @@ mod tests {
             templates,
             vec![
                 TemplateListing {
-                    artifact_id: "proposal",
+                    artifact_id: "proposal".to_string(),
                     has_content: true,
-                    template_name: "proposal.md",
+                    template_name: "proposal.md".to_string(),
                 },
                 TemplateListing {
-                    artifact_id: "specs",
+                    artifact_id: "specs".to_string(),
                     has_content: true,
-                    template_name: "spec.md",
+                    template_name: "spec.md".to_string(),
                 },
                 TemplateListing {
-                    artifact_id: "design",
+                    artifact_id: "design".to_string(),
                     has_content: true,
-                    template_name: "design.md",
+                    template_name: "design.md".to_string(),
                 },
                 TemplateListing {
-                    artifact_id: "tasks",
+                    artifact_id: "tasks".to_string(),
                     has_content: true,
-                    template_name: "tasks.md",
+                    template_name: "tasks.md".to_string(),
                 },
             ]
         );

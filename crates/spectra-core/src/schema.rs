@@ -651,34 +651,37 @@ pub enum ArtifactState {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ArtifactStatus {
-    pub id: &'static str,
-    pub output_path: &'static str,
+    pub id: String,
+    pub output_path: String,
     pub status: ArtifactState,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub missing_deps: Option<Vec<&'static str>>,
+    pub missing_deps: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusReport {
     pub change_name: String,
-    pub schema_name: &'static str,
+    pub schema_name: String,
     pub is_complete: bool,
-    pub apply_requires: &'static [&'static str],
+    pub apply_requires: Vec<String>,
     pub artifacts: Vec<ArtifactStatus>,
 }
 
-fn artifact_status(
-    artifact: &'static ArtifactDefinition,
-    done_ids: &std::collections::HashSet<&'static str>,
+/// Derive one artifact's [`ArtifactStatus`] from a [`ResolvedSchema`]'s
+/// [`ResolvedArtifact`], working over `String` ids so it runs the same for
+/// the built-in schema and a custom one loaded from disk.
+fn artifact_status_resolved(
+    artifact: &ResolvedArtifact,
+    done_ids: &std::collections::HashSet<String>,
 ) -> ArtifactStatus {
-    let missing_deps: Vec<_> = artifact
+    let missing_deps: Vec<String> = artifact
         .deps
         .iter()
-        .copied()
-        .filter(|dep| !done_ids.contains(dep))
+        .filter(|dep| !done_ids.contains(*dep))
+        .cloned()
         .collect();
-    let (status, missing_deps) = if done_ids.contains(artifact.id) {
+    let (status, missing_deps) = if done_ids.contains(&artifact.id) {
         (ArtifactState::Done, None)
     } else if missing_deps.is_empty() {
         (ArtifactState::Ready, None)
@@ -687,8 +690,8 @@ fn artifact_status(
     };
 
     ArtifactStatus {
-        id: artifact.id,
-        output_path: artifact.output_path,
+        id: artifact.id.clone(),
+        output_path: artifact.output_path.clone(),
         status,
         missing_deps,
     }
@@ -698,20 +701,36 @@ pub fn artifact_done(
     artifact: &ArtifactDefinition,
     change_dir: &std::path::Path,
 ) -> anyhow::Result<bool> {
+    artifact_done_at(artifact.output_path, change_dir)
+}
+
+/// Same "is this artifact's output present" check as [`artifact_done`], for a
+/// [`ResolvedArtifact`] (owned `String` output path) instead of the static
+/// [`ArtifactDefinition`]. Both delegate to [`artifact_done_at`] so the
+/// glob-vs-file logic lives in one place.
+pub fn artifact_done_resolved(
+    artifact: &ResolvedArtifact,
+    change_dir: &std::path::Path,
+) -> anyhow::Result<bool> {
+    artifact_done_at(&artifact.output_path, change_dir)
+}
+
+/// Shared "is this artifact's output present" check backing both
+/// [`artifact_done`] and [`artifact_done_resolved`].
+fn artifact_done_at(output_path: &str, change_dir: &std::path::Path) -> anyhow::Result<bool> {
     // A globbed output path ("specs/**/*.md") marks a directory-shaped
     // artifact: done = at least one .md anywhere under the glob's root
     // directory. Derived from the data instead of matching a hardcoded id so
     // a future directory-shaped artifact doesn't have to be named "specs".
-    if artifact.output_path.contains('*') {
-        let root = artifact
-            .output_path
+    if output_path.contains('*') {
+        let root = output_path
             .split('/')
             .next()
             .expect("split always yields at least one segment");
         let mut visited = std::collections::HashSet::new();
         return contains_markdown_file(&change_dir.join(root), &mut visited);
     }
-    Ok(change_dir.join(artifact.output_path).is_file())
+    Ok(change_dir.join(output_path).is_file())
 }
 
 /// Recursive "any .md file under this directory" scan backing the specs
@@ -827,23 +846,25 @@ fn scan_for_markdown(
 pub fn derive_status(
     change_name: &str,
     change_dir: &std::path::Path,
+    schema: &ResolvedSchema,
 ) -> anyhow::Result<StatusReport> {
     let mut done_ids = std::collections::HashSet::new();
-    for artifact in ARTIFACTS.iter() {
-        if artifact_done(artifact, change_dir)? {
-            done_ids.insert(artifact.id);
+    for artifact in &schema.artifacts {
+        if artifact_done_resolved(artifact, change_dir)? {
+            done_ids.insert(artifact.id.clone());
         }
     }
-    let artifacts = ARTIFACTS
+    let artifacts = schema
+        .artifacts
         .iter()
-        .map(|artifact| artifact_status(artifact, &done_ids))
+        .map(|artifact| artifact_status_resolved(artifact, &done_ids))
         .collect();
 
     Ok(StatusReport {
         change_name: change_name.to_string(),
-        schema_name: SCHEMA_NAME,
-        is_complete: done_ids.len() == ARTIFACTS.len(),
-        apply_requires: APPLY_REQUIRES,
+        schema_name: schema.name.clone(),
+        is_complete: done_ids.len() == schema.artifacts.len(),
+        apply_requires: schema.apply_requires.clone(),
         artifacts,
     })
 }
@@ -1034,8 +1055,8 @@ pub fn status(
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
-    require_supported(cfg, schema_name, Some(&change))?;
-    derive_status(&change.name, &change.dir)
+    let schema = resolve_schema(cfg, schema_name, Some(&change))?;
+    derive_status(&change.name, &change.dir, &schema)
 }
 
 #[cfg(test)]
@@ -1322,18 +1343,28 @@ mod tests {
     fn empty_change_has_only_proposal_ready() {
         let change_dir = TempDir::new("empty");
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert!(!report.is_complete);
-        assert_eq!(report.apply_requires, &["tasks"]);
+        assert_eq!(report.apply_requires, vec!["tasks".to_string()]);
         assert_eq!(report.artifacts[0].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[0].missing_deps, None);
         assert_eq!(report.artifacts[1].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[1].missing_deps, Some(vec!["proposal"]));
+        assert_eq!(
+            report.artifacts[1].missing_deps,
+            Some(vec!["proposal".to_string()])
+        );
         assert_eq!(report.artifacts[2].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[2].missing_deps, Some(vec!["proposal"]));
+        assert_eq!(
+            report.artifacts[2].missing_deps,
+            Some(vec!["proposal".to_string()])
+        );
         assert_eq!(report.artifacts[3].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[3].missing_deps, Some(vec!["specs"]));
+        assert_eq!(
+            report.artifacts[3].missing_deps,
+            Some(vec!["specs".to_string()])
+        );
     }
 
     #[test]
@@ -1341,13 +1372,17 @@ mod tests {
         let change_dir = TempDir::new("partial");
         std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[0].status, ArtifactState::Done);
         assert_eq!(report.artifacts[1].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
         assert_eq!(report.artifacts[3].status, ArtifactState::Blocked);
-        assert_eq!(report.artifacts[3].missing_deps, Some(vec!["specs"]));
+        assert_eq!(
+            report.artifacts[3].missing_deps,
+            Some(vec!["specs".to_string()])
+        );
     }
 
     #[test]
@@ -1360,7 +1395,8 @@ mod tests {
         std::fs::create_dir_all(&nested_specs).unwrap();
         std::fs::write(nested_specs.join("spec.md"), "# Spec\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert!(report.is_complete);
         assert!(report
@@ -1384,7 +1420,8 @@ mod tests {
         std::fs::write(specs.join("spec.md"), "# Spec\n").unwrap();
         std::fs::remove_dir_all(change_dir.join("specs")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert!(!report.is_complete);
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
@@ -1399,7 +1436,8 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::write(sub.join("notes.txt"), "scratch\n").unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
     }
@@ -1418,7 +1456,8 @@ mod tests {
         std::fs::create_dir_all(&specs).unwrap();
         std::os::unix::fs::symlink(&*outside, specs.join("cap1")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Done);
     }
@@ -1432,7 +1471,8 @@ mod tests {
         std::fs::create_dir_all(specs.join("sub")).unwrap();
         std::os::unix::fs::symlink(&specs, specs.join("sub").join("loop")).unwrap();
 
-        let report = derive_status("demo-feature", &change_dir).unwrap();
+        let report =
+            derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin()).unwrap();
 
         assert_eq!(report.artifacts[2].status, ArtifactState::Ready);
     }
@@ -1454,7 +1494,7 @@ mod tests {
         std::fs::set_permissions(specs.join("locked"), std::fs::Permissions::from_mode(0o000))
             .unwrap();
 
-        let result = derive_status("demo-feature", &change_dir);
+        let result = derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin());
 
         std::fs::set_permissions(specs.join("locked"), std::fs::Permissions::from_mode(0o755))
             .unwrap();
@@ -1471,7 +1511,7 @@ mod tests {
         std::fs::create_dir_all(&specs).unwrap();
         std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o000)).unwrap();
 
-        let result = derive_status("demo-feature", &change_dir);
+        let result = derive_status("demo-feature", &change_dir, &ResolvedSchema::builtin());
 
         // Restore before asserting so TempDir's Drop can clean up.
         std::fs::set_permissions(&specs, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -1483,20 +1523,27 @@ mod tests {
 
     #[test]
     fn missing_dependencies_preserve_schema_order() {
-        const MULTI_DEP_ARTIFACT: ArtifactDefinition = ArtifactDefinition {
-            id: "example",
-            output_path: "example.md",
-            description: "",
-            deps: &["proposal", "design", "specs"],
-            instruction: "",
-            template: "",
+        let multi_dep_artifact = ResolvedArtifact {
+            id: "example".to_string(),
+            output_path: "example.md".to_string(),
+            description: String::new(),
+            deps: vec![
+                "proposal".to_string(),
+                "design".to_string(),
+                "specs".to_string(),
+            ],
+            instruction: String::new(),
+            template: String::new(),
         };
-        let done_ids = std::collections::HashSet::from(["design"]);
+        let done_ids = std::collections::HashSet::from(["design".to_string()]);
 
-        let status = artifact_status(&MULTI_DEP_ARTIFACT, &done_ids);
+        let status = artifact_status_resolved(&multi_dep_artifact, &done_ids);
 
         assert_eq!(status.status, ArtifactState::Blocked);
-        assert_eq!(status.missing_deps, Some(vec!["proposal", "specs"]));
+        assert_eq!(
+            status.missing_deps,
+            Some(vec!["proposal".to_string(), "specs".to_string()])
+        );
     }
 
     #[test]
