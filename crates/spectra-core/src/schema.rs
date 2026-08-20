@@ -461,6 +461,7 @@ pub struct ResolvedArtifact {
     pub deps: Vec<String>,
     pub instruction: String,
     pub template: String,
+    pub template_name: String,
 }
 
 /// A fully resolved workflow schema: either the built-in `spec-driven`
@@ -496,6 +497,10 @@ impl ResolvedSchema {
                     deps: a.deps.iter().map(|d| d.to_string()).collect(),
                     instruction: a.instruction.to_string(),
                     template: a.template.to_string(),
+                    template_name: match a.id {
+                        "specs" => "spec.md".to_string(),
+                        _ => a.output_path.to_string(),
+                    },
                 })
                 .collect(),
             artifact_order: SCHEMA_ARTIFACT_ORDER
@@ -540,9 +545,34 @@ impl ResolvedSchema {
                     deps: a.requires,
                     instruction: a.instruction,
                     template: template_content,
+                    template_name: a.template,
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+
+        let artifact_ids: std::collections::HashSet<&str> =
+            artifacts.iter().map(|a| a.id.as_str()).collect();
+        for artifact in &artifacts {
+            for dep in &artifact.deps {
+                if !artifact_ids.contains(dep.as_str()) {
+                    anyhow::bail!(
+                        "Schema '{}': artifact '{}' requires '{}' which is not defined in this schema",
+                        yaml_path.display(),
+                        artifact.id,
+                        dep
+                    );
+                }
+            }
+        }
+        for req in &raw.apply.requires {
+            if !artifact_ids.contains(req.as_str()) {
+                anyhow::bail!(
+                    "Schema '{}': apply.requires references '{}' which is not defined in this schema",
+                    yaml_path.display(),
+                    req
+                );
+            }
+        }
 
         let artifact_order = artifacts.iter().map(|a| a.id.clone()).collect();
 
@@ -1465,6 +1495,7 @@ mod tests {
             ],
             instruction: String::new(),
             template: String::new(),
+            template_name: "example.md".to_string(),
         };
         let done_ids = std::collections::HashSet::from(["design".to_string()]);
 
@@ -1572,6 +1603,7 @@ mod tests {
         assert_eq!(schema.artifacts.len(), 1);
         assert_eq!(schema.artifacts[0].id, "proposal");
         assert_eq!(schema.artifacts[0].template, "## Custom Template\n");
+        assert_eq!(schema.artifacts[0].template_name, "proposal.md");
         // `instruction:` is a plain (unquoted) YAML scalar here, so its
         // trailing newline is stripped per YAML scalar-folding rules --
         // unlike a `template:` file read straight off disk, which keeps
@@ -1579,6 +1611,43 @@ mod tests {
         assert_eq!(schema.artifacts[0].instruction, "Write it.");
         assert_eq!(schema.apply_requires, vec!["proposal"]);
         assert_eq!(schema.apply_instruction, "Do the work.");
+    }
+
+    #[test]
+    fn resolved_load_rejects_an_unknown_requires_id() {
+        let tmp = TempDir::new("load-bad-requires");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: [nonexistent]\napply:\n  requires: [proposal]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string().contains("requires 'nonexistent'"),
+            "expected a requires-validation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_an_unknown_apply_requires_id() {
+        let tmp = TempDir::new("load-bad-apply-requires");
+        let schema_dir = tmp.join("schemas").join("bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [ghost]\n  instruction: y\n",
+        )
+        .unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("apply.requires references 'ghost'"),
+            "expected an apply.requires-validation error, got: {err}"
+        );
     }
 
     #[test]

@@ -47,10 +47,7 @@ pub fn list(cfg: &Config, schema_name: Option<&str>) -> Result<TemplateListResul
             TemplateListing {
                 artifact_id: artifact.id.clone(),
                 has_content: has_content(&artifact.template),
-                template_name: match artifact.id.as_str() {
-                    "specs" => "spec.md".to_string(),
-                    _ => artifact.output_path.clone(),
-                },
+                template_name: artifact.template_name.clone(),
             }
         })
         .collect();
