@@ -161,11 +161,11 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: ghcr.io/howie/openspectra:${{ github.ref_name }}
+          tags: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
 
       - name: Smoke-test the image
         env:
-          IMAGE: ghcr.io/howie/openspectra:${{ github.ref_name }}
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
         run: |
           set -euo pipefail
           # ENTRYPOINT is `spectra`, so args are passed straight through.
@@ -177,7 +177,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          image="ghcr.io/howie/openspectra"
+          image="ghcr.io/${{ github.repository }}"
           docker push "${image}:${REF_NAME}"
           # Only advance :latest for stable tags (skip pre-releases like v0.1.0-rc1).
           case "$REF_NAME" in
