@@ -32,9 +32,7 @@ The `--tools` matrix and probes P29-P36 additionally cover:
 The reference CLI's `--dir` probes showed that `config.yaml` follows the
 resolved spec directory. They also showed that a non-default directory replaces
 line 6 of `.spectra.yaml` in place, while default `openspec` leaves the example
-commented. OpenSpectra does not yet expose the reference CLI's `--dir` flag, so
-its non-default renderer is covered in a unit test but is not reachable through
-the current CLI.
+commented. OpenSpectra exposes this renderer through `--dir`.
 
 The following remain **unverified** against the oracle:
 
@@ -52,12 +50,14 @@ behavior for an existing OpenSpec project.
 ## CLI shape
 
 ```text
-spectra init [--adopt] [--json] [--tools <TOOLS>]
+spectra init [PATH] [--force] [--dir <DIR>] [--adopt] [--json] [--tools <TOOLS>]
 ```
 
-The reference CLI additionally accepts `[PATH]`, `--force`, and `--dir`; those
-surfaces remain outside OpenSpectra's current CLI. `--adopt` and `--json` are
-OpenSpectra extensions.
+OpenSpectra implements the reference CLI's `[PATH]`, `--force`, and `--dir`
+surfaces. An explicit path is created when missing, canonicalized, and used
+directly without walking up to an initialized parent. `--force` permits
+reinitializing an existing project. `--adopt` and `--json` are OpenSpectra
+extensions.
 
 `init` is the only command that does **not** require
 `Config::is_initialized` to already be true. Every other subcommand calls

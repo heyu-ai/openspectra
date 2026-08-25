@@ -491,11 +491,51 @@ fn walk_names_in(dir: &Path) -> Vec<String> {
     names
 }
 
+/// 變更清單的排序欄位。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    Name,
+    Modified,
+    Created,
+}
+
+fn sort_names_by_metadata(names: &mut [String], root: &Path, sort_key: SortKey) {
+    if sort_key == SortKey::Name {
+        names.sort();
+        return;
+    }
+
+    names.sort_by(|a, b| {
+        let timestamp = |name: &str| {
+            std::fs::metadata(root.join(name))
+                .ok()
+                .and_then(|metadata| {
+                    if sort_key == SortKey::Modified {
+                        metadata.modified().ok()
+                    } else {
+                        // 部分 Unix 檔案系統不提供 birth time；仍先讀取
+                        // created，無法取得時以 modified 維持穩定且有用的排序。
+                        metadata.created().or_else(|_| metadata.modified()).ok()
+                    }
+                })
+        };
+
+        timestamp(b).cmp(&timestamp(a)).then_with(|| a.cmp(b))
+    });
+}
+
 /// List active (non-archived) change names, sorted. Parked changes are not
 /// under `changes_dir()` at all, so no extra filtering is needed.
 pub fn list_active(cfg: &Config) -> Vec<String> {
     let mut names = walk_change_names(cfg);
     names.sort();
+    names
+}
+
+/// 依指定欄位列出使用中的變更。
+pub fn list_active_sorted(cfg: &Config, sort_key: SortKey) -> Vec<String> {
+    let mut names = walk_change_names(cfg);
+    sort_names_by_metadata(&mut names, &cfg.changes_dir(), sort_key);
     names
 }
 
@@ -519,6 +559,24 @@ pub fn list_parked(cfg: &Config) -> Vec<String> {
         .filter(|name| is_valid_name(name) && ORACLE_CHANGE_ID_RE.is_match(name))
         .collect();
     names.sort();
+    names
+}
+
+/// 依指定欄位列出暫停中的變更。
+pub fn list_parked_sorted(cfg: &Config, sort_key: SortKey) -> Vec<String> {
+    let Some(dir) = parked_root(cfg) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| is_valid_name(name) && ORACLE_CHANGE_ID_RE.is_match(name))
+        .collect();
+    sort_names_by_metadata(&mut names, &dir, sort_key);
     names
 }
 

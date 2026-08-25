@@ -100,14 +100,20 @@ pub struct InitOutcome {
 /// no way to retry — every subsequent `init` would immediately bail with
 /// "already initialized" instead of finishing the interrupted work.
 pub fn init(root: &Path) -> Result<InitOutcome> {
-    init_with_options(root, false)
+    init_with_options(root, false, false, None)
 }
 
 /// Scaffold a project and generate instruction files for explicitly requested
 /// AI tools. Tool selection and all file-write semantics are shared with
 /// `spectra update`; unknown ids are accepted and generate nothing.
-pub fn init_with_tools(root: &Path, adopt: bool, tools: &[String]) -> Result<InitOutcome> {
-    let outcome = init_with_options(root, adopt)?;
+pub fn init_with_tools(
+    root: &Path,
+    adopt: bool,
+    tools: &[String],
+    force: bool,
+    spec_dir: Option<&str>,
+) -> Result<InitOutcome> {
+    let outcome = init_with_options(root, adopt, force, spec_dir)?;
     if !tools.is_empty() {
         let cfg = Config::load(root)?;
         crate::update::generate_instruction_files(&cfg, tools)?;
@@ -123,15 +129,20 @@ pub fn init_with_tools(root: &Path, adopt: bool, tools: &[String]) -> Result<Ini
 /// `.spectra/` is ignored, and writes `.spectra.yaml` last. It deliberately
 /// does not overwrite `project.md`, `AGENTS.md`, `config.yaml`, or any existing
 /// change/spec content under the spec directory.
-pub fn init_with_options(root: &Path, adopt: bool) -> Result<InitOutcome> {
-    if Config::is_initialized(root) {
-        anyhow::bail!(
-            "already initialized ({} exists)",
-            root.join(".spectra.yaml").display()
-        );
+/// `force` 只略過已初始化檢查，其餘檔案仍沿用相同的非破壞性處理。
+pub fn init_with_options(
+    root: &Path,
+    adopt: bool,
+    force: bool,
+    spec_dir: Option<&str>,
+) -> Result<InitOutcome> {
+    if !force && Config::is_initialized(root) {
+        anyhow::bail!("Already initialized. Use --force to reinitialize.");
     }
 
-    let spec_dir = if adopt {
+    let spec_dir = if let Some(spec_dir) = spec_dir {
+        spec_dir.to_string()
+    } else if adopt {
         detect_adopt_spec_dir(root)?
     } else {
         DEFAULT_SPEC_DIR.to_string()
@@ -422,7 +433,7 @@ mod tests {
     fn init_with_tools_generates_requested_files_without_detection_setup() {
         let tmp = TempDir::new();
 
-        init_with_tools(&tmp, false, &["claude".to_string()]).unwrap();
+        init_with_tools(&tmp, false, &["claude".to_string()], false, None).unwrap();
 
         assert!(tmp.join("CLAUDE.md").is_file());
         assert!(tmp.join(".claude/settings.json").is_file());
@@ -547,7 +558,10 @@ mod tests {
         init(&tmp).unwrap();
 
         let err = init(&tmp).unwrap_err();
-        assert!(err.to_string().contains("already initialized"));
+        assert_eq!(
+            err.to_string(),
+            "Already initialized. Use --force to reinitialize."
+        );
     }
 
     #[test]
@@ -565,7 +579,7 @@ mod tests {
         )
         .unwrap();
 
-        let outcome = init_with_options(&tmp, true).unwrap();
+        let outcome = init_with_options(&tmp, true, false, None).unwrap();
 
         assert!(outcome.adopted);
         assert_eq!(outcome.spec_dir, "openspec");
@@ -592,16 +606,19 @@ mod tests {
         let tmp = TempDir::new();
         init(&tmp).unwrap();
 
-        let err = init_with_options(&tmp, true).unwrap_err();
+        let err = init_with_options(&tmp, true, false, None).unwrap_err();
 
-        assert!(err.to_string().contains("already initialized"));
+        assert_eq!(
+            err.to_string(),
+            "Already initialized. Use --force to reinitialize."
+        );
     }
 
     #[test]
     fn init_adopt_on_empty_dir_creates_the_default_skeleton() {
         let tmp = TempDir::new();
 
-        let outcome = init_with_options(&tmp, true).unwrap();
+        let outcome = init_with_options(&tmp, true, false, None).unwrap();
 
         assert!(outcome.adopted);
         assert_eq!(outcome.spec_dir, "openspec");
@@ -619,7 +636,7 @@ mod tests {
         let tmp = TempDir::new();
         std::fs::write(tmp.join("openspec"), "not a directory\n").unwrap();
 
-        let err = init_with_options(&tmp, true).unwrap_err();
+        let err = init_with_options(&tmp, true, false, None).unwrap_err();
 
         assert!(err.to_string().contains("is not a directory"), "got: {err}");
         // Nothing was marked initialized.
