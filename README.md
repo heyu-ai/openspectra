@@ -4,23 +4,32 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** early. The Rust CLI currently ships `init`, `drift`, `analyze`,
-> `completion`, `schemas`, `status`, `instructions`, `validate`, `list`, `show`,
-> `park`, `unpark`, `in-progress add`, `new change`, `new artifact`, `task done`,
-> `update`, `archive`, and `config`. It runs on Linux/macOS with no bundled
-> runtime dependencies (`git` must be on `PATH`). The reverse-engineering
-> write-ups are in
-> [`docs/reverse-engineering/drift.md`](docs/reverse-engineering/drift.md),
-> [`docs/reverse-engineering/task.md`](docs/reverse-engineering/task.md),
-> [`docs/reverse-engineering/archive.md`](docs/reverse-engineering/archive.md),
-> [`docs/reverse-engineering/update.md`](docs/reverse-engineering/update.md),
-> [`docs/reverse-engineering/in-progress.md`](docs/reverse-engineering/in-progress.md),
-> and [`docs/reverse-engineering/init.md`](docs/reverse-engineering/init.md)
-> (init's default artifacts and stdout are oracle-verified; its `--adopt` /
-> `--json` extensions and a few edge cases are not — see that doc). `validate` is
-> likewise **not** oracle-verified: it matches the OSS `openspec validate`
-> contract, not the macOS binary — see
-> [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md).
+> **Status:** The Rust CLI ships 20 commands — `init`, `drift`, `analyze`,
+> `search`, `completion`, `schemas`, `templates`, `status`, `instructions`,
+> `validate`, `list`, `show`, `park`, `unpark`, `in-progress add`, `new change`,
+> `new artifact`, `task done`, `update`, `archive`, and `config` — covering
+> the full SDD workflow. It runs on Linux/macOS with no bundled runtime
+> dependencies (`git` must be on `PATH`). Three oracle commands remain unported:
+> `schema` (custom schema management), `demo`, and `feedback` (see
+> [#65](https://github.com/heyu-ai/openspectra/issues/65) for the tracking
+> issue). The reverse-engineering write-ups are in
+> [`docs/reverse-engineering/`](docs/reverse-engineering/):
+> [`analyze.md`](docs/reverse-engineering/analyze.md),
+> [`archive.md`](docs/reverse-engineering/archive.md),
+> [`artifact-workflow.md`](docs/reverse-engineering/artifact-workflow.md),
+> [`config.md`](docs/reverse-engineering/config.md),
+> [`drift.md`](docs/reverse-engineering/drift.md),
+> [`in-progress.md`](docs/reverse-engineering/in-progress.md),
+> [`init.md`](docs/reverse-engineering/init.md),
+> [`park.md`](docs/reverse-engineering/park.md),
+> [`schemas.md`](docs/reverse-engineering/schemas.md),
+> [`search.md`](docs/reverse-engineering/search.md),
+> [`task.md`](docs/reverse-engineering/task.md),
+> [`templates.md`](docs/reverse-engineering/templates.md),
+> [`update.md`](docs/reverse-engineering/update.md),
+> and [`validate.md`](docs/reverse-engineering/validate.md).
+> `validate` is **not** oracle-verified: it matches the OSS `openspec validate`
+> contract, not the macOS binary — see the validate write-up.
 
 ## Why
 
@@ -107,20 +116,20 @@ cargo install spectra-cli
 Release tarballs are attached to GitHub releases for Linux and macOS:
 
 ```sh
-curl -L https://github.com/howie/openspectra/releases/download/v0.2.1/spectra-v0.2.1-x86_64-unknown-linux-musl.tar.gz \
+curl -L https://github.com/heyu-ai/openspectra/releases/download/v0.8.0/spectra-v0.8.0-x86_64-unknown-linux-musl.tar.gz \
   | tar xz
-sudo mv spectra-v0.2.1-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
+sudo mv spectra-v0.8.0-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
 ```
 
-Substitute the latest release tag from https://github.com/howie/openspectra/releases.
+Substitute the latest release tag from https://github.com/heyu-ai/openspectra/releases.
 
-Docker images are published as `ghcr.io/howie/openspectra:<tag>` and
-`ghcr.io/howie/openspectra:latest` (linux/amd64 only; on other platforms use
+Docker images are published as `ghcr.io/heyu-ai/openspectra:<tag>` and
+`ghcr.io/heyu-ai/openspectra:latest` (linux/amd64 only; on other platforms use
 the release tarballs). The image bundles `git` and the `spectra` binary, with
 `spectra` as its entrypoint:
 
 ```sh
-docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/howie/openspectra:latest drift --json
+docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/heyu-ai/openspectra:latest drift --json
 ```
 
 ### CI gate example
@@ -147,9 +156,9 @@ jobs:
           fetch-depth: 0
       - name: Install spectra
         run: |
-          # Pin to a release tag; see https://github.com/howie/openspectra/releases for the latest.
-          SPECTRA_VERSION=v0.2.1
-          curl -L "https://github.com/howie/openspectra/releases/download/${SPECTRA_VERSION}/spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+          # Pin to a release tag; see https://github.com/heyu-ai/openspectra/releases for the latest.
+          SPECTRA_VERSION=v0.8.0
+          curl -L "https://github.com/heyu-ai/openspectra/releases/download/${SPECTRA_VERSION}/spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar xz
           sudo mv "spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl/spectra" /usr/local/bin/spectra
       - name: Restore drift baselines
@@ -313,7 +322,7 @@ jobs:
         # Pin to a release tag; :latest tracks the newest stable release.
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo \
-            ghcr.io/howie/openspectra:v0.2.1 validate --changes --strict
+            ghcr.io/heyu-ai/openspectra:v0.8.0 validate --changes --strict
 ```
 
 `spectra validate` gates on its own exit code, so no `jq` is needed. For the
@@ -354,7 +363,7 @@ oracle to calibrate constants (`crates/spectra-core/src/calibration.rs`).
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / analyze / completion / schemas / status / instructions / validate / list / show / park / unpark / in-progress add / new change / new artifact / task done / update / archive / config
+crates/spectra-cli/    # clap CLI: init / drift / analyze / search / completion / schemas / templates / status / instructions / validate / list / show / park / unpark / in-progress add / new change / new artifact / task done / update / archive / config
 crates/spectra-core/assets/update/   # instruction-file templates captured verbatim from the oracle (generated; see update.md)
 docs/reverse-engineering/   # how the original works (each doc separates probed from still-unverified behavior)
 scripts/               # oracle calibration probes + template capture (capture-update-templates.py)
