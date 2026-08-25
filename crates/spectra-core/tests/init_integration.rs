@@ -84,7 +84,10 @@ fn init_is_idempotent_refusal_not_silent_reinit() {
 
     init::init(&root).unwrap();
     let err = init::init(&root).unwrap_err();
-    assert!(err.to_string().contains("already initialized"));
+    assert_eq!(
+        err.to_string(),
+        "Already initialized. Use --force to reinitialize."
+    );
 }
 
 #[test]
@@ -97,7 +100,7 @@ fn init_adopt_then_list_specs_sees_preexisting_capability() {
     )
     .unwrap();
 
-    let outcome = init::init_with_options(&root, true).unwrap();
+    let outcome = init::init_with_options(&root, true, false, None).unwrap();
 
     assert!(outcome.adopted);
     let cfg = Config::load(&root).unwrap();

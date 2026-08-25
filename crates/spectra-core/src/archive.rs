@@ -82,11 +82,12 @@ pub fn archive(
     cfg: &Config,
     name: &str,
     skip_specs: bool,
+    no_validate: bool,
     mark_tasks_complete: bool,
 ) -> Result<ArchiveOutcome> {
     let ch = change::try_load(cfg, name)?.ok_or_else(|| anyhow!("Change '{name}' not found."))?;
 
-    if !skip_specs {
+    if !skip_specs && !no_validate {
         validate_spec_deltas(cfg, &ch.dir, name)?;
     }
 
@@ -833,7 +834,7 @@ mod tests {
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         assert_eq!(outcome.name, "my-feature");
         assert!(outcome.archived_name.ends_with("-my-feature"));
@@ -851,7 +852,7 @@ mod tests {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
 
-        let err = archive(&c, "does-not-exist", true, false).unwrap_err();
+        let err = archive(&c, "does-not-exist", true, false, false).unwrap_err();
         assert_eq!(err.to_string(), "Change 'does-not-exist' not found.");
     }
 
@@ -860,9 +861,9 @@ mod tests {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
-        archive(&c, "my-feature", true, false).unwrap();
+        archive(&c, "my-feature", true, false, false).unwrap();
 
-        let err = archive(&c, "my-feature", true, false).unwrap_err();
+        let err = archive(&c, "my-feature", true, false, false).unwrap_err();
         assert_eq!(err.to_string(), "Change 'my-feature' not found.");
     }
 
@@ -872,7 +873,7 @@ mod tests {
         let c = git_repo_cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         let meta = std::fs::read_to_string(
             c.changes_dir()
@@ -895,7 +896,7 @@ mod tests {
         let c = git_repo_cfg_with_identity(&tmp, "Weird: Name #1", "weird@example.com");
         change::create(&c, "my-feature").unwrap();
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         let meta_path = c
             .changes_dir()
@@ -925,7 +926,7 @@ mod tests {
             "schema: v1\ncreated: 2024-01-01\nfuture_field: some-value-not-yet-modeled\n",
         );
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         let meta = std::fs::read_to_string(
             c.changes_dir()
@@ -957,7 +958,7 @@ mod tests {
             "this: [is, not, : valid yaml\n",
         );
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         let archived_dir = c.changes_dir().join("archive").join(&outcome.archived_name);
         let backup = std::fs::read_to_string(archived_dir.join(".openspec.yaml.corrupt")).unwrap();
@@ -976,7 +977,7 @@ mod tests {
             "- [ ] a\n- [ ] b\n",
         );
 
-        let outcome = archive(&c, "my-feature", true, true).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, true).unwrap();
 
         let tasks = std::fs::read_to_string(
             c.changes_dir()
@@ -996,7 +997,7 @@ mod tests {
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
 
-        let outcome = archive(&c, "my-feature", true, true).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, true).unwrap();
 
         assert!(!c
             .changes_dir()
@@ -1016,7 +1017,7 @@ mod tests {
             "- [ ] a\n",
         );
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         let tasks = std::fs::read_to_string(
             c.changes_dir()
@@ -1042,7 +1043,7 @@ mod tests {
             DELTA_TEMPLATE,
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied.len(), 1);
         assert_eq!(outcome.specs_applied[0].capability, "my-cap");
@@ -1078,7 +1079,7 @@ mod tests {
             DELTA_TEMPLATE,
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied.len(), 1);
         assert_eq!(outcome.specs_applied[0].capability, "Billing/Invoices");
@@ -1119,7 +1120,7 @@ mod tests {
         let specs_root = c.changes_dir().join("my-feature").join("specs");
         std::os::unix::fs::symlink(&specs_root, specs_root.join("loop")).unwrap();
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied.len(), 1);
         assert_eq!(outcome.specs_applied[0].capability, "my-cap");
@@ -1143,7 +1144,7 @@ mod tests {
             DELTA_TEMPLATE,
         );
 
-        archive(&c, "my-feature", false, false).unwrap();
+        archive(&c, "my-feature", false, false, false).unwrap();
 
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("### Requirement: First"));
@@ -1167,7 +1168,7 @@ mod tests {
             delta,
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied[0].added, 2);
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
@@ -1198,7 +1199,7 @@ mod tests {
             delta,
         );
 
-        archive(&c, "my-feature", false, false).unwrap();
+        archive(&c, "my-feature", false, false, false).unwrap();
 
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("text one"));
@@ -1231,7 +1232,7 @@ mod tests {
             DELTA_TEMPLATE,
         );
 
-        archive(&c, "my-feature", false, false).unwrap();
+        archive(&c, "my-feature", false, false, false).unwrap();
 
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         let new_req_idx = spec
@@ -1275,7 +1276,7 @@ mod tests {
             DELTA_TEMPLATE,
         );
 
-        archive(&c, "my-feature", false, false).unwrap();
+        archive(&c, "my-feature", false, false, false).unwrap();
 
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         let new_req_idx = spec
@@ -1304,7 +1305,7 @@ mod tests {
             DELTA_TEMPLATE,
         );
 
-        let outcome = archive(&c, "my-feature", true, false).unwrap();
+        let outcome = archive(&c, "my-feature", true, false, false).unwrap();
 
         assert!(outcome.specs_applied.is_empty());
         assert!(!c.specs_dir().join("my-cap").join("spec.md").exists());
@@ -1334,7 +1335,7 @@ mod tests {
              - **THEN** modified behavior applies\n",
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied[0].modified, 1);
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
@@ -1376,7 +1377,7 @@ mod tests {
             "## REMOVED Requirements\n\n### Requirement: Second\n\nDeprecated.\n",
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied[0].removed, 1);
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
@@ -1408,7 +1409,7 @@ mod tests {
              renamed and modified text\n",
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied[0].renamed, 1);
         assert_eq!(outcome.specs_applied[0].modified, 1);
@@ -1443,7 +1444,7 @@ mod tests {
              - TO: `### Requirement: Renamed First`\n",
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied[0].added, 1);
         assert_eq!(outcome.specs_applied[0].modified, 1);
@@ -1476,7 +1477,7 @@ mod tests {
             "## MODIFIED Requirements\n\n### Requirement: Missing\n\nnew text\n",
         );
 
-        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
         assert!(err
             .to_string()
             .contains("capability 'my-cap': cannot MODIFY requirement 'Missing'"));
@@ -1506,7 +1507,7 @@ mod tests {
             "## RENAMED Requirements\n- FROM: `### Requirement: First`\n- TO: `### Requirement: Second`\n",
         );
 
-        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
         assert!(err
             .to_string()
             .contains("capability 'my-cap': cannot RENAME requirement to 'Second'"));
@@ -1548,7 +1549,7 @@ mod tests {
                 delta,
             );
 
-            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            let err = archive(&c, "my-feature", false, false, false).unwrap_err();
 
             assert!(
                 err.to_string().contains(expected),
@@ -1577,7 +1578,7 @@ mod tests {
             "## ADDED Requirements\n\n### Requirement: Second\n\nnew duplicate\n",
         );
 
-        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
 
         assert!(err
             .to_string()
@@ -1604,7 +1605,7 @@ mod tests {
             "## MODIFIED Requirements\n\n### Requirement:   Session    Expiration  \n\nnew\n",
         );
 
-        archive(&c, "my-feature", false, false).unwrap();
+        archive(&c, "my-feature", false, false, false).unwrap();
 
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("### Requirement:   Session    Expiration  \n\nnew"));
@@ -1651,7 +1652,7 @@ mod tests {
             "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nmodified alpha text\n",
         );
 
-        archive(&c, "my-feature", false, false).unwrap();
+        archive(&c, "my-feature", false, false, false).unwrap();
 
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("modified alpha text"));
@@ -1701,7 +1702,7 @@ mod tests {
                 delta,
             );
 
-            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            let err = archive(&c, "my-feature", false, false, false).unwrap_err();
             assert!(
                 err.to_string()
                     .contains(&format!("`## {kind} Requirements` section contains no")),
@@ -1733,7 +1734,7 @@ mod tests {
              ## MODIFIED Requirements\n\n### Requirement: Second\n\nb\n",
         );
 
-        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("more than one `## MODIFIED Requirements` section"),
@@ -1762,7 +1763,7 @@ mod tests {
              ### Requirement: Dup\n\nb\n",
         );
 
-        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
         assert!(
             err.to_string()
                 .contains("delta ADDs requirement 'Dup' more than once"),
@@ -1826,7 +1827,7 @@ mod tests {
              * TO: `### Requirement: Primero`\n",
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
         assert_eq!(outcome.specs_applied[0].renamed, 1);
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("### Requirement: Primero"));
@@ -1852,7 +1853,7 @@ mod tests {
                     .join("spec.md"),
                 "## REMOVED Requirements\n\n### Requirement:   Second  \n\ngone\n",
             );
-            archive(&c, "my-feature", false, false).unwrap();
+            archive(&c, "my-feature", false, false, false).unwrap();
             let spec =
                 std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
             assert!(!spec.contains("### Requirement: Second"));
@@ -1876,7 +1877,7 @@ mod tests {
                  - FROM: `### Requirement:   Second  `\n\
                  - TO: `### Requirement: Segundo`\n",
             );
-            archive(&c, "my-feature", false, false).unwrap();
+            archive(&c, "my-feature", false, false, false).unwrap();
             let spec =
                 std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
             assert!(spec.contains("### Requirement: Segundo"));
@@ -1921,7 +1922,7 @@ mod tests {
                 delta,
             );
 
-            let err = archive(&c, "my-feature", false, false).unwrap_err();
+            let err = archive(&c, "my-feature", false, false, false).unwrap_err();
             assert!(
                 err.to_string().contains(needle),
                 "malformed RENAMED should error with '{needle}', got: {err}"
@@ -1948,7 +1949,7 @@ mod tests {
             "## MODIFIED Requirements\n\n### Requirement: First\n\nnew text\n",
         );
 
-        assert!(archive(&c, "my-feature", false, false).is_err());
+        assert!(archive(&c, "my-feature", false, false, false).is_err());
 
         assert!(
             c.changes_dir().join("my-feature").is_dir(),
@@ -1974,7 +1975,7 @@ mod tests {
             "# just some notes, no delta headers\n",
         );
 
-        let outcome = archive(&c, "my-feature", false, false).unwrap();
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
 
         assert_eq!(outcome.specs_applied.len(), 1);
         assert_eq!(outcome.specs_applied[0].added, 0);
@@ -1988,7 +1989,7 @@ mod tests {
         change::create(&c, "my-feature").unwrap();
         change::mark_in_progress(&c, "my-feature").unwrap();
 
-        archive(&c, "my-feature", true, false).unwrap();
+        archive(&c, "my-feature", true, false, false).unwrap();
 
         assert!(!c
             .root
@@ -2015,7 +2016,7 @@ mod tests {
         .unwrap();
         assert!(touched::touched_path(&c, "my-feature").is_file());
 
-        archive(&c, "my-feature", true, false).unwrap();
+        archive(&c, "my-feature", true, false, false).unwrap();
 
         assert!(!touched::touched_path(&c, "my-feature").exists());
     }
@@ -2056,7 +2057,7 @@ mod tests {
             return;
         }
 
-        let result = archive(&c, "my-feature", false, false);
+        let result = archive(&c, "my-feature", false, false, false);
         std::fs::set_permissions(&spec_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         assert!(result.is_err());
@@ -2085,7 +2086,7 @@ mod tests {
         std::fs::create_dir_all(&cap_dir).unwrap();
         std::fs::write(cap_dir.join("spec.md"), DELTA_TEMPLATE).unwrap();
 
-        let err = archive(&c, "my-feature", false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
 
         assert!(err.to_string().contains("not valid UTF-8"));
         assert!(
@@ -2114,7 +2115,7 @@ mod tests {
             return;
         }
 
-        let err = archive(&c, "my-feature", true, false).unwrap_err();
+        let err = archive(&c, "my-feature", true, false, false).unwrap_err();
         std::fs::set_permissions(&meta_path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         // {:#} is what main.rs actually prints; the underlying io::Error's

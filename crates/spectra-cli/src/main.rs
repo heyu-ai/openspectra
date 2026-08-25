@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
-use clap::{CommandFactory, Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
 use spectra_core::{
@@ -38,6 +38,12 @@ enum Command {
     /// `<spec_dir>/{changes/archive,specs}/`, and a `.spectra/` entry in
     /// `.gitignore`. Every other command requires this to have run first.
     Init {
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        force: bool,
+        #[arg(long, value_name = "DIR")]
+        dir: Option<String>,
         #[arg(long)]
         adopt: bool,
         #[arg(long)]
@@ -166,6 +172,9 @@ enum Command {
         parked: bool,
         #[arg(long)]
         json: bool,
+        /// Sort by: name, modified, created
+        #[arg(long, value_name = "SORT", default_value = "modified")]
+        sort: ListSort,
     },
     /// Show a change's proposal, or a spec's content if the name isn't a change.
     Show {
@@ -222,12 +231,33 @@ enum Command {
         /// Mark all incomplete tasks as complete before archiving.
         #[arg(long)]
         mark_tasks_complete: bool,
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+        #[arg(long = "no-validate")]
+        no_validate: bool,
     },
     /// Config management commands
     Config {
         #[command(subcommand)]
         target: ConfigTarget,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ListSort {
+    Name,
+    Modified,
+    Created,
+}
+
+impl From<ListSort> for change::SortKey {
+    fn from(value: ListSort) -> Self {
+        match value {
+            ListSort::Name => Self::Name,
+            ListSort::Modified => Self::Modified,
+            ListSort::Created => Self::Created,
+        }
+    }
 }
 
 /// Subcommands of `spectra config`, managing the *global* user config file
@@ -385,8 +415,15 @@ fn init_json(outcome: &spectra_core::init::InitOutcome) -> serde_json::Value {
     })
 }
 
-fn cmd_init(root: &Path, adopt: bool, as_json: bool, tools: &[String]) -> Result<i32> {
-    let outcome = spectra_core::init::init_with_tools(root, adopt, tools)?;
+fn cmd_init(
+    root: &Path,
+    adopt: bool,
+    as_json: bool,
+    tools: &[String],
+    force: bool,
+    spec_dir: Option<&str>,
+) -> Result<i32> {
+    let outcome = spectra_core::init::init_with_tools(root, adopt, tools, force, spec_dir)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&init_json(&outcome))?);
     } else if outcome.adopted {
@@ -634,11 +671,15 @@ fn print_human(r: &drift::DriftReport, use_color: bool) {
     }
 }
 
-fn list_change_items(cfg: &Config, want_parked: bool) -> Result<Vec<serde_json::Value>> {
+fn list_change_items(
+    cfg: &Config,
+    want_parked: bool,
+    sort_key: change::SortKey,
+) -> Result<Vec<serde_json::Value>> {
     let names = if want_parked {
-        change::list_parked(cfg)
+        change::list_parked_sorted(cfg, sort_key)
     } else {
-        change::list_active(cfg)
+        change::list_active_sorted(cfg, sort_key)
     };
     let mut items = Vec::new();
     for name in &names {
@@ -653,25 +694,29 @@ fn list_change_items(cfg: &Config, want_parked: bool) -> Result<Vec<serde_json::
         } else {
             "in-progress"
         };
-        let summary = first_line(&ch.proposal_md());
         items.push(json!({
             "name": name,
             "status": status,
             "completedTasks": done,
             "totalTasks": total,
-            "summary": summary,
         }));
     }
     Ok(items)
 }
 
-fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) -> Result<i32> {
+fn cmd_list(
+    cfg: &Config,
+    want_specs: bool,
+    want_parked: bool,
+    as_json: bool,
+    sort_key: change::SortKey,
+) -> Result<i32> {
     // clap rejects --specs with --parked (they're `conflicts_with`), so at
     // most one of the two is ever true here.
     if want_specs {
         return cmd_list_specs(cfg, as_json);
     }
-    let items = list_change_items(cfg, want_parked)?;
+    let items = list_change_items(cfg, want_parked, sort_key)?;
     if as_json {
         // The oracle keys the parked listing on "parked", not "changes".
         let key = if want_parked { "parked" } else { "changes" };
@@ -686,14 +731,9 @@ fn cmd_list(cfg: &Config, want_specs: bool, want_parked: bool, as_json: bool) ->
             }
         );
     } else {
+        println!("{}", if want_parked { "Parked:" } else { "Changes:" });
         for it in &items {
-            println!(
-                "{:<45} {}/{} {}",
-                it["name"].as_str().unwrap_or(""),
-                it["completedTasks"],
-                it["totalTasks"],
-                it["status"].as_str().unwrap_or("")
-            );
+            println!("  • {}", it["name"].as_str().unwrap_or(""));
         }
     }
     Ok(0)
@@ -1144,10 +1184,23 @@ fn cmd_archive(
     cfg: &Config,
     change_name: Option<&str>,
     skip_specs: bool,
+    no_validate: bool,
     mark_tasks_complete: bool,
+    yes: bool,
 ) -> Result<i32> {
     let name = change::resolve(cfg, change_name)?;
-    let outcome = spectra_core::archive::archive(cfg, &name, skip_specs, mark_tasks_complete)?;
+    if std::io::stdin().is_terminal() && !yes {
+        eprint!("Archive '{name}'? (y/N) ");
+        std::io::stderr().flush()?;
+        let mut response = String::new();
+        std::io::stdin().read_line(&mut response)?;
+        if !matches!(response.chars().next(), Some('y' | 'Y')) {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+    let outcome =
+        spectra_core::archive::archive(cfg, &name, skip_specs, no_validate, mark_tasks_complete)?;
     println!(
         "Archived '{}' as '{}'.",
         outcome.name, outcome.archived_name
@@ -1323,7 +1376,24 @@ fn run() -> Result<i32> {
     let root = find_root(&cwd);
 
     match &cli.command {
-        Command::Init { adopt, json, tools } => cmd_init(&root, *adopt, *json, tools),
+        Command::Init {
+            path,
+            force,
+            dir,
+            adopt,
+            json,
+            tools,
+        } => {
+            let init_root = if let Some(path) = path {
+                std::fs::create_dir_all(path)
+                    .with_context(|| format!("creating {}", path.display()))?;
+                path.canonicalize()
+                    .with_context(|| format!("canonicalizing {}", path.display()))?
+            } else {
+                root.clone()
+            };
+            cmd_init(&init_root, *adopt, *json, tools, *force, dir.as_deref())
+        }
         Command::Drift { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_drift(&cfg, change.as_deref(), *json, use_color)
@@ -1419,9 +1489,10 @@ fn run() -> Result<i32> {
             specs,
             parked,
             json,
+            sort,
         } => {
             let cfg = require_initialized(&root)?;
-            cmd_list(&cfg, *specs, *parked, *json)
+            cmd_list(&cfg, *specs, *parked, *json, (*sort).into())
         }
         Command::Show { item, json } => {
             let cfg = require_initialized(&root)?;
@@ -1492,9 +1563,18 @@ fn run() -> Result<i32> {
             change,
             skip_specs,
             mark_tasks_complete,
+            yes,
+            no_validate,
         } => {
             let cfg = require_initialized(&root)?;
-            cmd_archive(&cfg, change.as_deref(), *skip_specs, *mark_tasks_complete)
+            cmd_archive(
+                &cfg,
+                change.as_deref(),
+                *skip_specs,
+                *no_validate,
+                *mark_tasks_complete,
+                *yes,
+            )
         }
         // Global config management needs no project (like `init`/`schemas`).
         Command::Config { target } => cmd_config(target, use_color),
@@ -1702,11 +1782,13 @@ mod tests {
                 specs,
                 parked,
                 json,
+                sort,
             } => {
                 assert!(changes);
                 assert!(!specs);
                 assert!(!parked);
                 assert!(!json);
+                assert!(matches!(sort, ListSort::Modified));
             }
             _ => panic!("expected Command::List"),
         }
@@ -1798,11 +1880,11 @@ mod tests {
         std::fs::create_dir_all(&parked_dir).unwrap();
         std::fs::write(parked_dir.join("proposal.md"), "# On hold\n").unwrap();
 
-        let active = list_change_items(&cfg, false).unwrap();
+        let active = list_change_items(&cfg, false, change::SortKey::Name).unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0]["name"].as_str(), Some("shipped"));
 
-        let parked = list_change_items(&cfg, true).unwrap();
+        let parked = list_change_items(&cfg, true, change::SortKey::Name).unwrap();
         assert_eq!(parked.len(), 1);
         assert_eq!(parked[0]["name"].as_str(), Some("on-hold"));
     }
@@ -1823,7 +1905,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(list_change_items(&cfg, true).unwrap().is_empty());
+        assert!(list_change_items(&cfg, true, change::SortKey::Name)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

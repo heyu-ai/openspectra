@@ -4,7 +4,7 @@
 //! actual runtime behavior.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn spectra() -> Command {
     Command::new(env!("CARGO_BIN_EXE_spectra"))
@@ -85,6 +85,10 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
         "list --changes failed: {changes_human:?}"
     );
     assert_eq!(default_human.stdout, changes_human.stdout);
+    assert_eq!(
+        String::from_utf8(default_human.stdout).unwrap(),
+        "Changes:\n  • add-search-filter\n"
+    );
 
     let default_json = spectra()
         .args(["list", "--json"])
@@ -106,6 +110,73 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
     );
     assert_eq!(default_json.stdout, changes_json.stdout);
     assert!(!default_json.stdout.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&default_json.stdout).unwrap();
+    let item = &value["changes"][0];
+    assert_eq!(item["name"], "add-search-filter");
+    assert_eq!(item["status"], "in-progress");
+    assert_eq!(item["completedTasks"], 0);
+    assert_eq!(item["totalTasks"], 0);
+    assert!(item.get("summary").is_none());
+}
+
+#[test]
+fn list_sorts_changes_by_name_modified_and_created() {
+    let tmp = TempDir::new("list-sort");
+    init_project_with_change(&tmp, "middle");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    for name in ["z-last", "a-first"] {
+        let out = spectra()
+            .args(["new", "change", name])
+            .current_dir(&*tmp)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "new change failed: {out:?}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let listed_names = |sort: &str| {
+        let out = spectra()
+            .args(["list", "--sort", sort, "--json"])
+            .current_dir(&*tmp)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "list --sort {sort} failed: {out:?}");
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        value["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["name"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(listed_names("name"), ["a-first", "middle", "z-last"]);
+    assert_eq!(listed_names("modified"), ["a-first", "z-last", "middle"]);
+    assert_eq!(listed_names("created"), ["a-first", "z-last", "middle"]);
+}
+
+#[test]
+fn list_parked_human_output_uses_the_oracle_header_and_bullets() {
+    let tmp = TempDir::new("list-parked-human");
+    init_project_with_change(&tmp, "on-hold");
+    let park = spectra()
+        .args(["park", "on-hold"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(park.status.success(), "park failed: {park:?}");
+
+    let out = spectra()
+        .args(["list", "--parked"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "list --parked failed: {out:?}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "Parked:\n  • on-hold\n"
+    );
 }
 
 #[test]
@@ -156,6 +227,89 @@ fn init_json_output_matches_the_documented_shape() {
     assert_eq!(
         reported_root.canonicalize().unwrap(),
         tmp.canonicalize().unwrap()
+    );
+}
+
+#[test]
+fn init_creates_and_uses_a_missing_explicit_path() {
+    let tmp = TempDir::new("init-missing-path");
+    let target = tmp.join("new/project");
+
+    let out = spectra()
+        .arg("init")
+        .arg(&target)
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "init PATH failed: {out:?}");
+    assert!(target.join(".spectra.yaml").is_file());
+    assert!(target.join("openspec/changes/archive").is_dir());
+}
+
+#[test]
+fn init_uses_an_existing_explicit_path_directly() {
+    let tmp = TempDir::new("init-existing-path");
+    let target = tmp.join("existing");
+    std::fs::create_dir_all(&target).unwrap();
+
+    let out = spectra()
+        .arg("init")
+        .arg(&target)
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "init PATH failed: {out:?}");
+    assert!(target.join(".spectra.yaml").is_file());
+    assert!(!tmp.join(".spectra.yaml").exists());
+}
+
+#[test]
+fn init_force_reinitializes_an_existing_project() {
+    let tmp = TempDir::new("init-force");
+    let first = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    assert!(first.status.success(), "initial init failed: {first:?}");
+
+    let out = spectra()
+        .args(["init", "--force"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "init --force failed: {out:?}");
+    assert!(tmp.join("openspec/config.yaml").is_file());
+}
+
+#[test]
+fn init_dir_uses_the_custom_spec_directory() {
+    let tmp = TempDir::new("init-dir");
+
+    let out = spectra()
+        .args(["init", "--dir", "custom-dir"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "init --dir failed: {out:?}");
+    assert!(tmp.join("custom-dir/changes/archive").is_dir());
+    assert!(tmp.join("custom-dir/specs").is_dir());
+    let config = std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap();
+    assert_eq!(config.lines().nth(5), Some("spec_dir: custom-dir"));
+}
+
+#[test]
+fn init_without_force_reports_the_oracle_reinitialize_message() {
+    let tmp = TempDir::new("init-already");
+    let first = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    assert!(first.status.success(), "initial init failed: {first:?}");
+
+    let out = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Error: Already initialized. Use --force to reinitialize.\n"
     );
 }
 
@@ -227,6 +381,121 @@ fn init_project_with_change(tmp: &Path, name: &str) {
         .output()
         .unwrap();
     assert!(nc.status.success(), "new change failed: {nc:?}");
+}
+
+#[test]
+fn archive_yes_skips_confirmation_and_archives() {
+    let tmp = TempDir::new("archive-yes");
+    init_project_with_change(&tmp, "ready");
+
+    let out = spectra()
+        .args(["archive", "ready", "-y", "--skip-specs"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "archive -y failed: {out:?}");
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("Archive 'ready'?"));
+    assert!(!tmp.join("openspec/changes/ready").exists());
+}
+
+#[test]
+fn archive_no_validate_skips_the_pre_move_validation() {
+    let tmp = TempDir::new("archive-no-validate");
+    init_project_with_change(&tmp, "unsafe-change");
+    let delta = tmp.join("openspec/changes/unsafe-change/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n### Requirement: Missing\n\nnew text\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["archive", "unsafe-change", "-y", "--no-validate"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!tmp.join("openspec/changes/unsafe-change").exists());
+    let archived = std::fs::read_dir(tmp.join("openspec/changes/archive"))
+        .unwrap()
+        .flatten()
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with("-unsafe-change")
+        });
+    assert!(archived, "--no-validate 應先移動變更，再嘗試套用規格");
+}
+
+#[test]
+fn archive_with_piped_stdin_skips_confirmation() {
+    let tmp = TempDir::new("archive-piped");
+    init_project_with_change(&tmp, "piped-change");
+
+    let mut child = spectra()
+        .args(["archive", "piped-change", "--skip-specs"])
+        .current_dir(&*tmp)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"n\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+
+    assert!(out.status.success(), "piped archive failed: {out:?}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("Aborted."));
+    assert!(!tmp.join("openspec/changes/piped-change").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_prompts_and_aborts_on_a_terminal() {
+    let tmp = TempDir::new("archive-prompt");
+    init_project_with_change(&tmp, "prompt-change");
+
+    let mut command = Command::new("script");
+    #[cfg(target_os = "macos")]
+    command.args([
+        "-q",
+        "/dev/null",
+        env!("CARGO_BIN_EXE_spectra"),
+        "archive",
+        "prompt-change",
+        "--skip-specs",
+    ]);
+    #[cfg(not(target_os = "macos"))]
+    let script_command = format!(
+        "{} archive prompt-change --skip-specs",
+        env!("CARGO_BIN_EXE_spectra")
+    );
+    #[cfg(not(target_os = "macos"))]
+    command.args(["-q", "-c", &script_command, "/dev/null"]);
+
+    let mut child = command
+        .current_dir(&*tmp)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"n\n").unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(out.status.success(), "終端機提示測試失敗：{out:?}");
+    assert!(output.contains("Archive 'prompt-change'? (y/N) "));
+    assert!(output.contains("Aborted."));
+    assert!(tmp.join("openspec/changes/prompt-change").is_dir());
 }
 
 #[test]
@@ -394,6 +663,9 @@ fn list_help_does_not_mention_changes_as_unimplemented() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(!stdout.contains("not yet implemented"));
+    assert!(stdout.contains("--sort <SORT>"));
+    assert!(stdout.contains("Sort by: name, modified, created"));
+    assert!(stdout.contains("[default: modified]"));
 }
 
 /// The marker path spelled out literally, on purpose: every other assertion
