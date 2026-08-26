@@ -863,11 +863,16 @@ fn cmd_in_progress_add(cfg: &Config, name: &str) -> Result<i32> {
 /// color is enabled (matching the oracle's `\x1b[2m` faint styling). Pulled out
 /// so the color wiring is unit-testable without spawning the binary.
 fn schema_line(schema: &schema::SchemaListing, use_color: bool) -> String {
+    let description = schema
+        .description
+        .as_deref()
+        .map(|description| format!(" — {description}"))
+        .unwrap_or_default();
     format!(
-        "  {} {} — {}",
+        "  {} {}{}",
         schema.name,
         colorize(&format!("({})", schema.source), "2", use_color),
-        schema.description
+        description
     )
 }
 
@@ -887,8 +892,9 @@ fn render_schemas_human(schemas: &[schema::SchemaListing], use_color: bool) -> S
     out
 }
 
-fn cmd_schemas(as_json: bool, use_color: bool) -> Result<i32> {
-    let schemas = schema::schemas();
+fn cmd_schemas(root: &Path, as_json: bool, use_color: bool) -> Result<i32> {
+    let cfg = Config::load(root).ok();
+    let schemas = schema::schemas(cfg.as_ref());
     if as_json {
         println!("{}", serde_json::to_string_pretty(&schemas)?);
     } else {
@@ -1426,10 +1432,9 @@ fn run() -> Result<i32> {
                 completion::uninstall(completion_shell(*shell)?, *yes)
             }
         },
-        // `schemas` lists the built-in schema registry, which needs no
-        // project — the oracle lists it outside an initialized project too, so
-        // it deliberately skips `require_initialized` (like `init`).
-        Command::Schemas { json } => cmd_schemas(*json, use_color),
+        // `schemas` 不需要已初始化的專案，因此刻意不呼叫
+        // `require_initialized`（與 `init` 相同）。
+        Command::Schemas { json } => cmd_schemas(&root, *json, use_color),
         // Template metadata is embedded in the schema registry and is
         // available outside an initialized project, matching the oracle.
         Command::Templates { schema, json } => {
@@ -1678,10 +1683,17 @@ mod tests {
     #[test]
     fn schema_line_dims_the_source_tag_only_when_color_is_enabled() {
         let schema = schema::SchemaListing {
-            artifacts: &["proposal", "specs", "design", "tasks"],
-            description: "Default OpenSpec workflow - proposal → specs → design → tasks",
-            name: "spec-driven",
-            source: "package",
+            artifacts: vec![
+                "proposal".to_string(),
+                "specs".to_string(),
+                "design".to_string(),
+                "tasks".to_string(),
+            ],
+            description: Some(
+                "Default OpenSpec workflow - proposal → specs → design → tasks".to_string(),
+            ),
+            name: "spec-driven".to_string(),
+            source: "package".to_string(),
         };
 
         assert_eq!(
@@ -1692,6 +1704,14 @@ mod tests {
             schema_line(&schema, true),
             "  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → design → tasks"
         );
+
+        let project_schema = schema::SchemaListing {
+            artifacts: vec!["proposal".to_string()],
+            description: None,
+            name: "mycustom".to_string(),
+            source: "project".to_string(),
+        };
+        assert_eq!(schema_line(&project_schema, false), "  mycustom (project)");
     }
 
     #[test]
@@ -1701,7 +1721,7 @@ mod tests {
         // the header SGR `"1"`->`"2"`, or dropping the dim on the source tag —
         // fails here. The golden integration tests only reach the --no-color
         // path (piped stdout), leaving this the sole guard on the colored path.
-        let schemas = schema::schemas();
+        let schemas = schema::schemas(None);
 
         // --no-color output must equal the two oracle-golden text lines.
         assert_eq!(

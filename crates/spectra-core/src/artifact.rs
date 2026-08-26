@@ -148,23 +148,12 @@ pub fn create(
     stdin_content: Option<&str>,
     force: bool,
 ) -> Result<NewArtifactOutcome> {
-    // No schema gate here, deliberately: probed on v2.3.1, `new artifact`
-    // never *errors* on the selector and has no `--schema` flag. With the
-    // change's `.openspec.yaml` recording an unresolvable `schema:` the oracle
-    // still exits 0. An earlier revision of #117 added a gate here; that both
-    // diverged from the oracle and reordered this function's oracle-probed
-    // check sequence (`docs/reverse-engineering/artifact-workflow.md`), which
-    // PR #48 review had already ruled must not happen without a probe.
-    //
-    // It does not follow that the oracle ignores the schema: it resolves it for
-    // *template lookup*. With a resolvable custom schema it writes that
-    // schema's template (probed with a marker file), and when it cannot resolve
-    // one it writes a **0-byte** artifact. OpenSpectra writes the built-in
-    // template in both cases -- a usable artifact rather than an empty one, and
-    // the wrong template for a custom schema (#126 landed schema loading for
-    // status/instructions but `new artifact` still uses the built-in). Recorded in
-    // `docs/reverse-engineering/schemas.md`, asserted by
-    // `schema_selector_integration.rs`.
+    // Probed on v2.3.1: `new artifact` never errors on the schema selector
+    // and has no `--schema` flag. With a resolvable custom schema it writes
+    // that schema's template; with an unresolvable one the oracle writes a
+    // 0-byte file. OpenSpectra falls back to the built-in template instead
+    // (deliberate divergence, recorded in docs/reverse-engineering/schemas.md,
+    // asserted by schema_selector_integration.rs).
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let artifact_type = ArtifactType::parse(type_name)?;
     let change = crate::change::try_load(cfg, &change_name)?.ok_or_else(|| {
@@ -200,7 +189,19 @@ pub fn create(
         validate_content(artifact_type, content)?;
     }
 
-    let content = stdin_content.unwrap_or_else(|| artifact_type.template());
+    let content = match stdin_content {
+        Some(content) => content.to_string(),
+        None => crate::schema::resolve_schema(cfg, None, Some(&change))
+            .ok()
+            .and_then(|schema| {
+                schema
+                    .artifacts
+                    .into_iter()
+                    .find(|artifact| artifact.id == artifact_type.schema_id())
+                    .map(|artifact| artifact.template)
+            })
+            .unwrap_or_else(|| artifact_type.template().to_string()),
+    };
     let parent = path.parent().expect("artifact paths always have a parent");
     std::fs::create_dir_all(parent)
         .with_context(|| format!("creating artifact directory {}", parent.display()))?;
@@ -601,5 +602,52 @@ mod tests {
             "Delta spec parse error: Invalid format: Delta spec must contain at least one operation (ADDED, MODIFIED, REMOVED, or RENAMED)"
         );
         assert!(!change_dir.join("specs").join("new-cap").exists());
+    }
+
+    #[test]
+    fn create_uses_the_resolved_project_schema_template() {
+        let tmp = TempDir::new("custom-schema-template");
+        let cfg = config(&tmp);
+        let change_dir = add_change(&cfg, "demo");
+        std::fs::write(change_dir.join(".openspec.yaml"), "schema: mycustom\n").unwrap();
+
+        let schema_dir = cfg.root.join("openspec/schemas/mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: My Custom\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            schema_dir.join("templates/proposal.md"),
+            "# CUSTOM-MARKER\n",
+        )
+        .unwrap();
+
+        create(&cfg, "proposal", None, Some("demo"), None, false).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(change_dir.join("proposal.md")).unwrap(),
+            "# CUSTOM-MARKER\n"
+        );
+    }
+
+    #[test]
+    fn create_falls_back_to_the_builtin_template_for_an_unresolvable_schema() {
+        let tmp = TempDir::new("unresolvable-schema-template");
+        let cfg = config(&tmp);
+        let change_dir = add_change(&cfg, "demo");
+        std::fs::write(
+            change_dir.join(".openspec.yaml"),
+            "schema: no-such-schema\n",
+        )
+        .unwrap();
+
+        create(&cfg, "proposal", None, Some("demo"), None, false).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(change_dir.join("proposal.md")).unwrap(),
+            ArtifactType::Proposal.template()
+        );
     }
 }
