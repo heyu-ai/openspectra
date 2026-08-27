@@ -10,6 +10,31 @@ changes.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-27
+
+### Added
+
+- **`spectra schemas` lists project schemas** (#59 partial) — discovers
+  `<spec_dir>/schemas/*/schema.yaml` and lists them alongside the built-in
+  `spec-driven` schema. Project entries use the directory name (not the
+  YAML `name:` field), force description to `null`, and report source as
+  `"project"` — matching the oracle v2.3.1 probed behavior documented in
+  `docs/reverse-engineering/schemas.md`.
+
+- **`spectra new artifact` uses custom schema templates** (#59 partial) —
+  resolves the change's schema and writes that schema's template when
+  available. Falls back to the built-in template when the schema is not
+  found (deliberate divergence: the oracle writes a 0-byte file). Parse
+  and load errors from present-but-broken schemas now warn on stderr
+  instead of being silently swallowed.
+
+### Fixed
+
+- Workspace dependency version mismatch (`spectra-core` 0.8.0 vs workspace
+  0.9.0) that blocked `cargo build` on a fresh checkout.
+
+## [0.9.0] - 2026-08-25
+
 ## [0.8.0] - 2026-08-12
 
 ### Added
