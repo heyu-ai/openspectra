@@ -859,9 +859,10 @@ fn cmd_in_progress_add(cfg: &Config, name: &str) -> Result<i32> {
 }
 
 /// Render one schema's human line, e.g.
-/// `  spec-driven (package) — <description>`, dimming the `(source)` tag when
-/// color is enabled (matching the oracle's `\x1b[2m` faint styling). Pulled out
-/// so the color wiring is unit-testable without spawning the binary.
+/// `  spec-driven (package) — <description>` or `  mycustom (project)` (when
+/// description is absent), dimming the `(source)` tag when color is enabled
+/// (matching the oracle's `\x1b[2m` faint styling). Pulled out so the color
+/// wiring is unit-testable without spawning the binary.
 fn schema_line(schema: &schema::SchemaListing, use_color: bool) -> String {
     let description = schema
         .description
@@ -893,7 +894,13 @@ fn render_schemas_human(schemas: &[schema::SchemaListing], use_color: bool) -> S
 }
 
 fn cmd_schemas(root: &Path, as_json: bool, use_color: bool) -> Result<i32> {
-    let cfg = Config::load(root).ok();
+    let cfg = match Config::load(root) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!("warning: {e:#}");
+            None
+        }
+    };
     let schemas = schema::schemas(cfg.as_ref());
     if as_json {
         println!("{}", serde_json::to_string_pretty(&schemas)?);
@@ -1432,7 +1439,7 @@ fn run() -> Result<i32> {
                 completion::uninstall(completion_shell(*shell)?, *yes)
             }
         },
-        // `schemas` 不需要已初始化的專案，因此刻意不呼叫
+        // oracle 在未初始化的專案外也能列出 schemas，因此刻意不呼叫
         // `require_initialized`（與 `init` 相同）。
         Command::Schemas { json } => cmd_schemas(&root, *json, use_color),
         // Template metadata is embedded in the schema registry and is
@@ -1712,6 +1719,10 @@ mod tests {
             source: "project".to_string(),
         };
         assert_eq!(schema_line(&project_schema, false), "  mycustom (project)");
+        assert_eq!(
+            schema_line(&project_schema, true),
+            "  mycustom \x1b[2m(project)\x1b[0m"
+        );
     }
 
     #[test]

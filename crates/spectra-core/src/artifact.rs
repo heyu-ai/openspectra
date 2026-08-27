@@ -150,10 +150,12 @@ pub fn create(
 ) -> Result<NewArtifactOutcome> {
     // Probed on v2.3.1: `new artifact` never errors on the schema selector
     // and has no `--schema` flag. With a resolvable custom schema it writes
-    // that schema's template; with an unresolvable one the oracle writes a
-    // 0-byte file. OpenSpectra falls back to the built-in template instead
-    // (deliberate divergence, recorded in docs/reverse-engineering/schemas.md,
-    // asserted by schema_selector_integration.rs).
+    // that schema's template (OpenSpectra now matches this). With an
+    // unresolvable one the oracle writes a 0-byte file; OpenSpectra falls
+    // back to the built-in template instead (deliberate divergence, recorded
+    // in docs/reverse-engineering/schemas.md, asserted by
+    // schema_selector_integration.rs). Parse/load errors from present-but-
+    // broken schemas warn on stderr but still fall back.
     let change_name = crate::change::resolve(cfg, explicit_change)?;
     let artifact_type = ArtifactType::parse(type_name)?;
     let change = crate::change::try_load(cfg, &change_name)?.ok_or_else(|| {
@@ -191,16 +193,23 @@ pub fn create(
 
     let content = match stdin_content {
         Some(content) => content.to_string(),
-        None => crate::schema::resolve_schema(cfg, None, Some(&change))
-            .ok()
-            .and_then(|schema| {
-                schema
-                    .artifacts
-                    .into_iter()
-                    .find(|artifact| artifact.id == artifact_type.schema_id())
-                    .map(|artifact| artifact.template)
-            })
-            .unwrap_or_else(|| artifact_type.template().to_string()),
+        None => match crate::schema::resolve_schema(cfg, None, Some(&change)) {
+            Ok(schema) => schema
+                .artifacts
+                .into_iter()
+                .find(|a| a.id == artifact_type.schema_id())
+                .map(|a| a.template)
+                .unwrap_or_else(|| artifact_type.template().to_string()),
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("Schema not found:") {
+                    artifact_type.template().to_string()
+                } else {
+                    eprintln!("warning: {e:#}");
+                    artifact_type.template().to_string()
+                }
+            }
+        },
     };
     let parent = path.parent().expect("artifact paths always have a parent");
     std::fs::create_dir_all(parent)

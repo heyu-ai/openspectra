@@ -437,7 +437,10 @@ pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
         return listings;
     };
 
-    for entry in entries.flatten() {
+    for entry_result in entries {
+        let Ok(entry) = entry_result else {
+            continue;
+        };
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
@@ -1353,6 +1356,25 @@ mod tests {
                 source: "project".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn project_schema_description_serializes_as_json_null() {
+        let (_tmp, cfg) = project("schemas-json-null");
+        let schema_dir = cfg.root.join("openspec/schemas/mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: Display Name\ndescription: This should be hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+        )
+        .unwrap();
+
+        let listings = schemas(Some(&cfg));
+        let json = serde_json::to_value(&listings).unwrap();
+        let project_entry = &json.as_array().unwrap()[1];
+        assert_eq!(project_entry["description"], serde_json::Value::Null);
+        assert_eq!(project_entry["name"], "mycustom");
+        assert_eq!(project_entry["source"], "project");
     }
 
     #[test]

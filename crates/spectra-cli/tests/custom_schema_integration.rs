@@ -179,6 +179,30 @@ fn templates_schema_flag_shows_custom_schema_name_and_artifacts() {
 }
 
 #[test]
+fn new_artifact_uses_custom_schema_template() {
+    let root = TempDir::new("new-artifact-custom-template");
+    init_project_with_custom_schema(&root);
+
+    let output = spectra()
+        .args(["new", "artifact", "proposal", "--change", "test-change"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "new artifact failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let content =
+        std::fs::read_to_string(root.join("openspec/changes/test-change/proposal.md")).unwrap();
+    assert_eq!(
+        content, "## Custom Proposal Template\n",
+        "expected custom template content, got: {content}"
+    );
+}
+
+#[test]
 fn status_exits_nonzero_when_custom_schema_dir_is_missing() {
     let root = TempDir::new("schema-missing");
     git(&root, &["init", "-q"]);
