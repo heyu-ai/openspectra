@@ -386,8 +386,8 @@ pub const APPLY_REQUIRES: &[&str] = &["tasks"];
 
 /// Source label the oracle reports for the built-in schema in
 /// `spectra schemas`. `spec-driven` ships inside the binary ("package"), as
-/// opposed to project- or user-level schema files (which OpenSpectra does not
-/// support). Pinned against the oracle — see docs/reverse-engineering/schemas.md.
+/// opposed to project-level schema files ("project"). Pinned against the
+/// oracle — see docs/reverse-engineering/schemas.md.
 pub const SCHEMA_SOURCE: &str = "package";
 
 /// One-line schema description shown by `spectra schemas`. Pinned byte-for-byte
@@ -411,22 +411,61 @@ pub const SCHEMA_ARTIFACT_ORDER: &[&str] = &["proposal", "specs", "design", "tas
 /// without needing `serde_json::Value`'s BTreeMap sorting.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SchemaListing {
-    pub artifacts: &'static [&'static str],
-    pub description: &'static str,
-    pub name: &'static str,
-    pub source: &'static str,
+    pub artifacts: Vec<String>,
+    pub description: Option<String>,
+    pub name: String,
+    pub source: String,
 }
 
-/// The built-in workflow schema registry backing `spectra schemas`.
-/// OpenSpectra ships exactly one schema (`spec-driven`); project/user schema
-/// discovery is not implemented, so this always returns a single entry.
-pub fn schemas() -> Vec<SchemaListing> {
-    vec![SchemaListing {
-        artifacts: SCHEMA_ARTIFACT_ORDER,
-        description: SCHEMA_DESCRIPTION,
-        name: SCHEMA_NAME,
-        source: SCHEMA_SOURCE,
-    }]
+/// `spectra schemas` 所列出的 schema。沒有專案設定時，僅回傳內建 schema。
+pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
+    let mut listings = vec![SchemaListing {
+        artifacts: SCHEMA_ARTIFACT_ORDER
+            .iter()
+            .map(|artifact| (*artifact).to_string())
+            .collect(),
+        description: Some(SCHEMA_DESCRIPTION.to_string()),
+        name: SCHEMA_NAME.to_string(),
+        source: SCHEMA_SOURCE.to_string(),
+    }];
+
+    let Some(cfg) = cfg else {
+        return listings;
+    };
+    let schemas_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
+    let Ok(entries) = std::fs::read_dir(schemas_dir) else {
+        return listings;
+    };
+
+    for entry_result in entries {
+        let Ok(entry) = entry_result else {
+            continue;
+        };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() || !entry.path().join("schema.yaml").is_file() {
+            continue;
+        }
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
+        let Ok(schema) = ResolvedSchema::load(&entry.path(), &name) else {
+            continue;
+        };
+        listings.push(SchemaListing {
+            artifacts: schema
+                .artifacts
+                .into_iter()
+                .map(|artifact| artifact.id)
+                .collect(),
+            description: None,
+            name,
+            source: SchemaSource::Project.to_string(),
+        });
+    }
+
+    listings
 }
 
 /// Where a [`ResolvedSchema`] came from: the built-in `spec-driven` workflow
@@ -1264,16 +1303,19 @@ mod tests {
 
     #[test]
     fn schemas_registry_matches_oracle_golden_shape() {
-        let listings = schemas();
+        let listings = schemas(None);
         assert_eq!(listings.len(), 1);
         let schema = &listings[0];
         assert_eq!(schema.name, "spec-driven");
         assert_eq!(schema.source, "package");
         assert_eq!(
             schema.description,
-            "Default OpenSpec workflow - proposal → specs → design → tasks"
+            Some("Default OpenSpec workflow - proposal → specs → design → tasks".to_string())
         );
-        assert_eq!(schema.artifacts, &["proposal", "specs", "design", "tasks"]);
+        assert_eq!(
+            schema.artifacts,
+            vec!["proposal", "specs", "design", "tasks"]
+        );
     }
 
     #[test]
@@ -1282,12 +1324,67 @@ mod tests {
             .join("../../docs/reverse-engineering/golden/schemas-2.3.1.json");
         let golden = std::fs::read_to_string(&golden_path).unwrap();
 
-        let rendered = serde_json::to_string_pretty(&schemas()).unwrap();
+        let rendered = serde_json::to_string_pretty(&schemas(None)).unwrap();
 
         // The golden captures the oracle's `--json` stdout, which ends in a
         // trailing newline the CLI adds via `println!`; the serializer itself
         // emits no trailing newline, so compare against the trimmed golden.
         assert_eq!(rendered, golden.trim_end());
+    }
+
+    #[test]
+    fn schemas_lists_valid_project_schemas_by_directory_name() {
+        let (_tmp, cfg) = project("schemas-project");
+        let schema_dir = cfg.root.join("openspec/schemas/mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: Display Name\ndescription: This is deliberately hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+        )
+        .unwrap();
+        std::fs::write(schema_dir.join("templates/proposal.md"), "# Template\n").unwrap();
+
+        let listings = schemas(Some(&cfg));
+
+        assert_eq!(listings.len(), 2);
+        assert_eq!(
+            listings[1],
+            SchemaListing {
+                artifacts: vec!["proposal".to_string()],
+                description: None,
+                name: "mycustom".to_string(),
+                source: "project".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn project_schema_description_serializes_as_json_null() {
+        let (_tmp, cfg) = project("schemas-json-null");
+        let schema_dir = cfg.root.join("openspec/schemas/mycustom");
+        std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: Display Name\ndescription: This should be hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+        )
+        .unwrap();
+
+        let listings = schemas(Some(&cfg));
+        let json = serde_json::to_value(&listings).unwrap();
+        let project_entry = &json.as_array().unwrap()[1];
+        assert_eq!(project_entry["description"], serde_json::Value::Null);
+        assert_eq!(project_entry["name"], "mycustom");
+        assert_eq!(project_entry["source"], "project");
+    }
+
+    #[test]
+    fn schemas_silently_skips_invalid_project_schemas() {
+        let (_tmp, cfg) = project("schemas-invalid-project");
+        let schema_dir = cfg.root.join("openspec/schemas/broken");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(schema_dir.join("schema.yaml"), "not: a valid schema").unwrap();
+
+        assert_eq!(schemas(Some(&cfg)).len(), 1);
     }
 
     #[test]
