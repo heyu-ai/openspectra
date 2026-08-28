@@ -741,9 +741,32 @@ pub fn fork(
     force: bool,
 ) -> anyhow::Result<ForkOutcome> {
     let schema = resolve_schema(cfg, Some(source_name), None)?;
+    let (source_version, source_tracks) = if schema.source == SchemaSource::Project {
+        let source_dir = cfg
+            .root
+            .join(&cfg.spec_dir)
+            .join("schemas")
+            .join(source_name);
+        let yaml_path = source_dir.join("schema.yaml");
+        if let Ok(text) = std::fs::read_to_string(&yaml_path) {
+            if let Ok(parsed) = serde_yaml::from_str::<SchemaYaml>(&text) {
+                (parsed.version, parsed.apply.tracks)
+            } else {
+                (Some(1), None)
+            }
+        } else {
+            (Some(1), None)
+        }
+    } else {
+        (Some(1), None)
+    };
     let target = target_name
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{source_name}-custom"));
+    reject_path_traversal(&target, "fork target")?;
+    if target.contains(std::path::MAIN_SEPARATOR) || target.contains('/') {
+        anyhow::bail!("schema fork target '{target}' must not contain path separators");
+    }
     let target_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(&target);
 
     if target_dir.exists() && !force {
@@ -753,12 +776,15 @@ pub fn fork(
         );
     }
 
+    if force && target_dir.exists() {
+        std::fs::remove_dir_all(&target_dir)?;
+    }
     let templates_dir = target_dir.join("templates");
     std::fs::create_dir_all(&templates_dir)?;
 
     let raw = SchemaYaml {
         name: schema.name,
-        version: Some(1),
+        version: source_version,
         description: Some(schema.description),
         artifacts: schema
             .artifacts
@@ -774,13 +800,14 @@ pub fn fork(
             .collect(),
         apply: SchemaYamlApply {
             requires: schema.apply_requires,
-            tracks: None,
+            tracks: source_tracks,
             instruction: schema.apply_instruction,
         },
     };
     std::fs::write(target_dir.join("schema.yaml"), serde_yaml::to_string(&raw)?)?;
 
     for artifact in &schema.artifacts {
+        reject_path_traversal(&artifact.template_name, "template")?;
         let template_path = templates_dir.join(&artifact.template_name);
         if let Some(parent) = template_path.parent() {
             std::fs::create_dir_all(parent)?;

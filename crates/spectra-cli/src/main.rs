@@ -1615,7 +1615,7 @@ fn run() -> Result<i32> {
                 source,
                 name,
                 force,
-                json: _,
+                json: _, // oracle accepts --json but output is unchanged (probed v2.3.1)
             } => {
                 let cfg = require_initialized(&root)?;
                 let outcome = schema::fork(&cfg, source, name.as_deref(), *force)?;
