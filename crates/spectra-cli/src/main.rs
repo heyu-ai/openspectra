@@ -241,6 +241,11 @@ enum Command {
         #[command(subcommand)]
         target: ConfigTarget,
     },
+    /// Schema management commands
+    Schema {
+        #[command(subcommand)]
+        command: SchemaCommand,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -312,6 +317,21 @@ enum ConfigTarget {
     },
     /// Edit config in $EDITOR
     Edit,
+}
+
+#[derive(Subcommand, Debug)]
+enum SchemaCommand {
+    /// Fork (copy) a schema
+    Fork {
+        /// Source schema
+        source: String,
+        /// New schema name
+        name: Option<String>,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1590,6 +1610,22 @@ fn run() -> Result<i32> {
         }
         // Global config management needs no project (like `init`/`schemas`).
         Command::Config { target } => cmd_config(target, use_color),
+        Command::Schema { command } => match command {
+            SchemaCommand::Fork {
+                source,
+                name,
+                force,
+                json: _,
+            } => {
+                let cfg = require_initialized(&root)?;
+                let outcome = schema::fork(&cfg, source, name.as_deref(), *force)?;
+                println!(
+                    "\u{2713} Forked '{}' \u{2192} '{}'",
+                    outcome.source, outcome.target
+                );
+                Ok(0)
+            }
+        },
     }
 }
 
