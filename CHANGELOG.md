@@ -10,6 +10,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-08-29
+
+### Added
+
+- **`spectra schema fork <SOURCE> [NAME]`** (#59 partial) — copies a
+  schema definition (built-in or project) into a new project schema
+  directory. Oracle-aligned behavior (probed on v2.3.1): the `name:`
+  field is not rewritten, default target is `<source>-custom`, `--force`
+  overwrites (with clean removal of stale templates), and `--json` is
+  accepted but inert. Path-traversal validation prevents the target name
+  from escaping `<spec_dir>/schemas/`. Forking a project schema preserves
+  its `tracks` and `version` fields.
+
 ## [0.10.0] - 2026-08-27
 
 ### Added
