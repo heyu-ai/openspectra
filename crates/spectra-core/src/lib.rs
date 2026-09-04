@@ -14,11 +14,13 @@ pub mod git;
 pub mod global_config;
 pub mod init;
 pub mod instructions;
+mod markdown;
 mod names;
 pub mod schema;
 pub mod search;
 pub mod skills;
 pub mod spec;
+pub mod spec_diff;
 pub mod tasks;
 pub mod templates;
 #[cfg(test)]

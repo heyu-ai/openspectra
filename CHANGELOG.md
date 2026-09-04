@@ -10,6 +10,39 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- OpenSpec 1.12-compatible validation scopes for changes, canonical specs,
+  archived task completion, and combined validation; additive v2 JSON includes
+  finding severity, grounded lines, item types, per-type totals, root metadata,
+  and full/findings report modes.
+- Requirement-level `show --diff`, batch `status --all`, status dependency
+  edges, planning completion, and explicit skipped-artifact state.
+- Complete custom-schema management with `schema init`, `schema validate`, and
+  `schema which`, plus project → user → package resolution.
+- `skip_specs` and guarded `retire_capabilities` change metadata.
+
+### Changed
+
+- Archive is now a rollback-capable transaction. This deliberately diverges
+  from Spectra 2.3.1's move-first ordering so a failed spec write cannot strand
+  a half-archived change.
+- Schema forks now adopt the target identity and preserve the complete source
+  tree and YAML formatting rather than retaining the source `name`.
+- Canonical capability discovery supports nested IDs consistently across list,
+  show, validate, analyze inputs, and archive.
+
+### Fixed
+
+- Prevent MODIFIED requirements from silently dropping existing scenarios.
+- Ignore Markdown structure inside correctly matched fenced code blocks in both
+  validation and archive.
+- Treat already-synced delta operations idempotently while preserving genuine
+  spelling and content conflicts.
+- Preserve a new capability's authored Purpose and warn when a delta tries to
+  replace an existing capability's Purpose.
+- Canonicalize rebuilt specs to exactly one final newline.
+
 ## [0.11.0] - 2026-08-29
 
 ### Added

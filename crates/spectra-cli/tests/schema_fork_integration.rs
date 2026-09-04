@@ -50,12 +50,12 @@ fn fork_builtin_creates_loadable_schema_and_lists_it() {
 
     let yaml = std::fs::read_to_string(schema_yaml).unwrap();
     assert!(
-        yaml.lines().any(|line| line == "name: spec-driven"),
-        "來源名稱未保留：{yaml}"
+        yaml.lines().any(|line| line == "name: mycustom"),
+        "fork target identity was not written: {yaml}"
     );
 
     let loaded = ResolvedSchema::load(&schema_dir, "mycustom").unwrap();
-    assert_eq!(loaded.name, "spec-driven");
+    assert_eq!(loaded.name, "mycustom");
     assert_eq!(loaded.source, SchemaSource::Project);
     assert_eq!(loaded.artifacts.len(), 4);
     assert!(loaded
@@ -167,7 +167,7 @@ fn fork_reports_missing_source_and_requires_initialized_project() {
 }
 
 #[test]
-fn fork_can_copy_a_project_schema_without_rewriting_its_name() {
+fn fork_copies_a_project_schema_tree_and_updates_its_identity() {
     let root = TempDir::new("schema-fork-project");
     init_project(&root);
 
@@ -175,10 +175,12 @@ fn fork_can_copy_a_project_schema_without_rewriting_its_name() {
     std::fs::create_dir_all(source_dir.join("templates")).unwrap();
     std::fs::write(
         source_dir.join("schema.yaml"),
-        "name: Project Source\nversion: 1\ndescription: 專案 schema\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: 提案\n  template: proposal.md\n  instruction: 撰寫提案。\n  requires: []\napply:\n  requires: [proposal]\n  instruction: 套用提案。\n",
+        "# preserved comment\nname: Project Source\nversion: 1\ndescription: 專案 schema\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: 提案\n  template: proposal.md\n  instruction: |\n    撰寫提案。\n  requires: []\napply:\n  requires: [proposal]\n  instruction: 套用提案。\n",
     )
     .unwrap();
     std::fs::write(source_dir.join("templates/proposal.md"), "## 專案範本\n").unwrap();
+    std::fs::create_dir_all(source_dir.join("notes/nested")).unwrap();
+    std::fs::write(source_dir.join("notes/nested/readme.txt"), "keep me\n").unwrap();
 
     let output = spectra()
         .args(["schema", "fork", "original", "copied"])
@@ -192,7 +194,62 @@ fn fork_can_copy_a_project_schema_without_rewriting_its_name() {
     );
 
     let copied = ResolvedSchema::load(&root.join("openspec/schemas/copied"), "copied").unwrap();
-    assert_eq!(copied.name, "Project Source");
+    assert_eq!(copied.name, "copied");
     assert_eq!(copied.description, "專案 schema");
     assert_eq!(copied.artifacts[0].template, "## 專案範本\n");
+    let copied_yaml =
+        std::fs::read_to_string(root.join("openspec/schemas/copied/schema.yaml")).unwrap();
+    assert!(copied_yaml.starts_with("# preserved comment\nname: copied\n"));
+    assert!(copied_yaml.contains("instruction: |\n    撰寫提案。"));
+    assert_eq!(
+        std::fs::read_to_string(root.join("openspec/schemas/copied/notes/nested/readme.txt"))
+            .unwrap(),
+        "keep me\n"
+    );
+}
+
+#[test]
+fn schema_init_validate_and_which_form_a_complete_management_flow() {
+    let root = TempDir::new("schema-management");
+    init_project(&root);
+
+    let initialized = spectra()
+        .args([
+            "schema",
+            "init",
+            "team-flow",
+            "--description",
+            "Team workflow",
+            "--artifacts",
+            "proposal,tasks",
+            "--default",
+            "--json",
+        ])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(initialized.status.success(), "{initialized:?}");
+    let created: serde_json::Value = serde_json::from_slice(&initialized.stdout).unwrap();
+    assert_eq!(created["schema"], "team-flow");
+
+    let validated = spectra()
+        .args(["schema", "validate", "team-flow", "--json"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(validated.status.success(), "{validated:?}");
+    let checks: serde_json::Value = serde_json::from_slice(&validated.stdout).unwrap();
+    assert_eq!(checks[0]["valid"], true);
+
+    let resolved = spectra()
+        .args(["schema", "which", "team-flow", "--json"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(resolved.status.success(), "{resolved:?}");
+    let resolution: serde_json::Value = serde_json::from_slice(&resolved.stdout).unwrap();
+    assert_eq!(resolution[0]["source"], "project");
+
+    let config = std::fs::read_to_string(root.join("openspec/config.yaml")).unwrap();
+    assert!(config.contains("schema: team-flow"));
 }

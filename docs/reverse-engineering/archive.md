@@ -43,57 +43,37 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    left as-is, matching the project's established practice of not
    re-litigating pre-existing, already-shipped command wording for a
    different command's sake).
-2. Move `<spec_dir>/changes/<name>/` to
-   `<spec_dir>/changes/archive/<YYYY-MM-DD>-<name>/` (confirmed via golden
-   run — **not** a top-level `archived/` directory, and **not** a flat
-   `changes/<date>-<name>/` either; it's nested one level deeper, under a
-   literal `archive` subdirectory of `changes/`). This matches
-   `change.rs::walk_change_names`'s pre-existing `name == "archive"`
-   exclusion (added before this PR, inferred from this very layout) and its
-   `ARCHIVED_PREFIX_RE` filter.
-3. If `--mark-tasks-complete`: flip every pending checkbox in the
-   *now-archived* `tasks.md` to done (`tasks::mark_all_done`), regardless of
-   group headers. This runs **after** the move (not before, as an earlier
-   draft had it) so that a rename failure — e.g. a same-day archive-name
-   collision from re-archiving a same-named change twice — never leaves the
-   still-active change with prematurely-flipped checkboxes.
-4. Stamp `.openspec.yaml` (at the new location) with `archived_at: <YYYY-MM-DD>`
-   and, when `git config user.name`/`user.email` are both set,
-   `archived_by: <name> <email>` (unquoted, e.g. `archived_by: Ada Lovelace
-   <ada@example.com>` — both fields confirmed via golden run; matches the
-   already-existing `created_by`/`created`-style fields on
-   `ChangeMetadata`). If git identity isn't configured, only `archived_at`
-   is written — OpenSpectra warns on stderr when this happens rather than
-   silently omitting the field with no signal.
-5. Unless `--skip-specs`: for each `specs/**/spec.md` under the (now-moved)
-   change, merge its delta into the matching canonical
-   `<spec_dir>/specs/<capability>/spec.md`, then print
-   `Specs applied: <capability> (added: N, modified: N, removed: N, renamed: N)`
-   per capability. The `specs/` tree is walked **recursively**, so a
-   nested-capability layout `specs/<Epic>/<Feature>/spec.md` merges into
-   `<spec_dir>/specs/<Epic>/<Feature>/spec.md` (capability id `<Epic>/<Feature>`)
-   rather than being silently skipped — `archive` and `validate` share one
-   recursive collector (`fsutil::collect_delta_specs`) so their traversal, and
-   its symlink-cycle safety, can't drift apart (issue #39). Two malformed
-   layouts fail loud instead of mis-writing or vanishing: a `spec.md` placed
-   directly under `specs/` (no capability directory) is a hard error, and a
-   capability directory that is itself a **symlink** is not descended (a change
-   from the pre-#39 walk, which used `fs::metadata` and followed such symlinks)
-   — its delta is skipped with a stderr warning, not dropped silently. The
-   oracle also prints "Snapshot created for unarchive support." — **not
-   implemented**; see "Known limitations" below.
-6. Clear the change's `.spectra/changes/<name>.{started,in-progress}`
-   sidecar markers **and** its `.spectra/touched/<name>.json` tracking file, if any
-   (best-effort; a failure here only warns, since archiving itself already
-   succeeded by this point). Not oracle-confirmed, but a correctness fix:
-   without it, a re-created change of the same name could silently inherit a
-   stale baseline SHA or stale touched-file history from before it was
-   archived — the same class of bug already fixed for `change::create` (see
-   `change.rs`'s `clear_stale_sidecar_state`). Clearing `touched.json` matters
-   specifically because `apply_spec_deltas`'s `code:` trace list (below) is
-   sourced from it — without clearing it, a recreated change would attribute
-   its trace footer to files touched by the *previous*, already-archived
-   change of the same name.
+2. Resolve every delta through the shared fence-aware Markdown parser and
+   prepare all resulting canonical spec contents in memory. Identical
+   ADDED/MODIFIED operations and already-applied REMOVED/RENAMED operations are
+   no-ops; case/whitespace variants and differing content remain conflicts.
+3. Create an exclusive claim in `changes/archive/` and re-check that
+   `<YYYY-MM-DD>-<name>` does not exist. This serializes archive writers before
+   the first canonical spec mutation.
+4. Snapshot every affected canonical spec and verify it still matches the
+   prepared baseline immediately before writing. Writes are atomic. A
+   cross-device change move falls back to an exclusive, recursively verified
+   copy before source removal.
+5. Unless `--skip-specs` or change metadata declares `skip_specs: true`, apply
+   every prepared spec mutation. New capability deltas may seed the main
+   `## Purpose`; an existing capability keeps its current Purpose. A change
+   declaring `retire_capabilities: true` may delete a spec whose final
+   requirement was removed, but only after validation confirms no unaccounted
+   content would be lost.
+6. Move `<spec_dir>/changes/<name>/` to
+   `<spec_dir>/changes/archive/<YYYY-MM-DD>-<name>/`, then optionally mark tasks
+   complete and stamp `archived_at`/`archived_by`.
+7. If any write, retirement, move, task update, or metadata update fails,
+   restore the active change and every spec that still matches the transaction's
+   expected output. A concurrent edit is never overwritten during rollback.
+8. On success, clear the change's `.spectra/changes/<name>.{started,in-progress}`
+   markers and `.spectra/touched/<name>.json` best-effort.
+
+The spec tree is recursive, so `specs/<Epic>/<Feature>/spec.md` maps to the
+same nested canonical capability. The collector rejects a root-level
+`specs/spec.md`, does not descend symlinked directories, and fails on unreadable
+entries. The oracle's durable \"Snapshot created for unarchive support\" feature
+remains separate and unimplemented; see \"Known limitations\" below.
 
 ## Spec delta format
 
@@ -229,6 +209,8 @@ Tasks-collision detection.
   archive today means manually moving the directory back and reverting
   `.openspec.yaml`/the canonical spec by hand (or via `git revert`, since
   archiving isn't its own commit).
+
+
 - **`code:` trace provenance** — see above.
 - **Section-header matching is case-sensitive.** `## ADDED Requirements`,
   `## MODIFIED Requirements`, `## Requirements`, and `## Purpose` are matched
@@ -237,3 +219,23 @@ Tasks-collision detection.
   and is treated as a no-op section — no oracle sample exists to confirm the
   reference CLI's actual casing sensitivity, so this wasn't changed
   speculatively.
+
+## Architecture decision: atomicity versus recovery
+
+OpenSpectra deliberately separates two guarantees that the oracle's snapshot
+message otherwise makes easy to conflate:
+
+1. **Single-run atomicity** — an `archive` invocation must either commit the
+   canonical spec updates and archive move together, or restore the active
+   change and every affected spec. This is a safety divergence from the probed
+   oracle order above: OpenSpectra will stage and validate all mutations, claim
+   the destination, snapshot affected paths, apply the mutations, move the
+   change, and roll back on failure.
+2. **Later unarchive support** — retaining a durable snapshot after a successful
+   archive so a future command can reverse it. This remains the separate,
+   unresolved parity question tracked in issue #111.
+
+The first guarantee prevents a failed command from leaving a half-archived
+change; it does not imply or implement the second. The maintainer selected this
+safe default on 2026-09-05. There is no legacy unsafe mode: preserving an
+observed partial-write failure is not worth a second public archive contract.

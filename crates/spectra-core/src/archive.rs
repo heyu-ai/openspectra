@@ -12,25 +12,16 @@
 use anyhow::{anyhow, Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::fsutil::read_optional;
 use crate::{change, touched};
 
-static ADDED_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^## ADDED Requirements\s*$").unwrap());
-static MODIFIED_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^## MODIFIED Requirements\s*$").unwrap());
-static REMOVED_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^## REMOVED Requirements\s*$").unwrap());
-static RENAMED_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^## RENAMED Requirements\s*$").unwrap());
 static REQUIREMENTS_HEADER_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?m)^## Requirements\s*$").unwrap());
 static PURPOSE_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## Purpose\s*$").unwrap());
-static REQUIREMENT_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?m)^### Requirement:").unwrap());
 static SECTION_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## \S").unwrap());
 
 /// How many requirements were appended to one capability's canonical spec.
@@ -86,67 +77,329 @@ pub fn archive(
     mark_tasks_complete: bool,
 ) -> Result<ArchiveOutcome> {
     let ch = change::try_load(cfg, name)?.ok_or_else(|| anyhow!("Change '{name}' not found."))?;
-
-    if !skip_specs && !no_validate {
-        validate_spec_deltas(cfg, &ch.dir, name)?;
-    }
-
     let today = chrono::Local::now().date_naive();
     let archived_name = format!("{today}-{name}");
     let archive_dir = cfg.changes_dir().join("archive");
+    let dest = archive_dir.join(&archived_name);
+
+    let declared_skip_specs = ch.metadata.skip_specs == Some(true);
+    if declared_skip_specs && has_any_file(&ch.dir.join("specs"))? {
+        anyhow::bail!("Change declares skip_specs but also contains files under specs/");
+    }
+    let skip_specs = skip_specs || declared_skip_specs;
+    let retirement_declared = ch.metadata.retire_capabilities == Some(true);
+    let prepared = if skip_specs {
+        Vec::new()
+    } else {
+        prepare_spec_deltas(
+            cfg,
+            &ch.dir,
+            name,
+            today,
+            retirement_declared,
+            retirement_declared && !no_validate,
+        )?
+    };
+    let metadata_snapshot = FileSnapshot::capture(ch.dir.join(".openspec.yaml"))?;
+    let tasks_snapshot = FileSnapshot::capture(ch.dir.join("tasks.md"))?;
+
     std::fs::create_dir_all(&archive_dir)
         .with_context(|| format!("creating {}", archive_dir.display()))?;
-    let dest = archive_dir.join(&archived_name);
-    std::fs::rename(&ch.dir, &dest)
-        .with_context(|| format!("moving {} to {}", ch.dir.display(), dest.display()))?;
+    let _claim = ArchiveClaim::acquire(&archive_dir, &dest, &archived_name)?;
 
-    let specs_applied = (|| -> Result<Vec<SpecApplyResult>> {
+    let transaction = (|| -> Result<()> {
+        commit_prepared_specs(&prepared)?;
+        move_directory(&ch.dir, &dest)
+            .with_context(|| format!("moving {} to {}", ch.dir.display(), dest.display()))?;
         if mark_tasks_complete {
             mark_tasks_complete_at(&dest, name)?;
         }
         stamp_archived_metadata(cfg, &dest, today)?;
-        if skip_specs {
-            Ok(Vec::new())
-        } else {
-            apply_spec_deltas(cfg, &dest, name, today)
-        }
-    })()
-    .with_context(|| {
-        format!(
-            "change '{name}' was moved to {} but archiving could not be completed. \
-             The change is at that location -- fix the issue, then either finish archiving by \
-             hand or move it back to keep working on it",
-            dest.display()
-        )
-    })?;
+        Ok(())
+    })();
 
-    if let Err(e) = change::clear_stale_sidecar_state(cfg, name) {
-        eprintln!("warning: failed to clear sidecar state for '{name}': {e}");
+    if let Err(error) = transaction {
+        let mut rollback_errors = Vec::new();
+        if dest.exists() && !ch.dir.exists() {
+            if let Err(rollback) = move_directory(&dest, &ch.dir) {
+                rollback_errors.push(format!(
+                    "restoring archived change from {} to {}: {rollback}",
+                    dest.display(),
+                    ch.dir.display()
+                ));
+            }
+        }
+        if ch.dir.exists() {
+            for snapshot in [&metadata_snapshot, &tasks_snapshot] {
+                if let Err(rollback) = snapshot.restore_unconditionally() {
+                    rollback_errors.push(rollback.to_string());
+                }
+            }
+        }
+        if let Err(rollback) = rollback_prepared_specs(&prepared) {
+            rollback_errors.push(rollback.to_string());
+        }
+        if rollback_errors.is_empty() {
+            return Err(error);
+        }
+        return Err(anyhow!(
+            "{error:#}; rollback also failed: {}",
+            rollback_errors.join("; ")
+        ));
+    }
+
+    if let Err(error) = change::clear_stale_sidecar_state(cfg, name) {
+        eprintln!("warning: failed to clear sidecar state for '{name}': {error}");
     }
 
     Ok(ArchiveOutcome {
         name: name.to_string(),
         archived_name,
-        specs_applied,
+        specs_applied: prepared.into_iter().map(|spec| spec.result).collect(),
     })
 }
 
-/// Computes every capability merge without writing it. This catches all
-/// requirement-name conflicts before anything about the change has been
-/// touched, preserving the same "active and unmoved on validation failure"
-/// guarantee the earlier unsupported-header gate provided.
-fn validate_spec_deltas(cfg: &Config, change_dir: &Path, source: &str) -> Result<()> {
-    let specs_dir = change_dir.join("specs");
-    let today = chrono::Local::now().date_naive();
-    // Traverses `specs/**/spec.md` recursively via the shared collector, so a
-    // nested-capability delta (`specs/<Epic>/<Feature>/spec.md`) is validated
-    // here exactly as `apply_spec_deltas` will merge it below -- the two must
-    // see the identical delta set, or a change could validate cleanly yet
-    // archive with a nested delta silently ignored (issue #39).
-    for (capability, delta) in crate::fsutil::collect_delta_specs(&specs_dir)? {
-        merge_spec_delta(cfg, &capability, &delta, source, today, true)?;
+struct ArchiveClaim {
+    path: PathBuf,
+}
+
+impl ArchiveClaim {
+    fn acquire(archive_dir: &Path, dest: &Path, archive_name: &str) -> Result<Self> {
+        if dest
+            .try_exists()
+            .with_context(|| format!("checking {}", dest.display()))?
+        {
+            anyhow::bail!("Archive '{archive_name}' already exists.");
+        }
+        let path = archive_dir.join(".spectra-archive.lock");
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .with_context(|| {
+                format!(
+                    "archive destination is already claimed; remove stale lock {} if no archive is running",
+                    path.display()
+                )
+            })?;
+        writeln!(file, "pid={}", std::process::id())?;
+        file.sync_all()?;
+        if dest
+            .try_exists()
+            .with_context(|| format!("checking {}", dest.display()))?
+        {
+            let _ = std::fs::remove_file(&path);
+            anyhow::bail!("Archive '{archive_name}' already exists.");
+        }
+        Ok(Self { path })
+    }
+}
+
+impl Drop for ArchiveClaim {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[derive(Debug)]
+struct FileSnapshot {
+    path: PathBuf,
+    original: Option<Vec<u8>>,
+}
+
+impl FileSnapshot {
+    fn capture(path: PathBuf) -> Result<Self> {
+        let original = read_optional_bytes(&path)?;
+        Ok(Self { path, original })
+    }
+
+    fn restore_unconditionally(&self) -> Result<()> {
+        restore_file(&self.path, self.original.as_deref())
+    }
+}
+
+fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn restore_file(path: &Path, content: Option<&[u8]>) -> Result<()> {
+    match content {
+        Some(content) => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::write(path, content).with_context(|| format!("restoring {}", path.display()))
+        }
+        None => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).with_context(|| format!("removing {}", path.display())),
+        },
+    }
+}
+fn has_any_file(dir: &Path) -> Result<bool> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", dir.display())),
+    };
+    for entry in entries {
+        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
+        let metadata = std::fs::symlink_metadata(entry.path())
+            .with_context(|| format!("reading {}", entry.path().display()))?;
+        if metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Ok(true);
+        }
+        if metadata.file_type().is_dir() && has_any_file(&entry.path())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn move_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+    match std::fs::rename(source, destination) {
+        Ok(()) => Ok(()),
+        Err(error) if is_cross_device_error(&error) => {
+            copy_directory_exclusive(source, destination)?;
+            if let Err(remove_error) = std::fs::remove_dir_all(source) {
+                return Err(std::io::Error::new(
+                    remove_error.kind(),
+                    format!(
+                        "copied {} to {} but could not remove source: {remove_error}",
+                        source.display(),
+                        destination.display()
+                    ),
+                ));
+            }
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn is_cross_device_error(error: &std::io::Error) -> bool {
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(libc::EXDEV)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = error;
+        false
+    }
+}
+
+fn copy_directory_exclusive(source: &Path, destination: &Path) -> std::io::Result<()> {
+    if destination.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!("{} already exists", destination.display()),
+        ));
+    }
+    if let Err(error) = copy_directory_contents(source, destination) {
+        let _ = std::fs::remove_dir_all(destination);
+        return Err(error);
+    }
+    if !directories_equal(source, destination)? {
+        let _ = std::fs::remove_dir_all(destination);
+        return Err(std::io::Error::other(
+            "archive fallback copy verification failed",
+        ));
     }
     Ok(())
+}
+
+fn copy_directory_contents(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let source_metadata = std::fs::symlink_metadata(source)?;
+    if !source_metadata.file_type().is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "archive source is not a directory",
+        ));
+    }
+    std::fs::create_dir(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let metadata = std::fs::symlink_metadata(&source_path)?;
+        if metadata.file_type().is_dir() {
+            copy_directory_contents(&source_path, &destination_path)?;
+        } else if metadata.file_type().is_file() {
+            let mut options = std::fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            let mut input = std::fs::File::open(&source_path)?;
+            let mut output = options.open(&destination_path)?;
+            std::io::copy(&mut input, &mut output)?;
+            output.sync_all()?;
+            std::fs::set_permissions(&destination_path, metadata.permissions())?;
+        } else if metadata.file_type().is_symlink() {
+            copy_symlink(&source_path, &destination_path)?;
+        } else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("unsupported archive entry {}", source_path.display()),
+            ));
+        }
+    }
+    std::fs::set_permissions(destination, source_metadata.permissions())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(std::fs::read_link(source)?, destination)
+}
+
+#[cfg(not(unix))]
+fn copy_symlink(_source: &Path, _destination: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "archive fallback cannot copy symbolic links on this platform",
+    ))
+}
+
+fn directories_equal(left: &Path, right: &Path) -> std::io::Result<bool> {
+    let mut left_entries = std::fs::read_dir(left)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let mut right_entries = std::fs::read_dir(right)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    left_entries.sort();
+    right_entries.sort();
+    if left_entries != right_entries {
+        return Ok(false);
+    }
+    for name in left_entries {
+        let left_path = left.join(&name);
+        let right_path = right.join(&name);
+        let left_metadata = std::fs::symlink_metadata(&left_path)?;
+        let right_metadata = std::fs::symlink_metadata(&right_path)?;
+        if left_metadata.file_type() != right_metadata.file_type() {
+            return Ok(false);
+        }
+        if left_metadata.file_type().is_dir() {
+            if !directories_equal(&left_path, &right_path)? {
+                return Ok(false);
+            }
+        } else if left_metadata.file_type().is_file() {
+            if std::fs::read(&left_path)? != std::fs::read(&right_path)? {
+                return Ok(false);
+            }
+        } else if left_metadata.file_type().is_symlink()
+            && std::fs::read_link(&left_path)? != std::fs::read_link(&right_path)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Flip every pending checkbox in the archived change's `tasks.md`. A
@@ -205,35 +458,168 @@ fn stamp_archived_metadata(cfg: &Config, dest: &Path, today: chrono::NaiveDate) 
     std::fs::write(&meta_path, yaml).with_context(|| format!("writing {}", meta_path.display()))
 }
 
-fn apply_spec_deltas(
+struct PreparedSpec {
+    path: PathBuf,
+    original: Option<Vec<u8>>,
+    content: Option<String>,
+    result: SpecApplyResult,
+    retire: bool,
+}
+
+fn prepare_spec_deltas(
     cfg: &Config,
-    archived_dir: &Path,
+    change_dir: &Path,
     source: &str,
     today: chrono::NaiveDate,
-) -> Result<Vec<SpecApplyResult>> {
-    let specs_dir = archived_dir.join("specs");
-    let mut results = Vec::new();
-    // Same recursive collector `validate_spec_deltas` used pre-move, so the
-    // applied set is exactly the validated set. The capability id may be a
-    // `/`-joined nested path (e.g. `Billing/Invoices`); `join`ing it produces
-    // the matching nested canonical `specs/<Epic>/<Feature>/spec.md`, and
-    // `create_dir_all` below makes the intermediate dirs.
-    for (capability, delta) in crate::fsutil::collect_delta_specs(&specs_dir)? {
-        let (content, result) = merge_spec_delta(cfg, &capability, &delta, source, today, false)?;
-        if let Some(content) = content {
-            let spec_path = cfg.specs_dir().join(&capability).join("spec.md");
-            let parent = spec_path.parent().expect("spec path always has a parent");
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-            std::fs::write(&spec_path, content)
-                .with_context(|| format!("writing {}", spec_path.display()))?;
-        }
-        results.push(result);
+    retirement_declared: bool,
+    retirement_allowed: bool,
+) -> Result<Vec<PreparedSpec>> {
+    let mut prepared = Vec::new();
+    for (capability, delta) in crate::fsutil::collect_delta_specs(&change_dir.join("specs"))? {
+        let path = cfg.specs_dir().join(&capability).join("spec.md");
+        let original = read_optional_bytes(&path)?;
+        let (mut content, result) =
+            merge_spec_delta(cfg, &capability, &delta, source, today, false)?;
+        let emptied = result.removed > 0
+            && content.as_deref().is_some_and(|rebuilt| {
+                crate::markdown::parse_main_requirements(rebuilt).is_empty()
+            });
+        let retire = if emptied {
+            let rebuilt = content.as_deref().expect("emptied content exists");
+            if !can_retire_spec(rebuilt) {
+                anyhow::bail!(
+                    "capability '{capability}' cannot be retired because its spec contains content outside Purpose and Requirements"
+                );
+            }
+            if !retirement_allowed {
+                if retirement_declared {
+                    anyhow::bail!(
+                        "capability '{capability}' retirement is disabled by --no-validate"
+                    );
+                }
+                anyhow::bail!(
+                    "capability '{capability}' would have no requirements; add retire_capabilities: true to the change metadata to retire it"
+                );
+            }
+            content = None;
+            true
+        } else {
+            false
+        };
+        prepared.push(PreparedSpec {
+            path,
+            original,
+            content,
+            result,
+            retire,
+        });
     }
-    // No explicit sort: `collect_delta_specs` already yields entries sorted by
-    // capability id (pinned by `fsutil`'s `collect_delta_specs_*` unit tests),
-    // and results are pushed in that order.
-    Ok(results)
+    Ok(prepared)
+}
+
+fn can_retire_spec(content: &str) -> bool {
+    enum Section {
+        Outside,
+        Purpose,
+        Requirements,
+    }
+    let mut section = Section::Outside;
+    for line in crate::markdown::normalize_markdown(content).lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("# ") && matches!(section, Section::Outside) {
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("## Purpose") {
+            section = Section::Purpose;
+            continue;
+        }
+        if trimmed.eq_ignore_ascii_case("## Requirements") {
+            section = Section::Requirements;
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            return false;
+        }
+        if !matches!(section, Section::Purpose) {
+            return false;
+        }
+    }
+    true
+}
+
+fn commit_prepared_specs(prepared: &[PreparedSpec]) -> Result<()> {
+    for spec in prepared {
+        if read_optional_bytes(&spec.path)? != spec.original {
+            anyhow::bail!(
+                "main spec changed while archive was preparing: {}",
+                spec.path.display()
+            );
+        }
+        if spec.retire {
+            std::fs::remove_file(&spec.path)
+                .with_context(|| format!("retiring {}", spec.path.display()))?;
+            if let Some(parent) = spec.path.parent() {
+                let _ = std::fs::remove_dir(parent);
+            }
+            continue;
+        }
+        let Some(content) = &spec.content else {
+            continue;
+        };
+        let parent = spec.path.parent().expect("spec path always has a parent");
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+        crate::fsutil::write_atomically(&spec.path, content)
+            .with_context(|| format!("writing {}", spec.path.display()))?;
+    }
+    Ok(())
+}
+
+fn rollback_prepared_specs(prepared: &[PreparedSpec]) -> Result<()> {
+    let mut failures = Vec::new();
+    for spec in prepared.iter().rev() {
+        if spec.retire {
+            match read_optional_bytes(&spec.path) {
+                Ok(current) if current == spec.original => {}
+                Ok(None) => {
+                    if let Err(error) = restore_file(&spec.path, spec.original.as_deref()) {
+                        failures.push(error.to_string());
+                    }
+                }
+                Ok(Some(_)) => failures.push(format!(
+                    "refusing to overwrite concurrent change at {} during retirement rollback",
+                    spec.path.display()
+                )),
+                Err(error) => failures.push(error.to_string()),
+            }
+            continue;
+        }
+        let Some(expected) = spec.content.as_ref().map(String::as_bytes) else {
+            continue;
+        };
+        match read_optional_bytes(&spec.path) {
+            Ok(current) if current == spec.original => {}
+            Ok(Some(current)) if current.as_slice() == expected => {
+                if let Err(error) = restore_file(&spec.path, spec.original.as_deref()) {
+                    failures.push(error.to_string());
+                }
+            }
+            Ok(None) if spec.original.is_none() => {}
+            Ok(_) => failures.push(format!(
+                "refusing to overwrite concurrent change at {} during rollback",
+                spec.path.display()
+            )),
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +637,7 @@ struct RequirementDelta {
     modified: Vec<String>,
     removed: Vec<String>,
     renamed: Vec<RenameDelta>,
+    purpose: Option<String>,
 }
 
 #[derive(Debug)]
@@ -273,30 +660,44 @@ fn merge_spec_delta(
     dry_run: bool,
 ) -> Result<(Option<String>, SpecApplyResult)> {
     let parsed = parse_requirement_delta(capability, delta)?;
-    let result = SpecApplyResult {
+    let planned =
+        parsed.added.len() + parsed.modified.len() + parsed.removed.len() + parsed.renamed.len();
+    let mut result = SpecApplyResult {
         capability: capability.to_string(),
-        added: parsed.added.len(),
-        modified: parsed.modified.len(),
-        removed: parsed.removed.len(),
-        renamed: parsed.renamed.len(),
+        added: 0,
+        modified: 0,
+        removed: 0,
+        renamed: 0,
     };
-    let has_changes = result.added + result.modified + result.removed + result.renamed > 0;
-    if !has_changes {
+    if planned == 0 {
         return Ok((None, result));
     }
 
     let spec_path = cfg.specs_dir().join(capability).join("spec.md");
     let existing = read_optional(&spec_path)?;
     let mut content = match existing {
-        Some(content) => content,
+        Some(content) => {
+            if parsed.purpose.is_some() {
+                eprintln!(
+                    "warning: capability '{capability}' already exists; ignoring delta Purpose and preserving {}",
+                    spec_path.display()
+                );
+            }
+            crate::markdown::normalize_markdown(&content).into_owned()
+        }
         None if parsed.modified.is_empty()
             && parsed.removed.is_empty()
             && parsed.renamed.is_empty() =>
         {
+            let purpose = parsed.purpose.clone().unwrap_or_else(|| {
+                format!(
+                    "TBD - created by archiving change '{source}'. Update Purpose after archive."
+                )
+            });
             format!(
                 "# {capability} Specification\n\n\
                  ## Purpose\n\n\
-                 TBD - created by archiving change '{source}'. Update Purpose after archive.\n\n\
+                 {purpose}\n\n\
                  ## Requirements\n"
             )
         }
@@ -304,13 +705,13 @@ fn merge_spec_delta(
             let first_missing = parsed
                 .renamed
                 .first()
-                .map(|r| ("RENAME", r.from.as_str()))
-                .or_else(|| parsed.removed.first().map(|r| ("REMOVE", r.as_str())))
+                .map(|rename| ("RENAME", rename.from.as_str()))
+                .or_else(|| parsed.removed.first().map(|name| ("REMOVE", name.as_str())))
                 .or_else(|| {
                     parsed
                         .modified
                         .first()
-                        .map(|r| ("MODIFY", requirement_name(r)))
+                        .map(|block| ("MODIFY", requirement_name(block)))
                 });
             let (kind, name) = first_missing.expect("non-ADDED delta exists");
             return Err(missing_requirement_error(
@@ -320,261 +721,165 @@ fn merge_spec_delta(
     };
 
     for rename in &parsed.renamed {
-        if find_requirement_block(&content, &rename.to).is_some() {
-            return Err(anyhow!(
-                "capability '{capability}': cannot RENAME requirement to '{}' -- a requirement with that name already exists in {}",
-                normalize_requirement_name(&rename.to),
-                spec_path.display()
+        if let Some(block) = find_requirement_block(&content, &rename.from) {
+            if let Some(existing_target) = find_folded_requirement_block(&content, &rename.to) {
+                return Err(anyhow!(
+                    "capability '{capability}': cannot RENAME requirement to '{}' -- requirement '{}' already exists in {}",
+                    normalize_requirement_name(&rename.to),
+                    existing_target.name,
+                    spec_path.display()
+                ));
+            }
+            content.replace_range(
+                block.start..block.header_end,
+                &format!("### Requirement: {}", rename.to.trim()),
+            );
+            result.renamed += 1;
+        } else if let Some(variant) = find_folded_requirement_block(&content, &rename.from) {
+            return Err(requirement_spelling_error(
+                capability,
+                "RENAME",
+                &rename.from,
+                &variant.name,
+                &spec_path,
+            ));
+        } else if find_requirement_block(&content, &rename.to).is_none() {
+            if let Some(variant) = find_folded_requirement_block(&content, &rename.to) {
+                return Err(requirement_spelling_error(
+                    capability,
+                    "RENAME target",
+                    &rename.to,
+                    &variant.name,
+                    &spec_path,
+                ));
+            }
+            return Err(missing_requirement_error(
+                capability,
+                "RENAME",
+                &rename.from,
+                &spec_path,
             ));
         }
-        let block = find_requirement_block(&content, &rename.from).ok_or_else(|| {
-            missing_requirement_error(capability, "RENAME", &rename.from, &spec_path)
-        })?;
-        content.replace_range(
-            block.start..block.header_end,
-            &format!("### Requirement: {}", rename.to.trim()),
-        );
     }
 
     for removed in &parsed.removed {
-        let block = find_requirement_block(&content, removed)
-            .ok_or_else(|| missing_requirement_error(capability, "REMOVE", removed, &spec_path))?;
-        content.replace_range(block.start..block.end, "");
+        if let Some(block) = find_requirement_block(&content, removed) {
+            content.replace_range(block.start..block.end, "");
+            result.removed += 1;
+        } else if let Some(variant) = find_folded_requirement_block(&content, removed) {
+            return Err(requirement_spelling_error(
+                capability,
+                "REMOVE",
+                removed,
+                &variant.name,
+                &spec_path,
+            ));
+        }
     }
 
     for modified in &parsed.modified {
         let name = requirement_name(modified);
         let block = find_requirement_block(&content, name)
             .ok_or_else(|| missing_requirement_error(capability, "MODIFY", name, &spec_path))?;
-        // `block.start..block.end` spans the canonical block *including* the
-        // trailing separator (blank line / `\n---\n` / EOF) that sits before
-        // the next header, but `modified` is `trim_end()`'d. Re-append the
-        // original block's trailing whitespace so the following
-        // `### Requirement:` stays at the start of its own line -- otherwise it
-        // is glued onto the modified block's last line and the multiline
-        // `^### Requirement:` regex silently stops matching it, dropping the
-        // requirement from every later parse.
+        let original = block_text(&content, &block);
+        let missing = missing_scenarios_in_modified(&original, modified);
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "capability '{capability}': MODIFIED requirement '{name}' omits scenario(s) the current spec still has: {}",
+                missing
+                    .iter()
+                    .map(|scenario| format!("\"{scenario}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        if requirement_content_eq(&original, modified) {
+            continue;
+        }
         let trailing = {
             let original = &content[block.start..block.end];
             original[original.trim_end().len()..].to_string()
         };
         content.replace_range(block.start..block.end, &format!("{modified}{trailing}"));
+        result.modified += 1;
     }
 
-    let mut added_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut added_to_apply = Vec::new();
     for added in &parsed.added {
         let name = requirement_name(added);
-        if find_requirement_block(&content, name).is_some() {
+        if let Some(block) = find_requirement_block(&content, name) {
+            let original = block_text(&content, &block);
+            if requirement_content_eq(&original, added) {
+                continue;
+            }
             return Err(anyhow!(
                 "capability '{capability}': cannot ADD requirement '{name}' -- it already exists in {}",
                 spec_path.display()
             ));
         }
-        // The exists check above only compares against the canonical spec, not
-        // the delta's own ADDED list -- so two same-named `### Requirement:`
-        // blocks in one ADDED section would both append (a duplicate header).
-        // Reject the second loudly instead.
-        if !added_names.insert(normalize_requirement_name(name)) {
-            return Err(anyhow!(
-                "capability '{capability}': delta ADDs requirement '{}' more than once",
-                normalize_requirement_name(name)
+        if let Some(variant) = find_folded_requirement_block(&content, name) {
+            return Err(requirement_spelling_error(
+                capability,
+                "ADD",
+                name,
+                &variant.name,
+                &spec_path,
             ));
         }
+        added_to_apply.push(added.clone());
+        result.added += 1;
     }
 
-    // Only application writes; validation (`dry_run`) discards `content`, so it
-    // must skip the append -- `append_added_requirements` loads this change's
-    // touched-file sidecar, which renames a *corrupt* sidecar aside. Doing that
-    // during validation would be a side effect on a run that may still fail on a
-    // later capability, breaking the "validation failure leaves the change
-    // untouched" guarantee. The conflict checks above are what validation needs;
-    // they've all run by this point.
     if !dry_run {
-        append_added_requirements(&mut content, &parsed.added, cfg, source, today);
+        append_added_requirements(&mut content, &added_to_apply, cfg, source, today);
     }
 
-    Ok((Some(content), result))
+    let applied = result.added + result.modified + result.removed + result.renamed;
+    if applied > 0 {
+        content.truncate(content.trim_end_matches('\n').len());
+        content.push('\n');
+    }
+    Ok(((applied > 0).then_some(content), result))
 }
 
 fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
-    // Each delta kind is parsed from its *first* matching header, with the
-    // section bounded by the next `## ` header -- so a second same-kind header
-    // (e.g. from a bad merge) would have its body silently dropped. Reject a
-    // duplicate loudly instead, consistent with the empty-section guard below.
-    for (header_re, kind) in [
-        (&*ADDED_HEADER_RE, "ADDED"),
-        (&*MODIFIED_HEADER_RE, "MODIFIED"),
-        (&*REMOVED_HEADER_RE, "REMOVED"),
-        (&*RENAMED_HEADER_RE, "RENAMED"),
+    let parsed = crate::markdown::parse_delta(delta)
+        .map_err(|error| anyhow!("capability '{capability}': parsing delta: {error:#}"))?;
+
+    for (present, count, kind) in [
+        (parsed.modified_present, parsed.modified.len(), "MODIFIED"),
+        (parsed.removed_present, parsed.removed.len(), "REMOVED"),
+        (parsed.renamed_present, parsed.renamed.len(), "RENAMED"),
     ] {
-        if header_re.find_iter(delta).count() > 1 {
+        if present && count == 0 {
             return Err(anyhow!(
-                "capability '{capability}': delta has more than one \
-                 `## {kind} Requirements` section -- merge them into one"
+                "capability '{capability}': `## {kind} Requirements` section contains no \
+                 recognizable entries -- fix the delta or re-run with --skip-specs"
             ));
         }
     }
 
-    let added: Vec<String> = requirement_blocks_in_section(delta, &ADDED_HEADER_RE)?
-        .into_iter()
-        .map(|b| block_text(delta, &b))
-        .collect();
-    let modified: Vec<String> = requirement_blocks_in_section(delta, &MODIFIED_HEADER_RE)?
-        .into_iter()
-        .map(|b| block_text(delta, &b))
-        .collect();
-    let removed: Vec<String> = requirement_blocks_in_section(delta, &REMOVED_HEADER_RE)?
-        .into_iter()
-        .map(|b| b.name)
-        .collect();
-    let renamed = parse_renamed_requirements(capability, delta)?;
-
-    // A recognized delta section header that parsed to zero entries is almost
-    // always a malformed delta (a prose-only body, the wrong heading level, or
-    // a REMOVED/RENAMED entry not written as a `### Requirement:` header).
-    // Erroring loudly here preserves the guarantee the old unsupported-header
-    // reject gave: `archive` must never silently drop a MODIFIED/REMOVED/RENAMED
-    // intent and move the change out of the active set with nothing applied.
-    // ADDED keeps its historical lenient no-op for an empty section -- it never
-    // had a reject gate to preserve, and an empty ADDED section is harmless.
-    ensure_section_non_empty(
-        capability,
-        delta,
-        &MODIFIED_HEADER_RE,
-        "MODIFIED",
-        modified.len(),
-    )?;
-    ensure_section_non_empty(
-        capability,
-        delta,
-        &REMOVED_HEADER_RE,
-        "REMOVED",
-        removed.len(),
-    )?;
-    ensure_section_non_empty(
-        capability,
-        delta,
-        &RENAMED_HEADER_RE,
-        "RENAMED",
-        renamed.len(),
-    )?;
-
     Ok(RequirementDelta {
-        added,
-        modified,
-        removed,
-        renamed,
-    })
-}
-
-/// Errors when `header_re` matches `delta` (the section is present) but the
-/// section parsed to zero entries -- see [`parse_requirement_delta`] for why a
-/// present-but-empty MODIFIED/REMOVED/RENAMED section must fail loudly rather
-/// than archive as a silent no-op.
-fn ensure_section_non_empty(
-    capability: &str,
-    delta: &str,
-    header_re: &Regex,
-    kind: &str,
-    parsed_count: usize,
-) -> Result<()> {
-    if parsed_count == 0 && header_re.is_match(delta) {
-        return Err(anyhow!(
-            "capability '{capability}': `## {kind} Requirements` section contains no \
-             recognizable entries -- fix the delta or re-run with --skip-specs"
-        ));
-    }
-    Ok(())
-}
-
-fn requirement_blocks_in_section(delta: &str, header_re: &Regex) -> Result<Vec<RequirementBlock>> {
-    let Some(header_match) = header_re.find(delta) else {
-        return Ok(Vec::new());
-    };
-    let after_header = &delta[header_match.end()..];
-    let section_end = SECTION_HEADER_RE
-        .find(after_header)
-        .map_or(after_header.len(), |m| m.start());
-    Ok(requirement_blocks(after_header[..section_end].as_ref())
-        .into_iter()
-        .map(|mut block| {
-            block.start += header_match.end();
-            block.end += header_match.end();
-            block.header_end += header_match.end();
-            block
-        })
-        .collect())
-}
-
-fn parse_renamed_requirements(capability: &str, delta: &str) -> Result<Vec<RenameDelta>> {
-    let Some(header_match) = RENAMED_HEADER_RE.find(delta) else {
-        return Ok(Vec::new());
-    };
-    let after_header = &delta[header_match.end()..];
-    let section_end = SECTION_HEADER_RE
-        .find(after_header)
-        .map_or(after_header.len(), |m| m.start());
-    let section = &after_header[..section_end];
-
-    let mut renames = Vec::new();
-    let mut pending_from: Option<String> = None;
-    for line in section.lines() {
-        // Accept either `-` or `*` as the list bullet: a markdown auto-formatter
-        // routinely rewrites one to the other, and OpenSpec's own examples use
-        // `-` but don't forbid `*`. A line that isn't a bullet at all is skipped.
-        let Some(item) = line
-            .trim_start()
-            .strip_prefix('-')
-            .or_else(|| line.trim_start().strip_prefix('*'))
-            .map(str::trim_start)
-        else {
-            continue;
-        };
-        if let Some(raw) = item.strip_prefix("FROM:") {
-            if pending_from.is_some() {
-                return Err(anyhow!(
-                    "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
-                ));
-            }
-            pending_from = Some(parse_backticked_requirement_header(
-                capability, "FROM", raw,
-            )?);
-        } else if let Some(raw) = item.strip_prefix("TO:") {
-            let Some(from) = pending_from.take() else {
-                return Err(anyhow!(
-                    "capability '{capability}': malformed RENAMED Requirements section -- TO without preceding FROM"
-                ));
-            };
-            let to = parse_backticked_requirement_header(capability, "TO", raw)?;
-            renames.push(RenameDelta { from, to });
-        }
-    }
-
-    if pending_from.is_some() {
-        return Err(anyhow!(
-            "capability '{capability}': malformed RENAMED Requirements section -- FROM without following TO"
-        ));
-    }
-
-    Ok(renames)
-}
-
-fn parse_backticked_requirement_header(capability: &str, field: &str, raw: &str) -> Result<String> {
-    let Some(start) = raw.find('`') else {
-        return Err(anyhow!(
-            "capability '{capability}': malformed RENAMED Requirements section -- {field} is missing a backticked requirement header"
-        ));
-    };
-    let rest = &raw[start + 1..];
-    let Some(end) = rest.find('`') else {
-        return Err(anyhow!(
-            "capability '{capability}': malformed RENAMED Requirements section -- {field} is missing a closing backtick"
-        ));
-    };
-    requirement_name_from_header(&rest[..end]).ok_or_else(|| {
-        anyhow!(
-            "capability '{capability}': malformed RENAMED Requirements section -- {field} must be a `### Requirement: <name>` header"
-        )
+        purpose: parsed.purpose,
+        added: parsed
+            .added
+            .into_iter()
+            .map(|requirement| requirement.raw)
+            .collect(),
+        modified: parsed
+            .modified
+            .into_iter()
+            .map(|requirement| requirement.raw)
+            .collect(),
+        removed: parsed.removed,
+        renamed: parsed
+            .renamed
+            .into_iter()
+            .map(|rename| RenameDelta {
+                from: rename.from,
+                to: rename.to,
+            })
+            .collect(),
     })
 }
 
@@ -582,35 +887,66 @@ fn block_text(content: &str, block: &RequirementBlock) -> String {
     content[block.start..block.end].trim_end().to_string()
 }
 
+fn requirement_content_eq(left: &str, right: &str) -> bool {
+    fn normalize(content: &str) -> String {
+        let mut lines = Vec::new();
+        let mut in_trace = false;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed == "<!-- @trace" {
+                in_trace = true;
+                continue;
+            }
+            if in_trace {
+                if trimmed == "-->" {
+                    in_trace = false;
+                }
+                continue;
+            }
+            lines.push(line.trim_end());
+        }
+        while lines
+            .last()
+            .is_some_and(|line| line.trim().is_empty() || line.trim() == "---")
+        {
+            lines.pop();
+        }
+        lines.join("\n").trim().to_string()
+    }
+
+    normalize(left) == normalize(right)
+}
+
+fn missing_scenarios_in_modified(current: &str, modified: &str) -> Vec<String> {
+    fn scenarios(block: &str) -> Vec<String> {
+        crate::markdown::parse_main_requirements(&format!("## Requirements\n{block}"))
+            .into_iter()
+            .next()
+            .map(|requirement| requirement.scenarios)
+            .unwrap_or_default()
+    }
+
+    let mut proposed = scenarios(modified);
+    let mut missing = Vec::new();
+    for scenario in scenarios(current) {
+        if let Some(index) = proposed.iter().position(|candidate| candidate == &scenario) {
+            proposed.remove(index);
+        } else {
+            missing.push(scenario);
+        }
+    }
+    missing
+}
+
 fn requirement_blocks(content: &str) -> Vec<RequirementBlock> {
-    REQUIREMENT_HEADER_RE
-        .find_iter(content)
-        .filter_map(|m| {
-            let line_end = content[m.start()..]
-                .find('\n')
-                .map_or(content.len(), |offset| m.start() + offset);
-            let header = &content[m.start()..line_end];
-            let name = requirement_name_from_header(header)?;
-            let after_header = &content[line_end..];
-            let next_requirement = REQUIREMENT_HEADER_RE
-                .find(after_header)
-                .map(|next| line_end + next.start());
-            let next_section = SECTION_HEADER_RE
-                .find(after_header)
-                .map(|next| line_end + next.start());
-            let end = match (next_requirement, next_section) {
-                (Some(req), Some(section)) => req.min(section),
-                (Some(req), None) => req,
-                (None, Some(section)) => section,
-                (None, None) => content.len(),
-            };
-            Some(RequirementBlock {
-                name: name.clone(),
-                normalized_name: normalize_requirement_name(&name),
-                start: m.start(),
-                end,
-                header_end: line_end,
-            })
+    crate::markdown::parse_main_requirements(content)
+        .into_iter()
+        .map(|requirement| RequirementBlock {
+            name: requirement.name.clone(),
+            normalized_name: normalize_requirement_name(&requirement.name),
+            start: requirement.start,
+            end: requirement.end,
+            header_end: requirement.header_end,
         })
         .collect()
 }
@@ -622,18 +958,19 @@ fn find_requirement_block(content: &str, name: &str) -> Option<RequirementBlock>
         .find(|block| block.normalized_name == needle)
 }
 
+fn find_folded_requirement_block(content: &str, name: &str) -> Option<RequirementBlock> {
+    let needle = normalize_requirement_name(name).to_lowercase();
+    requirement_blocks(content)
+        .into_iter()
+        .find(|block| block.normalized_name.to_lowercase() == needle)
+}
+
 fn requirement_name(block: &str) -> &str {
     let line_end = block.find('\n').unwrap_or(block.len());
     block[..line_end]
         .strip_prefix("### Requirement:")
         .expect("requirement block starts with a requirement header")
         .trim()
-}
-
-fn requirement_name_from_header(header: &str) -> Option<String> {
-    header
-        .strip_prefix("### Requirement:")
-        .map(|name| name.trim().to_string())
 }
 
 fn normalize_requirement_name(name: &str) -> String {
@@ -649,6 +986,21 @@ fn missing_requirement_error(
     anyhow!(
         "capability '{capability}': cannot {kind} requirement '{}' -- it does not exist in {}",
         normalize_requirement_name(name),
+        spec_path.display()
+    )
+}
+
+fn requirement_spelling_error(
+    capability: &str,
+    kind: &str,
+    requested: &str,
+    existing: &str,
+    spec_path: &Path,
+) -> anyhow::Error {
+    anyhow!(
+        "capability '{capability}': cannot {kind} requirement '{}' -- it differs only in case or whitespace from '{}' in {}",
+        normalize_requirement_name(requested),
+        normalize_requirement_name(existing),
         spec_path.display()
     )
 }
@@ -827,6 +1179,100 @@ mod tests {
         - **THEN** first works\n\n\
         ### Requirement: Second\n\nsecond text\n\n\
         ### Requirement: Third\n\nthird text\n";
+
+    #[cfg(unix)]
+    #[test]
+    fn fallback_copy_preserves_nested_files_and_symlinks() {
+        let tmp = TempDir::new();
+        let source = tmp.join("source");
+        let destination = tmp.join("destination");
+        write(&source.join("nested/file.txt"), "content\n");
+        std::os::unix::fs::symlink("nested/file.txt", source.join("link")).unwrap();
+
+        copy_directory_exclusive(&source, &destination).unwrap();
+
+        assert!(source.is_dir());
+        assert!(directories_equal(&source, &destination).unwrap());
+        assert_eq!(
+            std::fs::read_link(destination.join("link")).unwrap(),
+            PathBuf::from("nested/file.txt")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_rolls_back_an_earlier_spec_when_a_later_write_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        let first_path = c.specs_dir().join("a-first").join("spec.md");
+        let original = "# a-first Specification\n\n## Purpose\n\nFirst.\n\n## Requirements\n\n\
+            ### Requirement: Existing\nold text\n";
+        write(&first_path, original);
+        write(
+            &c.changes_dir().join("my-feature/specs/a-first/spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Existing\nnew text\n",
+        );
+        write(
+            &c.changes_dir().join("my-feature/specs/z-last/spec.md"),
+            DELTA_TEMPLATE,
+        );
+        let blocked = c.specs_dir().join("z-last");
+        std::fs::create_dir_all(&blocked).unwrap();
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = archive(&c, "my-feature", false, false, false);
+        std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        result.unwrap_err();
+        assert_eq!(std::fs::read_to_string(first_path).unwrap(), original);
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c
+            .changes_dir()
+            .join("archive")
+            .read_dir()
+            .unwrap()
+            .any(|entry| entry
+                .is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with("-my-feature"))));
+    }
+
+    #[test]
+    fn archive_claim_is_exclusive_and_released_on_drop() {
+        let tmp = TempDir::new();
+        let archive_dir = tmp.join("archive");
+        let destination = archive_dir.join("2026-09-05-change");
+        std::fs::create_dir_all(&archive_dir).unwrap();
+
+        let claim = ArchiveClaim::acquire(&archive_dir, &destination, "change").unwrap();
+        assert!(ArchiveClaim::acquire(&archive_dir, &destination, "change").is_err());
+        drop(claim);
+        assert!(ArchiveClaim::acquire(&archive_dir, &destination, "change").is_ok());
+    }
+
+    #[test]
+    fn rollback_refuses_to_overwrite_a_concurrent_spec_edit() {
+        let tmp = TempDir::new();
+        let path = tmp.join("spec.md");
+        std::fs::write(&path, "concurrent").unwrap();
+        let prepared = vec![PreparedSpec {
+            path: path.clone(),
+            original: Some(b"old".to_vec()),
+            content: Some("new".to_string()),
+            result: SpecApplyResult {
+                capability: "cap".to_string(),
+                added: 0,
+                modified: 1,
+                removed: 0,
+                renamed: 0,
+            },
+            retire: false,
+        }];
+
+        assert!(rollback_prepared_specs(&prepared).is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "concurrent");
+    }
 
     #[test]
     fn archive_moves_the_change_dir_to_dated_archive_subdir() {
@@ -1056,6 +1502,23 @@ mod tests {
         assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
         // The very first requirement in a fresh spec has no "---" separator.
         assert!(!spec.contains("---"));
+    }
+
+    #[test]
+    fn archive_preserves_an_authored_purpose_for_a_new_capability() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            &format!("## Purpose\n\nLets users export portable account data.\n\n{DELTA_TEMPLATE}"),
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap/spec.md")).unwrap();
+        assert!(spec.contains("## Purpose\n\nLets users export portable account data."));
+        assert!(!spec.contains("TBD - created by archiving"));
     }
 
     #[test]
@@ -1353,10 +1816,34 @@ mod tests {
             "Third must remain at line-start after MODIFY, got:\n{spec}"
         );
         assert_eq!(
-            REQUIREMENT_HEADER_RE.find_iter(&spec).count(),
+            crate::markdown::parse_main_requirements(&spec).len(),
             3,
             "all three requirement headers must remain line-anchored, got:\n{spec}"
         );
+    }
+
+    #[test]
+    fn archive_canonicalizes_rebuilt_specs_to_one_final_newline() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap").join("spec.md");
+        write(&spec_path, &format!("{CANONICAL_SPEC}\n\n"));
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## MODIFIED Requirements\n\n\
+             ### Requirement: Second\n\nupdated text\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let rebuilt = std::fs::read_to_string(spec_path).unwrap();
+        assert!(rebuilt.ends_with('\n'));
+        assert!(!rebuilt.ends_with("\n\n"));
     }
 
     #[test]
@@ -1384,6 +1871,42 @@ mod tests {
         assert!(spec.contains("### Requirement: First"));
         assert!(!spec.contains("### Requirement: Second"));
         assert!(spec.contains("### Requirement: Third"));
+    }
+
+    #[test]
+    fn capability_retirement_requires_marker_and_deletes_the_spec_when_declared() {
+        let make = |label: &str, declared: bool| {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            let spec_path = c.specs_dir().join("my-cap/spec.md");
+            write(
+                &spec_path,
+                "# my-cap Specification\n\n## Purpose\n\nCapability purpose.\n\n## Requirements\n\n\
+                 ### Requirement: Only\nThe system SHALL exist.\n\n\
+                 #### Scenario: Exists\n- **WHEN** used\n- **THEN** it works\n",
+            );
+            change::create(&c, label).unwrap();
+            if declared {
+                write(
+                    &c.changes_dir().join(label).join(".openspec.yaml"),
+                    "schema: spec-driven\nretire_capabilities: true\n",
+                );
+            }
+            write(
+                &c.changes_dir().join(label).join("specs/my-cap/spec.md"),
+                "## REMOVED Requirements\n\n### Requirement: Only\n",
+            );
+            (tmp, c, spec_path)
+        };
+
+        let (_blocked_tmp, blocked_cfg, blocked_path) = make("blocked", false);
+        assert!(archive(&blocked_cfg, "blocked", false, false, false).is_err());
+        assert!(blocked_path.is_file());
+        assert!(blocked_cfg.changes_dir().join("blocked").is_dir());
+
+        let (_retired_tmp, retired_cfg, retired_path) = make("retired", true);
+        archive(&retired_cfg, "retired", false, false, false).unwrap();
+        assert!(!retired_path.exists());
     }
 
     #[test]
@@ -1437,6 +1960,9 @@ mod tests {
              ### Requirement: Fourth\n\nfourth text\n\n\
              ## MODIFIED Requirements\n\n\
              ### Requirement: Renamed First\n\nrenamed first modified text\n\n\
+             #### Scenario: First scenario\n\n\
+             - **WHEN** first changes\n\
+             - **THEN** modified behavior applies\n\n\
              ## REMOVED Requirements\n\n\
              ### Requirement: Third\n\nremove it\n\n\
              ## RENAMED Requirements\n\
@@ -1523,41 +2049,32 @@ mod tests {
     }
 
     #[test]
-    fn archive_errors_on_removed_and_renamed_missing_requirements() {
-        for (kind, delta, expected) in [
-            (
-                "removed",
-                "## REMOVED Requirements\n\n### Requirement: Missing\n\nold\n",
-                "cannot REMOVE requirement 'Missing'",
-            ),
-            (
-                "renamed",
-                "## RENAMED Requirements\n- FROM: `### Requirement: Missing`\n- TO: `### Requirement: New`\n",
-                "cannot RENAME requirement 'Missing'",
-            ),
-        ] {
-            let tmp = TempDir::new();
-            let c = cfg(&tmp);
-            write(&c.specs_dir().join("my-cap").join("spec.md"), CANONICAL_SPEC);
-            change::create(&c, "my-feature").unwrap();
-            write(
-                &c.changes_dir()
-                    .join("my-feature")
-                    .join("specs")
-                    .join("my-cap")
-                    .join("spec.md"),
-                delta,
-            );
+    fn archive_errors_when_both_rename_source_and_target_are_missing() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap").join("spec.md"),
+            CANONICAL_SPEC,
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            "## RENAMED Requirements\n- FROM: `### Requirement: Missing`\n- TO: `### Requirement: New`\n",
+        );
 
-            let err = archive(&c, "my-feature", false, false, false).unwrap_err();
+        let err = archive(&c, "my-feature", false, false, false).unwrap_err();
 
-            assert!(
-                err.to_string().contains(expected),
-                "{kind} conflict should name the missing requirement, got: {err}"
-            );
-            assert!(c.changes_dir().join("my-feature").is_dir());
-            assert!(!c.changes_dir().join("archive").exists());
-        }
+        assert!(
+            err.to_string()
+                .contains("cannot RENAME requirement 'Missing'"),
+            "rename conflict should name the missing requirement, got: {err}"
+        );
+        assert!(c.changes_dir().join("my-feature").is_dir());
+        assert!(!c.changes_dir().join("archive").exists());
     }
 
     #[test]
@@ -1657,7 +2174,7 @@ mod tests {
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("modified alpha text"));
         assert_eq!(
-            REQUIREMENT_HEADER_RE.find_iter(&spec).count(),
+            crate::markdown::parse_main_requirements(&spec).len(),
             3,
             "all three requirement headers must survive as line-anchored, got:\n{spec}"
         );

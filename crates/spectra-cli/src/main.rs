@@ -107,8 +107,11 @@ enum Command {
     /// Show workflow artifact status for a change.
     Status {
         /// Change name (auto-detects if only one exists).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "all")]
         change: Option<String>,
+        /// Show every active change in one stable report.
+        #[arg(long)]
+        all: bool,
         /// Workflow schema name; overrides both the change's own
         /// `.openspec.yaml` `schema:` and `<spec_dir>/config.yaml`'s. Only
         /// `spec-driven` is built in — any other name is an error rather than
@@ -145,14 +148,27 @@ enum Command {
     /// Unlike `drift`, this is a pass/fail gate: it exits non-zero when any
     /// change is invalid.
     Validate {
-        /// Change name to validate (auto-detects if only one active change
-        /// exists). Ignored when --changes is given.
-        change: Option<String>,
-        /// Validate every active change instead of a single one.
-        #[arg(long, conflicts_with = "change")]
+        /// Change or spec name to validate.
+        item: Option<String>,
+        /// Validate every active change.
+        #[arg(long, conflicts_with_all = ["item", "specs", "all", "archived"])]
         changes: bool,
-        /// Escalate content-quality findings (missing SHALL/MUST or missing
-        /// scenario) from ignored to hard errors.
+        /// Validate every canonical spec.
+        #[arg(long, conflicts_with_all = ["item", "changes", "all", "archived"])]
+        specs: bool,
+        /// Validate all active changes and canonical specs.
+        #[arg(long, conflicts_with_all = ["item", "changes", "specs", "archived"])]
+        all: bool,
+        /// Validate that archived changes have no incomplete tasks.
+        #[arg(long, conflicts_with_all = ["item", "changes", "specs", "all"])]
+        archived: bool,
+        /// Select the direct item's type when names are ambiguous.
+        #[arg(long = "type", value_name = "TYPE")]
+        item_type: Option<ValidationItemType>,
+        /// Select full or findings-only output for an explicit bulk scope.
+        #[arg(long, value_name = "REPORT")]
+        report: Option<ValidationReportKind>,
+        /// Treat content-quality warnings as failures.
         #[arg(long)]
         strict: bool,
         #[arg(long)]
@@ -182,6 +198,8 @@ enum Command {
         item: String,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        diff: bool,
     },
     /// Park a change (mark it on hold, excluding it from the active listing).
     Park {
@@ -255,6 +273,18 @@ enum ListSort {
     Created,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ValidationItemType {
+    Change,
+    Spec,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ValidationReportKind {
+    Full,
+    Findings,
+}
+
 impl From<ListSort> for change::SortKey {
     fn from(value: ListSort) -> Self {
         match value {
@@ -321,6 +351,38 @@ enum ConfigTarget {
 
 #[derive(Subcommand, Debug)]
 enum SchemaCommand {
+    /// Create a project-local schema.
+    Init {
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, value_delimiter = ',')]
+        artifacts: Vec<String>,
+        #[arg(long, conflicts_with = "no_default")]
+        default: bool,
+        #[arg(long)]
+        no_default: bool,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate one schema, or every project schema when omitted.
+    Validate {
+        name: Option<String>,
+        #[arg(long)]
+        verbose: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show where a schema resolves from.
+    Which {
+        name: Option<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Fork (copy) a schema
     Fork {
         /// Source schema
@@ -527,44 +589,118 @@ fn cmd_search(cfg: &Config, query: &str, limit: usize, as_json: bool) -> Result<
     Ok(0)
 }
 
-fn cmd_validate(
-    cfg: &Config,
-    change_name: Option<&str>,
-    all_changes: bool,
+#[derive(Clone, Copy)]
+struct ValidateOptions<'a> {
+    item: Option<&'a str>,
+    changes: bool,
+    specs: bool,
+    all: bool,
+    archived: bool,
+    item_type: Option<ValidationItemType>,
+    report_kind: Option<ValidationReportKind>,
     strict: bool,
     as_json: bool,
-) -> Result<i32> {
-    if !all_changes && change_name.is_none() && change::list_active(cfg).is_empty() {
+}
+
+fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>) -> Result<i32> {
+    let ValidateOptions {
+        item,
+        changes,
+        specs,
+        all,
+        archived,
+        item_type,
+        report_kind,
+        strict,
+        as_json,
+    } = options;
+    let bulk = changes || specs || all || archived;
+    if report_kind.is_some() && !bulk {
+        anyhow::bail!("--report requires --changes, --specs, --all, or --archived");
+    }
+
+    let mut report = if archived {
+        spectra_core::validate::validate_archived(cfg)?
+    } else if bulk {
+        let change_names = if changes || all {
+            change::list_active(cfg)
+        } else {
+            Vec::new()
+        };
+        let spec_names = if specs || all {
+            spec::list(cfg)?
+        } else {
+            Vec::new()
+        };
+        spectra_core::validate::build_mixed_report(cfg, &change_names, &spec_names, strict)?
+    } else if let Some(item) = item {
+        let is_change = change::try_load(cfg, item)?.is_some();
+        let is_spec = spec::try_load(cfg, item)?.is_some();
+        let validation = match item_type {
+            Some(ValidationItemType::Change) if is_change => {
+                spectra_core::validate::validate_change(cfg, item, strict)?
+            }
+            Some(ValidationItemType::Spec) if is_spec => {
+                spectra_core::validate::validate_spec(cfg, item, strict)?
+            }
+            Some(ValidationItemType::Change) => anyhow::bail!("Change '{item}' not found."),
+            Some(ValidationItemType::Spec) => anyhow::bail!("Spec '{item}' not found."),
+            None if is_change && is_spec => {
+                anyhow::bail!(
+                    "Ambiguous item '{item}' matches both a change and a spec; pass --type change|spec"
+                )
+            }
+            None if is_change => spectra_core::validate::validate_change(cfg, item, strict)?,
+            None if is_spec => spectra_core::validate::validate_spec(cfg, item, strict)?,
+            None => anyhow::bail!("Change '{item}' not found."),
+        };
+        spectra_core::validate::report_from_items(cfg, vec![validation])
+    } else if change::list_active(cfg).is_empty() {
         if as_json {
             println!("[]");
         }
         return Ok(0);
-    }
-    let report = if all_changes {
-        spectra_core::validate::validate_all_active(cfg, strict)?
     } else {
-        // A single named (or auto-detected) change. `resolve` yields the
-        // reference CLI's "no active changes" / "multiple changes" errors on
-        // the auto-detect (None) path, but passes an explicit name through
-        // verbatim -- so verify it actually exists here, otherwise a typo'd,
-        // parked, or archived name would be silently reported as a bogus "no
-        // delta" validation failure instead of "Change '<name>' not found."
-        // (matching `archive`).
-        let name = change::resolve(cfg, change_name)?;
-        if change::try_load(cfg, &name)?.is_none() {
-            anyhow::bail!("Change '{name}' not found.");
-        }
+        let name = change::resolve(cfg, None)?;
         spectra_core::validate::build_report(cfg, std::slice::from_ref(&name), strict)?
     };
 
-    if as_json {
+    let failed = report.any_failed();
+    let findings = matches!(report_kind, Some(ValidationReportKind::Findings));
+    if findings {
+        report.items.retain(|item| !item.issues.is_empty());
+    }
+    if as_json && findings {
+        let scope = if archived {
+            "archived"
+        } else if all {
+            "all"
+        } else if changes {
+            "changes"
+        } else {
+            "specs"
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "report": {
+                    "kind": "validation-findings",
+                    "version": "1.0",
+                    "scope": scope,
+                    "returnedItems": report.items.len(),
+                    "totalItems": report.summary.totals.total,
+                },
+                "itemFindings": report.items,
+                "summary": report.summary,
+                "root": report.root,
+            }))?
+        );
+    } else if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print_validate_human(&report);
     }
-    // Gate semantics (distinct from `drift`, which always exits 0): a failed
-    // validation exits non-zero so `validate` can back a CI check directly.
-    Ok(i32::from(report.any_failed()))
+    Ok(i32::from(failed))
 }
 
 fn print_validate_human(report: &spectra_core::validate::ValidateReport) {
@@ -833,7 +969,34 @@ fn show_json(item: &str, content: &ShowContent) -> serde_json::Value {
     }
 }
 
-fn cmd_show(cfg: &Config, item: &str, as_json: bool) -> Result<i32> {
+fn cmd_show(cfg: &Config, item: &str, as_json: bool, with_diff: bool) -> Result<i32> {
+    if with_diff {
+        if change::try_load(cfg, item)?.is_none() {
+            anyhow::bail!("--diff requires a change name");
+        }
+        let entries = spectra_core::spec_diff::change_diff(cfg, item)?;
+        if as_json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "name": item,
+                    "diff": entries,
+                }))?
+            );
+        } else {
+            for entry in entries {
+                println!(
+                    "{} {} / {}\n{}",
+                    entry.operation, entry.capability, entry.name, entry.diff
+                );
+                if let Some(warning) = entry.warning {
+                    println!("warning: {warning}");
+                }
+            }
+        }
+        return Ok(0);
+    }
+
     let content = resolve_show_content(cfg, item)?;
     if as_json {
         println!(
@@ -985,6 +1148,7 @@ fn cmd_status(
             schema::ArtifactState::Done => "✓",
             schema::ArtifactState::Ready => "○",
             schema::ArtifactState::Blocked => "✗",
+            schema::ArtifactState::Skipped => "~",
         };
         println!("  {marker} {} ({})", artifact.id, artifact.output_path);
         if let Some(missing_deps) = &artifact.missing_deps {
@@ -996,6 +1160,51 @@ fn cmd_status(
         println!("  ✓ All artifacts complete");
     }
     Ok(0)
+}
+
+fn cmd_status_all(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Result<i32> {
+    let names = change::list_active(cfg);
+    let mut entries = Vec::with_capacity(names.len());
+    let mut failed = false;
+    for name in names {
+        match schema::status(cfg, Some(&name), schema_name) {
+            Ok(report) => entries.push(serde_json::to_value(report)?),
+            Err(error) => {
+                failed = true;
+                entries.push(json!({
+                    "changeName": name,
+                    "status": [{
+                        "severity": "error",
+                        "message": error.to_string(),
+                    }],
+                }));
+            }
+        }
+    }
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "changes": entries,
+                "root": cfg.root,
+            }))?
+        );
+    } else {
+        for (index, entry) in entries.iter().enumerate() {
+            if index > 0 {
+                println!();
+            }
+            if let Some(name) = entry["changeName"].as_str() {
+                println!("Change: {name}");
+                if let Some(schema) = entry["schemaName"].as_str() {
+                    println!("Schema: {schema}");
+                } else if let Some(message) = entry["status"][0]["message"].as_str() {
+                    println!("Error: {message}");
+                }
+            }
+        }
+    }
+    Ok(i32::from(failed))
 }
 
 fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> String {
@@ -1470,11 +1679,16 @@ fn run() -> Result<i32> {
         }
         Command::Status {
             change,
+            all,
             schema,
             json,
         } => {
             let cfg = require_initialized(&root)?;
-            cmd_status(&cfg, change.as_deref(), schema.as_deref(), *json)
+            if *all {
+                cmd_status_all(&cfg, schema.as_deref(), *json)
+            } else {
+                cmd_status(&cfg, change.as_deref(), schema.as_deref(), *json)
+            }
         }
         Command::Instructions {
             artifact,
@@ -1503,13 +1717,31 @@ fn run() -> Result<i32> {
             )
         }
         Command::Validate {
-            change,
+            item,
             changes,
+            specs,
+            all,
+            archived,
+            item_type,
+            report,
             strict,
             json,
         } => {
             let cfg = require_initialized(&root)?;
-            cmd_validate(&cfg, change.as_deref(), *changes, *strict, *json)
+            cmd_validate(
+                &cfg,
+                ValidateOptions {
+                    item: item.as_deref(),
+                    changes: *changes,
+                    specs: *specs,
+                    all: *all,
+                    archived: *archived,
+                    item_type: *item_type,
+                    report_kind: *report,
+                    strict: *strict,
+                    as_json: *json,
+                },
+            )
         }
         Command::List {
             // `changes` is unused here on purpose: clap's `conflicts_with_all`
@@ -1526,9 +1758,9 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_list(&cfg, *specs, *parked, *json, (*sort).into())
         }
-        Command::Show { item, json } => {
+        Command::Show { item, json, diff } => {
             let cfg = require_initialized(&root)?;
-            cmd_show(&cfg, item, *json)
+            cmd_show(&cfg, item, *json, *diff)
         }
         Command::Park { change, json } => {
             let cfg = require_initialized(&root)?;
@@ -1611,6 +1843,107 @@ fn run() -> Result<i32> {
         // Global config management needs no project (like `init`/`schemas`).
         Command::Config { target } => cmd_config(target, use_color),
         Command::Schema { command } => match command {
+            SchemaCommand::Init {
+                name,
+                description,
+                artifacts,
+                default,
+                no_default: _,
+                force,
+                json,
+            } => {
+                let cfg = require_initialized(&root)?;
+                let outcome = schema::init_schema(
+                    &cfg,
+                    name,
+                    description.as_deref(),
+                    artifacts,
+                    *default,
+                    *force,
+                )?;
+                if *json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&json!({
+                            "created": true,
+                            "path": outcome.target_dir,
+                            "schema": outcome.target,
+                        }))?
+                    );
+                } else {
+                    println!("\u{2713} Created schema '{}'", outcome.target);
+                }
+                Ok(0)
+            }
+            SchemaCommand::Validate {
+                name,
+                verbose,
+                json,
+            } => {
+                let cfg = require_initialized(&root)?;
+                let names = name.clone().map_or_else(
+                    || {
+                        schema::schemas(Some(&cfg))
+                            .into_iter()
+                            .filter(|schema| schema.source == "project")
+                            .map(|schema| schema.name)
+                            .collect()
+                    },
+                    |name| vec![name],
+                );
+                let checks: Vec<_> = names
+                    .iter()
+                    .map(|name| schema::validate_schema(&cfg, name))
+                    .collect();
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&checks)?);
+                } else {
+                    for check in &checks {
+                        println!(
+                            "{} {}{}",
+                            if check.valid { "\u{2713}" } else { "\u{2717}" },
+                            check.name,
+                            if *verbose {
+                                format!(" ({})", check.path)
+                            } else {
+                                String::new()
+                            }
+                        );
+                        for issue in &check.issues {
+                            println!("  {issue}");
+                        }
+                    }
+                }
+                Ok(i32::from(checks.iter().any(|check| !check.valid)))
+            }
+            SchemaCommand::Which { name, all, json } => {
+                let cfg = require_initialized(&root)?;
+                let names = if *all {
+                    schema::schemas(Some(&cfg))
+                        .into_iter()
+                        .map(|schema| schema.name)
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![name.clone().ok_or_else(|| {
+                        anyhow::anyhow!("schema name is required unless --all is used")
+                    })?]
+                };
+                let mut resolutions = Vec::new();
+                for name in names {
+                    resolutions.push(schema::which(&cfg, &name)?);
+                }
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&resolutions)?);
+                } else {
+                    for resolution in resolutions {
+                        println!(
+                            "{} resolves from {}: {}",
+                            resolution.name, resolution.source, resolution.path
+                        );
+                    }
+                }
+                Ok(0)
+            }
             SchemaCommand::Fork {
                 source,
                 name,

@@ -123,51 +123,13 @@ fn status_json_and_human_contracts_match_the_oracle() {
         .unwrap();
     assert!(json_out.status.success(), "status failed: {json_out:?}");
     let json_text = String::from_utf8(json_out.stdout).unwrap();
-    assert_eq!(
-        json_text,
-        concat!(
-            "{\n",
-            "  \"changeName\": \"demo-feature\",\n",
-            "  \"schemaName\": \"spec-driven\",\n",
-            "  \"isComplete\": false,\n",
-            "  \"applyRequires\": [\n",
-            "    \"tasks\"\n",
-            "  ],\n",
-            "  \"artifacts\": [\n",
-            "    {\n",
-            "      \"id\": \"proposal\",\n",
-            "      \"outputPath\": \"proposal.md\",\n",
-            "      \"status\": \"ready\"\n",
-            "    },\n",
-            "    {\n",
-            "      \"id\": \"design\",\n",
-            "      \"outputPath\": \"design.md\",\n",
-            "      \"status\": \"blocked\",\n",
-            "      \"missingDeps\": [\n",
-            "        \"proposal\"\n",
-            "      ]\n",
-            "    },\n",
-            "    {\n",
-            "      \"id\": \"specs\",\n",
-            "      \"outputPath\": \"specs/**/*.md\",\n",
-            "      \"status\": \"blocked\",\n",
-            "      \"missingDeps\": [\n",
-            "        \"proposal\"\n",
-            "      ]\n",
-            "    },\n",
-            "    {\n",
-            "      \"id\": \"tasks\",\n",
-            "      \"outputPath\": \"tasks.md\",\n",
-            "      \"status\": \"blocked\",\n",
-            "      \"missingDeps\": [\n",
-            "        \"specs\"\n",
-            "      ]\n",
-            "    }\n",
-            "  ]\n",
-            "}\n",
-        )
-    );
     let report: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+    assert_eq!(report["changeName"], "demo-feature");
+    assert_eq!(report["schemaName"], "spec-driven");
+    assert_eq!(report["isComplete"], false);
+    assert_eq!(report["isPlanningComplete"], false);
+    assert_eq!(report["applyRequires"], serde_json::json!(["tasks"]));
+    assert_eq!(report["artifacts"][0]["requires"], serde_json::json!([]));
     for key in [
         "changeName",
         "schemaName",
@@ -287,4 +249,56 @@ fn status_still_reports_when_openspec_yaml_is_malformed() {
         stdout.contains("proposal"),
         "status report missing artifacts: {stdout}"
     );
+}
+
+#[test]
+fn status_exposes_dependencies_and_skip_specs_planning_completion() {
+    let root = TempDir::new("skip-specs-status");
+    init_project_with_change(&root, "demo-feature");
+    let dir = change_dir(&root, "demo-feature");
+    std::fs::write(
+        dir.join(".openspec.yaml"),
+        "schema: spec-driven\nskip_specs: true\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("proposal.md"), "# Proposal\n").unwrap();
+    std::fs::write(dir.join("design.md"), "# Design\n").unwrap();
+    std::fs::write(dir.join("tasks.md"), "# Tasks\n").unwrap();
+
+    let out = spectra()
+        .args(["status", "--change", "demo-feature", "--json"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["isPlanningComplete"], true);
+    assert_eq!(report["artifacts"][2]["status"], "skipped");
+    assert_eq!(
+        report["artifacts"][3]["requires"],
+        serde_json::json!(["specs"])
+    );
+}
+
+#[test]
+fn status_all_returns_every_active_change_in_one_envelope() {
+    let root = TempDir::new("status-all");
+    init_project_with_change(&root, "z-last");
+    let created = spectra()
+        .args(["new", "change", "a-first"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
+
+    let out = spectra()
+        .args(["status", "--all", "--json"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["changes"].as_array().unwrap().len(), 2);
+    assert_eq!(report["changes"][0]["changeName"], "a-first");
+    assert_eq!(report["changes"][1]["changeName"], "z-last");
 }

@@ -22,76 +22,74 @@
 //!    finding unconditionally, not just under `--strict`; the strict gating
 //!    here is OpenSpectra's own choice — see `validate.md` "Known divergences".)
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
 
 use crate::change;
 use crate::config::Config;
+use crate::fsutil::read_optional;
 
 /// A word-boundaried RFC 2119 keyword: `\bSHALL\b` matches "The system SHALL"
 /// but not "MARSHALL", and case-sensitivity keeps a lowercase "shall" (prose,
 /// not a normative clause) from counting.
 static SHALL_OR_MUST_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b(SHALL|MUST)\b").unwrap());
+static TASK_GROUP_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^ {0,3}##\s+(\d+)\.(?:\s|$)").unwrap());
+static LEVEL_TWO_HEADING_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^ {0,3}##(?:\s|$)").unwrap());
+static TASK_ID_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^\s*[-*]\s*\[[ xX]\]\s*(\d+(?:\.\d+)+(?:[A-Za-z]+)?)(?:\s|$)").unwrap()
+});
 
-/// A `**Key**: value` metadata line (e.g. `**Priority**: high`), matched at the
-/// start of a trimmed line. When locating a requirement's first *text* block
-/// these are skipped, mirroring OSS's `extractRequirementText`. Note the leading
-/// `**` requirement means a `> **Goal**:` blockquote is *not* matched (its first
-/// char is `>`), so a Goal blockquote counts as the first text block — the
-/// issue #80 discrimination.
-static METADATA_LINE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\*\*[^*]+\*\*:").unwrap());
-
-/// The requirement's first "text block", the way OSS's `extractRequirementText`
-/// locates it: scanning the body after the `### Requirement:` heading, skip
-/// blank lines and `**Key**:` metadata lines, stop at the first `#### ` scenario
-/// header, and return the first remaining line. A leading `> **Goal**:`
-/// blockquote is deliberately *not* skipped — it is that first block — so a
-/// normative `SHALL`/`MUST` placed *after* a Goal blockquote is never reached
-/// (issue #80). Returns `None` when the requirement has no such line (no
-/// normative text at all), which the caller treats as failing the rule.
-fn extract_requirement_text(body: &str) -> Option<&str> {
-    for line in body.lines() {
-        // Stop at a scenario header (OSS: `/^####\s+/`), anchored at column 0
-        // like the other structural headers.
-        if line.starts_with("####") && line[4..].starts_with([' ', '\t']) {
-            break;
-        }
-        let trimmed = line.trim();
-        if trimmed.is_empty() || METADATA_LINE_RE.is_match(trimmed) {
-            continue;
-        }
-        return Some(trimmed);
-    }
-    None
-}
-
-/// One validation finding. Field order is the serialized `--json` order and is
-/// the documented contract the downstream gate parses (`level`/`path`/`message`).
+/// One validation finding. Existing field order remains level/path/message;
+/// `line` is additive and omitted when the parser cannot ground it.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Issue {
     pub level: String,
     pub path: String,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
 }
 
 impl Issue {
-    fn error(path: String, message: String) -> Self {
-        Issue {
-            level: "ERROR".to_string(),
+    fn new(level: &str, path: String, message: String) -> Self {
+        Self {
+            level: level.to_string(),
             path,
             message,
+            line: None,
         }
+    }
+
+    fn error(path: String, message: String) -> Self {
+        Self::new("ERROR", path, message)
+    }
+
+    fn warning(path: String, message: String) -> Self {
+        Self::new("WARNING", path, message)
+    }
+
+    fn info(path: String, message: String) -> Self {
+        Self::new("INFO", path, message)
+    }
+
+    fn at_line(mut self, line: usize) -> Self {
+        self.line = Some(line);
+        self
     }
 }
 
-/// Per-change result. `valid` is `true` exactly when `issues` is empty.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ChangeValidation {
     pub id: String,
+    #[serde(rename = "type")]
+    pub item_type: String,
     pub valid: bool,
     pub issues: Vec<Issue>,
+    #[serde(rename = "durationMs")]
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -99,93 +97,213 @@ pub struct Totals {
     pub passed: usize,
     pub failed: usize,
     pub total: usize,
+    pub items: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Summary {
     pub totals: Totals,
+    pub by_type: std::collections::BTreeMap<String, Totals>,
 }
 
-/// Top-level `--json` shape, matching the downstream gate's parser:
-/// `{ "items": [...], "summary": { "totals": { "failed": N } } }`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct RootInfo {
+    pub path: String,
+    pub spec_dir: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ValidateReport {
     pub items: Vec<ChangeValidation>,
     pub summary: Summary,
+    pub version: String,
+    pub root: RootInfo,
 }
 
 impl ValidateReport {
-    /// Whether any change failed validation. The CLI maps this to a non-zero
-    /// exit so `validate` behaves like a linter/gate (unlike `drift`, whose
-    /// exit code never encodes analysis severity).
     pub fn any_failed(&self) -> bool {
         self.summary.totals.failed > 0
     }
 }
 
-/// Validate every active (non-parked, non-archived) change.
 pub fn validate_all_active(cfg: &Config, strict: bool) -> Result<ValidateReport> {
     let names = change::list_active(cfg);
     build_report(cfg, &names, strict)
 }
 
-/// Validate an explicit set of change names, assembling the summary totals.
 pub fn build_report(cfg: &Config, names: &[String], strict: bool) -> Result<ValidateReport> {
     let mut items = Vec::with_capacity(names.len());
     for name in names {
         items.push(validate_change(cfg, name, strict)?);
     }
-    let failed = items.iter().filter(|i| !i.valid).count();
-    let total = items.len();
-    let passed = total - failed;
-    Ok(ValidateReport {
-        items,
+    Ok(report_from_items(cfg, items))
+}
+
+pub fn build_mixed_report(
+    cfg: &Config,
+    change_names: &[String],
+    spec_names: &[String],
+    strict: bool,
+) -> Result<ValidateReport> {
+    let mut items = Vec::with_capacity(change_names.len() + spec_names.len());
+    for name in change_names {
+        items.push(validate_change(cfg, name, strict)?);
+    }
+    for name in spec_names {
+        items.push(validate_spec(cfg, name, strict)?);
+    }
+    Ok(report_from_items(cfg, items))
+}
+
+pub fn report_from_items(cfg: &Config, items: Vec<ChangeValidation>) -> ValidateReport {
+    fn totals<'a>(items: impl Iterator<Item = &'a ChangeValidation>) -> Totals {
+        let items: Vec<_> = items.collect();
+        let failed = items.iter().filter(|item| !item.valid).count();
+        let total = items.len();
+        Totals {
+            passed: total - failed,
+            failed,
+            total,
+            items: total,
+        }
+    }
+
+    let mut by_type = std::collections::BTreeMap::new();
+    for item_type in ["change", "spec"] {
+        let selected: Vec<_> = items
+            .iter()
+            .filter(|item| item.item_type == item_type)
+            .collect();
+        if !selected.is_empty() {
+            by_type.insert(item_type.to_string(), totals(selected.into_iter()));
+        }
+    }
+    ValidateReport {
         summary: Summary {
-            totals: Totals {
-                passed,
-                failed,
-                total,
-            },
+            totals: totals(items.iter()),
+            by_type,
         },
-    })
+        items,
+        version: "2.0".to_string(),
+        root: RootInfo {
+            path: cfg.root.to_string_lossy().to_string(),
+            spec_dir: cfg.spec_dir.clone(),
+        },
+    }
 }
 
 /// Validate one change by name. Traverses `changes/<name>/specs/` recursively
 /// (so nested `<Epic>/<Feature>/spec.md` layouts are covered), enforcing the
 /// structural rule always and the content-quality rules only under `strict`.
 pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
+    let started = std::time::Instant::now();
     let specs_root = cfg.changes_dir().join(name).join("specs");
     let files = crate::fsutil::collect_delta_specs(&specs_root)?;
+    let skip_specs =
+        change::try_load(cfg, name)?.and_then(|change| change.metadata.skip_specs) == Some(true);
 
     let mut issues = Vec::new();
+    if skip_specs && !files.is_empty() {
+        issues.push(Issue::error(
+            ".openspec.yaml".to_string(),
+            "Change declares skip_specs but also contains delta spec files".to_string(),
+        ));
+    } else if skip_specs {
+        issues.push(Issue::info(
+            ".openspec.yaml".to_string(),
+            "Change declares skip_specs and contains no delta specs".to_string(),
+        ));
+    }
     let mut total_operations = 0usize;
     for (cap, content) in &files {
-        let parsed = parse_delta(content);
-        total_operations += parsed.operations;
-        if strict {
-            for req in &parsed.body_reqs {
-                if !req.has_shall_or_must {
-                    issues.push(Issue::error(
-                        spec_rel_path(cap),
+        let path = spec_rel_path(cap);
+        let parsed = match crate::markdown::parse_delta(content) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                issues.push(Issue::error(path, error.to_string()));
+                continue;
+            }
+        };
+        total_operations += parsed.added.len()
+            + parsed.modified.len()
+            + parsed.removed.len()
+            + parsed.renamed.len();
+
+        for req in parsed.added.iter().chain(&parsed.modified) {
+            if req.text.is_empty() {
+                issues.push(
+                    Issue::error(
+                        path.clone(),
+                        format!("Requirement '{}' is missing requirement text", req.name),
+                    )
+                    .at_line(req.line),
+                );
+            } else if !SHALL_OR_MUST_RE.is_match(&req.text) {
+                issues.push(
+                    Issue::warning(
+                        path.clone(),
                         format!(
-                            "Requirement '{}' must state a normative SHALL or MUST",
+                            "Requirement '{}' should state a normative SHALL or MUST",
                             req.name
                         ),
-                    ));
-                }
-                if !req.has_scenario {
-                    issues.push(Issue::error(
-                        spec_rel_path(cap),
+                    )
+                    .at_line(req.line),
+                );
+            }
+            if req.scenarios.is_empty() {
+                issues.push(
+                    Issue::error(
+                        path.clone(),
                         format!(
-                            "Requirement '{}' must have at least one `#### Scenario:` block",
+                            "Requirement '{}' must have at least one `#### Scenario:` or other level-4 scenario block",
                             req.name
                         ),
-                    ));
+                    )
+                    .at_line(req.line),
+                );
+            }
+        }
+
+        let main_path = cfg.specs_dir().join(cap).join("spec.md");
+        if let Ok(main_content) = std::fs::read_to_string(&main_path) {
+            let current = crate::markdown::parse_main_requirements(&main_content);
+            for modified in &parsed.modified {
+                let base_name = parsed
+                    .renamed
+                    .iter()
+                    .find(|rename| normalize_name(&rename.to) == normalize_name(&modified.name))
+                    .map_or(modified.name.as_str(), |rename| rename.from.as_str());
+                let Some(base) = current.iter().find(|requirement| {
+                    normalize_name(&requirement.name) == normalize_name(base_name)
+                }) else {
+                    continue;
+                };
+                let missing = missing_scenarios(&base.scenarios, &modified.scenarios);
+                if !missing.is_empty() {
+                    issues.push(
+                        Issue::error(
+                            path.clone(),
+                            format!(
+                                "MODIFIED \"{}\" omits scenario(s) the current spec still has: {}",
+                                modified.name,
+                                missing
+                                    .iter()
+                                    .map(|scenario| format!("\"{scenario}\""))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        )
+                        .at_line(modified.line),
+                    );
                 }
             }
         }
     }
-    if total_operations == 0 {
+    issues.extend(task_numbering_issues(
+        &cfg.changes_dir().join(name).join("tasks.md"),
+    )?);
+    if total_operations == 0 && !skip_specs {
         issues.push(Issue::error(
             format!("changes/{name}"),
             "Change must contain at least one delta (an ADDED/MODIFIED/REMOVED/RENAMED \
@@ -196,9 +314,203 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 
     Ok(ChangeValidation {
         id: name.to_string(),
-        valid: issues.is_empty(),
+        item_type: "change".to_string(),
+        valid: issues_are_valid(&issues, strict),
         issues,
+        duration_ms: elapsed_ms(started),
     })
+}
+
+pub fn validate_spec(cfg: &Config, id: &str, strict: bool) -> Result<ChangeValidation> {
+    let started = std::time::Instant::now();
+    let spec = crate::spec::load(cfg, id)?;
+    let content = std::fs::read_to_string(spec.spec_md())?;
+    let mut issues = Vec::new();
+    let purpose = crate::markdown::parse_main_purpose(&content);
+    match &purpose {
+        None => issues.push(Issue::error(
+            "spec.md".to_string(),
+            "Spec must contain a non-empty ## Purpose section".to_string(),
+        )),
+        Some(purpose) if crate::markdown::is_placeholder_purpose(purpose) => {
+            issues.push(Issue::warning(
+                "spec.md".to_string(),
+                "Purpose is still a TBD/TODO placeholder".to_string(),
+            ));
+        }
+        Some(_) => {}
+    }
+    let requirements = crate::markdown::parse_main_requirements(&content);
+    if requirements.is_empty() {
+        issues.push(Issue::error(
+            "spec.md".to_string(),
+            "Spec must contain at least one requirement under ## Requirements".to_string(),
+        ));
+    }
+    for requirement in requirements {
+        if requirement.text.is_empty() {
+            issues.push(
+                Issue::error(
+                    "spec.md".to_string(),
+                    format!(
+                        "Requirement '{}' is missing requirement text",
+                        requirement.name
+                    ),
+                )
+                .at_line(requirement.line),
+            );
+        } else if !SHALL_OR_MUST_RE.is_match(&requirement.text) {
+            issues.push(
+                Issue::warning(
+                    "spec.md".to_string(),
+                    format!(
+                        "Requirement '{}' should state a normative SHALL or MUST",
+                        requirement.name
+                    ),
+                )
+                .at_line(requirement.line),
+            );
+        }
+        if requirement.scenarios.is_empty() {
+            issues.push(
+                Issue::error(
+                    "spec.md".to_string(),
+                    format!("Requirement '{}' must include a scenario", requirement.name),
+                )
+                .at_line(requirement.line),
+            );
+        }
+    }
+    Ok(ChangeValidation {
+        id: id.to_string(),
+        item_type: "spec".to_string(),
+        valid: issues_are_valid(&issues, strict),
+        issues,
+        duration_ms: elapsed_ms(started),
+    })
+}
+
+pub fn validate_archived(cfg: &Config) -> Result<ValidateReport> {
+    let archive_dir = cfg.changes_dir().join("archive");
+    let entries = match std::fs::read_dir(&archive_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(report_from_items(cfg, Vec::new()));
+        }
+        Err(error) => {
+            return Err(error).with_context(|| format!("reading {}", archive_dir.display()));
+        }
+    };
+    let mut dirs = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    dirs.sort();
+    let mut items = Vec::new();
+    for dir in dirs {
+        let started = std::time::Instant::now();
+        if !dir.is_dir() {
+            continue;
+        }
+
+        let id = dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let tasks = read_optional(&dir.join("tasks.md"))?
+            .map(|content| crate::tasks::parse(&content))
+            .unwrap_or_default();
+        let incomplete = tasks.iter().filter(|task| !task.done).count();
+        let issues = if incomplete == 0 {
+            Vec::new()
+        } else {
+            vec![Issue::error(
+                "tasks.md".to_string(),
+                format!("{incomplete} incomplete archived task(s)"),
+            )]
+        };
+        items.push(ChangeValidation {
+            id,
+            item_type: "change".to_string(),
+            valid: issues.is_empty(),
+            issues,
+            duration_ms: elapsed_ms(started),
+        });
+    }
+    Ok(report_from_items(cfg, items))
+}
+fn elapsed_ms(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn task_numbering_issues(path: &std::path::Path) -> Result<Vec<Issue>> {
+    let Some(content) = read_optional(path)? else {
+        return Ok(Vec::new());
+    };
+    let mut issues = Vec::new();
+    let mut current_group: Option<String> = None;
+    let mut first_by_id = std::collections::HashMap::new();
+    for (index, line) in content.lines().enumerate() {
+        if LEVEL_TWO_HEADING_RE.is_match(line) {
+            current_group = TASK_GROUP_RE
+                .captures(line)
+                .map(|captures| captures[1].trim_start_matches('0').to_string());
+        }
+        let Some(captures) = TASK_ID_RE.captures(line) else {
+            continue;
+        };
+        let id = captures[1].to_string();
+        let line_number = index + 1;
+        if let Some(group) = &current_group {
+            let task_group = id
+                .split('.')
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches('0');
+            if task_group != group {
+                issues.push(
+                    Issue::warning(
+                        "tasks.md".to_string(),
+                        format!("Task \"{id}\" is under group {group}, but points to group {task_group}"),
+                    )
+                    .at_line(line_number),
+                );
+            }
+        }
+        if let Some(first) = first_by_id.insert(id.clone(), line_number) {
+            issues.push(
+                Issue::warning(
+                    "tasks.md".to_string(),
+                    format!("Task ID \"{id}\" is duplicated; first declared on line {first}"),
+                )
+                .at_line(line_number),
+            );
+        }
+    }
+    Ok(issues)
+}
+
+fn issues_are_valid(issues: &[Issue], strict: bool) -> bool {
+    !issues
+        .iter()
+        .any(|issue| issue.level == "ERROR" || (strict && issue.level == "WARNING"))
+}
+
+fn normalize_name(name: &str) -> String {
+    name.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn missing_scenarios(current: &[String], modified: &[String]) -> Vec<String> {
+    let mut remaining = modified.to_vec();
+    let mut missing = Vec::new();
+    for scenario in current {
+        if let Some(index) = remaining.iter().position(|candidate| candidate == scenario) {
+            remaining.remove(index);
+        } else {
+            missing.push(scenario.clone());
+        }
+    }
+    missing
 }
 
 /// Human-readable relative path to a capability's delta spec, used in issue
@@ -208,170 +520,6 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 /// directory) with a hard error upstream rather than yielding an empty id here.
 fn spec_rel_path(cap: &str) -> String {
     format!("specs/{cap}/spec.md")
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Section {
-    Added,
-    Modified,
-    Removed,
-    Renamed,
-    Other,
-}
-
-/// A requirement that carries a body (ADDED or MODIFIED), with the two
-/// content-quality signals pre-computed from that body.
-struct BodyRequirement {
-    name: String,
-    has_shall_or_must: bool,
-    has_scenario: bool,
-}
-
-struct DeltaParse {
-    /// Total delta operations: ADDED/MODIFIED/REMOVED requirement headers plus
-    /// RENAMED `TO:` entries. Drives the "at least one delta" structural rule.
-    operations: usize,
-    body_reqs: Vec<BodyRequirement>,
-}
-
-/// A requirement block being accumulated line-by-line until its terminator
-/// (the next `### Requirement:` or `## ` header). `has_scenario` is tracked
-/// during the scan (not derived from `body` afterwards) so it can be made
-/// fenced-code-block aware — a `#### Scenario:` line inside a ``` fence is code,
-/// not a real scenario heading.
-struct PendingReq {
-    name: String,
-    body: String,
-    has_scenario: bool,
-}
-
-impl PendingReq {
-    fn finish(self) -> BodyRequirement {
-        BodyRequirement {
-            // The normative keyword must appear in the requirement's *first*
-            // text block (issue #80), not merely somewhere in the body — a
-            // SHALL sitting after a `> **Goal**:` blockquote or only inside a
-            // scenario does not count, matching OSS's first-block extraction.
-            has_shall_or_must: extract_requirement_text(&self.body)
-                .is_some_and(|text| SHALL_OR_MUST_RE.is_match(text)),
-            has_scenario: self.has_scenario,
-            name: self.name,
-        }
-    }
-}
-
-/// Whether `line` opens or closes a fenced code block (```` ``` ```` or `~~~`,
-/// possibly indented under a list item). Used to suppress markdown-structure
-/// matching inside code fences.
-fn is_code_fence(line: &str) -> bool {
-    let t = line.trim_start();
-    t.starts_with("```") || t.starts_with("~~~")
-}
-
-/// Classify a `## ` header line into a delta section, or `None` if it isn't a
-/// level-2 header at all. Trailing whitespace is tolerated (matching archive's
-/// `^## ADDED Requirements\s*$` regex); the header must start at column 0, as
-/// all archive/OpenSpec structural headers do — a leading-indented `## ` is
-/// treated as body, not a section boundary. An unrecognized `## ` header is
-/// `Section::Other`, which ends any requirement block without counting.
-fn parse_section_header(line: &str) -> Option<Section> {
-    let trimmed = line.trim_end();
-    if !trimmed.starts_with("## ") {
-        return None;
-    }
-    Some(match trimmed {
-        "## ADDED Requirements" => Section::Added,
-        "## MODIFIED Requirements" => Section::Modified,
-        "## REMOVED Requirements" => Section::Removed,
-        "## RENAMED Requirements" => Section::Renamed,
-        _ => Section::Other,
-    })
-}
-
-fn parse_delta(content: &str) -> DeltaParse {
-    let mut operations = 0usize;
-    let mut body_reqs = Vec::new();
-    let mut section = Section::Other;
-    let mut pending: Option<PendingReq> = None;
-    let mut in_fence = false;
-
-    for line in content.lines() {
-        // Fenced code inside a requirement body must not be parsed as markdown
-        // structure: a `## foo` bash comment or a `#### Scenario:` in an example
-        // is code, not a heading. The fence delimiter and its contents are still
-        // accumulated into `body`, just never classified.
-        if is_code_fence(line) {
-            in_fence = !in_fence;
-            if let Some(req) = pending.as_mut() {
-                req.body.push_str(line);
-                req.body.push('\n');
-            }
-            continue;
-        }
-
-        if !in_fence {
-            if let Some(sec) = parse_section_header(line) {
-                if let Some(req) = pending.take() {
-                    body_reqs.push(req.finish());
-                }
-                section = sec;
-                continue;
-            }
-
-            // Structural headers are matched at column 0 (like archive.rs's
-            // `^### Requirement:` / `^#### ...` anchored regexes and the
-            // OpenSpec convention). Only list bullets under RENAMED are
-            // trim_start'd, since those are legitimately indented list items.
-            if let Some(rest) = line.strip_prefix("### Requirement:") {
-                if let Some(req) = pending.take() {
-                    body_reqs.push(req.finish());
-                }
-                match section {
-                    Section::Added | Section::Modified | Section::Removed => operations += 1,
-                    Section::Renamed | Section::Other => {}
-                }
-                if matches!(section, Section::Added | Section::Modified) {
-                    pending = Some(PendingReq {
-                        name: rest.trim().to_string(),
-                        body: String::new(),
-                        has_scenario: false,
-                    });
-                }
-                continue;
-            }
-
-            if section == Section::Renamed {
-                let bullet = line.trim_start();
-                if let Some(rest) = bullet
-                    .strip_prefix('-')
-                    .or_else(|| bullet.strip_prefix('*'))
-                {
-                    if rest.trim_start().starts_with("TO:") {
-                        operations += 1;
-                    }
-                }
-            }
-
-            if line.starts_with("#### Scenario:") {
-                if let Some(req) = pending.as_mut() {
-                    req.has_scenario = true;
-                }
-            }
-        }
-
-        if let Some(req) = pending.as_mut() {
-            req.body.push_str(line);
-            req.body.push('\n');
-        }
-    }
-
-    if let Some(req) = pending.take() {
-        body_reqs.push(req.finish());
-    }
-    DeltaParse {
-        operations,
-        body_reqs,
-    }
 }
 
 #[cfg(test)]
@@ -386,165 +534,6 @@ mod tests {
         #### Scenario: Valid credentials\n\n\
         - **WHEN** a user submits valid credentials\n\
         - **THEN** they are logged in\n";
-
-    #[test]
-    fn parse_delta_counts_added_modified_removed_and_renamed_operations() {
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: A\n\nThe system MUST do a.\n\n#### Scenario: s\n\n- **WHEN** x\n\n\
-            ## MODIFIED Requirements\n\n\
-            ### Requirement: B\n\nThe system SHALL do b.\n\n#### Scenario: s\n\n- **WHEN** y\n\n\
-            ## REMOVED Requirements\n\n\
-            ### Requirement: C\n\nDeprecated.\n\n\
-            ## RENAMED Requirements\n\n\
-            - FROM: `### Requirement: D`\n- TO: `### Requirement: E`\n";
-        let parsed = parse_delta(delta);
-        // A (added) + B (modified) + C (removed) + one rename TO = 4.
-        assert_eq!(parsed.operations, 4);
-        // Only ADDED/MODIFIED carry bodies to quality-check.
-        assert_eq!(parsed.body_reqs.len(), 2);
-    }
-
-    #[test]
-    fn parse_delta_ignores_requirement_headers_outside_delta_sections() {
-        // A `### Requirement:` under a non-delta `## ` section (or with no
-        // section at all) is not a delta operation.
-        let delta = "## Some Prose Section\n\n### Requirement: Stray\n\nThe system SHALL x.\n";
-        let parsed = parse_delta(delta);
-        assert_eq!(parsed.operations, 0);
-        assert!(parsed.body_reqs.is_empty());
-    }
-
-    #[test]
-    fn parse_delta_flags_missing_shall_and_missing_scenario() {
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: NoNormative\n\nThe system does a thing.\n";
-        let parsed = parse_delta(delta);
-        assert_eq!(parsed.body_reqs.len(), 1);
-        assert!(!parsed.body_reqs[0].has_shall_or_must);
-        assert!(!parsed.body_reqs[0].has_scenario);
-    }
-
-    #[test]
-    fn parse_delta_ignores_markdown_structure_inside_a_fenced_code_block() {
-        // Regression (mob review): a `## ` bash comment and a `#### Scenario:`
-        // line inside a fenced code block are code, not markdown structure. The
-        // requirement's real scenario (after the fence) must still be detected,
-        // and the in-fence `## Run migrations` must NOT flush the requirement.
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: Deploy\n\n\
-            The system SHALL run migrations on deploy.\n\n\
-            ```bash\n\
-            ## Run migrations\n\
-            #### Scenario: not-a-real-heading\n\
-            ./migrate.sh\n\
-            ```\n\n\
-            #### Scenario: Migrations run\n\n\
-            - **WHEN** deploy starts\n\
-            - **THEN** migrations run\n";
-        let parsed = parse_delta(delta);
-        assert_eq!(
-            parsed.operations, 1,
-            "the fenced `## ` must not split the delta"
-        );
-        assert_eq!(parsed.body_reqs.len(), 1);
-        assert!(
-            parsed.body_reqs[0].has_scenario,
-            "the real post-fence scenario must be detected"
-        );
-        assert!(parsed.body_reqs[0].has_shall_or_must);
-    }
-
-    #[test]
-    fn parse_delta_matches_structural_headers_at_column_zero_only() {
-        // Structural headers are matched at column 0, consistent with
-        // archive.rs's anchored `^### Requirement:` regex and the OpenSpec
-        // convention -- an indented `### Requirement:` is body text (e.g. an
-        // example inside a scenario), not a new requirement.
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: Real\n\n\
-            The system MUST work.\n\n\
-            #### Scenario: Real scenario\n\n\
-            - **WHEN** x\n\
-            - **THEN** y, e.g.\n    \
-            ### Requirement: Not A Real One\n";
-        let parsed = parse_delta(delta);
-        assert_eq!(
-            parsed.operations, 1,
-            "the indented `### Requirement:` must not count as a second delta"
-        );
-        assert_eq!(parsed.body_reqs.len(), 1);
-        assert!(parsed.body_reqs[0].has_scenario);
-        assert!(parsed.body_reqs[0].has_shall_or_must);
-    }
-
-    #[test]
-    fn parse_delta_shall_is_word_boundaried_and_case_sensitive() {
-        // "MARSHALL" contains the substring "SHALL" but is not the keyword, and
-        // a lowercase "shall" is prose, not a normative clause.
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: R\n\nThe MARSHALL shall maybe do it.\n\n#### Scenario: s\n\n- **WHEN** x\n";
-        let parsed = parse_delta(delta);
-        assert!(!parsed.body_reqs[0].has_shall_or_must);
-        assert!(parsed.body_reqs[0].has_scenario);
-    }
-
-    #[test]
-    fn parse_delta_shall_reads_only_the_first_text_block() {
-        // Issue #80 (OSS parity): the normative check reads only the first text
-        // block after the heading. A requirement whose first block is a `>
-        // **Goal**:` user-story blockquote, with the SHALL sentence placed
-        // *after* it, has no normative content where the parser looks -> FAIL.
-        // The same prose with the SHALL first PASSES. The two differ only in the
-        // order of the Goal blockquote and the normative paragraph.
-        let bad = "## ADDED Requirements\n\n\
-            ### Requirement: Goal First\n\n\
-            > **Goal**: As an author, I want a user story first.\n\n\
-            The system SHALL do the thing.\n\n\
-            #### Scenario: s\n\n- **WHEN** x\n";
-        let good = "## ADDED Requirements\n\n\
-            ### Requirement: Normative First\n\n\
-            The system SHALL do the thing.\n\n\
-            > **Goal**: As an author, I want a user story after.\n\n\
-            #### Scenario: s\n\n- **WHEN** x\n";
-        assert!(
-            !parse_delta(bad).body_reqs[0].has_shall_or_must,
-            "a Goal blockquote first block hides a SHALL in a later block"
-        );
-        assert!(
-            parse_delta(good).body_reqs[0].has_shall_or_must,
-            "a normative-first requirement must be recognized"
-        );
-    }
-
-    #[test]
-    fn parse_delta_shall_extraction_skips_metadata_key_lines() {
-        // OSS `extractRequirementText` skips `**Key**: value` metadata lines
-        // when locating the first text block, so a normative sentence placed
-        // after a `**Priority**:` line is still seen. (A `> **Goal**:`
-        // blockquote is NOT skipped -- the leading `>` means it is not a
-        // `**Key**:` line -- which is exactly the discrimination above.)
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: With Metadata\n\n\
-            **Priority**: high\n\n\
-            The system MUST do it.\n\n\
-            #### Scenario: s\n\n- **WHEN** x\n";
-        assert!(parse_delta(delta).body_reqs[0].has_shall_or_must);
-    }
-
-    #[test]
-    fn parse_delta_shall_only_inside_a_scenario_does_not_count() {
-        // A SHALL that appears only inside a scenario block (after the first
-        // `#### Scenario:`) is not in the requirement's first text block, so the
-        // requirement is not normative -- extraction stops at the scenario
-        // header, matching OSS.
-        let delta = "## ADDED Requirements\n\n\
-            ### Requirement: Scenario Only\n\n\
-            The system does a thing.\n\n\
-            #### Scenario: s\n\n- **WHEN** x\n- **THEN** it SHALL happen\n";
-        let parsed = parse_delta(delta);
-        assert!(!parsed.body_reqs[0].has_shall_or_must);
-        assert!(parsed.body_reqs[0].has_scenario);
-    }
 
     struct TempDir(PathBuf);
 
@@ -652,7 +641,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_change_missing_scenario_errors_only_under_strict() {
+    fn validate_change_missing_scenario_is_always_an_error() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         write_delta(
@@ -662,17 +651,19 @@ mod tests {
             "## ADDED Requirements\n\n### Requirement: Login\n\nThe system SHALL log in.\n",
         );
 
-        // Structural rule satisfied (one ADDED requirement), so non-strict passes
-        // even though the requirement has no scenario.
         let lenient = validate_change(&c, "feat", false).unwrap();
-        assert!(lenient.valid, "non-strict must ignore the missing scenario");
+        assert!(!lenient.valid);
+        assert!(lenient
+            .issues
+            .iter()
+            .any(|issue| issue.message.contains("#### Scenario:")));
 
         let strict = validate_change(&c, "feat", true).unwrap();
         assert!(!strict.valid);
         assert!(strict
             .issues
             .iter()
-            .any(|i| i.message.contains("#### Scenario:")));
+            .any(|issue| issue.message.contains("#### Scenario:")));
     }
 
     #[test]
@@ -729,24 +720,45 @@ mod tests {
     }
 
     #[test]
+    fn task_numbering_warnings_fail_only_in_strict_mode() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(&c, "feat", "auth", GOOD_ADDED);
+        fs::write(
+            c.changes_dir().join("feat/tasks.md"),
+            "## 1. Group\n- [ ] 2.1 wrong group\n- [ ] 2.1 duplicate\n",
+        )
+        .unwrap();
+
+        let normal = validate_change(&c, "feat", false).unwrap();
+        assert!(normal.valid);
+        assert!(normal.issues.iter().all(|issue| issue.level == "WARNING"));
+
+        let strict = validate_change(&c, "feat", true).unwrap();
+        assert!(!strict.valid);
+        assert!(strict
+            .issues
+            .iter()
+            .any(|issue| issue.message.contains("duplicated") && issue.line == Some(3)));
+    }
+
+    #[test]
     fn report_json_shape_matches_the_downstream_gate_contract() {
-        let report = ValidateReport {
-            items: vec![ChangeValidation {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let report = report_from_items(
+            &c,
+            vec![ChangeValidation {
                 id: "feat".to_string(),
+                item_type: "change".to_string(),
                 valid: false,
                 issues: vec![Issue::error(
                     "specs/auth/spec.md".to_string(),
                     "boom".to_string(),
                 )],
+                duration_ms: 0,
             }],
-            summary: Summary {
-                totals: Totals {
-                    passed: 0,
-                    failed: 1,
-                    total: 1,
-                },
-            },
-        };
+        );
         let value = serde_json::to_value(&report).unwrap();
         assert_eq!(value["items"][0]["id"], "feat");
         assert_eq!(value["items"][0]["valid"], false);
