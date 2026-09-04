@@ -1,26 +1,13 @@
-//! `spectra validate` — OpenSpec change validation gate.
+//! `spectra validate` — OpenSpec 1.12-compatible validation gate.
 //!
-//! Unlike `drift`/`archive`, this command is **not** reverse-engineered from
-//! the closed-source macOS Spectra binary: Spectra is macOS-only and its
-//! `validate` surface can't be probed from Linux CI, so there is no oracle to
-//! calibrate against. Instead it matches the documented `@fission-ai/openspec`
-//! (OSS 1.5.0) `validate` contract — deliberately *without* OSS's
-//! nested-capability blind spot, so `specs/<Epic>/<Feature>/spec.md` layouts
-//! validate correctly instead of being reported as "no deltas found". See
-//! `docs/reverse-engineering/validate.md` for the rule set and rationale.
+//! Unlike `drift`, this command is not reverse-engineered from the closed
+//! Spectra binary. OpenSpec 1.12 is the format authority; the JSON report grows
+//! additively so existing consumers of `summary.totals.failed` remain valid.
 //!
-//! Validation rules:
-//!  - Structural (always an ERROR): a change must contain at least one
-//!    requirement delta — an `### Requirement:` under an `## ADDED`/`##
-//!    MODIFIED`/`## REMOVED` section, or a `- TO:` entry under `## RENAMED`,
-//!    in any `specs/**/spec.md` beneath the change.
-//!  - Content quality (an ERROR only under `--strict`): each ADDED/MODIFIED
-//!    requirement must state a normative `SHALL`/`MUST` **in its first text
-//!    block** (issue #80 — see `extract_requirement_text`) and carry at least
-//!    one `#### Scenario:` block. Without `--strict` these are not reported, so
-//!    a non-strict run gates purely on structure. (OSS fires the SHALL/MUST
-//!    finding unconditionally, not just under `--strict`; the strict gating
-//!    here is OpenSpectra's own choice — see `validate.md` "Known divergences".)
+//! Validation and archive share the same BOM/line-ending/fence-aware Markdown
+//! parser. Changes and canonical specs may be validated directly or in bulk;
+//! archived validation checks incomplete tasks. Errors always fail, warnings
+//! fail only under `--strict`, and informational findings never fail.
 
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;

@@ -47,28 +47,20 @@ pub struct ArchiveOutcome {
 /// mark all pending tasks done, stamp `.openspec.yaml` with
 /// `archived_by`/`archived_at`, and (unless `skip_specs`) apply each
 /// capability's spec delta. Clears the change's `.spectra/` sidecar state
-/// (parked/baseline/touched-file markers) on success -- best-effort: if
-/// that cleanup itself fails (e.g. a permission error), it's reported as a
-/// warning rather than failing the whole archive, since the move and spec
-/// application have already succeeded by that point.
+/// (parked/baseline/touched-file markers) on success; cleanup failure warns
+/// because the archive transaction has already committed.
 ///
 /// Errors with "Change '<name>' not found." when `name` doesn't name an
 /// existing active change — matching the reference CLI, which reports the
-/// same message whether the name never existed or was already archived
-/// (archived changes live under `changes/archive/`, outside the active
-/// namespace `try_load` searches).
+/// same message whether the name never existed or was already archived.
 ///
-/// Unless `skip_specs`, every capability's spec delta is validated
-/// *before* the change directory is moved or anything else is written, so a
-/// validation failure leaves the change exactly as it was — still active,
-/// not stuck half-archived with the directory already moved but its specs
-/// never applied. `--mark-tasks-complete` similarly runs *after* the
-/// directory move (operating on the now-archived `tasks.md`), not before —
-/// if the move itself fails (e.g. a same-day archive-name collision), the
-/// still-active change is left completely untouched rather than carrying
-/// prematurely-flipped checkboxes. Any failure *after* the move still
-/// leaves the change moved but incomplete; the resulting error names the
-/// new location so it isn't a mystery where the change went.
+/// Archive deliberately diverges from the oracle's move-first ordering.
+/// Before the first canonical-spec write it parses and prepares every delta,
+/// snapshots each target, and claims the archive destination. It writes specs,
+/// moves the change, then updates archived tasks/metadata. Any failure rolls
+/// back targets that still match the transaction's expected output and restores
+/// the active change; concurrent edits are never overwritten. Durable
+/// snapshot/unarchive support remains a separate limitation.
 pub fn archive(
     cfg: &Config,
     name: &str,

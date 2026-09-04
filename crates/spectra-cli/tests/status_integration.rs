@@ -112,7 +112,7 @@ fn status_complete_omits_missing_deps_and_prints_completion_line() {
 }
 
 #[test]
-fn status_json_and_human_contracts_match_the_oracle() {
+fn status_json_is_additive_and_human_output_preserves_oracle_contract() {
     let root = TempDir::new("contract");
     init_project_with_change(&root, "demo-feature");
 

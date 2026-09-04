@@ -87,16 +87,16 @@ the oracle's output. The oracle's behaviour for YAML-special identities is
 unparseable file), that would be a deliberate, recorded divergence — we keep
 the readable-back behaviour.
 
-## `spectra status [--change] [--schema] [--json]`
+## `spectra status [--change NAME | --all] [--schema NAME] [--json]`
 
-JSON (pretty, camelCase): `{changeName, schemaName, isComplete,
-applyRequires, artifacts[{id, outputPath, status, missingDeps?}]}` —
-`missingDeps` present only when `blocked`. Human output marks
-done/ready/blocked as `✓`/`○`/`✗` with `    blocked by: <deps>` under
-blocked items; when everything is done a final `  ✓ All artifacts complete`
-line is appended. Errors (exit 1): `Change '<name>' not found.` and
-`Schema not found: Schema '<s>' not found in project, user, or built-in
-locations`.
+Single-change JSON remains additive-compatible with the oracle's camelCase
+shape and now includes `isPlanningComplete` plus
+`artifacts[{id, outputPath, status, missingDeps?, requires}]`. A change declaring
+`skip_specs: true` reports the specs artifact as `skipped`; skipped artifacts
+satisfy dependency and planning-completion calculations. `status --all`
+returns every active change in one sorted `{changes, root}` envelope and keeps a
+per-change diagnostic instead of aborting the sweep. Human output marks
+done/ready/blocked/skipped as `✓`/`○`/`✗`/`~`.
 
 ## No-active-change command matrix
 
