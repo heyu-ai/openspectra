@@ -648,7 +648,11 @@ fn load_change_metadata(change_dir: &Path) -> Result<change::ChangeMetadata> {
         return Ok(change::ChangeMetadata::default());
     };
     Ok(serde_yaml::from_slice(&bytes).unwrap_or_else(|error| {
-        eprintln!("warning: ignoring unparseable {} ({error})", path.display());
+        eprintln!(
+            "warning: ignoring unparseable {} ({error}); \
+             metadata fields (skip_specs, retire_capabilities) will use defaults",
+            path.display()
+        );
         change::ChangeMetadata::default()
     }))
 }

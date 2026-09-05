@@ -661,10 +661,7 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>) -> Result<i32> {
         };
         spectra_core::validate::report_from_items(cfg, vec![validation])
     } else if change::list_active(cfg).is_empty() {
-        if as_json {
-            println!("[]");
-        }
-        return Ok(0);
+        spectra_core::validate::report_from_items(cfg, Vec::new())
     } else {
         let name = change::resolve(cfg, None)?;
         spectra_core::validate::build_report(cfg, std::slice::from_ref(&name), strict)?

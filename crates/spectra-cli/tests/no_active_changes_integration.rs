@@ -96,8 +96,11 @@ fn list_and_validate_keep_their_probed_empty_outputs() {
             &["list", "--json"],
             b"{\n  \"changes\": []\n}\n",
         ),
-        ("validate", &["validate"], b""),
-        ("validate --json", &["validate", "--json"], b"[]\n"),
+        (
+            "validate",
+            &["validate"],
+            b"\n0 passed, 0 failed (0 total).\n",
+        ),
     ];
 
     for &(label, args, expected_stdout) in cases {
@@ -106,4 +109,21 @@ fn list_and_validate_keep_their_probed_empty_outputs() {
         assert_eq!(output.stdout, expected_stdout, "{label} 的 stdout 不符預期");
         assert!(output.stderr.is_empty(), "{label} 的 stderr 應為空");
     }
+
+    let json_out = spectra()
+        .args(["validate", "--json"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert_eq!(
+        json_out.status.code(),
+        Some(0),
+        "validate --json 應結束於狀態碼 0"
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&json_out.stdout).expect("validate --json 應回傳合法 JSON");
+    assert_eq!(report["version"], "2.0");
+    assert_eq!(report["items"], serde_json::json!([]));
+    assert_eq!(report["summary"]["totals"]["passed"], 0);
+    assert_eq!(report["summary"]["totals"]["failed"], 0);
 }
