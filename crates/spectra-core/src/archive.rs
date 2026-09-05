@@ -792,8 +792,14 @@ fn can_retire_spec(content: &str) -> bool {
         Purpose,
         Requirements,
     }
+    let normalized = crate::markdown::normalize_markdown(content);
+    let lines: Vec<&str> = normalized.lines().collect();
+    let mask = crate::markdown::fenced_line_mask(&lines);
     let mut section = Section::Outside;
-    for line in crate::markdown::normalize_markdown(content).lines() {
+    for (index, line) in lines.iter().enumerate() {
+        if mask[index] {
+            continue;
+        }
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -1334,7 +1340,9 @@ fn append_added_requirements(
     if blocks.is_empty() {
         return;
     }
-    let mut code_files: Vec<String> = touched::already_recorded(cfg, source).into_iter().collect();
+    let mut code_files: Vec<String> = touched::already_recorded_readonly(cfg, source)
+        .into_iter()
+        .collect();
     code_files.sort();
     let code_yaml = if code_files.is_empty() {
         "code: []".to_string()
@@ -2790,10 +2798,10 @@ mod tests {
     }
 
     #[test]
-    fn merge_validation_is_side_effect_free_on_the_touched_sidecar() {
-        // Compatibility validation runs `merge_spec_delta` in `dry_run` mode,
-        // which inserts raw ADDED blocks without loading the touched sidecar.
-        // Reading a corrupt sidecar would rename it aside and mutate state.
+    fn merge_is_side_effect_free_on_the_touched_sidecar_in_both_modes() {
+        // Both validation (dry_run) and application use a read-only touched
+        // loader so a corrupt sidecar is never renamed aside during a
+        // transaction that may roll back.
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
@@ -2803,20 +2811,16 @@ mod tests {
         let today = chrono::Local::now().date_naive();
         let added_delta = "## ADDED Requirements\n\n### Requirement: New\n\ntext\n";
 
-        // dry_run (validation): no append, so the corrupt sidecar is untouched.
         merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, true, false).unwrap();
         assert!(
             touched.is_file() && !corrupt_backup.exists(),
             "validation must not read or rename the touched sidecar"
         );
 
-        // application (dry_run = false) is where the sidecar is read, so a
-        // corrupt one is renamed aside there -- confirming the load lives only
-        // in the apply path, not validation.
         merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, false, false).unwrap();
         assert!(
-            corrupt_backup.is_file(),
-            "application should have read and backed up the corrupt sidecar"
+            touched.is_file() && !corrupt_backup.exists(),
+            "application must not rename the touched sidecar either"
         );
     }
 

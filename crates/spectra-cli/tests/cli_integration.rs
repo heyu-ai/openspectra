@@ -1388,6 +1388,79 @@ fn show_diff_isolates_modified_requirement_lines() {
 }
 
 #[test]
+fn show_diff_reports_removed_requirements() {
+    let tmp = TempDir::new("show-diff-removed");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Legacy\nThe system SHALL use legacy auth.\n\n\
+         #### Scenario: Legacy\n- **WHEN** legacy\n- **THEN** it works\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## REMOVED Requirements\n\n### Requirement: Legacy\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["show", "feat", "--diff", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let entry = &report["diff"][0];
+    assert_eq!(entry["operation"], "REMOVED");
+    assert!(entry["diff"]
+        .as_str()
+        .unwrap()
+        .contains("-### Requirement: Legacy"));
+}
+
+#[test]
+fn show_diff_reports_renamed_requirements() {
+    let tmp = TempDir::new("show-diff-renamed");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: OldName\nThe system SHALL do something.\n\n\
+         #### Scenario: Basic\n- **WHEN** requested\n- **THEN** it works\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## RENAMED Requirements\n\
+         - FROM: `### Requirement: OldName`\n\
+         - TO: `### Requirement: NewName`\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["show", "feat", "--diff", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let entry = &report["diff"][0];
+    assert_eq!(entry["operation"], "RENAMED");
+    let diff = entry["diff"].as_str().unwrap();
+    assert!(diff.contains("-### Requirement: OldName"));
+    assert!(diff.contains("+### Requirement: NewName"));
+}
+
+#[test]
 fn validate_rejects_a_modified_requirement_missing_from_the_canonical_spec() {
     let tmp = TempDir::new("validate-missing-modified");
     init_project_with_change(&tmp, "feat");

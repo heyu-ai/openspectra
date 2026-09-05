@@ -31,17 +31,6 @@ pub fn change_diff(cfg: &Config, change: &str) -> Result<Vec<DiffEntry>> {
             }
         };
         let current = crate::markdown::parse_main_requirements(&main);
-        let rename_map: std::collections::HashMap<_, _> = delta
-            .renamed
-            .iter()
-            .map(|rename| {
-                (
-                    crate::markdown::normalize_name(&rename.to),
-                    crate::markdown::normalize_name(&rename.from),
-                )
-            })
-            .collect();
-
         for requirement in delta.added {
             entries.push(DiffEntry {
                 capability: capability.clone(),
@@ -57,11 +46,10 @@ pub fn change_diff(cfg: &Config, change: &str) -> Result<Vec<DiffEntry>> {
             });
         }
         for requirement in delta.modified {
-            let requested = crate::markdown::normalize_name(&requirement.name);
-            let base_name = rename_map.get(&requested).unwrap_or(&requested);
+            let base_name = original_requirement_name(&requirement.name, &delta.renamed);
             let base = current
                 .iter()
-                .find(|candidate| crate::markdown::normalize_name(&candidate.name) == *base_name);
+                .find(|candidate| crate::markdown::normalize_name(&candidate.name) == base_name);
             entries.push(DiffEntry {
                 capability: capability.clone(),
                 operation: "MODIFIED".to_string(),
@@ -111,6 +99,21 @@ pub fn change_diff(cfg: &Config, change: &str) -> Result<Vec<DiffEntry>> {
         }
     }
     Ok(entries)
+}
+
+fn original_requirement_name(target: &str, renames: &[crate::markdown::Rename]) -> String {
+    let mut current = crate::markdown::normalize_name(target);
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(current.clone()) {
+        let Some(rename) = renames
+            .iter()
+            .find(|rename| crate::markdown::normalize_name(&rename.to) == current)
+        else {
+            break;
+        };
+        current = crate::markdown::normalize_name(&rename.from);
+    }
+    current
 }
 
 fn line_diff(before: &str, after: &str) -> String {

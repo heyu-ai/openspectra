@@ -418,7 +418,9 @@ pub fn validate_archived(cfg: &Config) -> Result<ValidateReport> {
     let mut items = Vec::new();
     for dir in dirs {
         let started = std::time::Instant::now();
-        if !dir.is_dir() {
+        let metadata = std::fs::symlink_metadata(&dir)
+            .with_context(|| format!("checking {}", dir.display()))?;
+        if !metadata.file_type().is_dir() {
             continue;
         }
 
@@ -818,5 +820,105 @@ mod tests {
         assert_eq!(value["items"][0]["issues"][0]["path"], "specs/auth/spec.md");
         assert_eq!(value["items"][0]["issues"][0]["message"], "boom");
         assert_eq!(value["summary"]["totals"]["failed"], 1);
+    }
+
+    fn write_canonical_spec(cfg: &Config, capability: &str, content: &str) {
+        let dir = cfg.specs_dir().join(capability);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("spec.md"), content).unwrap();
+    }
+
+    #[test]
+    fn validate_spec_passes_a_well_formed_spec() {
+        let tmp = TempDir::new();
+        let cfg = cfg(&tmp);
+        fs::create_dir_all(cfg.specs_dir()).unwrap();
+        write_canonical_spec(
+            &cfg,
+            "auth",
+            "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n\
+             ## Requirements\n\n### Requirement: Login\n\
+             The system SHALL authenticate users.\n\n\
+             #### Scenario: Valid\n- **WHEN** valid\n- **THEN** ok\n",
+        );
+        let result = validate_spec(&cfg, "auth", false).unwrap();
+        assert!(result.valid, "a well-formed spec must be valid: {result:?}");
+        assert!(result.issues.is_empty(), "no issues expected: {result:?}");
+    }
+
+    #[test]
+    fn validate_spec_rejects_missing_purpose() {
+        let tmp = TempDir::new();
+        let cfg = cfg(&tmp);
+        fs::create_dir_all(cfg.specs_dir()).unwrap();
+        write_canonical_spec(
+            &cfg,
+            "auth",
+            "# auth Specification\n\n## Requirements\n\n### Requirement: Login\n\
+             The system SHALL authenticate users.\n\n\
+             #### Scenario: Valid\n- **WHEN** valid\n- **THEN** ok\n",
+        );
+        let result = validate_spec(&cfg, "auth", false).unwrap();
+        assert!(!result.valid, "missing Purpose must fail: {result:?}");
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("Purpose")),
+            "must report missing Purpose: {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_spec_rejects_empty_requirements() {
+        let tmp = TempDir::new();
+        let cfg = cfg(&tmp);
+        fs::create_dir_all(cfg.specs_dir()).unwrap();
+        write_canonical_spec(
+            &cfg,
+            "auth",
+            "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n",
+        );
+        let result = validate_spec(&cfg, "auth", false).unwrap();
+        assert!(!result.valid, "empty requirements must fail: {result:?}");
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("at least one requirement")),
+            "must report empty requirements: {result:?}"
+        );
+    }
+
+    #[test]
+    fn validate_spec_placeholder_purpose_is_warning_not_error() {
+        let tmp = TempDir::new();
+        let cfg = cfg(&tmp);
+        fs::create_dir_all(cfg.specs_dir()).unwrap();
+        write_canonical_spec(
+            &cfg,
+            "auth",
+            "# auth Specification\n\n## Purpose\n\nTBD\n\n\
+             ## Requirements\n\n### Requirement: Login\n\
+             The system SHALL authenticate users.\n\n\
+             #### Scenario: Valid\n- **WHEN** valid\n- **THEN** ok\n",
+        );
+        let result = validate_spec(&cfg, "auth", false).unwrap();
+        assert!(
+            result.valid,
+            "placeholder purpose is WARNING, not ERROR in non-strict: {result:?}"
+        );
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|issue| issue.message.contains("placeholder")),
+            "must warn about placeholder: {result:?}"
+        );
+        let strict_result = validate_spec(&cfg, "auth", true).unwrap();
+        assert!(
+            !strict_result.valid,
+            "placeholder purpose must fail in strict: {strict_result:?}"
+        );
     }
 }

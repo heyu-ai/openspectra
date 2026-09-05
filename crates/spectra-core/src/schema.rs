@@ -1681,8 +1681,22 @@ where
 }
 
 pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
-    let text = std::fs::read_to_string(cfg.root.join(&cfg.spec_dir).join("config.yaml")).ok()?;
-    serde_yaml::from_str(&text).ok()
+    let path = cfg.root.join(&cfg.spec_dir).join("config.yaml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            eprintln!("warning: ignoring unreadable {}: {error}", path.display());
+            return None;
+        }
+    };
+    match serde_yaml::from_str(&text) {
+        Ok(config) => Some(config),
+        Err(error) => {
+            eprintln!("warning: ignoring unparseable {}: {error}", path.display());
+            None
+        }
+    }
 }
 
 /// The `schema:` selector in `<spec_dir>/config.yaml` — the *project-level*
@@ -1691,9 +1705,8 @@ pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
 /// `None` when the file is absent, has no `schema` key, or its value is blank
 /// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
 /// workflow and exits 0, unlike the change-level key — see
-/// [`resolve_schema`]). A read or parse failure is also `None`: an unreadable
-/// selector must not be louder than a missing one, since the built-in schema is
-/// the default either way.
+/// [`resolve_schema`]). A read or parse failure is also `None` (with an
+/// `eprintln` warning), since the built-in schema is the default either way.
 ///
 /// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
 /// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
