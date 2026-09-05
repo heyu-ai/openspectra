@@ -111,6 +111,28 @@ pub fn already_recorded(cfg: &Config, name: &str) -> HashSet<String> {
         .collect()
 }
 
+/// Read-only variant of [`already_recorded`] that never renames or mutates
+/// the tracking file. Safe to call during a transaction that may roll back.
+pub fn already_recorded_readonly(cfg: &Config, name: &str) -> HashSet<String> {
+    load_readonly(cfg, name)
+        .touched
+        .into_iter()
+        .flat_map(|e| e.files)
+        .collect()
+}
+
+fn load_readonly(cfg: &Config, name: &str) -> TouchedTracking {
+    let path = touched_path(cfg, name);
+    let empty = || TouchedTracking {
+        change: name.to_string(),
+        touched: Vec::new(),
+    };
+    match std::fs::read_to_string(&path) {
+        Err(_) => empty(),
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| empty()),
+    }
+}
+
 fn persist(cfg: &Config, name: &str, tracking: &TouchedTracking) -> Result<()> {
     let path = touched_path(cfg, name);
     let parent = path.parent().expect("touched path always has a parent");

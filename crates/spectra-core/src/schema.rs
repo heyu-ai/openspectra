@@ -1,6 +1,11 @@
 //! Built-in workflow schema definitions and artifact status derivation.
 
 use anyhow::Context;
+use regex::Regex;
+use std::sync::LazyLock;
+
+static SCHEMA_NAME_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$").unwrap());
 
 #[derive(Debug, Clone, Copy)]
 pub struct ArtifactDefinition {
@@ -417,54 +422,109 @@ pub struct SchemaListing {
     pub source: String,
 }
 
-/// `spectra schemas` 所列出的 schema。沒有專案設定時，僅回傳內建 schema。
-pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
-    let mut listings = vec![SchemaListing {
-        artifacts: SCHEMA_ARTIFACT_ORDER
-            .iter()
-            .map(|artifact| (*artifact).to_string())
-            .collect(),
-        description: Some(SCHEMA_DESCRIPTION.to_string()),
-        name: SCHEMA_NAME.to_string(),
-        source: SCHEMA_SOURCE.to_string(),
-    }];
-
-    let Some(cfg) = cfg else {
-        return listings;
+/// Return whether `name` belongs to this module's private replacement
+/// protocol. These directories must never become user-visible schemas, even
+/// when a failed cleanup leaves one behind.
+fn is_transient_schema_dir(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix('.') else {
+        return false;
     };
-    let schemas_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
-    let Ok(entries) = std::fs::read_dir(schemas_dir) else {
-        return listings;
-    };
+    [".stage-", ".backup-"].iter().any(|marker| {
+        rest.rsplit_once(marker).is_some_and(|(target, suffix)| {
+            !target.is_empty()
+                && !suffix.is_empty()
+                && suffix
+                    .split('-')
+                    .all(|component| !component.is_empty() && component.parse::<u64>().is_ok())
+        })
+    })
+}
 
-    for entry_result in entries {
-        let Ok(entry) = entry_result else {
-            continue;
-        };
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if !file_type.is_dir() || !entry.path().join("schema.yaml").is_file() {
-            continue;
-        }
+fn schema_directory_names(dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut names = Vec::new();
+    for entry in entries.flatten() {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        let Ok(schema) = ResolvedSchema::load(&entry.path(), &name) else {
+        if is_transient_schema_dir(&name) || !entry.path().is_dir() {
             continue;
-        };
-        listings.push(SchemaListing {
-            artifacts: schema
-                .artifacts
-                .into_iter()
-                .map(|artifact| artifact.id)
-                .collect(),
-            description: None,
-            name,
-            source: SchemaSource::Project.to_string(),
-        });
+        }
+        if entry.path().join("schema.yaml").is_file() {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// Enumerate project schema directory names without parsing their contents.
+///
+/// Validation callers need malformed schemas too, so discovery is deliberately
+/// based only on the presence of `schema.yaml`.
+pub fn project_schema_names(cfg: &crate::Config) -> anyhow::Result<Vec<String>> {
+    schema_directory_names(&cfg.root.join(&cfg.spec_dir).join("schemas"))
+}
+
+/// `spectra schemas` 所列出的 schema。沒有專案設定時，僅回傳內建 schema。
+pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
+    fn from_dir(dir: &std::path::Path, source: SchemaSource) -> Vec<SchemaListing> {
+        let mut listings = Vec::new();
+        for name in schema_directory_names(dir).unwrap_or_default() {
+            let schema_dir = dir.join(&name);
+            let Ok(schema) = ResolvedSchema::load(&schema_dir, &name) else {
+                continue;
+            };
+            listings.push(SchemaListing {
+                artifacts: schema
+                    .artifacts
+                    .into_iter()
+                    .map(|artifact| artifact.id)
+                    .collect(),
+                description: None,
+                name,
+                source: source.to_string(),
+            });
+        }
+        listings
     }
 
+    let mut listings = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    if let Some(cfg) = cfg {
+        for listing in from_dir(
+            &cfg.root.join(&cfg.spec_dir).join("schemas"),
+            SchemaSource::Project,
+        ) {
+            seen.insert(listing.name.clone());
+            listings.push(listing);
+        }
+    }
+    if let Some(user_dir) = user_schemas_dir() {
+        for listing in from_dir(&user_dir, SchemaSource::User) {
+            if seen.insert(listing.name.clone()) {
+                listings.push(listing);
+            }
+        }
+    }
+    if seen.insert(SCHEMA_NAME.to_string()) {
+        listings.insert(
+            0,
+            SchemaListing {
+                artifacts: SCHEMA_ARTIFACT_ORDER
+                    .iter()
+                    .map(|artifact| (*artifact).to_string())
+                    .collect(),
+                description: Some(SCHEMA_DESCRIPTION.to_string()),
+                name: SCHEMA_NAME.to_string(),
+                source: SCHEMA_SOURCE.to_string(),
+            },
+        );
+    }
     listings
 }
 
@@ -477,6 +537,7 @@ pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
 pub enum SchemaSource {
     Package,
     Project,
+    User,
 }
 
 impl std::fmt::Display for SchemaSource {
@@ -484,6 +545,7 @@ impl std::fmt::Display for SchemaSource {
         match self {
             Self::Package => f.write_str("package"),
             Self::Project => f.write_str("project"),
+            Self::User => f.write_str("user"),
         }
     }
 }
@@ -564,6 +626,61 @@ fn reject_path_traversal(path: &str, field: &str) -> anyhow::Result<()> {
     }
     Ok(())
 }
+fn artifact_dependency_cycle(artifacts: &[ResolvedArtifact]) -> Option<Vec<String>> {
+    fn visit(
+        index: usize,
+        artifacts: &[ResolvedArtifact],
+        indices: &std::collections::HashMap<&str, usize>,
+        states: &mut [u8],
+        stack: &mut Vec<usize>,
+    ) -> Option<Vec<String>> {
+        states[index] = 1;
+        stack.push(index);
+        for dependency in &artifacts[index].deps {
+            let dependency_index = indices[dependency.as_str()];
+            match states[dependency_index] {
+                0 => {
+                    if let Some(cycle) = visit(dependency_index, artifacts, indices, states, stack)
+                    {
+                        return Some(cycle);
+                    }
+                }
+                1 => {
+                    let start = stack
+                        .iter()
+                        .position(|candidate| *candidate == dependency_index)
+                        .expect("a visiting dependency is present in the DFS stack");
+                    let mut cycle = stack[start..]
+                        .iter()
+                        .map(|cycle_index| artifacts[*cycle_index].id.clone())
+                        .collect::<Vec<_>>();
+                    cycle.push(artifacts[dependency_index].id.clone());
+                    return Some(cycle);
+                }
+                _ => {}
+            }
+        }
+        stack.pop();
+        states[index] = 2;
+        None
+    }
+
+    let indices = artifacts
+        .iter()
+        .enumerate()
+        .map(|(index, artifact)| (artifact.id.as_str(), index))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut states = vec![0; artifacts.len()];
+    let mut stack = Vec::new();
+    for index in 0..artifacts.len() {
+        if states[index] == 0 {
+            if let Some(cycle) = visit(index, artifacts, &indices, &mut states, &mut stack) {
+                return Some(cycle);
+            }
+        }
+    }
+    None
+}
 
 impl ResolvedSchema {
     /// Load a custom schema from `<schema_dir>/schema.yaml`, reading each
@@ -579,6 +696,16 @@ impl ResolvedSchema {
             .with_context(|| format!("reading {}", yaml_path.display()))?;
         let raw: SchemaYaml = serde_yaml::from_str(&yaml_text)
             .with_context(|| format!("parsing {}", yaml_path.display()))?;
+        let mut seen_artifact_ids = std::collections::HashSet::new();
+        for artifact in &raw.artifacts {
+            if !seen_artifact_ids.insert(artifact.id.as_str()) {
+                anyhow::bail!(
+                    "Schema '{}': duplicate artifact ID '{}'",
+                    yaml_path.display(),
+                    artifact.id
+                );
+            }
+        }
 
         let templates_dir = schema_dir.join("templates");
         let artifacts = raw
@@ -619,6 +746,13 @@ impl ResolvedSchema {
                     );
                 }
             }
+        }
+        if let Some(cycle) = artifact_dependency_cycle(&artifacts) {
+            anyhow::bail!(
+                "Schema '{}': artifact dependency cycle: {}",
+                yaml_path.display(),
+                cycle.join(" -> ")
+            );
         }
         for req in &raw.apply.requires {
             if !artifact_ids.contains(req.as_str()) {
@@ -687,43 +821,253 @@ struct SchemaYamlApply {
 /// the change's own `.openspec.yaml` `schema:` > `<spec_dir>/config.yaml`'s
 /// `schema:` > the built-in. See `require_supported`'s doc comment for the
 /// full probed rationale behind that order.
+pub fn user_schemas_dir() -> Option<std::path::PathBuf> {
+    if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
+        let path = std::path::PathBuf::from(path);
+        if path.is_absolute() {
+            return Some(path.join("openspec/schemas"));
+        }
+    }
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map(|home| home.join(".local/share/openspec/schemas"))
+}
+
 pub fn resolve_schema(
     cfg: &crate::Config,
     explicit: Option<&str>,
     change: Option<&crate::change::Change>,
 ) -> anyhow::Result<ResolvedSchema> {
-    let resolved_name;
-    let name = match explicit {
-        Some(name) => name,
-        None => {
-            let from_change = change.and_then(|c| c.metadata.schema.clone());
-            match from_change {
-                Some(name) => {
-                    resolved_name = name;
-                    resolved_name.as_str()
-                }
-                None => match configured_schema_name(cfg) {
-                    Some(name) => {
-                        resolved_name = name;
-                        resolved_name.as_str()
-                    }
-                    None => return Ok(ResolvedSchema::builtin()),
-                },
-            }
+    let name = explicit
+        .map(str::to_string)
+        .or_else(|| change.and_then(|change| change.metadata.schema.clone()))
+        .or_else(|| configured_schema_name(cfg))
+        .unwrap_or_else(|| SCHEMA_NAME.to_string());
+    if is_transient_schema_dir(&name) {
+        return Err(anyhow::anyhow!(
+            "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
+        ));
+    }
+
+    let project_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(&name);
+    if project_dir.join("schema.yaml").is_file() {
+        return ResolvedSchema::load(&project_dir, &name);
+    }
+    if let Some(user_dir) = user_schemas_dir().map(|root| root.join(&name)) {
+        if user_dir.join("schema.yaml").is_file() {
+            let mut schema = ResolvedSchema::load(&user_dir, &name)?;
+            schema.source = SchemaSource::User;
+            return Ok(schema);
         }
-    };
+    }
     if name == SCHEMA_NAME {
         return Ok(ResolvedSchema::builtin());
     }
-    let schema_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(name);
-    let definition = schema_dir.join("schema.yaml");
-    if definition.is_file() {
-        return ResolvedSchema::load(&schema_dir, name);
-    }
-    // The oracle's wording, byte for byte, for a name that resolves nowhere.
     Err(anyhow::anyhow!(
         "Schema not found: Schema '{name}' not found in project, user, or built-in locations"
     ))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaResolutionInfo {
+    pub name: String,
+    pub source: String,
+    pub path: String,
+}
+
+pub fn which(cfg: &crate::Config, name: &str) -> anyhow::Result<SchemaResolutionInfo> {
+    let schema = resolve_schema(cfg, Some(name), None)?;
+    let path = match schema.source {
+        SchemaSource::Project => cfg
+            .root
+            .join(&cfg.spec_dir)
+            .join("schemas")
+            .join(name)
+            .display()
+            .to_string(),
+        SchemaSource::User => user_schemas_dir()
+            .expect("a user schema resolved, so its root exists")
+            .join(name)
+            .display()
+            .to_string(),
+        SchemaSource::Package => "embedded://schemas/spec-driven".to_string(),
+    };
+    Ok(SchemaResolutionInfo {
+        name: name.to_string(),
+        source: schema.source.to_string(),
+        path,
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaValidation {
+    pub name: String,
+    pub valid: bool,
+    pub path: String,
+    pub issues: Vec<String>,
+}
+
+pub fn validate_schema(cfg: &crate::Config, name: &str) -> SchemaValidation {
+    match which(cfg, name).and_then(|resolution| {
+        resolve_schema(cfg, Some(name), None).map(|schema| (resolution, schema))
+    }) {
+        Ok((resolution, schema)) => {
+            let issues = schema
+                .artifacts
+                .iter()
+                .filter(|artifact| artifact.template.is_empty())
+                .map(|artifact| {
+                    format!(
+                        "Template '{}' is missing or empty for artifact '{}'",
+                        artifact.template_name, artifact.id
+                    )
+                })
+                .collect::<Vec<_>>();
+            SchemaValidation {
+                name: name.to_string(),
+                valid: issues.is_empty(),
+                path: resolution.path,
+                issues,
+            }
+        }
+        Err(error) => SchemaValidation {
+            name: name.to_string(),
+            valid: false,
+            path: String::new(),
+            issues: vec![error.to_string()],
+        },
+    }
+}
+
+pub fn init_schema(
+    cfg: &crate::Config,
+    name: &str,
+    description: Option<&str>,
+    artifacts: &[String],
+    set_default: bool,
+    force: bool,
+) -> anyhow::Result<ForkOutcome> {
+    if !SCHEMA_NAME_RE.is_match(name) {
+        anyhow::bail!("schema name '{name}' must be kebab-case");
+    }
+
+    let schema = resolve_schema(cfg, Some(SCHEMA_NAME), None)?;
+    let requested = artifacts
+        .iter()
+        .cloned()
+        .collect::<std::collections::HashSet<_>>();
+    if !requested.is_empty() {
+        let known = schema
+            .artifacts
+            .iter()
+            .map(|artifact| artifact.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        if let Some(unknown) = requested
+            .iter()
+            .filter(|artifact| !known.contains(artifact.as_str()))
+            .min()
+        {
+            anyhow::bail!("unknown artifact ID '{unknown}'");
+        }
+    }
+
+    let schemas_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
+    let target_dir = schemas_dir.join(name);
+    ensure_replace_allowed(&target_dir, name, force)?;
+    std::fs::create_dir_all(&schemas_dir)?;
+    let (stage, backup) = transaction_paths(&schemas_dir, name);
+
+    let preparation = (|| {
+        prepare_fork_stage(cfg, SCHEMA_NAME, name, &schema, &stage)?;
+        if description.is_some() || !requested.is_empty() {
+            let path = stage.join("schema.yaml");
+            let mut raw: SchemaYaml = serde_yaml::from_str(&std::fs::read_to_string(&path)?)?;
+            if let Some(description) = description {
+                raw.description = Some(description.to_string());
+            }
+            if !requested.is_empty() {
+                raw.artifacts
+                    .retain(|artifact| requested.contains(&artifact.id));
+                for artifact in &mut raw.artifacts {
+                    artifact
+                        .requires
+                        .retain(|dependency| requested.contains(dependency));
+                }
+                raw.apply
+                    .requires
+                    .retain(|required| requested.contains(required));
+                if raw.apply.requires.is_empty() {
+                    if let Some(last) = raw.artifacts.last() {
+                        raw.apply.requires.push(last.id.clone());
+                    }
+                }
+            }
+            std::fs::write(&path, serde_yaml::to_string(&raw)?)?;
+            validate_prepared_schema(&stage, name)?;
+        }
+        prepare_config_update(cfg, name, set_default)
+    })();
+    let config_update = match preparation {
+        Ok(update) => update,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&stage);
+            return Err(error);
+        }
+    };
+
+    let had_target = install_prepared_schema(&stage, &target_dir, &backup)?;
+    if let Some((config_path, config_content)) = config_update {
+        if let Err(error) = crate::fsutil::write_atomically(&config_path, &config_content) {
+            let rollback = rollback_schema_install(&target_dir, &backup, had_target);
+            return match rollback {
+                Ok(()) => Err(error.into()),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "{error}; additionally failed to restore schema '{}': {rollback_error}",
+                    name
+                )),
+            };
+        }
+    }
+    if had_target {
+        let _ = std::fs::remove_dir_all(&backup);
+    }
+
+    Ok(ForkOutcome {
+        source: SCHEMA_NAME.to_string(),
+        target: name.to_string(),
+        target_dir,
+    })
+}
+
+fn prepare_config_update(
+    cfg: &crate::Config,
+    name: &str,
+    set_default: bool,
+) -> anyhow::Result<Option<(std::path::PathBuf, String)>> {
+    if !set_default {
+        return Ok(None);
+    }
+    let config_path = cfg.root.join(&cfg.spec_dir).join("config.yaml");
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("reading {}", config_path.display()))
+        }
+    };
+    let mut value: serde_yaml::Value = if content.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&content)?
+    };
+    let mapping = value
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("config.yaml must contain a YAML object"))?;
+    mapping.insert(
+        serde_yaml::Value::String("schema".to_string()),
+        serde_yaml::Value::String(name.to_string()),
+    );
+    Ok(Some((config_path, serde_yaml::to_string(&value)?)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -741,25 +1085,6 @@ pub fn fork(
     force: bool,
 ) -> anyhow::Result<ForkOutcome> {
     let schema = resolve_schema(cfg, Some(source_name), None)?;
-    let (source_version, source_tracks) = if schema.source == SchemaSource::Project {
-        let source_dir = cfg
-            .root
-            .join(&cfg.spec_dir)
-            .join("schemas")
-            .join(source_name);
-        let yaml_path = source_dir.join("schema.yaml");
-        if let Ok(text) = std::fs::read_to_string(&yaml_path) {
-            if let Ok(parsed) = serde_yaml::from_str::<SchemaYaml>(&text) {
-                (parsed.version, parsed.apply.tracks)
-            } else {
-                (Some(1), None)
-            }
-        } else {
-            (Some(1), None)
-        }
-    } else {
-        (Some(1), None)
-    };
     let target = target_name
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{source_name}-custom"));
@@ -767,52 +1092,23 @@ pub fn fork(
     if target.contains(std::path::MAIN_SEPARATOR) || target.contains('/') {
         anyhow::bail!("schema fork target '{target}' must not contain path separators");
     }
-    let target_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(&target);
-
-    if target_dir.exists() && !force {
-        anyhow::bail!(
-            "Schema '{}' already exists. Use --force to overwrite.",
-            target
-        );
+    if is_transient_schema_dir(&target) {
+        anyhow::bail!("schema fork target '{target}' uses a reserved transaction name");
     }
 
-    if force && target_dir.exists() {
-        std::fs::remove_dir_all(&target_dir)?;
+    let schemas_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
+    let target_dir = schemas_dir.join(&target);
+    ensure_replace_allowed(&target_dir, &target, force)?;
+    std::fs::create_dir_all(&schemas_dir)?;
+    let (stage, backup) = transaction_paths(&schemas_dir, &target);
+    if let Err(error) = prepare_fork_stage(cfg, source_name, &target, &schema, &stage) {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(error);
     }
-    let templates_dir = target_dir.join("templates");
-    std::fs::create_dir_all(&templates_dir)?;
 
-    let raw = SchemaYaml {
-        name: schema.name,
-        version: source_version,
-        description: Some(schema.description),
-        artifacts: schema
-            .artifacts
-            .iter()
-            .map(|artifact| SchemaYamlArtifact {
-                id: artifact.id.clone(),
-                generates: artifact.output_path.clone(),
-                description: artifact.description.clone(),
-                template: artifact.template_name.clone(),
-                instruction: artifact.instruction.clone(),
-                requires: artifact.deps.clone(),
-            })
-            .collect(),
-        apply: SchemaYamlApply {
-            requires: schema.apply_requires,
-            tracks: source_tracks,
-            instruction: schema.apply_instruction,
-        },
-    };
-    std::fs::write(target_dir.join("schema.yaml"), serde_yaml::to_string(&raw)?)?;
-
-    for artifact in &schema.artifacts {
-        reject_path_traversal(&artifact.template_name, "template")?;
-        let template_path = templates_dir.join(&artifact.template_name);
-        if let Some(parent) = template_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(template_path, &artifact.template)?;
+    let had_target = install_prepared_schema(&stage, &target_dir, &backup)?;
+    if had_target {
+        let _ = std::fs::remove_dir_all(&backup);
     }
 
     Ok(ForkOutcome {
@@ -822,12 +1118,240 @@ pub fn fork(
     })
 }
 
+fn ensure_replace_allowed(
+    target_dir: &std::path::Path,
+    target: &str,
+    force: bool,
+) -> anyhow::Result<()> {
+    if target_dir.exists() && !force {
+        anyhow::bail!(
+            "Schema '{}' already exists. Use --force to overwrite.",
+            target
+        );
+    }
+    Ok(())
+}
+
+fn transaction_paths(
+    schemas_dir: &std::path::Path,
+    target: &str,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let suffix = format!("{}-{sequence}", std::process::id());
+    (
+        schemas_dir.join(format!(".{target}.stage-{suffix}")),
+        schemas_dir.join(format!(".{target}.backup-{suffix}")),
+    )
+}
+
+fn prepare_fork_stage(
+    cfg: &crate::Config,
+    source_name: &str,
+    target: &str,
+    schema: &ResolvedSchema,
+    stage: &std::path::Path,
+) -> anyhow::Result<()> {
+    let schemas_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
+    let source_dir = match schema.source {
+        SchemaSource::Project => Some(schemas_dir.join(source_name)),
+        SchemaSource::User => user_schemas_dir().map(|dir| dir.join(source_name)),
+        SchemaSource::Package => None,
+    };
+    if let Some(source_dir) = source_dir {
+        copy_schema_tree(&source_dir, stage)?;
+        rewrite_schema_name(&stage.join("schema.yaml"), target)?;
+    } else {
+        let templates_dir = stage.join("templates");
+        std::fs::create_dir_all(&templates_dir)?;
+        let raw = SchemaYaml {
+            name: target.to_string(),
+            version: Some(1),
+            description: Some(schema.description.clone()),
+            artifacts: schema
+                .artifacts
+                .iter()
+                .map(|artifact| SchemaYamlArtifact {
+                    id: artifact.id.clone(),
+                    generates: artifact.output_path.clone(),
+                    description: artifact.description.clone(),
+                    template: artifact.template_name.clone(),
+                    instruction: artifact.instruction.clone(),
+                    requires: artifact.deps.clone(),
+                })
+                .collect(),
+            apply: SchemaYamlApply {
+                requires: schema.apply_requires.clone(),
+                tracks: None,
+                instruction: schema.apply_instruction.clone(),
+            },
+        };
+        std::fs::write(stage.join("schema.yaml"), serde_yaml::to_string(&raw)?)?;
+        for artifact in &schema.artifacts {
+            reject_path_traversal(&artifact.template_name, "template")?;
+            let template_path = templates_dir.join(&artifact.template_name);
+            if let Some(parent) = template_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(template_path, &artifact.template)?;
+        }
+    }
+    validate_prepared_schema(stage, target)
+}
+
+fn validate_prepared_schema(stage: &std::path::Path, target: &str) -> anyhow::Result<()> {
+    let loaded = ResolvedSchema::load(stage, target)?;
+    if loaded.name != target {
+        anyhow::bail!("forked schema identity did not update to '{target}'");
+    }
+    if let Some(artifact) = loaded
+        .artifacts
+        .iter()
+        .find(|artifact| artifact.template.is_empty())
+    {
+        anyhow::bail!(
+            "Template '{}' is missing or empty for artifact '{}'",
+            artifact.template_name,
+            artifact.id
+        );
+    }
+    Ok(())
+}
+
+fn install_prepared_schema(
+    stage: &std::path::Path,
+    target: &std::path::Path,
+    backup: &std::path::Path,
+) -> anyhow::Result<bool> {
+    let had_target = target.exists();
+    if had_target {
+        std::fs::rename(target, backup)?;
+    }
+    if let Err(error) = std::fs::rename(stage, target) {
+        if had_target {
+            if let Err(restore_error) = std::fs::rename(backup, target) {
+                return Err(anyhow::anyhow!(
+                    "{error}; additionally failed to restore previous schema: {restore_error}"
+                ));
+            }
+        }
+        return Err(error.into());
+    }
+    Ok(had_target)
+}
+
+fn rollback_schema_install(
+    target: &std::path::Path,
+    backup: &std::path::Path,
+    had_target: bool,
+) -> anyhow::Result<()> {
+    std::fs::remove_dir_all(target)?;
+    if had_target {
+        std::fs::rename(backup, target)?;
+    }
+    Ok(())
+}
+
+fn copy_schema_tree(source: &std::path::Path, destination: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let metadata = std::fs::symlink_metadata(entry.path())?;
+        let target = destination.join(entry.file_name());
+        if metadata.file_type().is_dir() {
+            copy_schema_tree(&entry.path(), &target)?;
+        } else if metadata.file_type().is_file() {
+            std::fs::copy(entry.path(), target)?;
+        } else {
+            anyhow::bail!(
+                "cannot fork schema with linked or unsupported entry {}",
+                entry.path().display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn yaml_inline_comment_start(value: &str) -> Option<usize> {
+    let mut chars = value.char_indices().peekable();
+    let mut quote = None;
+    let mut previous = None;
+    while let Some((index, character)) = chars.next() {
+        match quote {
+            Some('\'') if character == '\'' => {
+                if chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                    chars.next();
+                } else {
+                    quote = None;
+                }
+            }
+            Some('"') if character == '\\' => {
+                chars.next();
+            }
+            Some('"') if character == '"' => quote = None,
+            Some(_) => {}
+            None if character == '\'' || character == '"' => quote = Some(character),
+            None if character == '#' && previous.is_none_or(char::is_whitespace) => {
+                return Some(index);
+            }
+            None => {}
+        }
+        previous = Some(character);
+    }
+    None
+}
+
+fn rewrite_schema_name(path: &std::path::Path, target: &str) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(path)?;
+    let mut replaced = false;
+    let mut output = String::with_capacity(content.len());
+    for line in content.split_inclusive('\n') {
+        let (body, newline) = if let Some(body) = line.strip_suffix("\r\n") {
+            (body, "\r\n")
+        } else if let Some(body) = line.strip_suffix('\n') {
+            (body, "\n")
+        } else {
+            (line, "")
+        };
+        let Some(rest) = (!replaced).then(|| body.strip_prefix("name:")).flatten() else {
+            output.push_str(line);
+            continue;
+        };
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|character| !character.is_whitespace())
+        {
+            output.push_str(line);
+            continue;
+        }
+
+        let leading_len = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        let scalar_end = yaml_inline_comment_start(rest).unwrap_or(rest.len());
+        let suffix_start = rest[..scalar_end].trim_end_matches([' ', '\t']).len();
+        let leading = &rest[..leading_len];
+        let suffix = &rest[suffix_start..];
+        output.push_str("name:");
+        output.push_str(if leading.is_empty() { " " } else { leading });
+        output.push_str(target);
+        output.push_str(suffix);
+        output.push_str(newline);
+        replaced = true;
+    }
+    if !replaced {
+        anyhow::bail!("schema.yaml has no top-level name field");
+    }
+    std::fs::write(path, output)?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ArtifactState {
     Done,
     Ready,
     Blocked,
+    Skipped,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -838,6 +1362,7 @@ pub struct ArtifactStatus {
     pub status: ArtifactState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub missing_deps: Option<Vec<String>>,
+    pub requires: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -846,6 +1371,7 @@ pub struct StatusReport {
     pub change_name: String,
     pub schema_name: String,
     pub is_complete: bool,
+    pub is_planning_complete: bool,
     pub apply_requires: Vec<String>,
     pub artifacts: Vec<ArtifactStatus>,
 }
@@ -876,6 +1402,7 @@ fn artifact_status_resolved(
         output_path: artifact.output_path.clone(),
         status,
         missing_deps,
+        requires: artifact.deps.clone(),
     }
 }
 
@@ -1030,22 +1557,75 @@ pub fn derive_status(
     change_dir: &std::path::Path,
     schema: &ResolvedSchema,
 ) -> anyhow::Result<StatusReport> {
+    derive_status_with_skipped(
+        change_name,
+        change_dir,
+        schema,
+        &std::collections::HashSet::new(),
+    )
+}
+fn planning_artifact_ids(schema: &ResolvedSchema) -> std::collections::HashSet<String> {
+    let artifacts = schema
+        .artifacts
+        .iter()
+        .map(|artifact| (artifact.id.as_str(), artifact))
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut closure = std::collections::HashSet::new();
+    let mut pending = schema.apply_requires.clone();
+    while let Some(id) = pending.pop() {
+        if !closure.insert(id.clone()) {
+            continue;
+        }
+        if let Some(artifact) = artifacts.get(id.as_str()) {
+            pending.extend(artifact.deps.iter().cloned());
+        }
+    }
+    closure
+}
+
+fn derive_status_with_skipped(
+    change_name: &str,
+    change_dir: &std::path::Path,
+    schema: &ResolvedSchema,
+    skipped: &std::collections::HashSet<String>,
+) -> anyhow::Result<StatusReport> {
     let mut done_ids = std::collections::HashSet::new();
     for artifact in &schema.artifacts {
         if artifact_done_resolved(artifact, change_dir)? {
             done_ids.insert(artifact.id.clone());
         }
     }
+    let satisfied: std::collections::HashSet<_> = done_ids.union(skipped).cloned().collect();
     let artifacts = schema
         .artifacts
         .iter()
-        .map(|artifact| artifact_status_resolved(artifact, &done_ids))
+        .map(|artifact| {
+            if skipped.contains(&artifact.id) {
+                ArtifactStatus {
+                    id: artifact.id.clone(),
+                    output_path: artifact.output_path.clone(),
+                    status: ArtifactState::Skipped,
+                    missing_deps: None,
+                    requires: artifact.deps.clone(),
+                }
+            } else {
+                artifact_status_resolved(artifact, &satisfied)
+            }
+        })
         .collect();
+    let complete = schema
+        .artifacts
+        .iter()
+        .all(|artifact| satisfied.contains(&artifact.id));
+    let planning_complete = planning_artifact_ids(schema)
+        .iter()
+        .all(|artifact| satisfied.contains(artifact));
 
     Ok(StatusReport {
         change_name: change_name.to_string(),
         schema_name: schema.name.clone(),
-        is_complete: done_ids.len() == schema.artifacts.len(),
+        is_complete: complete,
+        is_planning_complete: planning_complete,
         apply_requires: schema.apply_requires.clone(),
         artifacts,
     })
@@ -1101,8 +1681,22 @@ where
 }
 
 pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
-    let text = std::fs::read_to_string(cfg.root.join(&cfg.spec_dir).join("config.yaml")).ok()?;
-    serde_yaml::from_str(&text).ok()
+    let path = cfg.root.join(&cfg.spec_dir).join("config.yaml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            eprintln!("warning: ignoring unreadable {}: {error}", path.display());
+            return None;
+        }
+    };
+    match serde_yaml::from_str(&text) {
+        Ok(config) => Some(config),
+        Err(error) => {
+            eprintln!("warning: ignoring unparseable {}: {error}", path.display());
+            None
+        }
+    }
 }
 
 /// The `schema:` selector in `<spec_dir>/config.yaml` — the *project-level*
@@ -1111,9 +1705,8 @@ pub(crate) fn read_spec_config(cfg: &crate::Config) -> Option<SpecConfig> {
 /// `None` when the file is absent, has no `schema` key, or its value is blank
 /// (probed: a project `config.yaml` holding a bare `schema:` runs the built-in
 /// workflow and exits 0, unlike the change-level key — see
-/// [`resolve_schema`]). A read or parse failure is also `None`: an unreadable
-/// selector must not be louder than a missing one, since the built-in schema is
-/// the default either way.
+/// [`resolve_schema`]). A read or parse failure is also `None` (with an
+/// `eprintln` warning), since the built-in schema is the default either way.
 ///
 /// Caveat on "unparseable": `serde_yaml` stringifies scalar types, so
 /// `schema: 123` yields `Some("123")` rather than `None`. Only a structural
@@ -1176,7 +1769,19 @@ pub fn status(
     let change = crate::change::try_load(cfg, &change_name)?
         .ok_or_else(|| anyhow::anyhow!("Change '{change_name}' not found."))?;
     let schema = resolve_schema(cfg, schema_name, Some(&change))?;
-    derive_status(&change.name, &change.dir, &schema)
+    let skipped = if change.metadata.skip_specs == Some(true) {
+        schema
+            .artifacts
+            .iter()
+            .filter(|artifact| {
+                artifact.id == "specs" || artifact.output_path.split('/').next() == Some("specs")
+            })
+            .map(|artifact| artifact.id.clone())
+            .collect()
+    } else {
+        std::collections::HashSet::new()
+    };
+    derive_status_with_skipped(&change.name, &change.dir, &schema, &skipped)
 }
 
 #[cfg(test)]
@@ -1484,6 +2089,21 @@ mod tests {
     }
 
     #[test]
+    fn project_schema_names_include_malformed_schemas_and_hide_transaction_dirs() {
+        let (_tmp, cfg) = project("project-schema-names");
+        let schemas_dir = cfg.root.join("openspec/schemas");
+        for name in ["broken", ".team.stage-123-0", ".team.backup-123-0"] {
+            let dir = schemas_dir.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("schema.yaml"), "not: a schema\n").unwrap();
+        }
+
+        assert_eq!(project_schema_names(&cfg).unwrap(), vec!["broken"]);
+        assert_eq!(schemas(Some(&cfg)).len(), 1);
+        assert!(resolve_schema(&cfg, Some(".team.stage-123-0"), None).is_err());
+    }
+
+    #[test]
     fn schema_artifact_order_is_a_permutation_of_the_artifact_definition_ids() {
         // The listing order is maintained by hand (authoring order, not
         // dependency order); this guards against a future ARTIFACTS change
@@ -1599,6 +2219,99 @@ mod tests {
         assert_eq!(report.artifacts[3].status, ArtifactState::Done);
     }
 
+    #[test]
+    fn optional_artifacts_do_not_block_planning_completion() {
+        let change_dir = TempDir::new("optional-planning-artifact");
+        std::fs::write(change_dir.join("proposal.md"), "# Proposal\n").unwrap();
+        std::fs::write(change_dir.join("tasks.md"), "# Tasks\n").unwrap();
+        let artifact = |id: &str, output_path: &str, deps: &[&str]| ResolvedArtifact {
+            id: id.to_string(),
+            output_path: output_path.to_string(),
+            description: String::new(),
+            deps: deps
+                .iter()
+                .map(|dependency| (*dependency).to_string())
+                .collect(),
+            instruction: String::new(),
+            template: String::new(),
+            template_name: output_path.to_string(),
+        };
+        let schema = ResolvedSchema {
+            name: "optional-flow".to_string(),
+            source: SchemaSource::Project,
+            description: String::new(),
+            artifacts: vec![
+                artifact("proposal", "proposal.md", &[]),
+                artifact("optional-design", "design.md", &["proposal"]),
+                artifact("tasks", "tasks.md", &["proposal"]),
+            ],
+            artifact_order: vec![
+                "proposal".to_string(),
+                "optional-design".to_string(),
+                "tasks".to_string(),
+            ],
+            apply_requires: vec!["tasks".to_string()],
+            apply_instruction: String::new(),
+        };
+
+        let report = derive_status("demo", &change_dir, &schema).unwrap();
+
+        assert!(!report.is_complete);
+        assert!(report.is_planning_complete);
+        assert_eq!(report.artifacts[1].status, ArtifactState::Ready);
+    }
+
+    #[test]
+    fn skip_specs_uses_the_declared_glob_artifact_id() {
+        let (_tmp, cfg) = project("custom-skip-specs");
+        let schema_dir = cfg.root.join("openspec/schemas/custom");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: custom\nartifacts:\n- id: delta-specifications\n  generates: specs/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [delta-specifications]\n  instruction: apply\n",
+        )
+        .unwrap();
+        let change_dir = cfg.root.join("openspec/changes/demo");
+        std::fs::create_dir_all(&change_dir).unwrap();
+        std::fs::write(
+            change_dir.join(".openspec.yaml"),
+            "schema: custom\nskip_specs: true\n",
+        )
+        .unwrap();
+
+        let report = status(&cfg, Some("demo"), None).unwrap();
+
+        assert!(report.is_complete);
+        assert!(report.is_planning_complete);
+        assert_eq!(report.artifacts[0].id, "delta-specifications");
+        assert_eq!(report.artifacts[0].status, ArtifactState::Skipped);
+    }
+
+    #[test]
+    fn skip_specs_preserves_the_conventional_artifact_id_with_a_custom_glob() {
+        let (_tmp, cfg) = project("conventional-skip-specs");
+        let schema_dir = cfg.root.join("openspec/schemas/custom");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: custom\nartifacts:\n- id: specs\n  generates: requirements/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [specs]\n  instruction: apply\n",
+        )
+        .unwrap();
+        let change_dir = cfg.root.join("openspec/changes/demo");
+        std::fs::create_dir_all(&change_dir).unwrap();
+        std::fs::write(
+            change_dir.join(".openspec.yaml"),
+            "schema: custom\nskip_specs: true\n",
+        )
+        .unwrap();
+
+        let report = status(&cfg, Some("demo"), None).unwrap();
+
+        assert!(report.is_complete);
+        assert!(report.is_planning_complete);
+        assert_eq!(report.artifacts[0].id, "specs");
+        assert_eq!(report.artifacts[0].status, ArtifactState::Skipped);
+    }
     #[test]
     fn non_markdown_files_under_specs_do_not_count_as_done() {
         let change_dir = TempDir::new("specs-non-md");
@@ -1838,6 +2551,48 @@ mod tests {
         assert!(
             err.to_string().contains("requires 'nonexistent'"),
             "expected a requires-validation error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_duplicate_artifact_ids() {
+        let tmp = TempDir::new("load-duplicate-artifact");
+        let schema_dir = tmp.join("schemas/bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: proposal\n  generates: first.md\n  description: first\n  template: first.md\n  instruction: first\n  requires: []\n- id: proposal\n  generates: second.md\n  description: second\n  template: second.md\n  instruction: second\n  requires: []\napply:\n  requires: [proposal]\n  instruction: apply\n",
+        )
+        .unwrap();
+
+        let error = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate artifact ID 'proposal'"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn resolved_load_rejects_dependency_cycles_with_the_cycle_path() {
+        let tmp = TempDir::new("load-dependency-cycle");
+        let schema_dir = tmp.join("schemas/bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: proposal\n  template: proposal.md\n  instruction: proposal\n  requires: [tasks]\n- id: tasks\n  generates: tasks.md\n  description: tasks\n  template: tasks.md\n  instruction: tasks\n  requires: [proposal]\napply:\n  requires: [tasks]\n  instruction: apply\n",
+        )
+        .unwrap();
+
+        let error = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("artifact dependency cycle: proposal -> tasks -> proposal"),
+            "unexpected error: {error}"
         );
     }
 

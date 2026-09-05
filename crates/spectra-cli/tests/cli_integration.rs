@@ -400,7 +400,7 @@ fn archive_yes_skips_confirmation_and_archives() {
 }
 
 #[test]
-fn archive_no_validate_skips_the_pre_move_validation() {
+fn archive_no_validate_still_keeps_change_active_when_merge_fails() {
     let tmp = TempDir::new("archive-no-validate");
     init_project_with_change(&tmp, "unsafe-change");
     let delta = tmp.join("openspec/changes/unsafe-change/specs/auth/spec.md");
@@ -418,17 +418,19 @@ fn archive_no_validate_skips_the_pre_move_validation() {
         .unwrap();
 
     assert_eq!(out.status.code(), Some(1));
-    assert!(!tmp.join("openspec/changes/unsafe-change").exists());
-    let archived = std::fs::read_dir(tmp.join("openspec/changes/archive"))
+    assert!(tmp.join("openspec/changes/unsafe-change").is_dir());
+    assert!(!tmp
+        .join("openspec/changes/archive")
+        .read_dir()
         .unwrap()
-        .flatten()
         .any(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with("-unsafe-change")
-        });
-    assert!(archived, "--no-validate 應先移動變更，再嘗試套用規格");
+            entry.is_ok_and(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with("-unsafe-change")
+            })
+        }));
 }
 
 #[test]
@@ -568,7 +570,11 @@ fn validate_strict_fails_and_exits_nonzero_on_a_bad_delta() {
     let report: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(report["summary"]["totals"]["failed"], 1, "got:\n{stdout}");
     assert_eq!(report["items"][0]["valid"], false);
-    assert_eq!(report["items"][0]["issues"][0]["level"], "ERROR");
+    assert!(report["items"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["level"] == "ERROR"));
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -578,9 +584,7 @@ fn validate_strict_fails_and_exits_nonzero_on_a_bad_delta() {
 }
 
 #[test]
-fn validate_nonstrict_passes_a_structurally_present_delta() {
-    // The same bad delta as above (no SHALL, no scenario) is structurally a
-    // delta, so a non-strict run gates only on structure and exits 0.
+fn validate_nonstrict_reports_keyword_guidance_without_failing() {
     let tmp = TempDir::new("validate-nonstrict");
     init_project_with_change(&tmp, "feat");
     let cap = tmp
@@ -592,7 +596,8 @@ fn validate_nonstrict_passes_a_structurally_present_delta() {
     std::fs::create_dir_all(&cap).unwrap();
     std::fs::write(
         cap.join("spec.md"),
-        "## ADDED Requirements\n\n### Requirement: Login\n\nUsers can log in.\n",
+        "## ADDED Requirements\n\n### Requirement: Login\n\nUsers can log in.\n\n\
+         #### Scenario: Login\n- **WHEN** credentials are valid\n- **THEN** access is granted\n",
     )
     .unwrap();
 
@@ -605,6 +610,237 @@ fn validate_nonstrict_passes_a_structurally_present_delta() {
     let report: serde_json::Value =
         serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
     assert_eq!(report["items"][0]["valid"], true);
+    assert_eq!(report["items"][0]["issues"][0]["level"], "WARNING");
+}
+
+#[test]
+fn validate_rejects_a_modified_requirement_that_drops_a_current_scenario() {
+    let tmp = TempDir::new("validate-scenario-loss");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL authenticate users.\n\n\
+         #### Scenario: Password login\n- **WHEN** credentials are valid\n- **THEN** access is granted\n\n\
+         #### Scenario: Locked account\n- **WHEN** an account is locked\n- **THEN** access is denied\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL authenticate users.\n\n\
+         #### Scenario: Password login\n- **WHEN** credentials are valid\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat", "--strict", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["items"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Locked account"))));
+    let archived = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(archived.status.code(), Some(1));
+    assert!(tmp.join("openspec/changes/feat").is_dir());
+    assert!(std::fs::read_to_string(main)
+        .unwrap()
+        .contains("#### Scenario: Locked account"));
+}
+
+#[test]
+fn archive_ignores_requirement_headers_inside_fenced_examples() {
+    let tmp = TempDir::new("archive-fenced-requirement");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ```markdown\n### Requirement: Login\nExample only.\n```\n\n\
+         ### Requirement: Login\nThe system SHALL use passwords.\n\n\
+         #### Scenario: Password\n- **WHEN** a password is valid\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL use passkeys.\n\n\
+         #### Scenario: Password\n- **WHEN** a passkey is valid\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let updated = std::fs::read_to_string(main).unwrap();
+    assert!(!updated.contains("The system SHALL use passwords."));
+    assert!(updated.contains("The system SHALL use passkeys."));
+    assert_eq!(updated.matches("```").count(), 2);
+}
+
+#[test]
+fn archive_treats_identical_added_and_modified_requirements_as_already_synced() {
+    let tmp = TempDir::new("archive-early-sync");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    let added = "### Requirement: Added\nThe system SHALL add behavior.\n\n\
+        #### Scenario: Added\n- **WHEN** requested\n- **THEN** it is added";
+    let modified = "### Requirement: Existing\nThe system SHALL keep behavior.\n\n\
+        #### Scenario: Existing\n- **WHEN** requested\n- **THEN** it is kept";
+    let original = format!(
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n{added}\n\n{modified}\n"
+    );
+    std::fs::write(&main, &original).unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        format!("## ADDED Requirements\n\n{added}\n\n## MODIFIED Requirements\n\n{modified}\n"),
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(std::fs::read_to_string(main).unwrap(), original);
+}
+
+#[test]
+fn archive_rejects_case_variant_and_missing_removal_targets() {
+    let typo = TempDir::new("archive-removal-typo");
+    init_project_with_change(&typo, "feat");
+    let main = typo.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL authenticate.\n\n\
+         #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+    let delta = typo.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        &delta,
+        "## REMOVED Requirements\n\n### Requirement: login\n",
+    )
+    .unwrap();
+    let typo_out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*typo)
+        .output()
+        .unwrap();
+    assert_eq!(typo_out.status.code(), Some(1));
+    assert!(typo.join("openspec/changes/feat").is_dir());
+
+    std::fs::write(
+        &delta,
+        "## REMOVED Requirements\n\n### Requirement: Missing\n",
+    )
+    .unwrap();
+    let missing_out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*typo)
+        .output()
+        .unwrap();
+    assert_eq!(missing_out.status.code(), Some(1));
+    assert!(typo.join("openspec/changes/feat").is_dir());
+    assert!(std::fs::read_to_string(main)
+        .unwrap()
+        .contains("### Requirement: Login"));
+}
+
+#[test]
+fn archive_treats_an_existing_rename_target_as_already_synced() {
+    let tmp = TempDir::new("archive-rename-synced");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    let original = "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+        ### Requirement: New login\nThe system SHALL authenticate.\n\n\
+        #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n";
+    std::fs::write(&main, original).unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## RENAMED Requirements\n\
+         - FROM: `### Requirement: Old login`\n\
+         - TO: `### Requirement: New login`\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(std::fs::read_to_string(main).unwrap(), original);
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_write_failure_keeps_the_change_active() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new("archive-rollback");
+    init_project_with_change(&tmp, "feat");
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## ADDED Requirements\n\n### Requirement: Login\n\
+         The system SHALL authenticate.\n\n#### Scenario: Login\n\
+         - **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+    let target_dir = tmp.join("openspec/specs/auth");
+    std::fs::create_dir_all(&target_dir).unwrap();
+    std::fs::set_permissions(&target_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&target_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(out.status.code(), Some(1));
+    assert!(tmp.join("openspec/changes/feat").is_dir());
+    assert!(!tmp
+        .join("openspec/changes/archive")
+        .read_dir()
+        .unwrap()
+        .any(|entry| {
+            entry.is_ok_and(|entry| entry.file_name().to_string_lossy().ends_with("-feat"))
+        }));
+    assert!(!target_dir.join("spec.md").exists());
 }
 
 #[test]
@@ -627,8 +863,184 @@ fn validate_errors_when_change_has_no_delta() {
 }
 
 #[test]
+fn skip_specs_validates_and_archives_a_behavior_neutral_change() {
+    let tmp = TempDir::new("skip-specs");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/.openspec.yaml"),
+        "schema: spec-driven\nskip_specs: true\n",
+    )
+    .unwrap();
+
+    let validated = spectra()
+        .args(["validate", "feat", "--strict", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(validated.status.success(), "{validated:?}");
+    let report: serde_json::Value = serde_json::from_slice(&validated.stdout).unwrap();
+    assert_eq!(report["summary"]["totals"]["failed"], 0);
+
+    let archived = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(archived.status.success(), "{archived:?}");
+}
+
+#[test]
+fn skip_specs_conflicts_with_delta_files() {
+    let tmp = TempDir::new("skip-specs-conflict");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/.openspec.yaml"),
+        "schema: spec-driven\nskip_specs: true\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(&delta, "## ADDED Requirements\n\n### Requirement: Login\n").unwrap();
+
+    let validated = spectra()
+        .args(["validate", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(validated.status.code(), Some(1));
+
+    let archived = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(archived.status.code(), Some(1));
+    assert!(tmp.join("openspec/changes/feat").is_dir());
+}
+
+#[test]
+fn strict_spec_validation_rejects_an_archived_purpose_placeholder() {
+    let tmp = TempDir::new("validate-purpose-placeholder");
+    init_project_with_change(&tmp, "feat");
+    let spec = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+    std::fs::write(
+        spec,
+        "# auth Specification\n\n## Purpose\n\n\
+         TBD - created by archiving change 'old'. Update Purpose after archive.\n\n\
+         ## Requirements\n\n### Requirement: Login\n\
+         The system SHALL authenticate.\n\n#### Scenario: Login\n\
+         - **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let normal = spectra()
+        .args(["validate", "auth", "--type", "spec", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(normal.status.success(), "{normal:?}");
+
+    let strict = spectra()
+        .args(["validate", "auth", "--type", "spec", "--strict", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(strict.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&strict.stdout).unwrap();
+    assert!(report["items"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("placeholder"))));
+}
+
+#[test]
+fn validation_bulk_scopes_emit_versioned_additive_reports() {
+    let tmp = TempDir::new("validate-bulk-v2");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/.openspec.yaml"),
+        "schema: spec-driven\nskip_specs: true\n",
+    )
+    .unwrap();
+    let spec = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+    std::fs::write(
+        spec,
+        "# auth Specification\n\n## Purpose\n\nAuthentication behavior.\n\n\
+         ## Requirements\n\n### Requirement: Login\nThe system SHALL authenticate.\n\n\
+         #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let all = spectra()
+        .args(["validate", "--all", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(all.status.success(), "{all:?}");
+    let report: serde_json::Value = serde_json::from_slice(&all.stdout).unwrap();
+    assert_eq!(report["version"], "2.0");
+    assert_eq!(report["summary"]["totals"]["failed"], 0);
+    assert_eq!(report["summary"]["totals"]["items"], 2);
+    assert_eq!(report["summary"]["byType"]["change"]["items"], 1);
+    assert_eq!(report["summary"]["byType"]["spec"]["items"], 1);
+    assert!(report["root"]["path"].is_string());
+    assert!(report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["type"] == "spec"));
+
+    let findings = spectra()
+        .args(["validate", "--all", "--report", "findings", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(findings.status.success(), "{findings:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&findings.stdout).unwrap();
+    assert_eq!(findings["report"]["kind"], "validation-findings");
+    assert_eq!(findings["report"]["totalItems"], 2);
+    assert_eq!(findings["report"]["returnedItems"], 1);
+}
+
+#[test]
+fn validate_archived_fails_on_incomplete_tasks() {
+    let tmp = TempDir::new("validate-archived");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/tasks.md"),
+        "## 1. Work\n- [ ] 1.1 unfinished\n",
+    )
+    .unwrap();
+    let archived = spectra()
+        .args(["archive", "feat", "--yes", "--skip-specs"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(archived.status.success(), "{archived:?}");
+
+    let validated = spectra()
+        .args(["validate", "--archived", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(validated.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&validated.stdout).unwrap();
+    assert_eq!(report["summary"]["totals"]["failed"], 1);
+    assert!(report["items"][0]["issues"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("incomplete"));
+}
+
+#[test]
 fn validate_errors_change_not_found_for_a_nonexistent_explicit_name() {
     // Regression (mob review): an explicit typo'd / archived name must report
+
     // "Change '<name>' not found." (like `archive`), not a misleading
     // "must contain at least one delta" validation failure.
     let tmp = TempDir::new("validate-notfound");
@@ -655,6 +1067,65 @@ fn validate_errors_change_not_found_for_a_nonexistent_explicit_name() {
         String::from_utf8(out.stdout).unwrap().trim().is_empty(),
         "no JSON report should be emitted for a not-found change"
     );
+}
+#[test]
+fn list_and_show_support_nested_canonical_spec_ids() {
+    let tmp = TempDir::new("nested-canonical-spec");
+    init_project_with_change(&tmp, "feat");
+    let spec = tmp.join("openspec/specs/identity/auth/spec.md");
+    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+    std::fs::write(&spec, "# Auth\n\nNested authentication.\n").unwrap();
+
+    let listed = spectra()
+        .args(["list", "--specs", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{listed:?}");
+    let list_json: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
+    assert_eq!(list_json["specs"][0]["name"], "identity/auth");
+
+    let shown = spectra()
+        .args(["show", "identity/auth", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(shown.status.success(), "{shown:?}");
+    let show_json: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
+    assert_eq!(show_json["spec"], "# Auth\n\nNested authentication.\n");
+}
+
+#[test]
+fn archive_warns_and_preserves_existing_purpose() {
+    let tmp = TempDir::new("archive-purpose-existing");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nExisting purpose.\n\n## Requirements\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## Purpose\n\nReplacement purpose.\n\n## ADDED Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL authenticate.\n\n\
+         #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["archive", "feat", "--yes"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("ignoring delta Purpose"));
+    let updated = std::fs::read_to_string(main).unwrap();
+    assert!(updated.contains("Existing purpose."));
+    assert!(!updated.contains("Replacement purpose."));
 }
 
 #[test]
@@ -879,4 +1350,384 @@ fn in_progress_add_requires_an_initialized_project() {
         "unexpected stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+#[test]
+fn show_diff_isolates_modified_requirement_lines() {
+    let tmp = TempDir::new("show-diff");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL use passwords.\n\n\
+         #### Scenario: Login\n- **WHEN** a password is valid\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n### Requirement: Login\n\
+         The system SHALL use passkeys.\n\n#### Scenario: Login\n\
+         - **WHEN** a passkey is valid\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["show", "feat", "--diff", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let diff = report["diff"][0]["diff"].as_str().unwrap();
+    assert!(diff.contains("-The system SHALL use passwords."));
+    assert!(diff.contains("+The system SHALL use passkeys."));
+}
+
+#[test]
+fn show_diff_reports_removed_requirements() {
+    let tmp = TempDir::new("show-diff-removed");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Legacy\nThe system SHALL use legacy auth.\n\n\
+         #### Scenario: Legacy\n- **WHEN** legacy\n- **THEN** it works\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## REMOVED Requirements\n\n### Requirement: Legacy\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["show", "feat", "--diff", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let entry = &report["diff"][0];
+    assert_eq!(entry["operation"], "REMOVED");
+    assert!(entry["diff"]
+        .as_str()
+        .unwrap()
+        .contains("-### Requirement: Legacy"));
+}
+
+#[test]
+fn show_diff_reports_renamed_requirements() {
+    let tmp = TempDir::new("show-diff-renamed");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: OldName\nThe system SHALL do something.\n\n\
+         #### Scenario: Basic\n- **WHEN** requested\n- **THEN** it works\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## RENAMED Requirements\n\
+         - FROM: `### Requirement: OldName`\n\
+         - TO: `### Requirement: NewName`\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["show", "feat", "--diff", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let entry = &report["diff"][0];
+    assert_eq!(entry["operation"], "RENAMED");
+    let diff = entry["diff"].as_str().unwrap();
+    assert!(diff.contains("-### Requirement: OldName"));
+    assert!(diff.contains("+### Requirement: NewName"));
+}
+
+#[test]
+fn validate_rejects_a_modified_requirement_missing_from_the_canonical_spec() {
+    let tmp = TempDir::new("validate-missing-modified");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Existing\nThe system SHALL keep existing behavior.\n\n\
+         #### Scenario: Existing\n- **WHEN** requested\n- **THEN** it remains\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n### Requirement: Missing\n\
+         The system SHALL modify behavior.\n\n#### Scenario: Modified\n\
+         - **WHEN** requested\n- **THEN** it changes\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["summary"]["totals"]["failed"], 1);
+    assert!(report["items"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("MODIFY") && message.contains("Missing"))));
+}
+
+#[test]
+fn validate_follows_a_transitive_rename_chain_when_checking_scenario_loss() {
+    let tmp = TempDir::new("validate-rename-chain");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Original login\nThe system SHALL authenticate users.\n\n\
+         #### Scenario: Password login\n- **WHEN** credentials are valid\n- **THEN** access is granted\n\n\
+         #### Scenario: Locked account\n- **WHEN** an account is locked\n- **THEN** access is denied\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n\
+         ### Requirement: Final login\nThe system SHALL authenticate users.\n\n\
+         #### Scenario: Password login\n- **WHEN** credentials are valid\n- **THEN** access is granted\n\n\
+         ## RENAMED Requirements\n\
+         - FROM: `### Requirement: Original login`\n\
+         - TO: `### Requirement: Intermediate login`\n\
+         - FROM: `### Requirement: Intermediate login`\n\
+         - TO: `### Requirement: Final login`\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["items"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("Locked account"))));
+}
+
+#[test]
+fn validate_reports_archive_retirement_preflight_failures_as_findings() {
+    let tmp = TempDir::new("validate-retirement-preflight");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/.openspec.yaml"),
+        "schema: spec-driven\nretire_capabilities: true\n",
+    )
+    .unwrap();
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL authenticate.\n\n\
+         #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n\n\
+         ## Operational Notes\n\nThis content prevents whole-capability retirement.\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(delta, "## REMOVED Requirements\n\n### Requirement: Login\n").unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(report["items"][0]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|issue| issue["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("outside Purpose and Requirements"))));
+}
+
+#[test]
+fn validate_type_requires_an_item_and_conflicts_with_bulk_scopes() {
+    let tmp = TempDir::new("validate-type-arguments");
+    for args in [
+        &["validate", "--type", "change"][..],
+        &["validate", "--changes", "--type", "change"][..],
+        &["validate", "--specs", "--type", "spec"][..],
+        &["validate", "--all", "--type", "change"][..],
+        &["validate", "--archived", "--type", "change"][..],
+    ] {
+        let out = spectra().args(args).current_dir(&*tmp).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{args:?} must be rejected by clap: {out:?}"
+        );
+    }
+}
+
+#[test]
+fn schema_validate_without_a_name_includes_malformed_project_schemas() {
+    let tmp = TempDir::new("schema-validate-malformed-bulk");
+    init_project_with_change(&tmp, "feat");
+    let schema = tmp.join("openspec/schemas/broken/schema.yaml");
+    std::fs::create_dir_all(schema.parent().unwrap()).unwrap();
+    std::fs::write(schema, "name: [unclosed\n").unwrap();
+
+    let out = spectra()
+        .args(["schema", "validate", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let checks: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let broken = checks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["name"] == "broken")
+        .expect("malformed on-disk schema must remain enumerable");
+    assert_eq!(broken["valid"], false);
+}
+
+#[test]
+fn validate_human_output_prints_warning_findings_for_a_valid_item() {
+    let tmp = TempDir::new("validate-human-warning");
+    init_project_with_change(&tmp, "feat");
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## ADDED Requirements\n\n### Requirement: Login\nUsers can log in.\n\n\
+         #### Scenario: Login\n- **WHEN** credentials are valid\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("feat"), "{stdout}");
+    assert!(stdout.contains("OK"), "{stdout}");
+    assert!(stdout.contains("WARNING specs/auth/spec.md:"), "{stdout}");
+    assert!(stdout.contains("SHALL or MUST"), "{stdout}");
+}
+
+#[test]
+fn validate_human_output_prints_info_findings_for_a_valid_item() {
+    let tmp = TempDir::new("validate-human-info");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/.openspec.yaml"),
+        "schema: spec-driven\nskip_specs: true\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["validate", "feat"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("OK"), "{stdout}");
+    assert!(stdout.contains("INFO .openspec.yaml:"), "{stdout}");
+    assert!(stdout.contains("declares skip_specs"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn show_diff_and_validation_propagate_unreadable_canonical_spec_errors() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = TempDir::new("unreadable-canonical-spec");
+    init_project_with_change(&tmp, "feat");
+    let main = tmp.join("openspec/specs/auth/spec.md");
+    std::fs::create_dir_all(main.parent().unwrap()).unwrap();
+    std::fs::write(
+        &main,
+        "# auth Specification\n\n## Purpose\n\nAuthentication.\n\n## Requirements\n\n\
+         ### Requirement: Login\nThe system SHALL authenticate.\n\n\
+         #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+    let delta = tmp.join("openspec/changes/feat/specs/auth/spec.md");
+    std::fs::create_dir_all(delta.parent().unwrap()).unwrap();
+    std::fs::write(
+        delta,
+        "## MODIFIED Requirements\n\n### Requirement: Login\n\
+         The system SHALL authenticate safely.\n\n#### Scenario: Login\n\
+         - **WHEN** requested\n- **THEN** access is granted\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&main, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_to_string(&main).is_ok() {
+        std::fs::set_permissions(&main, std::fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+
+    let diff = spectra()
+        .args(["show", "feat", "--diff"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    let validation = spectra()
+        .args(["validate", "feat"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&main, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    for out in [diff, validation] {
+        assert_eq!(out.status.code(), Some(1), "{out:?}");
+        let stderr = String::from_utf8(out.stderr).unwrap();
+        assert!(stderr.contains("reading"), "{stderr}");
+        assert!(stderr.contains("openspec/specs/auth/spec.md"), "{stderr}");
+    }
 }

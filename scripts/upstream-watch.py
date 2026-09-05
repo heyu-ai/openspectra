@@ -147,7 +147,7 @@ def build_digest(
     out.extend(fmt_issues(oracle_issues) or ["- _(none)_"])
     out.append("")
 
-    out.append("## 📐 Format authority — `Fission-AI/OpenSpec` (v1.6.0 base)")
+    out.append("## 📐 Format authority — `Fission-AI/OpenSpec` (v1.12.0 base)")
     out.append("*A change here may shift the OpenSpec conventions that "
                "`validate` / `archive` delta-merge implement.*")
     out.append("")

@@ -4,13 +4,13 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** The Rust CLI ships 20 commands — `init`, `drift`, `analyze`,
-> `search`, `completion`, `schemas`, `templates`, `status`, `instructions`,
-> `validate`, `list`, `show`, `park`, `unpark`, `in-progress add`, `new change`,
-> `new artifact`, `task done`, `update`, `archive`, and `config` — covering
-> the full SDD workflow. It runs on Linux/macOS with no bundled runtime
-> dependencies (`git` must be on `PATH`). Three oracle commands remain unported:
-> `schema` (custom schema management), `demo`, and `feedback` (see
+> **Status:** The Rust CLI ships 21 commands — `init`, `drift`, `analyze`,
+> `search`, `completion`, `schemas`, `schema`, `templates`, `status`,
+> `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
+> `in-progress add`, `new change`, `new artifact`, `task done`, `update`,
+> `archive`, and `config` — covering the full SDD workflow. It runs on
+> Linux/macOS with no bundled runtime dependencies (`git` must be on `PATH`).
+> Two oracle commands remain unported: `demo` and `feedback` (see
 > [#65](https://github.com/heyu-ai/openspectra/issues/65) for the tracking
 > issue). The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/`](docs/reverse-engineering/):
@@ -61,26 +61,30 @@ severity, so a CI gate keys on a JSON field — use the **FilePath** entries of
 ```sh
 spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/config.yaml + <spec_dir>/{changes/archive,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
-spectra validate [CHANGE] [--changes] [--strict] [--json]  # OpenSpec structural gate; exits non-zero when any change is invalid
+spectra validate [ITEM] [--type change|spec] [--changes|--specs|--all|--archived] [--strict] [--report full|findings] [--json]  # OpenSpec structural/content gate
 spectra list  [--json]            # lists active changes
 spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
 spectra list  --specs [--json]    # lists capability specs instead of changes
 spectra list  --parked [--json]   # lists parked changes instead of active ones
-spectra show  <CHANGE|SPEC> [--json]   # prints the change's proposal, or a spec's content
+spectra show  <CHANGE|SPEC> [--diff] [--json]  # prints content; --diff isolates requirement-level change lines
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
 spectra new change <NAME> [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)
 spectra new artifact <TYPE> [CAPABILITY] [--change <NAME>] [--stdin] [--force] [--json]  # creates one artifact (proposal|design|tasks|spec) from stdin or its built-in template, with per-type validation
 spectra schemas [--json]          # lists the built-in workflow schema registry (only spec-driven)
-spectra status [--change <NAME>] [--schema <NAME>] [--json]   # shows the artifact DAG (proposal → {design, specs} → tasks) as done/ready/blocked
+spectra schema init <NAME> [--description TEXT] [--artifacts IDS] [--default] [--force] [--json]  # creates a project-local workflow schema
+spectra schema fork <SOURCE> [NAME] [--force] [--json]  # copies a schema with target identity preserved
+spectra schema validate [NAME] [--verbose] [--json]     # validates schema structure, templates, and dependency graph
+spectra schema which [NAME] [--all] [--json]            # reports project → user → package resolution
+spectra status [--change <NAME>|--all] [--schema <NAME>] [--json]   # shows one or every artifact DAG with dependencies and skip state
 spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifact's authoring instruction + template; with all artifacts done, switches to apply mode (tasks progress + preflight)
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
 spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md checkbox done, records touched files
-spectra in-progress add <NAME>    # records a write-only in-progress marker (no --json, no removal path, no effect on any listing)
+spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # transactional merge/move with rollback; honors skip_specs/retire_capabilities metadata
 spectra completion generate [SHELL]              # prints a shell completion script (bash|zsh|fish|elvish|powershell; detects $SHELL when omitted)
 spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
 spectra completion uninstall [SHELL] [-y]         # removes that file
-spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # moves a change to changes/archive/<date>-<name>, applies added spec requirements
+spectra in-progress add <NAME>    # records a write-only in-progress marker (no --json, no removal path, no effect on any listing)
 spectra update [PATH] [--force]   # rewrites instruction files for every detected AI tool (.claude/, .cursor/, … 23 tools); oracle-verified byte-for-byte
 spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 spectra search <QUERY> [--limit N] [--json]  # searches Markdown artifacts using dependency-free lexical ranking
@@ -94,12 +98,12 @@ successful run — severity does **not** map to the exit code — and `1` on err
 a gate (see [CI gate example](#ci-gate-example)).
 
 `validate` is the deliberate exception: it is a pass/fail gate, so it exits
-`0` when every validated change is valid and `1` when any is invalid (also
-`1` on an operational error, e.g. not initialized). The JSON is still
-authoritative — gate on `summary.totals.failed`. See
-[`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md)
-for the rule set (it matches the OSS `openspec validate` contract, not the
-macOS Spectra binary, which can't be probed for `validate` from Linux CI).
+`0` when every selected change/spec/archive check is valid and `1` when any is
+invalid (also `1` on operational errors). The additive v2 JSON retains
+`summary.totals.failed` for existing gates and adds item types, severities,
+grounded lines, per-type totals, root metadata, bulk scopes, and findings-only
+reports. See [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md);
+this contract follows OSS OpenSpec 1.12 rather than the macOS Spectra binary.
 
 `spectra drift`'s human-readable conclusion line is colored by severity
 (green/yellow/red) when stdout is a terminal; `--no-color` or the

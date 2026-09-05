@@ -53,6 +53,10 @@ pub const NO_ACTIVE_CHANGES_MESSAGE: &str =
 pub struct ChangeMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_specs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retire_capabilities: Option<bool>,
     /// `YYYY-MM-DD` creation date, or `None` when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,

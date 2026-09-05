@@ -26,50 +26,73 @@ impl Spec {
     }
 }
 
+fn is_valid_capability_id(id: &str) -> bool {
+    !id.is_empty() && !id.contains('\\') && id.split('/').all(is_valid_name)
+}
+
 /// List capability spec names (directories under `specs_dir()` containing
 /// `spec.md`), sorted. A missing `specs_dir()` is not an error (mirrors
 /// `change::list_active`); any other I/O failure (e.g. permissions) is.
 pub fn list(cfg: &Config) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    let entries = match std::fs::read_dir(cfg.specs_dir()) {
+    let mut visited = std::collections::HashSet::new();
+    collect_specs(
+        &cfg.specs_dir(),
+        std::path::Path::new(""),
+        &mut visited,
+        &mut names,
+    )?;
+    names.sort();
+    Ok(names)
+}
+
+fn collect_specs(
+    dir: &std::path::Path,
+    relative: &std::path::Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+    names: &mut Vec<String>,
+) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(names),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", cfg.specs_dir().display())),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("reading {}", dir.display())),
     };
+    let canonical =
+        std::fs::canonicalize(dir).with_context(|| format!("resolving {}", dir.display()))?;
+    if !visited.insert(canonical) {
+        return Ok(());
+    }
+
     for entry in entries {
-        let entry = entry.with_context(|| format!("reading {}", cfg.specs_dir().display()))?;
-        let path = entry.path();
-        // `Path::is_dir`/`is_file` return `false` on *any* stat error (including
-        // PermissionDenied), which would silently drop an inaccessible spec
-        // from the listing instead of reporting it; use `fs::metadata` (which,
-        // unlike `DirEntry::file_type`, follows symlinks — matching
-        // `change::list_active`'s `Path::is_dir()` behavior) so only a genuine
-        // NotFound is treated as "not a spec".
-        match std::fs::metadata(&path) {
-            Ok(m) if m.is_dir() => {}
-            Ok(_) => continue,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-        }
-        let spec_md = path.join("spec.md");
-        match std::fs::metadata(&spec_md) {
-            Ok(m) if m.is_file() => {}
-            Ok(_) => continue,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(e).with_context(|| format!("reading {}", spec_md.display())),
-        }
+        let entry = entry.with_context(|| format!("reading {}", dir.display()))?;
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             eprintln!(
-                "warning: skipping non-UTF-8 spec directory name {:?} in {}",
+                "warning: skipping non-UTF-8 spec entry {:?} in {}",
                 entry.file_name().to_string_lossy(),
-                cfg.specs_dir().display()
+                dir.display()
             );
             continue;
         };
-        names.push(name);
+        let path = entry.path();
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}", path.display()));
+            }
+        };
+        if metadata.is_dir() {
+            collect_specs(&path, &relative.join(&name), visited, names)?;
+        } else if metadata.is_file() && name == "spec.md" && !relative.as_os_str().is_empty() {
+            let id = relative
+                .iter()
+                .map(|part| part.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            names.push(id);
+        }
     }
-    names.sort();
-    Ok(names)
+    Ok(())
 }
 
 /// Load a spec by name if it exists. Returns `Ok(None)` only when `spec.md`
@@ -79,7 +102,7 @@ pub fn list(cfg: &Config) -> Result<Vec<String>> {
 /// misread a permission error as "not a spec" the way a boolean
 /// `Path::is_file()` check would.
 pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Spec>> {
-    if !is_valid_name(name) {
+    if !is_valid_capability_id(name) {
         return Ok(None);
     }
     let spec_md = cfg.specs_dir().join(name).join("spec.md");
@@ -98,7 +121,7 @@ pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Spec>> {
 /// raw CLI argument straight through, so this traversal guard is
 /// load-bearing, not defensive-for-a-hypothetical-future-caller.
 pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
-    if !is_valid_name(name) {
+    if !is_valid_capability_id(name) {
         return Err(anyhow::anyhow!("invalid spec name '{name}'"));
     }
     let dir = cfg.specs_dir().join(name);

@@ -18,9 +18,10 @@ Reference CLI options: `--no-color`, `-y`/`--yes` (skip confirmation),
 `--skip-specs`, `--no-validate`, `--mark-tasks-complete`. OpenSpectra
 implements all of these options. On an interactive terminal, archive prompts
 with `Archive '<name>'? (y/N) ` unless `-y`/`--yes` is present. Piped input
-skips the prompt. `--no-validate` skips the pre-move validation pass but still
-applies spec deltas after moving the change; `--skip-specs` skips both steps.
-This is independent of the implemented top-level `spectra validate` command.
+skips the prompt. `--no-validate` skips the side-effect-free compatibility
+preflight but the frozen deltas are still prepared and applied before the
+final archive move; `--skip-specs` skips both steps. This is independent of
+the implemented top-level `spectra validate` command.
 
 **No `--json` flag exists on the reference `archive` command** — confirmed
 via `--help`, unlike every other mutating command (`park`, `unpark`,
@@ -43,57 +44,51 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    left as-is, matching the project's established practice of not
    re-litigating pre-existing, already-shipped command wording for a
    different command's sake).
-2. Move `<spec_dir>/changes/<name>/` to
-   `<spec_dir>/changes/archive/<YYYY-MM-DD>-<name>/` (confirmed via golden
-   run — **not** a top-level `archived/` directory, and **not** a flat
-   `changes/<date>-<name>/` either; it's nested one level deeper, under a
-   literal `archive` subdirectory of `changes/`). This matches
-   `change.rs::walk_change_names`'s pre-existing `name == "archive"`
-   exclusion (added before this PR, inferred from this very layout) and its
-   `ARCHIVED_PREFIX_RE` filter.
-3. If `--mark-tasks-complete`: flip every pending checkbox in the
-   *now-archived* `tasks.md` to done (`tasks::mark_all_done`), regardless of
-   group headers. This runs **after** the move (not before, as an earlier
-   draft had it) so that a rename failure — e.g. a same-day archive-name
-   collision from re-archiving a same-named change twice — never leaves the
-   still-active change with prematurely-flipped checkboxes.
-4. Stamp `.openspec.yaml` (at the new location) with `archived_at: <YYYY-MM-DD>`
-   and, when `git config user.name`/`user.email` are both set,
-   `archived_by: <name> <email>` (unquoted, e.g. `archived_by: Ada Lovelace
-   <ada@example.com>` — both fields confirmed via golden run; matches the
-   already-existing `created_by`/`created`-style fields on
-   `ChangeMetadata`). If git identity isn't configured, only `archived_at`
-   is written — OpenSpectra warns on stderr when this happens rather than
-   silently omitting the field with no signal.
-5. Unless `--skip-specs`: for each `specs/**/spec.md` under the (now-moved)
-   change, merge its delta into the matching canonical
-   `<spec_dir>/specs/<capability>/spec.md`, then print
-   `Specs applied: <capability> (added: N, modified: N, removed: N, renamed: N)`
-   per capability. The `specs/` tree is walked **recursively**, so a
-   nested-capability layout `specs/<Epic>/<Feature>/spec.md` merges into
-   `<spec_dir>/specs/<Epic>/<Feature>/spec.md` (capability id `<Epic>/<Feature>`)
-   rather than being silently skipped — `archive` and `validate` share one
-   recursive collector (`fsutil::collect_delta_specs`) so their traversal, and
-   its symlink-cycle safety, can't drift apart (issue #39). Two malformed
-   layouts fail loud instead of mis-writing or vanishing: a `spec.md` placed
-   directly under `specs/` (no capability directory) is a hard error, and a
-   capability directory that is itself a **symlink** is not descended (a change
-   from the pre-#39 walk, which used `fs::metadata` and followed such symlinks)
-   — its delta is skipped with a stderr warning, not dropped silently. The
-   oracle also prints "Snapshot created for unarchive support." — **not
-   implemented**; see "Known limitations" below.
-6. Clear the change's `.spectra/changes/<name>.{started,in-progress}`
-   sidecar markers **and** its `.spectra/touched/<name>.json` tracking file, if any
-   (best-effort; a failure here only warns, since archiving itself already
-   succeeded by this point). Not oracle-confirmed, but a correctness fix:
-   without it, a re-created change of the same name could silently inherit a
-   stale baseline SHA or stale touched-file history from before it was
-   archived — the same class of bug already fixed for `change::create` (see
-   `change.rs`'s `clear_stale_sidecar_state`). Clearing `touched.json` matters
-   specifically because `apply_spec_deltas`'s `code:` trace list (below) is
-   sourced from it — without clearing it, a recreated change would attribute
-   its trace footer to files touched by the *previous*, already-archived
-   change of the same name.
+2. Create an exclusive claim in `changes/archive/`, re-check that
+   `<YYYY-MM-DD>-<name>` does not exist, and freeze the active change with a
+   same-filesystem rename to a hidden sibling staging path. All subsequent
+   parsing reads that frozen directory; the active name is no longer available
+   for another writer to mutate or archive.
+3. Fingerprint the frozen tree, resolve every delta through the shared
+   fence-aware Markdown parser, and prepare all canonical spec contents in
+   memory. ADDED/MODIFIED operations are no-ops only when the canonical block
+   already has identical content. RENAMED is a no-op only when the exact TO
+   target proves the final state. A missing REMOVED target in an existing
+   canonical spec is an error; an already-absent whole capability is a no-op
+   only when `retire_capabilities: true` explicitly authorizes retirement.
+4. Snapshot every affected canonical spec plus the frozen metadata/tasks
+   bytes. Compute the exact metadata/tasks output bytes, then verify both the
+   canonical baselines and frozen-tree fingerprint before the first spec
+   commit. Canonical writes are atomic.
+5. Unless `--skip-specs` or change metadata declares `skip_specs: true`, apply
+   every prepared spec mutation. New capability deltas may seed the main
+   `## Purpose`; an existing capability keeps its current Purpose. A change
+   declaring `retire_capabilities: true` may delete a spec whose final
+   requirement was removed, but only after the side-effect-free compatibility
+   preflight confirms no unaccounted content would be lost.
+6. Move the hidden frozen directory to
+   `<spec_dir>/changes/archive/<YYYY-MM-DD>-<name>/`. An EXDEV move copies from
+   the frozen source to an exclusive destination and recursively verifies it.
+   Copy or verification failure (including a verification I/O error) cleans
+   the destination. Once verification succeeds the destination is
+   authoritative: source-cleanup failure is a warning, and the hidden staged
+   source is retained at the reported path for manual recovery.
+7. Optionally write the precomputed completed-task bytes, then stamp the
+   precomputed `archived_at`/`archived_by` metadata bytes.
+8. If preparation, fingerprint verification, a spec write, the move, task
+   update, or metadata update fails, restore the frozen/archive directory to
+   the active name only when that name is unoccupied. Metadata, tasks, and
+   canonical specs are restored only when their current bytes equal either the
+   original or this transaction's exact expected output; concurrent edits are
+   never overwritten.
+9. On success, clear the change's `.spectra/changes/<name>.{started,in-progress}`
+   markers and `.spectra/touched/<name>.json` best-effort.
+
+The spec tree is recursive, so `specs/<Epic>/<Feature>/spec.md` maps to the
+same nested canonical capability. The collector rejects a root-level
+`specs/spec.md`, does not descend symlinked directories, and fails on unreadable
+entries. The oracle's durable \"Snapshot created for unarchive support\" feature
+remains separate and unimplemented; see \"Known limitations\" below.
 
 ## Spec delta format
 
@@ -109,23 +104,25 @@ A change's own `specs/<cap>/spec.md` is a *delta* against the canonical
 
 each followed by one or more `### Requirement: <name>` blocks.
 
-**Confirmed via golden run: `## ADDED Requirements` just means "insert these
+**Confirmed via golden run: `## ADDED Requirements` means "insert these
 requirement blocks into the canonical spec's `## Requirements` section,
-verbatim, each followed by its own trace footer"** — not a smart merge. New
-blocks are inserted right after the `## Requirements` header, before whatever
-`##` section (if any) follows it, rather than blindly appended to the end of
-the file. This matters once a canonical spec has grown a trailing section of
-its own (e.g. a human-added `## Notes`/`## Appendix`): appending at the
-file's end would incorrectly nest the new requirement under that unrelated
-section instead of inside `## Requirements` (OpenSpectra-only fix, not
-independently oracle-confirmed for this specific edge case — the golden
-samples observed only had a bare `## Requirements` with nothing after it).
-If the canonical spec has no `## Requirements` header at all (predating the
-convention, or hand-edited to drop it), insertion falls back to right after
-`## Purpose` instead, using the same before-the-next-section logic; only a
-spec with neither header falls all the way back to the literal end of the
-file, since at that point there's no recognizable section structure left to
-nest under incorrectly.
+verbatim, each followed by its own trace footer"** — not a smart merge. Header
+recognition is ASCII-case-insensitive, so accepted hand-written forms such as
+`## added requirements`, `### requirement: Name`, `## requirements`, and
+`## purpose` retain their parsed raw block while participating in the same
+merge and placement rules.
+
+New blocks are inserted right after the canonical Requirements header, before
+whatever `##` section (if any) follows it, rather than blindly appended to the
+end of the file. This matters once a canonical spec has grown a trailing
+section of its own (e.g. a human-added `## Notes`/`## Appendix`): appending at
+the file's end would incorrectly nest the new requirement under that unrelated
+section instead of inside Requirements (OpenSpectra-only fix, not independently
+oracle-confirmed for this specific edge case — golden samples observed only a
+bare Requirements section). If the canonical spec has no Requirements header,
+insertion falls back to right after Purpose using the same
+before-the-next-section logic; only a spec with neither header falls back to
+the literal end.
 The very first requirement appended to a fresh spec has no separator; every
 subsequent one (including the first appended to an *already-populated*
 spec) is preceded by a `\n---\n` line. If the canonical spec doesn't exist
@@ -183,22 +180,27 @@ Application order is:
 4. `ADDED Requirements`: append new requirement blocks using the existing
    insertion-point and trace-footer behavior described above.
 
-A requirement block runs from a `### Requirement:` header up to, but not
-including, the next `### Requirement:` header, the next `## ` section header,
-or EOF. Requirement names are matched case-sensitively after trimming
-leading/trailing whitespace and collapsing internal whitespace runs to a
-single space. This keeps OpenSpectra's existing case-sensitive section and
-requirement-header behavior while tolerating hand-written spacing differences.
+A requirement block runs from a parsed level-three Requirement header up to,
+but not including, the next level-three header, the next level-two section, or
+EOF. The parser recognizes the `Requirement:` prefix and the Purpose,
+Requirements, and delta section names ASCII-case-insensitively. Parsed
+`markdown::Requirement` names and raw blocks are authoritative throughout the
+merge; archive does not reparse an exact-case header. Requirement *names*
+remain case-sensitive after trimming leading/trailing whitespace and
+collapsing internal whitespace runs to one space. A case-only name variant is
+a spelling conflict rather than an idempotent match.
 
-Spec validation still runs **before** the change directory is moved. During
-validation OpenSpectra computes the full merged result in memory using the
-same RENAMED → REMOVED → MODIFIED → ADDED order that archive later writes.
-A missing MODIFIED/REMOVED/RENAMED-FROM target, a RENAMED-TO name that already
-exists in the canonical spec, or an ADDED requirement that already exists after
-the earlier operations, is a conflict and leaves the change active and unmoved.
-ADDED-only deltas may create a previously missing canonical
-`specs/<cap>/spec.md`; MODIFIED/REMOVED/RENAMED against a missing canonical spec
-are conflicts because there is nothing to match.
+Compatibility validation runs after the active directory has been frozen but
+before canonical specs are mutated or the final archive destination is
+created. It computes the full merged result in memory using the same RENAMED →
+REMOVED → MODIFIED → ADDED order as application, without reading or repairing
+touched sidecars. A missing MODIFIED or REMOVED target, a missing
+RENAMED-FROM whose exact RENAMED-TO target does not prove the final state, a
+RENAMED-TO name that already exists, or a conflicting ADDED requirement is an
+error. ADDED-only deltas may create a missing canonical spec.
+MODIFIED/RENAMED against a missing canonical spec are conflicts; REMOVED is
+also a conflict unless explicit capability-retirement metadata makes the
+already-absent whole capability an authorized no-op.
 
 Several **malformed-delta** shapes are also rejected loudly at validation
 (rather than silently dropping the author's intent, which would be worse than
@@ -209,12 +211,11 @@ second would be dropped); the same requirement ADDED twice within one delta
 (the canonical-spec exists check can't see an intra-delta duplicate); and a
 malformed `## RENAMED Requirements` FROM/TO pair (a FROM without a TO, a
 missing/unbalanced backtick, or backtick content that isn't a
-`### Requirement:` header). RENAMED accepts either `-` or `*` list bullets. To
-keep validation genuinely side-effect-free, the in-memory validation pass skips
-the ADDED trace-footer step (it reads this change's `.spectra/touched/` sidecar
-and would rename a corrupt one aside) -- that only happens during the real
-write, so a validation that fails on a later capability leaves the sidecar
-untouched.
+`### Requirement:` header). RENAMED accepts either `-` or `*` list bullets.
+Validation builds side-effect-free ADDED blocks without trace footers, because
+trace provenance is irrelevant to compatibility and reading this change's
+`.spectra/touched/` sidecar could rename a corrupt file aside. Trace footers
+are added only while preparing the exact bytes that will be committed.
 
 ## Known limitations
 
@@ -229,11 +230,27 @@ Tasks-collision detection.
   archive today means manually moving the directory back and reverting
   `.openspec.yaml`/the canonical spec by hand (or via `git revert`, since
   archiving isn't its own commit).
+
 - **`code:` trace provenance** — see above.
-- **Section-header matching is case-sensitive.** `## ADDED Requirements`,
-  `## MODIFIED Requirements`, `## Requirements`, and `## Purpose` are matched
-  with their exact reference casing. A hand-written delta using different
-  casing (e.g. `## modified requirements`) matches none of these patterns
-  and is treated as a no-op section — no oracle sample exists to confirm the
-  reference CLI's actual casing sensitivity, so this wasn't changed
-  speculatively.
+
+## Architecture decision: atomicity versus recovery
+
+OpenSpectra deliberately separates two guarantees that the oracle's snapshot
+message otherwise makes easy to conflate:
+
+1. **Single-run atomicity** — an `archive` invocation freezes the source before
+   preparation, verifies its fingerprint before committing specs, and must
+   either finish the archive or restore the unoccupied active path and every
+   transaction-owned output. Rollback uses original and exact expected bytes,
+   so it never restores untouched paths or overwrites concurrent edits. A
+   verified EXDEV destination is the one exception to source removal:
+   cleanup failure retains the hidden staged copy and reports its recovery
+   path, but does not roll back the authoritative archive or canonical specs.
+2. **Later unarchive support** — retaining a durable snapshot after a successful
+   archive so a future command can reverse it. This remains the separate,
+   unresolved parity question tracked in issue #111.
+
+The first guarantee prevents a failed command from leaving a half-archived
+change; it does not imply or implement the second. The maintainer selected this
+safe default on 2026-09-05. There is no legacy unsafe mode: preserving an
+observed partial-write failure is not worth a second public archive contract.
