@@ -537,6 +537,36 @@ pub(crate) fn parse_main_purpose(content: &str) -> Option<String> {
     (!purpose.is_empty()).then_some(purpose)
 }
 
+fn main_section_end(content: &str, section_name: &str) -> Option<usize> {
+    let normalized = normalize_markdown(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let mask = fenced_line_mask(&lines);
+    let header = lines.iter().enumerate().find_map(|(index, line)| {
+        (!mask[index]
+            && heading_text(line, 2).is_some_and(|text| text.eq_ignore_ascii_case(section_name)))
+        .then_some(index)
+    })?;
+    let end = ((header + 1)..lines.len())
+        .find(|index| !mask[*index] && heading_text(lines[*index], 2).is_some())
+        .unwrap_or(lines.len());
+    Some(
+        lines
+            .iter()
+            .take(end)
+            .map(|line| line.len() + 1)
+            .sum::<usize>()
+            .min(normalized.len()),
+    )
+}
+
+pub(crate) fn main_requirements_insertion_point(content: &str) -> Option<usize> {
+    main_section_end(content, "Requirements")
+}
+
+pub(crate) fn main_purpose_insertion_point(content: &str) -> Option<usize> {
+    main_section_end(content, "Purpose")
+}
+
 pub(crate) fn is_placeholder_purpose(purpose: &str) -> bool {
     let trimmed = purpose.trim();
     let first = trimmed.split_whitespace().next().unwrap_or_default();

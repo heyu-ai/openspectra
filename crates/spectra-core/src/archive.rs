@@ -9,19 +9,12 @@
 //! gaps (no snapshot/unarchive support).
 
 use anyhow::{anyhow, Context, Result};
-use once_cell::sync::Lazy;
-use regex::Regex;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 use crate::fsutil::read_optional;
 use crate::{change, touched};
-
-static REQUIREMENTS_HEADER_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?mi)^## Requirements\s*$").unwrap());
-static PURPOSE_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?mi)^## Purpose\s*$").unwrap());
-static SECTION_HEADER_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?m)^## \S").unwrap());
 
 /// How many requirements were appended to one capability's canonical spec.
 #[derive(Debug, Clone)]
@@ -81,7 +74,7 @@ pub fn archive(
         .with_context(|| format!("checking {}", archive_dir.display()))?;
     std::fs::create_dir_all(&archive_dir)
         .with_context(|| format!("creating {}", archive_dir.display()))?;
-    let _claim = ArchiveClaim::acquire(&archive_dir, &dest, &archived_name)?;
+    let claim = ArchiveClaim::acquire(&archive_dir, &dest, &archived_name)?;
     std::fs::rename(&ch.dir, &staged).with_context(|| {
         format!(
             "freezing active change from {} to {}",
@@ -142,12 +135,12 @@ pub fn archive(
 
         fingerprint.verify(&staged)?;
         commit_prepared_specs(&prepared)?;
+        if let Some(bytes) = tasks_update {
+            write_file_bytes(&staged.join("tasks.md"), &bytes)?;
+        }
+        metadata_update.apply(&staged)?;
         move_directory(&staged, &dest)
             .with_context(|| format!("moving {} to {}", staged.display(), dest.display()))?;
-        if let Some(bytes) = tasks_update {
-            write_file_bytes(&dest.join("tasks.md"), &bytes)?;
-        }
-        metadata_update.apply(&dest)?;
         Ok(())
     })();
 
@@ -169,7 +162,7 @@ pub fn archive(
         if let Err(rollback) = rollback_prepared_specs(&prepared) {
             rollback_errors.push(rollback.to_string());
         }
-        drop(_claim);
+        drop(claim);
         if !archive_dir_preexisting {
             let _ = std::fs::remove_dir(&archive_dir);
         }
@@ -643,7 +636,10 @@ fn prepare_tasks_update(original: Option<&[u8]>, name: &str) -> Result<Option<Ve
 }
 
 fn write_file_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
-    std::fs::write(path, bytes).with_context(|| format!("writing {}", path.display()))
+    let content = std::str::from_utf8(bytes)
+        .with_context(|| format!("writing {}: content is not UTF-8", path.display()))?;
+    crate::fsutil::write_atomically(path, content)
+        .with_context(|| format!("writing {}", path.display()))
 }
 
 fn load_change_metadata(change_dir: &Path) -> Result<change::ChangeMetadata> {
@@ -663,7 +659,6 @@ struct ArchivedMetadataUpdate {
 }
 
 impl ArchivedMetadataUpdate {
-    /// Plan the exact serialized metadata from the frozen original bytes.
     fn prepare(cfg: &Config, original: Option<&[u8]>, today: chrono::NaiveDate) -> Result<Self> {
         let (mut metadata, parse_error) = match original {
             None => (change::ChangeMetadata::default(), None),
@@ -685,14 +680,14 @@ impl ArchivedMetadataUpdate {
         })
     }
 
-    fn apply(self, dest: &Path) -> Result<()> {
-        let meta_path = dest.join(".openspec.yaml");
+    fn apply(self, change_dir: &Path) -> Result<()> {
+        let meta_path = change_dir.join(".openspec.yaml");
         if let Some(error) = self.parse_error {
             let backup = touched::non_colliding_backup_path(&meta_path);
-            let recovery_hint = match std::fs::rename(&meta_path, &backup) {
-                Ok(()) => format!("the original file was preserved at {}", backup.display()),
-                Err(rename_error) => {
-                    format!("failed to preserve the original file too ({rename_error})")
+            let recovery_hint = match std::fs::copy(&meta_path, &backup) {
+                Ok(_) => format!("the original file was preserved at {}", backup.display()),
+                Err(copy_error) => {
+                    format!("failed to preserve the original file too ({copy_error})")
                 }
             };
             eprintln!(
@@ -1295,19 +1290,9 @@ fn requirement_spelling_error(
 /// which is only reachable when the spec has no recognizable section
 /// structure at all, so there's no trailing section left to nest under.
 fn requirements_insertion_point(content: &str) -> usize {
-    if let Some(req_match) = REQUIREMENTS_HEADER_RE.find(content) {
-        let after = &content[req_match.end()..];
-        return SECTION_HEADER_RE
-            .find(after)
-            .map_or(content.len(), |m| req_match.end() + m.start());
-    }
-    if let Some(purpose_match) = PURPOSE_HEADER_RE.find(content) {
-        let after = &content[purpose_match.end()..];
-        return SECTION_HEADER_RE
-            .find(after)
-            .map_or(content.len(), |m| purpose_match.end() + m.start());
-    }
-    content.len()
+    crate::markdown::main_requirements_insertion_point(content)
+        .or_else(|| crate::markdown::main_purpose_insertion_point(content))
+        .unwrap_or(content.len())
 }
 
 /// Insert ADDED blocks during compatibility validation without reading touched
@@ -2101,6 +2086,38 @@ mod tests {
             spec[..notes_idx].ends_with("\n\n"),
             "a blank line must separate the inserted trace footer from '## Notes', got:\n{spec}"
         );
+    }
+
+    #[test]
+    fn archive_ignores_fenced_requirements_heading_when_placing_added_blocks() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap/spec.md"),
+            "# my-cap Specification\n\n## Purpose\n\nExisting.\n\n\
+             ```markdown\n## requirements\nquoted\n```\n\n\
+             ## Requirements\n\n### Requirement: Existing\ntext\n",
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            DELTA_TEMPLATE,
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap/spec.md")).unwrap();
+        let real_heading = spec.rfind("## Requirements").unwrap();
+        let added = spec
+            .find("### Requirement: <!-- requirement name -->")
+            .unwrap();
+        assert!(
+            added > real_heading,
+            "added block landed outside real section:\n{spec}"
+        );
+        assert!(crate::markdown::parse_main_requirements(&spec)
+            .iter()
+            .any(|requirement| requirement.name == "<!-- requirement name -->"));
     }
 
     #[test]

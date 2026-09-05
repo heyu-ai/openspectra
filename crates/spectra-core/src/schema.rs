@@ -1092,6 +1092,9 @@ pub fn fork(
     if target.contains(std::path::MAIN_SEPARATOR) || target.contains('/') {
         anyhow::bail!("schema fork target '{target}' must not contain path separators");
     }
+    if is_transient_schema_dir(&target) {
+        anyhow::bail!("schema fork target '{target}' uses a reserved transaction name");
+    }
 
     let schemas_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
     let target_dir = schemas_dir.join(&target);
@@ -1757,7 +1760,9 @@ pub fn status(
         schema
             .artifacts
             .iter()
-            .filter(|artifact| artifact.output_path == "specs/**/*.md")
+            .filter(|artifact| {
+                artifact.id == "specs" || artifact.output_path.split('/').next() == Some("specs")
+            })
             .map(|artifact| artifact.id.clone())
             .collect()
     } else {
@@ -2269,6 +2274,31 @@ mod tests {
         assert_eq!(report.artifacts[0].status, ArtifactState::Skipped);
     }
 
+    #[test]
+    fn skip_specs_preserves_the_conventional_artifact_id_with_a_custom_glob() {
+        let (_tmp, cfg) = project("conventional-skip-specs");
+        let schema_dir = cfg.root.join("openspec/schemas/custom");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: custom\nartifacts:\n- id: specs\n  generates: requirements/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [specs]\n  instruction: apply\n",
+        )
+        .unwrap();
+        let change_dir = cfg.root.join("openspec/changes/demo");
+        std::fs::create_dir_all(&change_dir).unwrap();
+        std::fs::write(
+            change_dir.join(".openspec.yaml"),
+            "schema: custom\nskip_specs: true\n",
+        )
+        .unwrap();
+
+        let report = status(&cfg, Some("demo"), None).unwrap();
+
+        assert!(report.is_complete);
+        assert!(report.is_planning_complete);
+        assert_eq!(report.artifacts[0].id, "specs");
+        assert_eq!(report.artifacts[0].status, ArtifactState::Skipped);
+    }
     #[test]
     fn non_markdown_files_under_specs_do_not_count_as_done() {
         let change_dir = TempDir::new("specs-non-md");

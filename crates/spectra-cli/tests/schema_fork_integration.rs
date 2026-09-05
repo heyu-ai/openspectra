@@ -361,3 +361,19 @@ fn schema_init_validate_and_which_form_a_complete_management_flow() {
     let config = std::fs::read_to_string(root.join("openspec/config.yaml")).unwrap();
     assert!(config.contains("schema: team-flow"));
 }
+
+#[test]
+fn schema_fork_rejects_reserved_transaction_names() {
+    let root = TempDir::new("schema-private-name");
+    init_project(&root);
+
+    let output = spectra()
+        .args(["schema", "fork", "spec-driven", ".team.stage-123-0"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("reserved transaction name"));
+    assert!(!root.join("openspec/schemas/.team.stage-123-0").exists());
+}
