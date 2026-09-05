@@ -185,11 +185,18 @@ pub fn report_from_items(cfg: &Config, items: Vec<ChangeValidation>) -> Validate
 /// structural rule always and the content-quality rules only under `strict`.
 pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
     let started = std::time::Instant::now();
-    let specs_root = cfg.changes_dir().join(name).join("specs");
+    let change_dir = cfg.changes_dir().join(name);
+    let specs_root = change_dir.join("specs");
     let files = crate::fsutil::collect_delta_specs(&specs_root)?;
-    let skip_specs =
-        change::try_load(cfg, name)?.and_then(|change| change.metadata.skip_specs) == Some(true);
-
+    let loaded_change = change::try_load(cfg, name)?;
+    let skip_specs = loaded_change
+        .as_ref()
+        .and_then(|change| change.metadata.skip_specs)
+        == Some(true);
+    let retirement_declared = loaded_change
+        .as_ref()
+        .and_then(|change| change.metadata.retire_capabilities)
+        == Some(true);
     let mut issues = Vec::new();
     if skip_specs && !files.is_empty() {
         issues.push(Issue::error(
@@ -253,17 +260,21 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
         }
 
         let main_path = cfg.specs_dir().join(cap).join("spec.md");
-        if let Ok(main_content) = std::fs::read_to_string(&main_path) {
+        let main_content = match std::fs::read_to_string(&main_path) {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}", main_path.display()));
+            }
+        };
+        if let Some(main_content) = main_content {
             let current = crate::markdown::parse_main_requirements(&main_content);
             for modified in &parsed.modified {
-                let base_name = parsed
-                    .renamed
+                let base_name = original_requirement_name(&modified.name, &parsed.renamed);
+                let Some(base) = current
                     .iter()
-                    .find(|rename| normalize_name(&rename.to) == normalize_name(&modified.name))
-                    .map_or(modified.name.as_str(), |rename| rename.from.as_str());
-                let Some(base) = current.iter().find(|requirement| {
-                    normalize_name(&requirement.name) == normalize_name(base_name)
-                }) else {
+                    .find(|requirement| normalize_name(&requirement.name) == base_name)
+                else {
                     continue;
                 };
                 let missing = missing_scenarios(&base.scenarios, &modified.scenarios);
@@ -285,6 +296,16 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
                     );
                 }
             }
+        }
+    }
+    if !skip_specs {
+        if let Err(error) = crate::archive::validate_archive_compatibility(
+            cfg,
+            &change_dir,
+            name,
+            retirement_declared,
+        ) {
+            issues.push(Issue::error(format!("changes/{name}"), error.to_string()));
         }
     }
     issues.extend(task_numbering_issues(
@@ -311,7 +332,9 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 pub fn validate_spec(cfg: &Config, id: &str, strict: bool) -> Result<ChangeValidation> {
     let started = std::time::Instant::now();
     let spec = crate::spec::load(cfg, id)?;
-    let content = std::fs::read_to_string(spec.spec_md())?;
+    let spec_path = spec.spec_md();
+    let content = std::fs::read_to_string(&spec_path)
+        .with_context(|| format!("reading {}", spec_path.display()))?;
     let mut issues = Vec::new();
     let purpose = crate::markdown::parse_main_purpose(&content);
     match &purpose {
@@ -485,6 +508,21 @@ fn issues_are_valid(issues: &[Issue], strict: bool) -> bool {
 
 fn normalize_name(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn original_requirement_name(target: &str, renames: &[crate::markdown::Rename]) -> String {
+    let mut current = normalize_name(target);
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(current.clone()) {
+        let Some(rename) = renames
+            .iter()
+            .find(|rename| normalize_name(&rename.to) == current)
+        else {
+            break;
+        };
+        current = normalize_name(&rename.from);
+    }
+    current
 }
 
 fn missing_scenarios(current: &[String], modified: &[String]) -> Vec<String> {
@@ -727,6 +765,33 @@ mod tests {
             .issues
             .iter()
             .any(|issue| issue.message.contains("duplicated") && issue.line == Some(3)));
+    }
+
+    #[test]
+    fn reverse_rename_resolution_is_transitive_and_cycle_safe() {
+        let chain = vec![
+            crate::markdown::Rename {
+                from: "Original".to_string(),
+                to: "Intermediate".to_string(),
+            },
+            crate::markdown::Rename {
+                from: "Intermediate".to_string(),
+                to: "Final".to_string(),
+            },
+        ];
+        assert_eq!(original_requirement_name("Final", &chain), "Original");
+
+        let cycle = vec![
+            crate::markdown::Rename {
+                from: "First".to_string(),
+                to: "Second".to_string(),
+            },
+            crate::markdown::Rename {
+                from: "Second".to_string(),
+                to: "First".to_string(),
+            },
+        ];
+        assert_eq!(original_requirement_name("First", &cycle), "First");
     }
 
     #[test]

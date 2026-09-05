@@ -163,7 +163,12 @@ enum Command {
         #[arg(long, conflicts_with_all = ["item", "changes", "specs", "all"])]
         archived: bool,
         /// Select the direct item's type when names are ambiguous.
-        #[arg(long = "type", value_name = "TYPE")]
+        #[arg(
+            long = "type",
+            value_name = "TYPE",
+            requires = "item",
+            conflicts_with_all = ["changes", "specs", "all", "archived"]
+        )]
         item_type: Option<ValidationItemType>,
         /// Select full or findings-only output for an explicit bulk scope.
         #[arg(long, value_name = "REPORT")]
@@ -711,9 +716,9 @@ fn print_validate_human(report: &spectra_core::validate::ValidateReport) {
             let n = item.issues.len();
             let noun = if n == 1 { "issue" } else { "issues" };
             println!("{:<45} FAIL ({n} {noun})", item.id);
-            for issue in &item.issues {
-                println!("  {} {}: {}", issue.level, issue.path, issue.message);
-            }
+        }
+        for issue in &item.issues {
+            println!("  {} {}: {}", issue.level, issue.path, issue.message);
         }
     }
     let t = &report.summary.totals;
@@ -1125,6 +1130,33 @@ fn cmd_templates(
     Ok(0)
 }
 
+fn status_human(report: &schema::StatusReport) -> String {
+    let mut output = format!(
+        "Change: {}\nSchema: {}\n\n",
+        report.change_name, report.schema_name
+    );
+    for artifact in &report.artifacts {
+        let marker = match artifact.status {
+            schema::ArtifactState::Done => "✓",
+            schema::ArtifactState::Ready => "○",
+            schema::ArtifactState::Blocked => "✗",
+            schema::ArtifactState::Skipped => "~",
+        };
+        output.push_str(&format!(
+            "  {marker} {} ({})\n",
+            artifact.id, artifact.output_path
+        ));
+        if let Some(missing_deps) = &artifact.missing_deps {
+            output.push_str(&format!("    blocked by: {}\n", missing_deps.join(", ")));
+        }
+    }
+    output.push('\n');
+    if report.is_complete {
+        output.push_str("  ✓ All artifacts complete\n");
+    }
+    output
+}
+
 fn cmd_status(
     cfg: &Config,
     change_name: Option<&str>,
@@ -1137,29 +1169,18 @@ fn cmd_status(
     let report = schema::status(cfg, Some(&change_name), schema_name)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
-        return Ok(0);
-    }
-
-    println!("Change: {}", report.change_name);
-    println!("Schema: {}", report.schema_name);
-    println!();
-    for artifact in &report.artifacts {
-        let marker = match artifact.status {
-            schema::ArtifactState::Done => "✓",
-            schema::ArtifactState::Ready => "○",
-            schema::ArtifactState::Blocked => "✗",
-            schema::ArtifactState::Skipped => "~",
-        };
-        println!("  {marker} {} ({})", artifact.id, artifact.output_path);
-        if let Some(missing_deps) = &artifact.missing_deps {
-            println!("    blocked by: {}", missing_deps.join(", "));
-        }
-    }
-    println!();
-    if report.is_complete {
-        println!("  ✓ All artifacts complete");
+    } else {
+        print!("{}", status_human(&report));
     }
     Ok(0)
+}
+
+enum BatchStatusEntry {
+    Report(schema::StatusReport),
+    Error {
+        change_name: String,
+        message: String,
+    },
 }
 
 fn cmd_status_all(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Result<i32> {
@@ -1168,20 +1189,33 @@ fn cmd_status_all(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Res
     let mut failed = false;
     for name in names {
         match schema::status(cfg, Some(&name), schema_name) {
-            Ok(report) => entries.push(serde_json::to_value(report)?),
+            Ok(report) => entries.push(BatchStatusEntry::Report(report)),
             Err(error) => {
                 failed = true;
-                entries.push(json!({
-                    "changeName": name,
-                    "status": [{
-                        "severity": "error",
-                        "message": error.to_string(),
-                    }],
-                }));
+                entries.push(BatchStatusEntry::Error {
+                    change_name: name,
+                    message: error.to_string(),
+                });
             }
         }
     }
     if as_json {
+        let entries = entries
+            .iter()
+            .map(|entry| match entry {
+                BatchStatusEntry::Report(report) => serde_json::to_value(report),
+                BatchStatusEntry::Error {
+                    change_name,
+                    message,
+                } => Ok(json!({
+                    "changeName": change_name,
+                    "status": [{
+                        "severity": "error",
+                        "message": message,
+                    }],
+                })),
+            })
+            .collect::<serde_json::Result<Vec<_>>>()?;
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -1194,13 +1228,12 @@ fn cmd_status_all(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Res
             if index > 0 {
                 println!();
             }
-            if let Some(name) = entry["changeName"].as_str() {
-                println!("Change: {name}");
-                if let Some(schema) = entry["schemaName"].as_str() {
-                    println!("Schema: {schema}");
-                } else if let Some(message) = entry["status"][0]["message"].as_str() {
-                    println!("Error: {message}");
-                }
+            match entry {
+                BatchStatusEntry::Report(report) => print!("{}", status_human(report)),
+                BatchStatusEntry::Error {
+                    change_name,
+                    message,
+                } => println!("Change: {change_name}\nError: {message}"),
             }
         }
     }
@@ -1881,16 +1914,10 @@ fn run() -> Result<i32> {
                 json,
             } => {
                 let cfg = require_initialized(&root)?;
-                let names = name.clone().map_or_else(
-                    || {
-                        schema::schemas(Some(&cfg))
-                            .into_iter()
-                            .filter(|schema| schema.source == "project")
-                            .map(|schema| schema.name)
-                            .collect()
-                    },
-                    |name| vec![name],
-                );
+                let names = match name {
+                    Some(name) => vec![name.clone()],
+                    None => schema::project_schema_names(&cfg)?,
+                };
                 let checks: Vec<_> = names
                     .iter()
                     .map(|name| schema::validate_schema(&cfg, name))

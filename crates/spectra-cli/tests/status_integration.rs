@@ -302,3 +302,35 @@ fn status_all_returns_every_active_change_in_one_envelope() {
     assert_eq!(report["changes"][0]["changeName"], "a-first");
     assert_eq!(report["changes"][1]["changeName"], "z-last");
 }
+
+#[test]
+fn status_all_human_renders_the_full_artifact_dag_for_every_change() {
+    let root = TempDir::new("status-all-human");
+    init_project_with_change(&root, "z-last");
+    let created = spectra()
+        .args(["new", "change", "a-first"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{created:?}");
+
+    let out = spectra()
+        .args(["status", "--all"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{out:?}");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let first = stdout.find("Change: a-first").unwrap();
+    let second = stdout.find("Change: z-last").unwrap();
+    assert!(first < second, "{stdout}");
+    for section in [&stdout[first..second], &stdout[second..]] {
+        assert!(section.contains("Schema: spec-driven"), "{section}");
+        assert!(section.contains("proposal (proposal.md)"), "{section}");
+        assert!(section.contains("design (design.md)"), "{section}");
+        assert!(section.contains("specs (specs/**/*.md)"), "{section}");
+        assert!(section.contains("tasks (tasks.md)"), "{section}");
+        assert!(section.contains("blocked by:"), "{section}");
+    }
+}

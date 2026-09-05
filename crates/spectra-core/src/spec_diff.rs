@@ -23,7 +23,13 @@ pub fn change_diff(cfg: &Config, change: &str) -> Result<Vec<DiffEntry>> {
         let delta = crate::markdown::parse_delta(&content)
             .with_context(|| format!("parsing specs/{capability}/spec.md"))?;
         let main_path = cfg.specs_dir().join(&capability).join("spec.md");
-        let main = std::fs::read_to_string(&main_path).unwrap_or_default();
+        let main = match std::fs::read_to_string(&main_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(error).with_context(|| format!("reading {}", main_path.display()));
+            }
+        };
         let current = crate::markdown::parse_main_requirements(&main);
         let rename_map: std::collections::HashMap<_, _> = delta
             .renamed

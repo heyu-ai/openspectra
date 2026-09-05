@@ -33,8 +33,17 @@ struct Fence {
     len: usize,
 }
 
+fn fence_content(line: &str) -> Option<&str> {
+    let indent = line
+        .as_bytes()
+        .iter()
+        .take_while(|byte| **byte == b' ')
+        .count();
+    (indent <= 3).then(|| &line[indent..])
+}
+
 fn fence_marker(line: &str) -> Option<Fence> {
-    let bytes = line.trim_start().as_bytes();
+    let bytes = fence_content(line)?.as_bytes();
     let marker = *bytes.first()?;
     if !matches!(marker, b'`' | b'~') {
         return None;
@@ -44,13 +53,16 @@ fn fence_marker(line: &str) -> Option<Fence> {
 }
 
 fn closes_fence(line: &str, active: Fence) -> bool {
-    let trimmed = line.trim_start();
-    let bytes = trimmed.as_bytes();
+    let content = match fence_content(line) {
+        Some(content) => content,
+        None => return false,
+    };
+    let bytes = content.as_bytes();
     let len = bytes
         .iter()
         .take_while(|byte| **byte == active.marker)
         .count();
-    len >= active.len && trimmed[len..].trim().is_empty()
+    len >= active.len && content[len..].trim().is_empty()
 }
 
 pub(crate) fn fenced_line_mask(lines: &[&str]) -> Vec<bool> {
@@ -173,6 +185,7 @@ fn requirement_blocks(lines: &[&str], mask: &[bool], start: usize, end: usize) -
         };
         let block_end = headers.get(position + 1).copied().unwrap_or(end);
         let mut text_lines = Vec::new();
+        let mut metadata_lines = Vec::new();
         let mut scenarios = Vec::new();
         for index in (*header + 1)..block_end {
             if mask[index] {
@@ -189,17 +202,26 @@ fn requirement_blocks(lines: &[&str], mask: &[bool], start: usize, end: usize) -
                 break;
             }
             let trimmed = lines[index].trim();
-            if scenarios.is_empty()
-                && !trimmed.is_empty()
-                && !(trimmed.starts_with("**") && trimmed.contains("**:"))
-            {
-                text_lines.push(trimmed);
+            if scenarios.is_empty() && !trimmed.is_empty() {
+                let is_metadata = trimmed
+                    .strip_prefix("**")
+                    .and_then(|line| line.split_once("**:"))
+                    .is_some_and(|(key, _)| !key.trim().is_empty());
+                if is_metadata {
+                    metadata_lines.push(trimmed);
+                } else {
+                    text_lines.push(trimmed);
+                }
             }
         }
         requirements.push(Requirement {
             name,
             raw: lines[*header..block_end].join("\n").trim_end().to_string(),
-            text: text_lines.join("\n"),
+            text: if text_lines.is_empty() {
+                metadata_lines.join("\n")
+            } else {
+                text_lines.join("\n")
+            },
             scenarios,
             line: *header + 1,
             start: offsets[*header],
@@ -306,6 +328,13 @@ fn validate_delta_conflicts(delta: &DeltaDocument) -> anyhow::Result<()> {
         }
     }
 
+    if let Some(name) = duplicate_name(delta.renamed.iter().map(|rename| rename.from.as_str())) {
+        anyhow::bail!("Duplicate requirement in RENAMED FROM: \"{name}\"");
+    }
+    if let Some(name) = duplicate_name(delta.renamed.iter().map(|rename| rename.to.as_str())) {
+        anyhow::bail!("Duplicate requirement in RENAMED TO: \"{name}\"");
+    }
+
     let added: std::collections::HashSet<_> = delta
         .added
         .iter()
@@ -321,6 +350,16 @@ fn validate_delta_conflicts(delta: &DeltaDocument) -> anyhow::Result<()> {
         .iter()
         .map(|name| normalize_name(name))
         .collect();
+    let renamed_from: std::collections::HashSet<_> = delta
+        .renamed
+        .iter()
+        .map(|rename| normalize_name(&rename.from))
+        .collect();
+    let renamed_to: std::collections::HashSet<_> = delta
+        .renamed
+        .iter()
+        .map(|rename| normalize_name(&rename.to))
+        .collect();
 
     for name in &modified {
         if removed.contains(name) {
@@ -328,6 +367,19 @@ fn validate_delta_conflicts(delta: &DeltaDocument) -> anyhow::Result<()> {
         }
         if added.contains(name) {
             anyhow::bail!("Requirement present in both MODIFIED and ADDED: \"{name}\"");
+        }
+    }
+    for name in &renamed_from {
+        if removed.contains(name) {
+            anyhow::bail!("Requirement present in both RENAMED FROM and REMOVED: \"{name}\"");
+        }
+        if modified.contains(name) {
+            anyhow::bail!("Requirement present in both RENAMED FROM and MODIFIED: \"{name}\"");
+        }
+    }
+    for name in &renamed_to {
+        if added.contains(name) {
+            anyhow::bail!("Requirement present in both RENAMED TO and ADDED: \"{name}\"");
         }
     }
     for name in &added {
@@ -401,17 +453,28 @@ pub(crate) fn parse_delta(content: &str) -> anyhow::Result<DeltaDocument> {
                     .join("\n")
                     .trim()
                     .to_string();
-                if !purpose.is_empty() {
-                    parsed.purpose = Some(purpose);
+                if purpose.is_empty() {
+                    anyhow::bail!("delta `## Purpose` section contains no content");
                 }
+                parsed.purpose = Some(purpose);
             }
             DeltaSection::Added => {
                 parsed.added_present = true;
                 parsed.added = requirement_blocks(&lines, &mask, section.start, section.end);
+                if parsed.added.is_empty() {
+                    anyhow::bail!(
+                        "delta `## ADDED Requirements` section contains no recognizable entries"
+                    );
+                }
             }
             DeltaSection::Modified => {
                 parsed.modified_present = true;
                 parsed.modified = requirement_blocks(&lines, &mask, section.start, section.end);
+                if parsed.modified.is_empty() {
+                    anyhow::bail!(
+                        "delta `## MODIFIED Requirements` section contains no recognizable entries"
+                    );
+                }
             }
             DeltaSection::Removed => {
                 parsed.removed_present = true;
@@ -419,10 +482,20 @@ pub(crate) fn parse_delta(content: &str) -> anyhow::Result<DeltaDocument> {
                     .into_iter()
                     .map(|requirement| requirement.name)
                     .collect();
+                if parsed.removed.is_empty() {
+                    anyhow::bail!(
+                        "delta `## REMOVED Requirements` section contains no recognizable entries"
+                    );
+                }
             }
             DeltaSection::Renamed => {
                 parsed.renamed_present = true;
                 parsed.renamed = rename_pairs(&lines, &mask, section.start, section.end)?;
+                if parsed.renamed.is_empty() {
+                    anyhow::bail!(
+                        "delta `## RENAMED Requirements` section contains no recognizable entries"
+                    );
+                }
             }
             DeltaSection::Other => {}
         }
@@ -545,5 +618,166 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("both MODIFIED and REMOVED"));
+    }
+
+    #[test]
+    fn fences_require_at_most_three_leading_spaces_to_open_or_close() {
+        let lines = [
+            "   ```markdown",
+            "inside",
+            "    `````",
+            "still inside",
+            "   ```",
+            "outside",
+            "    ```",
+            "not fenced",
+        ];
+        assert_eq!(
+            fenced_line_mask(&lines),
+            vec![true, true, true, true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn an_over_indented_closer_does_not_expose_destructive_delta_operations() {
+        let delta = parse_delta(concat!(
+            "```markdown\n",
+            "    `````\n",
+            "## REMOVED Requirements\n",
+            "### Requirement: Keep\n",
+            "```\n",
+            "## ADDED Requirements\n",
+            "### Requirement: Add\n",
+            "The system SHALL add safely.\n",
+            "#### Scenario: Safe addition\n",
+        ))
+        .unwrap();
+
+        assert!(!delta.removed_present);
+        assert!(delta.removed.is_empty());
+        assert_eq!(delta.added[0].name, "Add");
+    }
+
+    #[test]
+    fn metadata_lines_supply_text_only_when_ordinary_prose_is_absent() {
+        let delta = parse_delta(
+            "## ADDED Requirements\n\
+             ### Requirement: Metadata only\n\
+             **Priority**: High\n\
+             **Contract**: The system SHALL retain metadata.\n\
+             #### Scenario: Metadata survives\n\
+             ### Requirement: Ordinary prose\n\
+             **Priority**: Low\n\
+             The system MUST prefer this prose.\n\
+             #### Scenario: Prose wins\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            delta.added[0].text,
+            "**Priority**: High\n**Contract**: The system SHALL retain metadata."
+        );
+        assert_eq!(delta.added[1].text, "The system MUST prefer this prose.");
+    }
+
+    #[test]
+    fn rejects_every_present_but_empty_recognized_delta_section() {
+        for (source, section) in [
+            ("## Purpose\n\n", "Purpose"),
+            (
+                "## ADDED Requirements\n\nprose without a requirement\n",
+                "ADDED Requirements",
+            ),
+            (
+                "## MODIFIED Requirements\n\nprose without a requirement\n",
+                "MODIFIED Requirements",
+            ),
+            (
+                "## REMOVED Requirements\n\nprose without a requirement\n",
+                "REMOVED Requirements",
+            ),
+            (
+                "## RENAMED Requirements\n\nprose without a rename pair\n",
+                "RENAMED Requirements",
+            ),
+        ] {
+            let error = parse_delta(source).unwrap_err().to_string();
+            assert!(
+                error.contains(&format!("`## {section}` section contains no")),
+                "empty {section} section should be rejected, got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_duplicate_normalized_rename_sources_and_targets() {
+        for (source, operation, name) in [
+            (
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement: Old   Name`\n\
+                 - TO: `### Requirement: First`\n\
+                 - FROM: `### Requirement: Old Name`\n\
+                 - TO: `### Requirement: Second`\n",
+                "FROM",
+                "Old Name",
+            ),
+            (
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement: First`\n\
+                 - TO: `### Requirement: New   Name`\n\
+                 - FROM: `### Requirement: Second`\n\
+                 - TO: `### Requirement: New Name`\n",
+                "TO",
+                "New Name",
+            ),
+        ] {
+            let error = parse_delta(source).unwrap_err().to_string();
+            assert!(
+                error.contains(operation) && error.contains(name),
+                "duplicate RENAMED {operation} should name '{name}', got: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_normalized_rename_conflicts_with_other_operations() {
+        for (source, rename_side, operation, name) in [
+            (
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement: Old   Name`\n\
+                 - TO: `### Requirement: New`\n\
+                 ## REMOVED Requirements\n\
+                 ### Requirement: Old Name\n",
+                "FROM",
+                "REMOVED",
+                "Old Name",
+            ),
+            (
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement: Old Name`\n\
+                 - TO: `### Requirement: New`\n\
+                 ## MODIFIED Requirements\n\
+                 ### Requirement: Old   Name\n",
+                "FROM",
+                "MODIFIED",
+                "Old Name",
+            ),
+            (
+                "## RENAMED Requirements\n\
+                 - FROM: `### Requirement: Old`\n\
+                 - TO: `### Requirement: New   Name`\n\
+                 ## ADDED Requirements\n\
+                 ### Requirement: New Name\n",
+                "TO",
+                "ADDED",
+                "New Name",
+            ),
+        ] {
+            let error = parse_delta(source).unwrap_err().to_string();
+            assert!(
+                error.contains(rename_side) && error.contains(operation) && error.contains(name),
+                "RENAMED {rename_side}/{operation} conflict should name '{name}', got: {error}"
+            );
+        }
     }
 }
