@@ -85,7 +85,7 @@ spectra completion generate [SHELL]              # prints a shell completion scr
 spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
 spectra completion uninstall [SHELL] [-y]         # removes that file
 spectra in-progress add <NAME>    # records a write-only in-progress marker (no --json, no removal path, no effect on any listing)
-spectra update [PATH] [--force]   # rewrites instruction files for every detected AI tool (.claude/, .cursor/, … 23 tools); oracle-verified byte-for-byte
+spectra update [PATH] [--force]   # rewrites instruction files for every detected AI tool (.claude/, .cursor/, … 6 tools); oracle-verified byte-for-byte
 spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 spectra search <QUERY> [--limit N] [--json]  # searches Markdown artifacts using dependency-free lexical ranking
 spectra templates [--schema NAME] [--json]  # shows template paths for the workflow schema (only spec-driven is built in)
@@ -342,7 +342,7 @@ cargo test                   # unit + integration tests
 
 ## Fidelity
 
-Probes against the v2.3.1 oracle establish the Function/CliFlag/Symbol extraction
+Probes against the v3.0.0 oracle establish the Function/CliFlag/Symbol extraction
 and resolution rules, per-category over-cap sampling, Structure score formula,
 severity bands, and recommendation mapping. Unit tests and synthetic-repository
 integration tests preserve those formulas and mappings, but they do **not**

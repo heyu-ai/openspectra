@@ -2,9 +2,9 @@
 
 How `spectra update` (update instruction files for detected AI tools) was
 probed against the closed-source reference binary and ported. The fresh-write
-file set and bytes are pinned against `Spectra.app/Contents/MacOS/spectra` 2.3.1
-in `golden/update-trees-2.3.1.tsv` (445 always-on files across 23 tools, plus 10
-Claude files gated by `claude_slash_commands`). Individual sections distinguish
+file set and bytes are pinned against `Spectra.app/Contents/MacOS/spectra` 3.0.0
+in `golden/update-trees-3.0.0.tsv` (72 files across 6 tools; v3.0.0 removed
+command files and the `claude_slash_commands` gate). Individual sections distinguish
 directly probed rules from inferred `FileKind` classifications, deliberate
 divergences, and open questions.
 
@@ -319,9 +319,8 @@ binary) regenerates:
   `spectra-ingest` and `spectra-propose` have per-tool variants),
 - `crates/spectra-core/src/update_manifest.rs` — the generated registry
   (tool → detection path → file specs → **probed** `FileKind`), and
-- `golden/update-trees-2.3.1.tsv` — sha256 and gate of every oracle output file
-  with the default spec_dir, which CI replays with the switch both off and on;
-  its
+- `golden/update-trees-3.0.0.tsv` — sha256 of every oracle output file
+  with the default spec_dir; its
   `every_tool_tree_matches_the_oracle_golden_byte_for_byte` integration
   test verifies without needing the oracle.
 

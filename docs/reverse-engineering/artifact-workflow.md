@@ -266,8 +266,8 @@ this mode and the output remains raw Markdown. An unknown name writes
 1.
 
 The bodies under `crates/spectra-core/assets/skills/` are byte-exact captures
-from the Spectra 2.3.1 oracle. The generated
-`docs/reverse-engineering/golden/skills-2.3.1.tsv` manifest pins their oracle
+from the Spectra 3.0.0 oracle. The generated
+`docs/reverse-engineering/golden/skills-3.0.0.tsv` manifest pins their oracle
 provenance by byte length and SHA-256 digest. Both the assets and manifest are
 generated artifacts and must never be hand-edited. By default,
 `scripts/capture-skills.py` re-captures the bodies and verifies both; its

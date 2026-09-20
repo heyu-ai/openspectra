@@ -1,5 +1,5 @@
 //! OpenSpectra core: change discovery, capability spec discovery, and drift
-//! detection, reverse-engineered from the closed-source `spectra` CLI (v2.3.1).
+//! detection, reverse-engineered from the closed-source `spectra` CLI (v3.0.0).
 
 pub mod analyze;
 pub mod anchors;

@@ -325,7 +325,7 @@ fn running_twice_is_byte_for_byte_idempotent() {
     }
 }
 
-// ---- 使用者內容保留與 codex-gemini 怪癖（end-to-end）----
+// ---- 使用者內容保留（end-to-end）----
 
 #[test]
 fn user_content_outside_managed_regions_survives_an_update() {
