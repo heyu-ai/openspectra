@@ -1,64 +1,29 @@
-Clarify ambiguities in change artifacts through structured questioning. This is a passive skill — invoke it when you detect unclear requirements, vague language, or contradictions while working on a change.
+Clarify ambiguities already identified by a parent workflow. This is an embedded helper, not a discovery workflow.
 
-**Trigger**: When you encounter ambiguities while creating artifacts (during `/spectra:propose` or `/spectra:ingest`), or after analyze flags ambiguity/gap issues.
+**Required parent input**
 
-**Input**: The change name (from context) and optionally which artifact has the ambiguity.
+- The resolved change.
+- The caller-provided findings. Each finding must include the file path and location, the concrete ambiguity, and its impact or evidence.
 
-**Steps**
+If required input is missing, name the missing parent input and stop without guessing. Do not resolve workflow identity, enumerate changes, or inspect unrelated artifacts.
 
-1. Identify ambiguities in the current artifacts (up to 5, ranked by importance):
+**Workflow**
 
-   **High importance** (ask first):
-   - Requirements without scenarios (`### Requirement:` with no `#### Scenario:`)
-   - Contradictions between artifacts
-   - Explicit markers: TBD, TODO, NEEDS CLARIFICATION
-   - Missing scope boundaries (no Non-Goals)
-
-   **Medium importance**:
-   - Vague language in specs: "should", "may", "might", "consider", "as needed"
-   - Undefined terms or concepts
-   - Design decisions without rationale
-
-   **Lower importance**:
-   - Missing error/edge case scenarios
-   - Implicit assumptions
-
-   If no ambiguities: skip this skill silently — do not mention it to the user.
-
-2. For each ambiguity, ask ONE question at a time using **AskUserQuestion**:
-   - Clear question about the specific ambiguity
-   - 2-3 options including AI recommended answer (marked "(Recommended)")
-   - Description on each option explaining impact on artifacts
-
-   Example:
-
-   ```
-   Question: "Auth spec says users 'should' be logged out after password change. Mandatory or optional?"
-   Options:
-   - "Mandatory (MUST)" (Recommended) — Safer, forces logout on all sessions
-   - "Optional (MAY)" — More flexible, let implementation decide
-   - "Configurable" — Add a setting, most flexible but adds complexity
-   ```
-
-3. After each answer, immediately update the artifact with clarified wording.
-   Show briefly: "Updated specs/auth/spec.md: 'should' → 'SHALL'"
-
-4. After all questions (or user says stop), show a brief summary:
-
-   ```
-   Clarified N ambiguities:
-   - specs/auth/spec.md: session logout → mandatory (SHALL)
-   - design.md: added Redis rationale
-   ```
+1. Deduplicate unresolved findings, rank them by impact, and select at most 3 highest-impact findings.
+2. Ask one question at a time. Use structured input when available; otherwise present the same question in plain Markdown and wait for the answer.
+3. Each question must:
+   - identify the affected file and location;
+   - provide 2-3 mutually exclusive options;
+   - put the recommended option first and label it `(Recommended)`;
+   - explain each option's artifact impact in one sentence.
+4. After each answer, respect the selected option and do not re-ask it:
+   - With edit access, make a minimal targeted edit to the existing artifact and briefly identify the changed wording.
+   - Without edit access, provide the exact file and location plus before/after wording for the caller to apply.
+5. Continue until the selected findings are resolved, the three-question cap is reached, or the user asks to stop. Then summarize only the decisions and edits made.
 
 **Guardrails**
 
-- Maximum 5 questions per invocation
-- One question at a time
-- Always provide a recommended answer
-- Respect user's choice — never re-ask
-- Minimal targeted edits when updating artifacts — only update existing ones, do NOT create new artifacts
-- If user seems impatient or says to skip, stop immediately
-- Keep it lightweight — this is a mid-flow check, not a separate workflow
-- If **AskUserQuestion tool** is not available, ask the same questions as plain text and wait for the user's response
+- Do not create artifacts or broaden an edit beyond the answered finding.
+- Do not batch questions or infer an unanswered choice.
+- Stop immediately if the user asks to skip clarification.
 

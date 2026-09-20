@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify or recapture the embedded skills from the Spectra 2.3.1 oracle.
+"""Verify or recapture the embedded skills from the Spectra 3.0.0 oracle.
 
 This is a verification contract, not a general output tool. By default it
 compares the oracle output byte-for-byte with the core assets and validates
@@ -27,13 +27,12 @@ import tempfile
 from pathlib import Path
 from typing import NoReturn
 
-EXPECTED_VERSION = "2.3.1"
+EXPECTED_VERSION = "3.0.0"
 SKILLS = (
     "tdd",
     "audit",
     "apply",
     "archive",
-    "ask",
     "commit",
     "debug",
     "discuss",
@@ -42,11 +41,12 @@ SKILLS = (
     "propose",
     "analyze",
     "verify",
+    "review",
     "sync",
     "clarify",
 )
 KNOWN_ABSENT = (
-    "review",
+    "ask",
     "plan",
     "test",
     "refactor",
@@ -257,7 +257,9 @@ def verify_behavior_contract(binary: Path, bodies: dict[str, bytes]) -> None:
     )
     check("--json inertness", ["instructions", "--json", "--skill", "tdd"])
 
-    init = run(binary, ["init", "--tools", "none", "."], probe_dir)
+    # v3.0.0 不再接受 --tools none；用 claude 代替（skill body
+    # 不受 init tool 影響，precedence 測的是 --skill flag）。
+    init = run(binary, ["init", "--tools", "claude", "."], probe_dir)
     if init.returncode != 0:
         for mismatch in mismatches:
             print(f"[FAIL] {mismatch}", file=sys.stderr)

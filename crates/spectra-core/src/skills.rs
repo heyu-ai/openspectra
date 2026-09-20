@@ -1,7 +1,7 @@
-//! Skill bodies captured byte-exact from the Spectra 2.3.1 oracle.
+//! Skill bodies captured byte-exact from the Spectra 3.0.0 oracle.
 //! The registry's entries and their order are cross-checked by
 //! `scripts/capture-skills.py`. Both the static assets and
-//! `docs/reverse-engineering/golden/skills-2.3.1.tsv` are generated
+//! `docs/reverse-engineering/golden/skills-3.0.0.tsv` are generated
 //! artifacts — never hand-edit them.
 
 const SKILLS: &[(&str, &str)] = &[
@@ -9,7 +9,6 @@ const SKILLS: &[(&str, &str)] = &[
     ("audit", include_str!("../assets/skills/audit.md")),
     ("apply", include_str!("../assets/skills/apply.md")),
     ("archive", include_str!("../assets/skills/archive.md")),
-    ("ask", include_str!("../assets/skills/ask.md")),
     ("commit", include_str!("../assets/skills/commit.md")),
     ("debug", include_str!("../assets/skills/debug.md")),
     ("discuss", include_str!("../assets/skills/discuss.md")),
@@ -18,6 +17,7 @@ const SKILLS: &[(&str, &str)] = &[
     ("propose", include_str!("../assets/skills/propose.md")),
     ("analyze", include_str!("../assets/skills/analyze.md")),
     ("verify", include_str!("../assets/skills/verify.md")),
+    ("review", include_str!("../assets/skills/review.md")),
     ("sync", include_str!("../assets/skills/sync.md")),
     ("clarify", include_str!("../assets/skills/clarify.md")),
 ];
@@ -39,8 +39,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "tdd", "audit", "apply", "archive", "ask", "commit", "debug", "discuss", "drift",
-                "ingest", "propose", "analyze", "verify", "sync", "clarify",
+                "tdd", "audit", "apply", "archive", "commit", "debug", "discuss", "drift",
+                "ingest", "propose", "analyze", "verify", "review", "sync", "clarify",
             ]
         );
         assert!(SKILLS.iter().all(|(_, body)| !body.is_empty()));

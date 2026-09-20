@@ -1,0 +1,23 @@
+<!-- SPECTRA:START v1.3.0 -->
+
+# Spectra Instructions
+
+This project uses Spectra for Spec-Driven Development(SDD).
+
+## Directory Structure
+
+- **Specs**: `{{SPEC_DIR}}/specs/` - Current truth, what IS built
+- **Changes**: `{{SPEC_DIR}}/changes/` - Proposals, what SHOULD change
+- **Archive**: `{{SPEC_DIR}}/changes/archive/` - Completed changes
+- **Config**: `{{SPEC_DIR}}/config.yaml` - Project context and rules
+
+Explicit skill invocation takes precedence. Apply existing authorization within its unchanged scope.
+
+- Continue tasks for an identified change → `/spectra-apply`
+- Update requirements or plans for an identified change → `/spectra-ingest`
+
+## Workflow
+
+discuss? → propose → apply ⇄ ingest → verify / review → archive
+
+<!-- SPECTRA:END -->

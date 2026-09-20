@@ -1,23 +1,20 @@
 //! `spectra update` — 把偵測到的 AI 工具 instruction 檔更新到目前 schema
 //! 版本。
 //!
-//! 行為逐項 probe 自 oracle 2.3.1（見 `docs/reverse-engineering/update.md`）：
+//! 行為逐項 probe 自 oracle 3.0.0（見 `docs/reverse-engineering/update.md`）：
 //!
-//! - 偵測：工具的偵測路徑（如 `.claude`、`.github/prompts`）**存在**即算
+//! - 偵測：工具的偵測路徑（如 `.claude`、`.github`）**存在**即算
 //!   （檔案也算，不限目錄——oracle 用 exists 而非 is_dir，偵測路徑是普通
 //!   檔案時後續 create_dir_all 會炸原始 io error，這個 bug 也照搬）。
 //! - 每次執行對每個偵測到的工具**無條件重寫**其整組檔案（內容 idempotent
 //!   但一定寫檔）；缺檔補回；非管理檔（使用者自己的 skill 等）不動。
-//! - `--force` 在 oracle 2.3.1 觀察不到任何行為差異（CLI 收下但語義同
+//! - `--force` 在 oracle 觀察不到任何行為差異（CLI 收下但語義同
 //!   預設），這裡照樣只收不用。
-//! - 模板中 `{{SPEC_DIR}}` 代換為 config 的 `spec_dir`；oracle 輸出本身
-//!   含有漏代換的字面 `{{SPEC_DIR}}`（每個工具的 spectra-ask 命令檔，
-//!   slash commands 開啟後的 455 個 tool-file 中有 20 個、去重後 9 個
-//!   blob），capture 時跳脫成 `{{RAW_SPEC_DIR}}`，render 時還原字面值。
+//! - 模板中 `{{SPEC_DIR}}` 代換為 config 的 `spec_dir`；capture 時跳脫成
+//!   `{{RAW_SPEC_DIR}}`，render 時還原字面值。
 //! - [`FileKind`] 是**對 oracle 實測**分類的（sentinel 存活法），不是從模板
-//!   文字推論：kilocode 的 10 個 `.kilocode/workflows/*.md` 模板本身是完整
-//!   marker 區塊，oracle 卻整檔覆寫。
-//! - marker 檔（`CLAUDE.md`、`.cursorrules`、`AGENTS.md` 等 11 個路徑）以
+//!   文字推論。
+//! - marker 檔（`CLAUDE.md`、`.cursorrules`、`AGENTS.md` 等 5 個路徑）以
 //!   `<!-- SPECTRA:START … -->` / `<!-- SPECTRA:END -->` 區塊管理：
 //!   區塊完整 → 原地替換（marker 之外的內容保留，**含同行前後綴**）；
 //!   只有 START 沒 END → 整塊附加到檔尾；沒有 START（不管有沒有孤兒 END）
@@ -134,14 +131,25 @@ pub fn update_instruction_files(cfg: &Config) -> Result<Vec<&'static str>> {
 /// Generate instruction files for the requested tool ids.
 ///
 /// Unlike [`update_instruction_files`], selection comes directly from the
-/// caller rather than filesystem detection. Unknown ids are ignored, while
-/// valid ids retain request order. This is the write path used by
+/// caller rather than filesystem detection. Unknown ids are rejected with
+/// an error listing supported agents. This is the write path used by
 /// `spectra init --tools`.
 pub fn generate_instruction_files(cfg: &Config, tool_ids: &[String]) -> Result<()> {
-    let tools: Vec<_> = tool_ids
-        .iter()
-        .filter_map(|id| update_manifest::TOOLS.iter().find(|tool| tool.id == id))
-        .collect();
+    let mut tools = Vec::new();
+    for id in tool_ids {
+        match update_manifest::TOOLS.iter().find(|tool| tool.id == id) {
+            Some(tool) => tools.push(tool),
+            None => anyhow::bail!(
+                "Unsupported coding agent: {}. Supported agents: {}",
+                id,
+                update_manifest::TOOLS
+                    .iter()
+                    .map(|t| t.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
     update_detected_tools(cfg, &tools)
 }
 
@@ -149,16 +157,9 @@ pub fn generate_instruction_files(cfg: &Config, tool_ids: &[String]) -> Result<(
 /// （不必依賴 generated manifest），也是 `spectra init --tools` 的共用
 /// 寫入路徑（#89 與 update 逐位元相同的依據）。
 fn update_detected_tools(cfg: &Config, tools: &[&ToolDef]) -> Result<()> {
-    // RE'd 怪癖（對 2.3.1 成對 probe，見 update.md）：gemini 同時被偵測到
-    // 時，codex 只寫 AGENTS.md、整組 .agents/skills/* 被抑制。其他工具
-    // 兩兩組合都互不影響（含同樣會寫 GEMINI.md 的 antigravity）。
-    let gemini_present = tools.iter().any(|t| t.id == "gemini");
     for tool in tools {
         for file in tool.files {
             if !gate_allows(file.kind.gate, cfg) {
-                continue;
-            }
-            if tool.id == "codex" && gemini_present && file.relpath != "AGENTS.md" {
                 continue;
             }
             write_file(&cfg.root, file, &cfg.spec_dir)?;
@@ -607,7 +608,7 @@ mod tests {
             std::fs::create_dir_all(tmp.join(d)).unwrap();
         }
         let ids: Vec<_> = detect_tools(&tmp).iter().map(|t| t.id).collect();
-        assert_eq!(ids, ["claude", "cursor", "codex"]);
+        assert_eq!(ids, ["claude", "codex", "cursor"]);
     }
 
     #[test]
@@ -620,56 +621,35 @@ mod tests {
     }
 
     #[test]
-    fn detect_github_copilot_needs_the_nested_prompts_dir() {
+    fn detect_github_copilot_triggers_on_the_github_dir() {
         let tmp = TempDir::new("update-detect-gh");
         std::fs::create_dir_all(tmp.join(".github")).unwrap();
-        assert!(detect_tools(&tmp).is_empty());
-        std::fs::create_dir_all(tmp.join(".github/prompts")).unwrap();
         let ids: Vec<_> = detect_tools(&tmp).iter().map(|t| t.id).collect();
         assert_eq!(ids, ["github-copilot"]);
     }
 
     #[test]
-    fn registry_covers_all_twenty_three_probed_tools_in_oracle_order() {
+    fn registry_covers_all_six_probed_tools_in_oracle_order() {
         let ids: Vec<_> = update_manifest::TOOLS.iter().map(|t| t.id).collect();
         assert_eq!(
             ids,
             [
-                "claude",
-                "cursor",
-                "windsurf",
-                "cline",
-                "gemini",
-                "github-copilot",
-                "kiro",
-                "roocode",
-                "continue",
-                "opencode",
-                "codebuddy",
-                "costrict",
                 "antigravity",
-                "auggie",
-                "amazon-q",
-                "kilocode",
-                "factory",
-                "iflow",
-                "qoder",
-                "qwen",
+                "claude",
                 "codex",
-                "crush",
-                "trae"
+                "cursor",
+                "github-copilot",
+                "junie",
             ]
         );
     }
 
     #[test]
     fn file_kinds_match_the_probed_oracle_classification() {
-        // 這些數字是**對 oracle 實測**（sentinel 存活法）得到的，不是從模板
-        // 文字推的。舊版把「模板以 START marker 開頭」直接當成 Managed，於是
-        // 把 10 個 kilocode workflow 誤判成 Managed（oracle 其實整檔覆寫）。
-        // 這個測試同時堵住 reviewer 指出的循環斷言問題：
-        // `every_managed_template_is_a_complete_marker_block` 斷言的正是產生器
-        // 用來分類的那個述詞，永遠不可能紅。
+        // 這些數字是**對 oracle 3.0.0 實測**（sentinel 存活法）得到的，不是
+        // 從模板文字推的。v3.0.0 收斂為 6 家工具，5 個 Managed、1 個
+        // ClaudeSettings、其餘全是 Plain。不再有 marker-shaped-but-Plain
+        // 的反例（kilocode 已移除）。
         let mut managed = Vec::new();
         let mut settings = 0;
         let mut plain_but_marker_shaped = Vec::new();
@@ -692,33 +672,17 @@ mod tests {
             managed,
             [
                 ".cursorrules",
-                ".windsurfrules",
+                ".junie/AGENTS.md",
                 "AGENTS.md",
                 "CLAUDE.md",
-                "CLINE.md",
-                "CODEBUDDY.md",
-                "COSTRICT.md",
                 "GEMINI.md",
-                "IFLOW.md",
-                "QODER.md",
-                "QWEN.md"
             ],
             "Managed set drifted from the probed oracle classification"
         );
         assert_eq!(settings, 1);
-        plain_but_marker_shaped.sort_unstable();
-        plain_but_marker_shaped.dedup();
-        assert_eq!(
-            plain_but_marker_shaped.len(),
-            10,
-            "expected exactly kilocode's 10 workflow files to look managed but be \
-             full-overwrite; got {plain_but_marker_shaped:?}"
-        );
         assert!(
-            plain_but_marker_shaped
-                .iter()
-                .all(|p| p.starts_with(".kilocode/workflows/")),
-            "{plain_but_marker_shaped:?}"
+            plain_but_marker_shaped.is_empty(),
+            "v3.0.0 has no marker-shaped-but-Plain files; got {plain_but_marker_shaped:?}"
         );
     }
 
@@ -859,16 +823,35 @@ mod tests {
     }
 
     #[test]
-    fn requested_tools_ignore_unknown_ids_and_do_not_require_detection_paths() {
+    fn requested_tools_reject_unknown_ids() {
         let tmp = TempDir::new("update-requested");
         let cfg = init_cfg(&tmp);
         let requested = vec!["claude".to_string(), "bogus".to_string()];
 
+        let err = generate_instruction_files(&cfg, &requested).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Unsupported coding agent: bogus"),
+            "unexpected error: {msg}"
+        );
+        assert!(
+            msg.contains("Supported agents:"),
+            "error should list supported agents: {msg}"
+        );
+    }
+
+    #[test]
+    fn requested_valid_tool_does_not_require_detection_paths() {
+        let tmp = TempDir::new("update-requested-valid");
+        let cfg = init_cfg(&tmp);
+        let requested = vec!["claude".to_string()];
+
         generate_instruction_files(&cfg, &requested).unwrap();
 
-        for file in update_manifest::TOOLS[0].files {
-            // #102 之後 manifest 含 gated 條目：`--tools` 走與 update 相同的
-            // 寫入語義，預設 config（開關關閉）下 gated 檔案不寫。
+        // claude is the second tool in the v3.0.0 registry (index 1)
+        let claude = &update_manifest::TOOLS[1];
+        assert_eq!(claude.id, "claude");
+        for file in claude.files {
             let should_exist = gate_allows(file.kind.gate, &cfg);
             assert_eq!(
                 tmp.join(file.relpath).is_file(),
@@ -878,62 +861,38 @@ mod tests {
                 if should_exist { "" } else { " not" }
             );
         }
-        assert!(!tmp.join("bogus").exists());
     }
 
     #[test]
-    fn requested_unknown_and_space_separated_ids_write_nothing() {
-        let tmp = TempDir::new("update-requested-noop");
-        let requested = vec![
-            "definitely-not-a-tool".to_string(),
-            "claude cursor".to_string(),
-        ];
+    fn requested_space_separated_ids_are_rejected() {
+        let tmp = TempDir::new("update-requested-space");
+        let requested = vec!["claude cursor".to_string()];
 
-        generate_instruction_files(&init_cfg(&tmp), &requested).unwrap();
-
-        assert_eq!(std::fs::read_dir(&*tmp).unwrap().count(), 0);
+        let err = generate_instruction_files(&init_cfg(&tmp), &requested).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("Unsupported coding agent: claude cursor"),
+            "space-separated value should be rejected as unknown"
+        );
     }
 
     #[test]
-    fn update_claude_writes_exactly_the_files_its_gates_allow() {
-        // 前一版跑單一預設 config，斷言 manifest 裡 claude 的每一項都落地。
-        // 那在 manifest 只有 `Gate::Always` 時是對的，而 capture 重跑把 10 個
-        // `/spectra:X` command 加進來之後就必然失敗 —— 它們的 gate 在預設
-        // config 下是關的。這個更新只能在重跑之後做：在那之前 manifest 沒有
-        // gated 條目，改寫後的版本反而會因為下面的 vacuity guard 而失敗。
-        //
-        // 順帶把斷言加強：不只驗「gate 開時有寫」，也驗「gate 關時沒寫」。
-        // 只驗前者的話，一個永遠回 true 的 `gate_allows` 可以讓測試全綠。
-        for enabled in [false, true] {
-            let tmp = TempDir::new(&format!("update-claude-slash-{enabled}"));
-            std::fs::create_dir_all(tmp.join(".claude")).unwrap();
-            let mut cfg = init_cfg(&tmp);
-            cfg.claude_slash_commands = enabled;
+    fn update_claude_writes_all_files() {
+        // v3.0.0 不再有 gated 檔案，所有 claude 檔案都是 Gate::Always。
+        let tmp = TempDir::new("update-claude");
+        std::fs::create_dir_all(tmp.join(".claude")).unwrap();
+        let cfg = init_cfg(&tmp);
 
-            let ids = update_instruction_files(&cfg).unwrap();
-            assert_eq!(ids, ["claude"]);
+        let ids = update_instruction_files(&cfg).unwrap();
+        assert_eq!(ids, ["claude"]);
 
-            let mut gated_seen = 0usize;
-            for file in update_manifest::TOOLS[0].files {
-                if file.kind.gate == Gate::ClaudeSlashCommands {
-                    gated_seen += 1;
-                }
-                let should_exist = gate_allows(file.kind.gate, &cfg);
-                assert_eq!(
-                    tmp.join(file.relpath).is_file(),
-                    should_exist,
-                    "slash_commands={enabled}: {} should{} exist",
-                    file.relpath,
-                    if should_exist { "" } else { " not" }
-                );
-            }
-
-            // 若 manifest 有一天不再有 gated 條目（例如 capture 被跑成開關
-            // 關閉的狀態），上面的迴圈會退化成只驗 `Always`，這個測試就會
-            // 靜靜地不再涵蓋開關本身。這行讓那種退化變成紅燈而不是假綠。
-            assert_eq!(
-                gated_seen, 10,
-                "expected the 10 oracle-measured gated command files in the manifest"
+        let claude = &update_manifest::TOOLS[1];
+        assert_eq!(claude.id, "claude");
+        for file in claude.files {
+            assert_eq!(file.kind.gate, Gate::Always);
+            assert!(
+                tmp.join(file.relpath).is_file(),
+                "{} should exist",
+                file.relpath,
             );
         }
     }
@@ -1079,31 +1038,6 @@ mod tests {
         let claude_md = std::fs::read_to_string(tmp.join("CLAUDE.md")).unwrap();
         assert!(claude_md.contains("`docs/specs/specs/`"));
         assert!(!claude_md.contains("openspec/"));
-    }
-
-    #[test]
-    fn codex_skills_are_suppressed_when_gemini_is_also_detected() {
-        // RE'd 怪癖：gemini + codex → codex 只寫 AGENTS.md。
-        let tmp = TempDir::new("update-codex-gemini");
-        std::fs::create_dir_all(tmp.join(".agents")).unwrap();
-        std::fs::create_dir_all(tmp.join(".gemini")).unwrap();
-        let ids = update_instruction_files(&init_cfg(&tmp)).unwrap();
-        assert_eq!(ids, ["gemini", "codex"]);
-        assert!(tmp.join("AGENTS.md").is_file());
-        assert!(!tmp.join(".agents/skills").exists());
-        // gemini 自己的檔案不受影響。
-        assert!(tmp.join(".gemini/skills/spectra-apply/SKILL.md").is_file());
-    }
-
-    #[test]
-    fn codex_skills_are_written_when_gemini_is_absent() {
-        // 對照組：其他工具（含同樣寫 GEMINI.md 的 antigravity）不觸發抑制。
-        let tmp = TempDir::new("update-codex-antigrav");
-        std::fs::create_dir_all(tmp.join(".agents")).unwrap();
-        std::fs::create_dir_all(tmp.join(".agent")).unwrap();
-        let ids = update_instruction_files(&init_cfg(&tmp)).unwrap();
-        assert_eq!(ids, ["antigravity", "codex"]);
-        assert!(tmp.join(".agents/skills/spectra-apply/SKILL.md").is_file());
     }
 
     #[test]

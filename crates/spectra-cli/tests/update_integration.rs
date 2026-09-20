@@ -1,6 +1,6 @@
 //! `spectra update` 整合測試 — 訊息、exit code、寫檔集合與檔案位元組
-//! 全部對照 oracle 2.3.1 的 probe / golden
-//! （docs/reverse-engineering/update.md、golden/update-trees-2.3.1.tsv）。
+//! 全部對照 oracle 3.0.0 的 probe / golden
+//! （docs/reverse-engineering/update.md、golden/update-trees-3.0.0.tsv）。
 
 mod common;
 
@@ -17,13 +17,6 @@ fn init_root(root: &Path, spec_dir: &str) {
         format!("spec_dir: {spec_dir}\n"),
     )
     .unwrap();
-}
-
-fn enable_claude_slash_commands(root: &Path) {
-    let config = root.join(".spectra.yaml");
-    let mut text = std::fs::read_to_string(&config).unwrap();
-    text.push_str("claude_slash_commands: true\n");
-    std::fs::write(config, text).unwrap();
 }
 
 fn run_update(root: &Path, extra: &[&str]) -> Output {
@@ -107,7 +100,7 @@ fn multi_tool_message_lists_ids_in_registry_order() {
     let root = TempDir::new("update-multi");
     init_root(&root, "openspec");
     // 建立順序故意反著來：訊息仍要照 registry 順序。
-    for d in [".agents", ".cursor", ".claude", ".gemini"] {
+    for d in [".agents", ".cursor", ".claude"] {
         std::fs::create_dir_all(root.join(d)).unwrap();
     }
 
@@ -115,7 +108,7 @@ fn multi_tool_message_lists_ids_in_registry_order() {
     assert!(out.status.success());
     assert_eq!(
         stdout(&out),
-        "✓ Updated instruction files for: claude, cursor, gemini, codex\n"
+        "✓ Updated instruction files for: claude, codex, cursor\n"
     );
     assert!(out.stderr.is_empty(), "unexpected stderr: {out:?}");
 }
@@ -155,38 +148,23 @@ struct GoldenRow {
     tool: String,
     relpath: String,
     sha256: String,
-    gate: String,
 }
 
-/// golden TSV：tool → relpath / sha256 / gate，capture 自 oracle 實際輸出。
+/// golden TSV：tool → relpath / sha256，capture 自 oracle 實際輸出。
 fn golden_rows() -> Vec<GoldenRow> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/reverse-engineering/golden/update-trees-2.3.1.tsv");
+        .join("../../docs/reverse-engineering/golden/update-trees-3.0.0.tsv");
     std::fs::read_to_string(&path)
         .unwrap()
         .lines()
         .filter(|l| !l.starts_with('#') && !l.is_empty())
         .map(|l| {
             let mut it = l.split('\t');
-            let row = GoldenRow {
+            GoldenRow {
                 tool: it.next().unwrap().to_string(),
                 relpath: it.next().unwrap().to_string(),
                 sha256: it.next().unwrap().to_string(),
-                // 第四欄為必填：TSV 已於 capture 重跑時全面帶上 gate 欄。
-                // 不留 "Always" fallback —— 缺欄的資料列必須大聲失敗，否則
-                // 一列漏了 gate 會被靜默當成 Always 而通過（PR #102 review，
-                // Codex）。
-                gate: it
-                    .next()
-                    .unwrap_or_else(|| panic!("golden row missing gate column: {l}"))
-                    .to_string(),
-            };
-            assert!(
-                matches!(row.gate.as_str(), "Always" | "ClaudeSlashCommands"),
-                "unknown gate in golden row: {row:?}"
-            );
-            assert!(it.next().is_none(), "extra columns in golden row: {row:?}");
-            row
+            }
         })
         .collect()
 }
@@ -207,98 +185,56 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[test]
 fn every_tool_tree_matches_the_oracle_golden_byte_for_byte() {
     let rows = golden_rows();
-    assert_eq!(
-        rows.len(),
-        455,
-        "golden TSV still needs the reviewer-only capture rerun (445 existing + \
-         10 gated Claude command rows)"
-    );
+    assert_eq!(rows.len(), 72, "golden TSV row count drifted");
     let mut tools: Vec<String> = Vec::new();
     for row in &rows {
         if !tools.contains(&row.tool) {
             tools.push(row.tool.clone());
         }
     }
-    assert_eq!(tools.len(), 23, "golden TSV tool count drifted");
+    assert_eq!(tools.len(), 6, "golden TSV tool count drifted");
 
     for tool in &tools {
         let detect_dir = match tool.as_str() {
-            "claude" => ".claude",
-            "cursor" => ".cursor",
-            "windsurf" => ".windsurf",
-            "cline" => ".clinerules",
-            "gemini" => ".gemini",
-            "github-copilot" => ".github/prompts",
-            "kiro" => ".kiro",
-            "roocode" => ".roo",
-            "continue" => ".continue",
-            "opencode" => ".opencode",
-            "codebuddy" => ".codebuddy",
-            "costrict" => ".cospec",
             "antigravity" => ".agent",
-            "auggie" => ".augment",
-            "amazon-q" => ".amazonq",
-            "kilocode" => ".kilocode",
-            "factory" => ".factory",
-            "iflow" => ".iflow",
-            "qoder" => ".qoder",
-            "qwen" => ".qwen",
+            "claude" => ".claude",
             "codex" => ".agents",
-            "crush" => ".crush",
-            "trae" => ".trae",
+            "cursor" => ".cursor",
+            "github-copilot" => ".github",
+            "junie" => ".junie",
             other => panic!("unknown tool in golden TSV: {other}"),
         };
-        for slash_commands in [false, true] {
-            let switch = if slash_commands { "on" } else { "off" };
-            let root = TempDir::new(&format!("update-golden-{tool}-{switch}"));
-            init_root(&root, "openspec");
-            if slash_commands {
-                enable_claude_slash_commands(&root);
-            }
-            std::fs::create_dir_all(root.join(detect_dir)).unwrap();
+        let root = TempDir::new(&format!("update-golden-{tool}"));
+        init_root(&root, "docs/spectra");
+        std::fs::create_dir_all(root.join(detect_dir)).unwrap();
 
-            let out = run_update(&root, &[]);
-            assert!(
-                out.status.success(),
-                "{tool}/{switch}: update failed: {out:?}"
-            );
-            assert_eq!(
-                stdout(&out),
-                format!("✓ Updated instruction files for: {tool}\n")
-            );
-            // stderr parity：oracle 成功時 stderr 全空。少了這個斷言，一行
-            // `eprintln!` 可以在全套測試綠燈下混進去（PR #86 round-2, Codex 以
-            // mutation 示範）。
-            assert!(
-                out.stderr.is_empty(),
-                "{tool}/{switch}: unexpected stderr: {out:?}"
-            );
+        let out = run_update(&root, &[]);
+        assert!(out.status.success(), "{tool}: update failed: {out:?}");
+        assert_eq!(
+            stdout(&out),
+            format!("✓ Updated instruction files for: {tool}\n")
+        );
+        assert!(out.stderr.is_empty(), "{tool}: unexpected stderr: {out:?}");
 
-            let expected: Vec<(&str, &str)> = rows
-                .iter()
-                .filter(|row| row.tool == *tool && (slash_commands || row.gate == "Always"))
-                .map(|row| (row.relpath.as_str(), row.sha256.as_str()))
-                .collect();
-            for (rel, sha) in &expected {
-                let bytes = std::fs::read(root.join(rel))
-                    .unwrap_or_else(|e| panic!("{tool}/{switch}: missing {rel}: {e}"));
-                assert_eq!(
-                    &sha256_hex(&bytes),
-                    sha,
-                    "{tool}/{switch}: {rel} bytes drifted"
-                );
-            }
-
-            // 反向：不能多寫 golden 以外的檔案。
-            let mut written = Vec::new();
-            collect_files(&root, &root, &mut written);
-            written.retain(|p| p != ".spectra.yaml");
-            assert_eq!(
-                written.len(),
-                expected.len(),
-                "{tool}/{switch}: extra files written: {written:?}"
-            );
+        let expected: Vec<(&str, &str)> = rows
+            .iter()
+            .filter(|row| row.tool == *tool)
+            .map(|row| (row.relpath.as_str(), row.sha256.as_str()))
+            .collect();
+        for (rel, sha) in &expected {
+            let bytes = std::fs::read(root.join(rel))
+                .unwrap_or_else(|e| panic!("{tool}: missing {rel}: {e}"));
+            assert_eq!(&sha256_hex(&bytes), sha, "{tool}: {rel} bytes drifted");
         }
+
+        let mut written = Vec::new();
+        collect_files(&root, &root, &mut written);
+        written.retain(|p| p != ".spectra.yaml");
+        assert_eq!(
+            written.len(),
+            expected.len(),
+            "{tool}: extra files written: {written:?}"
+        );
     }
 }
 
@@ -413,24 +349,6 @@ fn user_content_outside_managed_regions_survives_an_update() {
         std::fs::read_to_string(root.join(".claude/settings.json")).unwrap(),
         "{\n  \"includeGitInstructions\": false,\n  \"userKey\": true\n}"
     );
-}
-
-#[test]
-fn codex_writes_only_agents_md_when_gemini_is_present() {
-    let root = TempDir::new("update-codex-quirk");
-    init_root(&root, "openspec");
-    std::fs::create_dir_all(root.join(".agents")).unwrap();
-    std::fs::create_dir_all(root.join(".gemini")).unwrap();
-
-    let out = run_update(&root, &[]);
-    assert!(out.status.success());
-    assert_eq!(
-        stdout(&out),
-        "✓ Updated instruction files for: gemini, codex\n"
-    );
-    assert!(root.join("AGENTS.md").is_file());
-    assert!(!root.join(".agents/skills").exists());
-    assert!(root.join(".gemini/skills/spectra-apply/SKILL.md").is_file());
 }
 
 // ---- 自訂 spec_dir 代換（end-to-end）----
