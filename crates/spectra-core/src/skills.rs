@@ -53,5 +53,6 @@ mod tests {
     fn lookup_rejects_names_outside_the_registry() {
         assert_eq!(skill_body("bogus"), None);
         assert_eq!(skill_body("TDD"), None);
+        assert_eq!(skill_body("ask"), None);
     }
 }

@@ -52,9 +52,8 @@ pub enum Gate {
 /// 一個工具檔案的寫入策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WriteStrategy {
-    /// 整檔覆寫（skills、commands、prompts，以及 kilocode 的 workflows——
-    /// 後者的模板看起來是 marker 區塊，但 oracle 實測是整檔覆寫）。
-    /// oracle 的做法是 unlink + 重建，故不跟隨 symlink、且能換掉唯讀檔。
+    /// 整檔覆寫（skills、prompts 等）。oracle 的做法是 unlink + 重建，
+    /// 故不跟隨 symlink、且能換掉唯讀檔。
     Plain,
     /// marker 檔：只管理 START/END 區塊，區塊外內容保留。
     Managed,

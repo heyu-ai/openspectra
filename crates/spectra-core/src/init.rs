@@ -105,7 +105,8 @@ pub fn init(root: &Path) -> Result<InitOutcome> {
 
 /// Scaffold a project and generate instruction files for explicitly requested
 /// AI tools. Tool selection and all file-write semantics are shared with
-/// `spectra update`; unknown ids are accepted and generate nothing.
+/// `spectra update`; unknown ids are rejected with an error listing
+/// supported agents.
 pub fn init_with_tools(
     root: &Path,
     adopt: bool,
