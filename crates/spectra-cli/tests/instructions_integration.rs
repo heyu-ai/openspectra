@@ -619,7 +619,7 @@ struct SkillManifestRow {
 
 fn skill_manifest() -> Vec<SkillManifestRow> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/reverse-engineering/golden/skills-2.3.1.tsv");
+        .join("../../docs/reverse-engineering/golden/skills-3.0.0.tsv");
     let text = std::fs::read_to_string(path).unwrap();
     let mut lines = text.lines();
     assert_eq!(lines.next(), Some("skill\tbytes\tsha256"));
@@ -659,8 +659,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn embedded_skills_match_the_assets_and_oracle_manifest_outside_a_project() {
     let root = TempDir::new("skills");
     let names = [
-        "tdd", "audit", "apply", "archive", "ask", "commit", "debug", "discuss", "drift", "ingest",
-        "propose", "analyze", "verify", "sync", "clarify",
+        "tdd", "audit", "apply", "archive", "commit", "debug", "discuss", "drift", "ingest",
+        "propose", "analyze", "verify", "review", "sync", "clarify",
     ];
     let manifest = skill_manifest();
     assert_eq!(

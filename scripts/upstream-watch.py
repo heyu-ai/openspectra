@@ -135,7 +135,7 @@ def build_digest(
                "(#8 / #9 / #11), and the parity gap issues (#55–#65).")
     out.append("")
 
-    out.append("## 🔭 Oracle — `kaochenlong/spectra-app` (v2.3.1 base)")
+    out.append("## 🔭 Oracle — `kaochenlong/spectra-app` (v3.0.0 base)")
     out.append("*A change here means the reverse-engineering target moved: "
                "re-probe the CLI surface, re-run golden calibration, and check "
                "`calibration.rs` + the RE write-ups for drift.*")

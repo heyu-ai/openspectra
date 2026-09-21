@@ -20,13 +20,13 @@ this file is agent-facing operational context.
   binary); regenerates `crates/spectra-core/assets/update/`, the generated
   `update_manifest.rs`, and the `update` golden TSV. It is a verification
   contract, not a printer: template round-trip, per-tool stdout, registry
-  order, and the codex×gemini quirk are all re-checked, and any mismatch
+  order, and update idempotency are all re-checked, and any mismatch
   exits non-zero keeping its sandboxes. Never hand-edit its outputs.
 - `scripts/capture-skills.py` — same constraints (macOS + reference binary,
-  version-pinned to 2.3.1); the default application path can be overridden by
+  version-pinned to 3.0.0); the default application path can be overridden by
   `--spectra-bin` or `SPECTRA_BIN`. It verifies all 15 embedded skill assets
   byte-exact against the oracle, checks their byte lengths and SHA-256 values
-  against `docs/reverse-engineering/golden/skills-2.3.1.tsv`, verifies the
+  against `docs/reverse-engineering/golden/skills-3.0.0.tsv`, verifies the
   oracle still rejects the known-absent enumeration candidates (fails loud if
   any of those candidates becomes a skill — detection is bounded by that
   wordlist), probes the behavior contract (`--skill` precedence outside and
