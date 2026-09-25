@@ -10,6 +10,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-25
+
 ### Added
 
 - OpenSpec 1.12-compatible validation scopes for changes, canonical specs,
