@@ -82,7 +82,9 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    original or this transaction's exact expected output; concurrent edits are
    never overwritten.
 9. On success, clear the change's `.spectra/changes/<name>.{started,in-progress}`
-   markers and `.spectra/touched/<name>.json` best-effort.
+   markers, the OpenSpectra-only `.spectra/changes/<name>.touched-baseline.json`
+   checkpoint (see "Deliberate divergences (#98)" below), and
+   `.spectra/touched/<name>.json` best-effort.
 
 The spec tree is recursive, so `specs/<Epic>/<Feature>/spec.md` maps to the
 same nested canonical capability. The collector rejects a root-level

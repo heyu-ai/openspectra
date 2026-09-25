@@ -59,6 +59,15 @@ here for accuracy rather than presented as oracle-verified):
      after step 3, and must never show up as a "touched" file) …
    * … **minus** anything under OpenSpectra's own `.spectra/` state directory
      (see the dedicated section below) …
+   * … **minus** (OpenSpectra-only, #98) anything whose content fingerprint
+     is unchanged since the previous checkpoint —
+     `.spectra/changes/<name>.touched-baseline.json`, written by
+     `new change` and rewritten at the end of every `task done`. A file that
+     was already dirty before the change started and that no task edited is
+     therefore not attributed to the change. With no baseline (a change
+     created before this divergence), or an unreadable/corrupt one (which
+     warns), this filter is skipped and the oracle's session-wide behavior
+     applies. See `archive.md` › "Deliberate divergences (#98)" …
    * … **minus** anything already recorded against an *earlier* task in this
      change's tracking file (confirmed empirically: a file that's still
      dirty after being recorded under task 1 is *not* re-attributed to
