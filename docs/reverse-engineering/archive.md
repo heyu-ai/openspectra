@@ -82,7 +82,9 @@ this asymmetry rather than inventing a flag the oracle doesn't have.
    original or this transaction's exact expected output; concurrent edits are
    never overwritten.
 9. On success, clear the change's `.spectra/changes/<name>.{started,in-progress}`
-   markers and `.spectra/touched/<name>.json` best-effort.
+   markers, the OpenSpectra-only `.spectra/changes/<name>.touched-baseline.json`
+   checkpoint (see "Deliberate divergences (#98)" below), and
+   `.spectra/touched/<name>.json` best-effort.
 
 The spec tree is recursive, so `specs/<Epic>/<Feature>/spec.md` maps to the
 same nested canonical capability. The collector rejects a root-level
@@ -159,6 +161,50 @@ git-diff-based heuristic. OpenSpectra populates `code:` from this change's
 sorted — a reasonable, self-consistent choice given the infrastructure
 already exists for exactly this purpose, but **not verified against the
 oracle**. `code: []` when no touched-file data exists for the change.
+
+Downstream corpus evidence (heyu-ai/openspectra#98: 96 specs archived by oracle
+2.3.1 in yibi-mvp, containing fonts, screenshots, PID files and spreadsheets in
+`code:`) plus the oracle's own open bug reports
+(kaochenlong/spectra-app#47, #95, #102) confirm that the v2.3.1 oracle's list
+is the change's session-wide dirty-file set, repeated verbatim under every
+requirement. The v3.0.0 oracle's bundled skills describe a per-task
+`task_baseline`; its collection behavior has not been probed yet.
+
+**Deliberate divergences (#98), both OpenSpectra-only (relative to v2.3.1):**
+
+- **Task-scoped collection.** `spectra new change` and every `task done` that
+  records successfully write a checkpoint,
+  `.spectra/changes/<name>.touched-baseline.json`, holding a content
+  fingerprint (length + FNV-1a 64; symlink target; `missing` for deleted) of
+  every dirty file at that moment. A path whose state cannot be determined (an
+  unreadable file or symlink, a directory or submodule, a stat error other than
+  not-found) is still checkpointed, with a `null` fingerprint, and always counts
+  as changed. Known limitation: a submodule (or an untracked nested git repo,
+  which `git status` also reports as a directory) that was already dirty before
+  the change started is therefore attributed to the first `task done` even if no
+  task touched it; fingerprinting it precisely would need an extra git call per
+  submodule. The
+  next `task done` records the files whose fingerprint differs from the
+  checkpoint, drawn from the current dirty set plus checkpointed paths that are
+  now clean (a pre-existing edit a task reverted to its committed content). A
+  file that was already dirty before the change started, and is never edited by
+  a task, is no longer attributed to the change. When recording into
+  `.spectra/touched/<name>.json` fails, the checkpoint is left as it was, so a
+  later `task done` still records those files. A change with no baseline
+  (created before this divergence) falls back to the old session-wide
+  behavior; an unreadable or corrupt baseline does the same, with a warning.
+  The baseline lives beside `.started` rather than under `.spectra/touched/`,
+  which keeps that directory to oracle-format tracking files. It is cleared
+  with the other sidecars on `new change` and `archive`.
+- **Stale-path pruning.** At archive time, paths that no longer exist on disk
+  (`symlink_metadata` reports not-found or not-a-directory; a dangling symlink
+  still counts as present) are left out of `code:`. Any other stat error keeps
+  the path and prints a warning. `.spectra/touched/<name>.json` itself is not
+  pruned, since commit tooling still needs to know which task deleted a file.
+
+The inline footer format and its repetition under every ADDED requirement
+(O(requirements × archives) growth) are unchanged; how to address that bloat
+is tracked separately on #98.
 
 OpenSpectra Phase 2 implements `MODIFIED`, `REMOVED`, and `RENAMED` against
 the **OpenSpec published convention** recorded in `docs/openspec-compat.md`,
