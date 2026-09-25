@@ -147,7 +147,7 @@ fn in_progress_marker_path(cfg: &Config, name: &str) -> PathBuf {
         .join(format!("{name}.in-progress"))
 }
 
-/// Remove any `.in-progress`/`.started`/
+/// Remove any `.in-progress`/`.started`/`.touched-baseline.json`/
 /// `.spectra/touched/<name>.json` sidecar files for `name`. Used by `create`
 /// (a change directory of the same name deleted by hand, rather than via
 /// `spectra archive`, may have left these behind — clearing them stops a
@@ -171,6 +171,7 @@ pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> 
         in_progress_marker_path(cfg, name),
         started_sha_path(cfg, name),
         crate::touched::touched_path(cfg, name),
+        crate::touched::baseline_path(cfg, name),
     ];
     let mut failures = Vec::new();
     for path in sidecars {
@@ -462,6 +463,15 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
         std::fs::write(&started, sha).with_context(|| format!("writing {}", started.display()))?;
     }
 
+    // Best-effort：第一個 task 的檢查點。change 建立前就 dirty 的檔案若之後
+    // 沒被改過，就不會被記成這個 change 的 touched file（見
+    // `touched::baseline_path`）。寫不出來只會退回 session-wide 收集，不是錯誤。
+    if let Some(dirty) = crate::git::dirty_files(&cfg.root) {
+        if let Err(e) = crate::touched::write_baseline(cfg, name, &dirty) {
+            eprintln!("warning: failed to write the touched-file baseline for '{name}': {e}");
+        }
+    }
+
     Ok(())
 }
 
@@ -622,8 +632,10 @@ pub struct TaskDoneOutcome {
 /// Mark the `task_id`-th checkbox (1-based, across all checkboxes in
 /// `tasks.md`, file order) as done, and best-effort record any newly-dirty
 /// files (via `git status --porcelain`, excluding the change's own artifact
-/// directory, OpenSpectra's own `.spectra/` state directory, and files
-/// already recorded for an earlier task) to `.spectra/touched/<name>.json`.
+/// directory, OpenSpectra's own `.spectra/` state directory, files whose
+/// content is unchanged since the previous checkpoint — `change create` or the
+/// previous `task done`, see `touched::baseline_path` — and files already
+/// recorded for an earlier task) to `.spectra/touched/<name>.json`.
 ///
 /// Errors when the change (or its `tasks.md`) doesn't exist use the same
 /// message for both cases — "tasks.md not found for change '<name>'" —
@@ -660,7 +672,7 @@ pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDo
         Some(dirty) => {
             let change_rel_dir = ch.dir.strip_prefix(&cfg.root).ok();
             let candidate_files: Vec<String> = dirty
-                .into_iter()
+                .iter()
                 .filter(|f| {
                     let path = std::path::Path::new(f);
                     let under_change_dir = change_rel_dir.is_some_and(|rel| path.starts_with(rel));
@@ -671,9 +683,15 @@ pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDo
                     let under_spectra_state_dir = path.starts_with(".spectra");
                     !under_change_dir && !under_spectra_state_dir
                 })
+                .cloned()
                 .collect();
+            let candidate_files = crate::touched::changed_since_baseline(cfg, name, candidate_files);
             if let Err(e) = crate::touched::record_new(cfg, name, task_id, &task_desc, candidate_files) {
                 eprintln!("warning: failed to record touched files for '{name}': {e}");
+            }
+            // 這次 task done 就是下一個 task 的檢查點。
+            if let Err(e) = crate::touched::write_baseline(cfg, name, &dirty) {
+                eprintln!("warning: failed to update the touched-file baseline for '{name}': {e}");
             }
         }
     }
@@ -1442,6 +1460,72 @@ mod tests {
         // The change's own artifact dir (tasks.md itself just got rewritten,
         // and is git-dirty) must never show up as a "touched" file.
         assert!(!recorded.iter().any(|f| f.contains("add-search-filter")));
+    }
+
+    #[test]
+    fn mark_task_done_skips_files_already_dirty_before_the_change_and_left_unchanged() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        // 建立 change 前就 dirty、之後沒再被改過：與這個 change 無關（#98）。
+        write(&tmp.join("unrelated.rs"), "// pre-existing edit\n");
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n",
+        );
+        write(&tmp.join("src.rs"), "fn main() {}\n");
+
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+
+        let recorded = touched::already_recorded(&cfg, "add-search-filter");
+        assert!(recorded.contains("src.rs"), "got {recorded:?}");
+        assert!(!recorded.contains("unrelated.rs"), "got {recorded:?}");
+    }
+
+    #[test]
+    fn mark_task_done_records_a_pre_dirty_file_once_a_task_changes_it() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        write(&tmp.join("shared.rs"), "// before\n");
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n- [ ] second\n",
+        );
+
+        // task 1 沒碰 shared.rs；task 2 改了它，所以要記在 task 2 名下。
+        write(&tmp.join("a.rs"), "// task 1\n");
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+        write(&tmp.join("shared.rs"), "// after\n");
+        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
+
+        let tracking: touched::TouchedTracking = serde_json::from_str(
+            &std::fs::read_to_string(touched::touched_path(&cfg, "add-search-filter")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(tracking.touched.len(), 2, "got {tracking:?}");
+        assert_eq!(tracking.touched[0].files, vec!["a.rs".to_string()]);
+        assert_eq!(tracking.touched[1].task_id, "2");
+        assert_eq!(tracking.touched[1].files, vec!["shared.rs".to_string()]);
+    }
+
+    #[test]
+    fn mark_task_done_without_a_baseline_falls_back_to_every_dirty_file() {
+        // 這個功能上線前建立的 change 沒有 baseline：維持舊行為，不能漏記。
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        write(&tmp.join("unrelated.rs"), "// pre-existing edit\n");
+        create(&cfg, "add-search-filter").unwrap();
+        std::fs::remove_file(touched::baseline_path(&cfg, "add-search-filter")).unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n",
+        );
+
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+
+        let recorded = touched::already_recorded(&cfg, "add-search-filter");
+        assert!(recorded.contains("unrelated.rs"), "got {recorded:?}");
     }
 
     #[test]

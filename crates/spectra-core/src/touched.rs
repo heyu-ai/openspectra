@@ -165,6 +165,115 @@ pub fn record(
     persist(cfg, name, &tracking)
 }
 
+/// `.spectra/changes/<name>.touched-baseline.json` — OpenSpectra-only
+/// sidecar（oracle 沒有），記錄「上一個檢查點」時每個 dirty 檔案的內容指紋。
+/// 檢查點是 `change create` 與每次 `task done`；下一次 `task done` 只把指紋
+/// 與檢查點不同（或檢查點時還不 dirty）的檔案算成這個 task 的 touched file。
+///
+/// 這修的是 oracle 的 session-wide 過度收集（kaochenlong/spectra-app#95、
+/// heyu-ai/openspectra#98）：change 開始前就已經 dirty、之後沒再被改過的
+/// 無關檔案，不該被灌進 archive 的 `@trace` `code:` 清單。放在
+/// `.spectra/changes/` 而不是 `.spectra/touched/`，是為了不在 oracle 的
+/// `/spectra:commit` skill 會讀的目錄裡多放它不認得的檔案。
+pub(crate) fn baseline_path(cfg: &Config, name: &str) -> PathBuf {
+    cfg.root
+        .join(".spectra")
+        .join("changes")
+        .join(format!("{name}.touched-baseline.json"))
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Baseline {
+    #[serde(default)]
+    files: std::collections::BTreeMap<String, String>,
+}
+
+/// 檔案目前狀態的指紋：一般檔案是長度加內容的 FNV-1a 64，symlink 是它的
+/// 目標，其他（目錄、submodule）是固定字串，不存在（已刪除）是 `"missing"`。
+/// 不用 `DefaultHasher`：它的演算法不保證跨 Rust 版本穩定，而 baseline 會跨
+/// binary 升級保存。碰撞的後果只是某個真的被改過的檔案漏記，這份資料本來就是
+/// best-effort，可以接受。
+fn fingerprint(root: &std::path::Path, rel: &str) -> String {
+    let path = root.join(rel);
+    let Ok(meta) = std::fs::symlink_metadata(&path) else {
+        return "missing".to_string();
+    };
+    if meta.file_type().is_symlink() {
+        return match std::fs::read_link(&path) {
+            Ok(target) => format!("symlink:{}", target.display()),
+            Err(_) => "symlink:?".to_string(),
+        };
+    }
+    if !meta.is_file() {
+        return "other".to_string();
+    }
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in &bytes {
+                hash ^= u64::from(*b);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            format!("{}:{hash:016x}", bytes.len())
+        }
+        // 讀不到內容時不能宣稱「沒變」：給一個不會等於任何先前指紋的值，
+        // 讓它落回舊行為（算成 touched），寧可多記也不要靜默漏記。
+        Err(e) => format!("unreadable:{e}"),
+    }
+}
+
+/// 把目前所有 dirty 檔案的指紋寫成新的檢查點。
+pub fn write_baseline(cfg: &Config, name: &str, dirty: &[String]) -> Result<()> {
+    let baseline = Baseline {
+        files: dirty
+            .iter()
+            .map(|f| (f.clone(), fingerprint(&cfg.root, f)))
+            .collect(),
+    };
+    let path = baseline_path(cfg, name);
+    let parent = path.parent().expect("baseline path always has a parent");
+    std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    let json = serde_json::to_string_pretty(&baseline)?;
+    std::fs::write(&path, json).with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
+/// 從 `candidates` 濾掉「檢查點之後內容沒變」的檔案。沒有 baseline（這個功能
+/// 上線前建立的 change）或 baseline 無法解析時回傳 `candidates` 原樣——也就是
+/// 舊的 session-wide 行為，並對後者發出警告，因為那代表一個檔案壞掉了。
+pub fn changed_since_baseline(cfg: &Config, name: &str, candidates: Vec<String>) -> Vec<String> {
+    let path = baseline_path(cfg, name);
+    let baseline: Baseline = match std::fs::read_to_string(&path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return candidates,
+        Err(e) => {
+            eprintln!(
+                "warning: couldn't read {} ({e}); recording every dirty file for '{name}'",
+                path.display()
+            );
+            return candidates;
+        }
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!(
+                    "warning: {} is corrupt ({e}); recording every dirty file for '{name}'",
+                    path.display()
+                );
+                return candidates;
+            }
+        },
+    };
+    candidates
+        .into_iter()
+        .filter(|f| {
+            baseline
+                .files
+                .get(f)
+                .is_none_or(|before| *before != fingerprint(&cfg.root, f))
+        })
+        .collect()
+}
+
 /// Combines [`already_recorded`] and [`record`] into a single load: given
 /// `candidate_files`, filters out anything already recorded against an
 /// earlier task and persists the rest as a new entry (a no-op if nothing's

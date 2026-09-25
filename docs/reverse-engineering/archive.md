@@ -160,6 +160,35 @@ sorted — a reasonable, self-consistent choice given the infrastructure
 already exists for exactly this purpose, but **not verified against the
 oracle**. `code: []` when no touched-file data exists for the change.
 
+Downstream corpus evidence (heyu-ai/openspectra#98: 96 specs archived by oracle
+2.3.1 in yibi-mvp, containing fonts, screenshots, PID files and spreadsheets in
+`code:`) plus the oracle's own open bug reports
+(kaochenlong/spectra-app#47, #95, #102) confirm that the oracle's list is the
+change's session-wide dirty-file set, repeated verbatim under every requirement.
+
+**Deliberate divergences (#98), both OpenSpectra-only:**
+
+- **Task-scoped collection.** `change create` and every `task done` write a
+  checkpoint, `.spectra/changes/<name>.touched-baseline.json`, holding a content
+  fingerprint (length + FNV-1a 64; symlink target; `missing` for deleted) of
+  every dirty file at that moment. The next `task done` records only dirty files
+  that were not dirty at the checkpoint or whose fingerprint changed since. A
+  file that was already dirty before the change started, and is never edited by
+  a task, is no longer attributed to the change. A change with no baseline
+  (created before this divergence) falls back to the old session-wide
+  behavior; an unreadable or corrupt baseline does the same, with a warning.
+  The baseline lives beside `.started`, not under `.spectra/touched/`, so the
+  directory the oracle's `/spectra:commit` skill reads gains no unknown files.
+  It is cleared with the other sidecars on `create` and `archive`.
+- **Stale-path pruning.** At archive time, paths that no longer exist on disk
+  (`symlink_metadata` fails; a dangling symlink still counts as present) are
+  left out of `code:`. `.spectra/touched/<name>.json` itself is not pruned,
+  since commit tooling still needs to know which task deleted a file.
+
+The inline footer format and its repetition under every ADDED requirement
+(O(requirements × archives) growth) are unchanged; how to address that bloat
+is tracked separately on #98.
+
 OpenSpectra Phase 2 implements `MODIFIED`, `REMOVED`, and `RENAMED` against
 the **OpenSpec published convention** recorded in `docs/openspec-compat.md`,
 not against a golden oracle sample. No oracle samples were captured for

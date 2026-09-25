@@ -1344,8 +1344,13 @@ fn append_added_requirements(
     if blocks.is_empty() {
         return;
     }
+    // OpenSpectra-only divergence（heyu-ai/openspectra#98）：archive 當下已不在
+    // 磁碟上的路徑不寫進 `code:`。oracle 照單全收，trace 裡會留下永遠指不到
+    // 東西的路徑。只在這裡過濾、不動 touched sidecar：`/spectra:commit` 仍需要
+    // 知道哪些刪除是哪個 task 造成的。`symlink_metadata` 讓斷掉的 symlink 仍算存在。
     let mut code_files: Vec<String> = touched::already_recorded_readonly(cfg, source)
         .into_iter()
+        .filter(|f| std::fs::symlink_metadata(cfg.root.join(f)).is_ok())
         .collect();
     code_files.sort();
     let code_yaml = if code_files.is_empty() {
@@ -1889,6 +1894,37 @@ mod tests {
         assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
         // The very first requirement in a fresh spec has no "---" separator.
         assert!(!spec.contains("---"));
+    }
+
+    #[test]
+    fn archive_trace_footer_omits_touched_paths_that_no_longer_exist() {
+        // #98：已從磁碟消失的路徑不寫進 `code:`，但 touched sidecar 本身不動。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            DELTA_TEMPLATE,
+        );
+        write(&tmp.join("src/kept.rs"), "// kept\n");
+        touched::record(
+            &c,
+            "my-feature",
+            1,
+            "t1",
+            vec!["src/kept.rs".to_string(), "src/gone.rs".to_string()],
+        )
+        .unwrap();
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
+        assert!(spec.contains("code:\n  - src/kept.rs\n-->"), "got:\n{spec}");
+        assert!(!spec.contains("src/gone.rs"), "got:\n{spec}");
     }
 
     #[test]
@@ -3035,10 +3071,13 @@ mod tests {
         )
         .unwrap();
         assert!(touched::touched_path(&c, "my-feature").is_file());
+        touched::write_baseline(&c, "my-feature", &["src/lib.rs".to_string()]).unwrap();
+        assert!(touched::baseline_path(&c, "my-feature").is_file());
 
         archive(&c, "my-feature", true, false, false).unwrap();
 
         assert!(!touched::touched_path(&c, "my-feature").exists());
+        assert!(!touched::baseline_path(&c, "my-feature").exists());
     }
 
     /// After chmod(0o000), root (or a container with CAP_DAC_OVERRIDE) can
