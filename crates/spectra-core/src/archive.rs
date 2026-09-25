@@ -1347,10 +1347,18 @@ fn append_added_requirements(
     // OpenSpectra-only divergence（heyu-ai/openspectra#98）：archive 當下已不在
     // 磁碟上的路徑不寫進 `code:`。oracle 照單全收，trace 裡會留下永遠指不到
     // 東西的路徑。只在這裡過濾、不動 touched sidecar：`/spectra:commit` 仍需要
-    // 知道哪些刪除是哪個 task 造成的。`symlink_metadata` 讓斷掉的 symlink 仍算存在。
+    // 知道哪些刪除是哪個 task 造成的。`symlink_metadata` 讓斷掉的 symlink 仍算存在；
+    // 只有「確定不存在」才剔除，權限不足等其他 stat 錯誤保留該路徑並警告。
     let mut code_files: Vec<String> = touched::already_recorded_readonly(cfg, source)
         .into_iter()
-        .filter(|f| std::fs::symlink_metadata(cfg.root.join(f)).is_ok())
+        .filter(|f| match std::fs::symlink_metadata(cfg.root.join(f)) {
+            Ok(_) => true,
+            Err(e) if touched::is_gone(&e) => false,
+            Err(e) => {
+                eprintln!("warning: couldn't check {f} ({e}); keeping it in the @trace code: list");
+                true
+            }
+        })
         .collect();
     code_files.sort();
     let code_yaml = if code_files.is_empty() {
@@ -1925,6 +1933,60 @@ mod tests {
         let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
         assert!(spec.contains("code:\n  - src/kept.rs\n-->"), "got:\n{spec}");
         assert!(!spec.contains("src/gone.rs"), "got:\n{spec}");
+    }
+
+    #[cfg(unix)]
+    fn archive_with_touched(c: &Config, files: &[&str]) -> String {
+        change::create(c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            DELTA_TEMPLATE,
+        );
+        let files = files.iter().map(|f| f.to_string()).collect();
+        touched::record(c, "my-feature", 1, "t1", files).unwrap();
+        archive(c, "my-feature", false, false, false).unwrap();
+        std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_trace_footer_keeps_a_dangling_symlink() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        std::os::unix::fs::symlink("nowhere", tmp.join("link")).unwrap();
+
+        let spec = archive_with_touched(&c, &["link"]);
+
+        assert!(spec.contains("code:\n  - link\n-->"), "got:\n{spec}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_trace_footer_keeps_a_path_it_cannot_stat() {
+        use std::os::unix::fs::PermissionsExt;
+        // #173 review：權限不足不代表檔案消失，不能從 `code:` 剔除。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(&tmp.join("private/secret.rs"), "// secret\n");
+        let private = tmp.join("private");
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o600)).unwrap();
+        if std::fs::symlink_metadata(private.join("secret.rs")).is_ok() {
+            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!("skipping: running as root (directory search permission not enforced)");
+            return;
+        }
+
+        let spec = archive_with_touched(&c, &["private/secret.rs"]);
+
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            spec.contains("code:\n  - private/secret.rs\n-->"),
+            "got:\n{spec}"
+        );
     }
 
     #[test]
@@ -3071,7 +3133,9 @@ mod tests {
         )
         .unwrap();
         assert!(touched::touched_path(&c, "my-feature").is_file());
-        touched::write_baseline(&c, "my-feature", &["src/lib.rs".to_string()]).unwrap();
+        write(&tmp.join("src/lib.rs"), "// lib\n");
+        let snapshot = touched::snapshot(&c, &["src/lib.rs".to_string()]);
+        touched::write_baseline(&c, "my-feature", &snapshot).unwrap();
         assert!(touched::baseline_path(&c, "my-feature").is_file());
 
         archive(&c, "my-feature", true, false, false).unwrap();

@@ -24,12 +24,12 @@ changes.
 
 ### Changed
 
-- Touched-file tracking is now task-scoped: `change create` and each
+- Touched-file tracking is now task-scoped: `spectra new change` and each
   `task done` checkpoint dirty-file fingerprints, so files that were already
   dirty before a change and are never edited by its tasks no longer land in
   `.spectra/touched/<name>.json` or the archive `@trace` `code:` list. Archive
   also omits paths that no longer exist on disk. Both deliberately diverge from
-  the oracle's session-wide collection (#98).
+  the v2.3.1 oracle's session-wide collection (#98).
 - Archive is now a rollback-capable transaction. This deliberately diverges
   from Spectra 2.3.1's move-first ordering so a failed spec write cannot strand
   a half-archived change.

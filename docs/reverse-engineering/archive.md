@@ -165,27 +165,37 @@ oracle**. `code: []` when no touched-file data exists for the change.
 Downstream corpus evidence (heyu-ai/openspectra#98: 96 specs archived by oracle
 2.3.1 in yibi-mvp, containing fonts, screenshots, PID files and spreadsheets in
 `code:`) plus the oracle's own open bug reports
-(kaochenlong/spectra-app#47, #95, #102) confirm that the oracle's list is the
-change's session-wide dirty-file set, repeated verbatim under every requirement.
+(kaochenlong/spectra-app#47, #95, #102) confirm that the v2.3.1 oracle's list
+is the change's session-wide dirty-file set, repeated verbatim under every
+requirement. The v3.0.0 oracle's bundled skills describe a per-task
+`task_baseline`; its collection behavior has not been probed yet.
 
-**Deliberate divergences (#98), both OpenSpectra-only:**
+**Deliberate divergences (#98), both OpenSpectra-only (relative to v2.3.1):**
 
-- **Task-scoped collection.** `change create` and every `task done` write a
-  checkpoint, `.spectra/changes/<name>.touched-baseline.json`, holding a content
+- **Task-scoped collection.** `spectra new change` and every `task done` that
+  records successfully write a checkpoint,
+  `.spectra/changes/<name>.touched-baseline.json`, holding a content
   fingerprint (length + FNV-1a 64; symlink target; `missing` for deleted) of
-  every dirty file at that moment. The next `task done` records only dirty files
-  that were not dirty at the checkpoint or whose fingerprint changed since. A
+  every dirty file at that moment. A path whose state cannot be determined (an
+  unreadable file or symlink, a directory or submodule, a stat error other than
+  not-found) is left out of the checkpoint and always counts as changed. The
+  next `task done` records the files whose fingerprint differs from the
+  checkpoint, drawn from the current dirty set plus checkpointed paths that are
+  now clean (a pre-existing edit a task reverted to its committed content). A
   file that was already dirty before the change started, and is never edited by
-  a task, is no longer attributed to the change. A change with no baseline
+  a task, is no longer attributed to the change. When recording into
+  `.spectra/touched/<name>.json` fails, the checkpoint is left as it was, so a
+  later `task done` still records those files. A change with no baseline
   (created before this divergence) falls back to the old session-wide
   behavior; an unreadable or corrupt baseline does the same, with a warning.
-  The baseline lives beside `.started`, not under `.spectra/touched/`, so the
-  directory the oracle's `/spectra:commit` skill reads gains no unknown files.
-  It is cleared with the other sidecars on `create` and `archive`.
+  The baseline lives beside `.started` rather than under `.spectra/touched/`,
+  which keeps that directory to oracle-format tracking files. It is cleared
+  with the other sidecars on `new change` and `archive`.
 - **Stale-path pruning.** At archive time, paths that no longer exist on disk
-  (`symlink_metadata` fails; a dangling symlink still counts as present) are
-  left out of `code:`. `.spectra/touched/<name>.json` itself is not pruned,
-  since commit tooling still needs to know which task deleted a file.
+  (`symlink_metadata` reports not-found or not-a-directory; a dangling symlink
+  still counts as present) are left out of `code:`. Any other stat error keeps
+  the path and prints a warning. `.spectra/touched/<name>.json` itself is not
+  pruned, since commit tooling still needs to know which task deleted a file.
 
 The inline footer format and its repetition under every ADDED requirement
 (O(requirements × archives) growth) are unchanged; how to address that bloat

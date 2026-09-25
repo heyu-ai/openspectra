@@ -167,14 +167,15 @@ pub fn record(
 
 /// `.spectra/changes/<name>.touched-baseline.json` — OpenSpectra-only
 /// sidecar（oracle 沒有），記錄「上一個檢查點」時每個 dirty 檔案的內容指紋。
-/// 檢查點是 `change create` 與每次 `task done`；下一次 `task done` 只把指紋
-/// 與檢查點不同（或檢查點時還不 dirty）的檔案算成這個 task 的 touched file。
+/// 檢查點是 `spectra new change`（`change::create`）與每次成功記錄的
+/// `task done`；下一次 `task done` 只把指紋與檢查點不同（或檢查點時還不
+/// dirty）的檔案算成這個 task 的 touched file。
 ///
-/// 這修的是 oracle 的 session-wide 過度收集（kaochenlong/spectra-app#95、
+/// 這修的是 oracle v2.3.1 的 session-wide 過度收集（kaochenlong/spectra-app#95、
 /// heyu-ai/openspectra#98）：change 開始前就已經 dirty、之後沒再被改過的
-/// 無關檔案，不該被灌進 archive 的 `@trace` `code:` 清單。放在
-/// `.spectra/changes/` 而不是 `.spectra/touched/`，是為了不在 oracle 的
-/// `/spectra:commit` skill 會讀的目錄裡多放它不認得的檔案。
+/// 無關檔案，不該被灌進 archive 的 `@trace` `code:` 清單。oracle 3.0.0 的
+/// `task_baseline` 行為尚未實測。放在 `.spectra/changes/`（`.started` 旁邊）
+/// 而不是 `.spectra/touched/`，是讓後者只放 oracle 格式的 tracking 檔。
 pub(crate) fn baseline_path(cfg: &Config, name: &str) -> PathBuf {
     cfg.root
         .join(".spectra")
@@ -188,46 +189,67 @@ struct Baseline {
     files: std::collections::BTreeMap<String, String>,
 }
 
+/// 所有 dirty 檔案在某一刻的指紋，依 `git status` 的順序。每個 `task done`
+/// 只算一次，同時拿來比較與寫成下一個檢查點。
+pub struct Snapshot(Vec<(String, Option<String>)>);
+
 /// 檔案目前狀態的指紋：一般檔案是長度加內容的 FNV-1a 64，symlink 是它的
-/// 目標，其他（目錄、submodule）是固定字串，不存在（已刪除）是 `"missing"`。
+/// 目標，不存在（已刪除）是 `"missing"`。無法判定狀態時（讀不到內容、讀不到
+/// symlink 目標、目錄或 submodule 這類非一般檔案、`NotFound` 以外的 stat 錯誤）
+/// 回傳 `None`：它不寫進 baseline，比較時一律算「有變」——寧可多記也不要
+/// 因為兩次都「不知道」就判定沒變而靜默漏記。
+///
 /// 不用 `DefaultHasher`：它的演算法不保證跨 Rust 版本穩定，而 baseline 會跨
-/// binary 升級保存。碰撞的後果只是某個真的被改過的檔案漏記，這份資料本來就是
+/// binary 升級保存。碰撞的後果是某個真的被改過的檔案漏記，這份資料本來就是
 /// best-effort，可以接受。
-fn fingerprint(root: &std::path::Path, rel: &str) -> String {
+fn fingerprint(root: &std::path::Path, rel: &str) -> Option<String> {
     let path = root.join(rel);
-    let Ok(meta) = std::fs::symlink_metadata(&path) else {
-        return "missing".to_string();
+    let meta = match std::fs::symlink_metadata(&path) {
+        Ok(meta) => meta,
+        Err(e) if is_gone(&e) => return Some("missing".to_string()),
+        Err(_) => return None,
     };
     if meta.file_type().is_symlink() {
-        return match std::fs::read_link(&path) {
-            Ok(target) => format!("symlink:{}", target.display()),
-            Err(_) => "symlink:?".to_string(),
-        };
+        return std::fs::read_link(&path)
+            .ok()
+            .map(|target| format!("symlink:{}", target.display()));
     }
     if !meta.is_file() {
-        return "other".to_string();
+        return None;
     }
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-            for b in &bytes {
-                hash ^= u64::from(*b);
-                hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-            format!("{}:{hash:016x}", bytes.len())
-        }
-        // 讀不到內容時不能宣稱「沒變」：給一個不會等於任何先前指紋的值，
-        // 讓它落回舊行為（算成 touched），寧可多記也不要靜默漏記。
-        Err(e) => format!("unreadable:{e}"),
+    let bytes = std::fs::read(&path).ok()?;
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in &bytes {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
+    Some(format!("{}:{hash:016x}", bytes.len()))
 }
 
-/// 把目前所有 dirty 檔案的指紋寫成新的檢查點。
-pub fn write_baseline(cfg: &Config, name: &str, dirty: &[String]) -> Result<()> {
-    let baseline = Baseline {
-        files: dirty
+/// stat 錯誤是否代表路徑已不存在。`NotADirectory` 是某個上層目錄已被換成
+/// 一般檔案，路徑同樣不存在；權限不足等其他錯誤不代表檔案消失了。
+/// 與 `archive` 剔除失效路徑共用，兩邊對「不存在」的判定才不會分岔。
+pub(crate) fn is_gone(e: &std::io::Error) -> bool {
+    matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
+}
+
+/// 目前所有 dirty 檔案的指紋。
+pub fn snapshot(cfg: &Config, dirty: &[String]) -> Snapshot {
+    Snapshot(
+        dirty
             .iter()
             .map(|f| (f.clone(), fingerprint(&cfg.root, f)))
+            .collect(),
+    )
+}
+
+/// 把 `snapshot` 寫成新的檢查點（無法判定指紋的檔案不寫入）。
+pub fn write_baseline(cfg: &Config, name: &str, snapshot: &Snapshot) -> Result<()> {
+    let baseline = Baseline {
+        files: snapshot
+            .0
+            .iter()
+            .filter_map(|(f, fp)| fp.as_ref().map(|fp| (f.clone(), fp.clone())))
             .collect(),
     };
     let path = baseline_path(cfg, name);
@@ -238,19 +260,36 @@ pub fn write_baseline(cfg: &Config, name: &str, dirty: &[String]) -> Result<()> 
     Ok(())
 }
 
-/// 從 `candidates` 濾掉「檢查點之後內容沒變」的檔案。沒有 baseline（這個功能
-/// 上線前建立的 change）或 baseline 無法解析時回傳 `candidates` 原樣——也就是
-/// 舊的 session-wide 行為，並對後者發出警告，因為那代表一個檔案壞掉了。
-pub fn changed_since_baseline(cfg: &Config, name: &str, candidates: Vec<String>) -> Vec<String> {
+/// 這個 task 的 touched file：`current` 裡的 dirty 檔案，加上檢查點時 dirty、
+/// 現在已經乾淨的檔案（例如被改回 commit 的內容），先以 `is_candidate` 排除
+/// change 目錄這類不算的路徑，再只留下指紋與檢查點不同的。
+///
+/// 沒有 baseline（這個功能上線前建立的 change）、baseline 讀不到或無法解析時，
+/// 回傳 `current` 裡所有符合 `is_candidate` 的檔案——也就是舊的 session-wide
+/// 行為；後兩者代表檔案出了問題，會發出警告。
+pub fn touched_since_baseline(
+    cfg: &Config,
+    name: &str,
+    current: &Snapshot,
+    is_candidate: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let every_dirty = || {
+        current
+            .0
+            .iter()
+            .map(|(f, _)| f.clone())
+            .filter(|f| is_candidate(f))
+            .collect()
+    };
     let path = baseline_path(cfg, name);
     let baseline: Baseline = match std::fs::read_to_string(&path) {
-        Err(e) if e.kind() == ErrorKind::NotFound => return candidates,
+        Err(e) if e.kind() == ErrorKind::NotFound => return every_dirty(),
         Err(e) => {
             eprintln!(
                 "warning: couldn't read {} ({e}); recording every dirty file for '{name}'",
                 path.display()
             );
-            return candidates;
+            return every_dirty();
         }
         Ok(s) => match serde_json::from_str(&s) {
             Ok(b) => b,
@@ -259,18 +298,27 @@ pub fn changed_since_baseline(cfg: &Config, name: &str, candidates: Vec<String>)
                     "warning: {} is corrupt ({e}); recording every dirty file for '{name}'",
                     path.display()
                 );
-                return candidates;
+                return every_dirty();
             }
         },
     };
-    candidates
-        .into_iter()
-        .filter(|f| {
-            baseline
-                .files
-                .get(f)
-                .is_none_or(|before| *before != fingerprint(&cfg.root, f))
+    let dirty: HashSet<&str> = current.0.iter().map(|(f, _)| f.as_str()).collect();
+    let now_clean = baseline
+        .files
+        .keys()
+        .filter(|f| !dirty.contains(f.as_str()))
+        .map(|f| (f.clone(), fingerprint(&cfg.root, f)));
+    current
+        .0
+        .iter()
+        .cloned()
+        .chain(now_clean)
+        .filter(|(f, _)| is_candidate(f))
+        .filter(|(f, now)| match (baseline.files.get(f), now) {
+            (Some(before), Some(now)) => before != now,
+            _ => true,
         })
+        .map(|(f, _)| f)
         .collect()
 }
 
@@ -352,6 +400,20 @@ mod tests {
             locale: None,
             claude_slash_commands: false,
         }
+    }
+
+    #[test]
+    fn a_path_whose_state_cannot_be_fingerprinted_always_counts_as_touched() {
+        // #173 review：目錄／submodule 這類非一般檔案兩次都「不知道」，不能判定為沒變。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        std::fs::create_dir_all(tmp.join("vendor/lib")).unwrap();
+        let dirty = vec!["vendor/lib".to_string()];
+        write_baseline(&c, "my-change", &snapshot(&c, &dirty)).unwrap();
+
+        let touched = touched_since_baseline(&c, "my-change", &snapshot(&c, &dirty), |_| true);
+
+        assert_eq!(touched, dirty);
     }
 
     #[test]
