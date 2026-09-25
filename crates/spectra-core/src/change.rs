@@ -1679,16 +1679,34 @@ mod tests {
         assert!(recorded.contains("README.md"), "got {recorded:?}");
     }
 
+    /// 測試結束（含 panic）時把 `path` 的權限改回 0o644，讓 TempDir 刪得掉。
+    #[cfg(unix)]
+    struct RestoreReadable(std::path::PathBuf);
+
+    #[cfg(unix)]
+    impl Drop for RestoreReadable {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o644));
+        }
+    }
+
+    #[cfg(unix)]
+    fn set_mode(path: &std::path::Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
     #[cfg(unix)]
     #[test]
     fn mark_task_done_records_a_changed_file_that_stays_unreadable() {
-        use std::os::unix::fs::PermissionsExt;
         // #173 review：讀不到內容時兩次指紋都一樣，不能因此判定「沒變」。
         let tmp = TempDir::new();
         let cfg = git_repo_cfg(&tmp);
         let secret = tmp.join("secret.rs");
         write(&secret, "// v1\n");
-        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let _restore = RestoreReadable(secret.clone());
+        set_mode(&secret, 0o000);
         if std::fs::read(&secret).is_ok() {
             eprintln!("skipping: running as root (chmod 0o000 not enforced)");
             return;
@@ -1698,15 +1716,67 @@ mod tests {
             &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
             "- [ ] first\n",
         );
-        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).unwrap();
+        set_mode(&secret, 0o644);
         write(&secret, "// v2\n");
-        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o000)).unwrap();
+        set_mode(&secret, 0o000);
 
         mark_task_done(&cfg, "add-search-filter", 1).unwrap();
 
-        std::fs::set_permissions(&secret, std::fs::Permissions::from_mode(0o644)).unwrap();
         let recorded = touched::already_recorded(&cfg, "add-search-filter");
         assert!(recorded.contains("secret.rs"), "got {recorded:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mark_task_done_records_an_unreadable_pre_dirty_file_a_task_restored() {
+        // #173 round 2：檢查點時指紋無法判定的路徑也要記進 baseline，
+        // 否則它被改回 commit 內容（變乾淨）後就不在任何候選來源裡。
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        let readme = tmp.join("README.md");
+        write(&readme, "pre-existing edit\n");
+        let _restore = RestoreReadable(readme.clone());
+        set_mode(&readme, 0o000);
+        if std::fs::read(&readme).is_ok() {
+            eprintln!("skipping: running as root (chmod 0o000 not enforced)");
+            return;
+        }
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n",
+        );
+        set_mode(&readme, 0o644);
+        git_in(&tmp, &["checkout", "--", "README.md"]);
+
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+
+        let recorded = touched::already_recorded(&cfg, "add-search-filter");
+        assert!(recorded.contains("README.md"), "got {recorded:?}");
+    }
+
+    #[test]
+    fn mark_task_done_excludes_state_and_change_dir_files_that_became_clean() {
+        // #173 round 2：兩個 task 之間 `git commit -a` 會讓 baseline 與 tasks.md
+        // 變成「檢查點時 dirty、現在乾淨」，它們仍不能被當成 touched file。
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        create(&cfg, "add-search-filter").unwrap();
+        write(
+            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
+            "- [ ] first\n- [ ] second\n",
+        );
+        write(&tmp.join("src.rs"), "fn main() {}\n");
+        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
+        git_in(&tmp, &["add", "-A"]);
+        git_in(&tmp, &["commit", "-q", "-m", "wip"]);
+        write(&tmp.join("b.rs"), "// b\n");
+
+        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
+
+        let t = tracking(&cfg, "add-search-filter");
+        let all: Vec<&String> = t.touched.iter().flat_map(|e| e.files.iter()).collect();
+        assert_eq!(all, vec!["src.rs", "b.rs"], "got {t:?}");
     }
 
     #[cfg(unix)]

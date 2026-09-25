@@ -1968,25 +1968,45 @@ mod tests {
     #[test]
     fn archive_trace_footer_keeps_a_path_it_cannot_stat() {
         use std::os::unix::fs::PermissionsExt;
+        /// 測試結束（含 panic）時把目錄權限改回來，讓 TempDir 刪得掉。
+        struct RestoreSearchable(PathBuf);
+        impl Drop for RestoreSearchable {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
         // #173 review：權限不足不代表檔案消失，不能從 `code:` 剔除。
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         write(&tmp.join("private/secret.rs"), "// secret\n");
         let private = tmp.join("private");
+        let _restore = RestoreSearchable(private.clone());
         std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o600)).unwrap();
         if std::fs::symlink_metadata(private.join("secret.rs")).is_ok() {
-            std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
             eprintln!("skipping: running as root (directory search permission not enforced)");
             return;
         }
 
         let spec = archive_with_touched(&c, &["private/secret.rs"]);
 
-        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(
             spec.contains("code:\n  - private/secret.rs\n-->"),
             "got:\n{spec}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_trace_footer_omits_a_path_whose_parent_became_a_file() {
+        // #173 round 2：上層目錄被換成一般檔案（NotADirectory），路徑同樣已不存在。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(&tmp.join("a"), "now a file\n");
+        write(&tmp.join("kept.rs"), "// kept\n");
+
+        let spec = archive_with_touched(&c, &["a/b.rs", "kept.rs"]);
+
+        assert!(spec.contains("code:\n  - kept.rs\n-->"), "got:\n{spec}");
     }
 
     #[test]

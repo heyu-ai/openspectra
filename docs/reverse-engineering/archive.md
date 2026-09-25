@@ -178,7 +178,12 @@ requirement. The v3.0.0 oracle's bundled skills describe a per-task
   fingerprint (length + FNV-1a 64; symlink target; `missing` for deleted) of
   every dirty file at that moment. A path whose state cannot be determined (an
   unreadable file or symlink, a directory or submodule, a stat error other than
-  not-found) is left out of the checkpoint and always counts as changed. The
+  not-found) is still checkpointed, with a `null` fingerprint, and always counts
+  as changed. Known limitation: a submodule (or an untracked nested git repo,
+  which `git status` also reports as a directory) that was already dirty before
+  the change started is therefore attributed to the first `task done` even if no
+  task touched it; fingerprinting it precisely would need an extra git call per
+  submodule. The
   next `task done` records the files whose fingerprint differs from the
   checkpoint, drawn from the current dirty set plus checkpointed paths that are
   now clean (a pre-existing edit a task reverted to its committed content). A

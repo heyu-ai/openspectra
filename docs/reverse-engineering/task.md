@@ -68,7 +68,10 @@ here for accuracy rather than presented as oracle-verified):
      before the change started and that no task edited is therefore not
      attributed to the change; one a task reverted to its committed content
      *is*, since it is checkpointed-but-now-clean with a changed fingerprint.
-     Paths whose state cannot be determined always count as changed. With no
+     Paths whose state cannot be determined are checkpointed with a `null`
+     fingerprint and always count as changed (so a pre-dirty submodule is
+     attributed to the first task; see `archive.md` for this known
+     limitation). With no
      baseline (a change created before this divergence), or an
      unreadable/corrupt one (which warns), this filter is skipped and the
      v2.3.1 oracle's session-wide behavior applies. See `archive.md` ›

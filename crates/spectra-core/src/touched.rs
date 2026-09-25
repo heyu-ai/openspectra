@@ -186,7 +186,9 @@ pub(crate) fn baseline_path(cfg: &Config, name: &str) -> PathBuf {
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Baseline {
     #[serde(default)]
-    files: std::collections::BTreeMap<String, String>,
+    /// `None`（JSON `null`）是「檢查點時 dirty，但指紋無法判定」：路徑仍要記下，
+    /// 它之後若變乾淨才會被列為候選；比較時一律算「有變」。
+    files: std::collections::BTreeMap<String, Option<String>>,
 }
 
 /// 所有 dirty 檔案在某一刻的指紋，依 `git status` 的順序。每個 `task done`
@@ -196,8 +198,10 @@ pub struct Snapshot(Vec<(String, Option<String>)>);
 /// 檔案目前狀態的指紋：一般檔案是長度加內容的 FNV-1a 64，symlink 是它的
 /// 目標，不存在（已刪除）是 `"missing"`。無法判定狀態時（讀不到內容、讀不到
 /// symlink 目標、目錄或 submodule 這類非一般檔案、`NotFound` 以外的 stat 錯誤）
-/// 回傳 `None`：它不寫進 baseline，比較時一律算「有變」——寧可多記也不要
-/// 因為兩次都「不知道」就判定沒變而靜默漏記。
+/// 回傳 `None`：baseline 以 `null` 記下這個路徑，比較時一律算「有變」——寧可
+/// 多記也不要因為兩次都「不知道」就判定沒變而靜默漏記。代價是 change 開始前
+/// 就 dirty、之後沒被碰過的 submodule（`git status` 回報成目錄）也會被記進
+/// 第一個 task；要精準判定得對 submodule 另跑 git，列為已知限制。
 ///
 /// 不用 `DefaultHasher`：它的演算法不保證跨 Rust 版本穩定，而 baseline 會跨
 /// binary 升級保存。碰撞的後果是某個真的被改過的檔案漏記，這份資料本來就是
@@ -243,13 +247,13 @@ pub fn snapshot(cfg: &Config, dirty: &[String]) -> Snapshot {
     )
 }
 
-/// 把 `snapshot` 寫成新的檢查點（無法判定指紋的檔案不寫入）。
+/// 把 `snapshot` 寫成新的檢查點（無法判定指紋的路徑記為 `null`）。
 pub fn write_baseline(cfg: &Config, name: &str, snapshot: &Snapshot) -> Result<()> {
     let baseline = Baseline {
         files: snapshot
             .0
             .iter()
-            .filter_map(|(f, fp)| fp.as_ref().map(|fp| (f.clone(), fp.clone())))
+            .map(|(f, fp)| (f.clone(), fp.clone()))
             .collect(),
     };
     let path = baseline_path(cfg, name);
@@ -315,7 +319,7 @@ pub fn touched_since_baseline(
         .chain(now_clean)
         .filter(|(f, _)| is_candidate(f))
         .filter(|(f, now)| match (baseline.files.get(f), now) {
-            (Some(before), Some(now)) => before != now,
+            (Some(Some(before)), Some(now)) => before != now,
             _ => true,
         })
         .map(|(f, _)| f)
@@ -409,6 +413,38 @@ mod tests {
         let c = cfg(&tmp);
         std::fs::create_dir_all(tmp.join("vendor/lib")).unwrap();
         let dirty = vec!["vendor/lib".to_string()];
+        write_baseline(&c, "my-change", &snapshot(&c, &dirty)).unwrap();
+
+        let touched = touched_since_baseline(&c, "my-change", &snapshot(&c, &dirty), |_| true);
+
+        assert_eq!(touched, dirty);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_that_cannot_be_stated_always_counts_as_touched() {
+        use std::os::unix::fs::PermissionsExt;
+        /// 測試結束（含 panic）時把目錄權限改回來，讓 TempDir 刪得掉。
+        struct RestoreSearchable(PathBuf);
+        impl Drop for RestoreSearchable {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        // NotFound 以外的 stat 錯誤（這裡是上層目錄沒有搜尋權限）不能當成
+        // `missing`：兩次都是 `missing` 會被判成沒變。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        std::fs::create_dir_all(tmp.join("private")).unwrap();
+        std::fs::write(tmp.join("private/secret.rs"), "// v1\n").unwrap();
+        let _restore = RestoreSearchable(tmp.join("private"));
+        std::fs::set_permissions(tmp.join("private"), std::fs::Permissions::from_mode(0o600))
+            .unwrap();
+        if std::fs::symlink_metadata(tmp.join("private/secret.rs")).is_ok() {
+            eprintln!("skipping: running as root (directory search permission not enforced)");
+            return;
+        }
+        let dirty = vec!["private/secret.rs".to_string()];
         write_baseline(&c, "my-change", &snapshot(&c, &dirty)).unwrap();
 
         let touched = touched_since_baseline(&c, "my-change", &snapshot(&c, &dirty), |_| true);
