@@ -56,12 +56,13 @@ won't have it).
 | Change metadata | optional `.openspec.yaml` | read via `ChangeMetadata` (`serde(flatten)` keeps unknown keys; absence → default) | ✅ compatible |
 | Canonical spec | `specs/<cap>/spec.md` with `## Purpose` / `## Requirements` / `### Requirement:` / `#### Scenario:` | same headers parsed by `archive`/`spec` | ✅ compatible |
 | Scenario bullets | `- **WHEN**` / `- **THEN**` (conventions spec) — also plain `- GIVEN/WHEN/THEN` in some docs | not parsed by `archive` (ADDED copies blocks verbatim); `drift` anchor extraction reads prose | ✅ compatible for archive |
-| Delta: `## ADDED Requirements` | append new requirement blocks | implemented (append into `## Requirements`, trace footer) | ✅ compatible |
+| Delta: `## ADDED Requirements` | append new requirement blocks | implemented (append into `## Requirements`; trace data in the `spec.trace.yaml` sidecar) | ✅ compatible |
 | Delta: `## MODIFIED Requirements` | replace existing requirement by header match | **rejected with an error**, asks for `--skip-specs` | 🔧 adapt — implement |
 | Delta: `## REMOVED Requirements` | delete existing requirement by header match | **rejected with an error** | 🔧 adapt — implement |
 | Delta: `## RENAMED Requirements` | `- FROM:`/`- TO:` header rename | **rejected with an error** | 🔧 adapt — implement |
 | Archive destination | `changes/archive/YYYY-MM-DD-<name>/` | identical | ✅ compatible |
 | Per-change sidecar state | none | `.spectra/changes/<name>.{started,in-progress}`, `.spectra/touched/<name>.json` (OpenSpectra also adds `.spectra/changes/<name>.touched-baseline.json`, #98) | ➕ spectra-only |
+| Canonical spec trace data | none | inline `<!-- @trace -->` footer under every ADDED/MODIFIED requirement (OpenSpectra writes `specs/<cap>/spec.trace.yaml` plus a one-line pointer instead, #98) | ➕ spectra-only |
 | Parked changes | `<git common dir>/spectra-app/changes/<name>/` | identical | ✅ compatible |
 | `.spectra/` in `.gitignore` | n/a | `init` ensures the entry | ➕ spectra-only |
 

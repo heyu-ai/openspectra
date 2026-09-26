@@ -173,8 +173,9 @@ pub fn record(
 ///
 /// 這修的是 oracle v2.3.1 的 session-wide 過度收集（kaochenlong/spectra-app#95、
 /// heyu-ai/openspectra#98）：change 開始前就已經 dirty、之後沒再被改過的
-/// 無關檔案，不該被灌進 archive 的 `@trace` `code:` 清單。oracle 3.0.0 的
-/// `task_baseline` 行為尚未實測。放在 `.spectra/changes/`（`.started` 旁邊）
+/// 無關檔案，不該被灌進 archive 的追溯 `code` 清單（`spec.trace.yaml`）。
+/// oracle 3.0.0 另有 `task start`／`task done --file` 的 per-task baseline，
+/// openspectra 尚未實作。放在 `.spectra/changes/`（`.started` 旁邊）
 /// 而不是 `.spectra/touched/`，是讓後者只放 oracle 格式的 tracking 檔。
 pub(crate) fn baseline_path(cfg: &Config, name: &str) -> PathBuf {
     cfg.root
