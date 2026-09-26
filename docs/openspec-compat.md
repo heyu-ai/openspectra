@@ -61,9 +61,17 @@ won't have it).
 | Delta: `## REMOVED Requirements` | delete existing requirement by header match | **rejected with an error** | 🔧 adapt — implement |
 | Delta: `## RENAMED Requirements` | `- FROM:`/`- TO:` header rename | **rejected with an error** | 🔧 adapt — implement |
 | Archive destination | `changes/archive/YYYY-MM-DD-<name>/` | identical | ✅ compatible |
-| Per-change sidecar state | none | `.spectra/changes/<name>.{started,in-progress}`, `.spectra/touched/<name>.json` (OpenSpectra also adds `.spectra/changes/<name>.touched-baseline.json`, #98) | ➕ spectra-only |
+| Per-change sidecar state | none | `.spectra/changes/<name>.{started,in-progress}`, `.spectra/touched/<name>.json` | ➕ spectra-only |
 | Parked changes | `<git common dir>/spectra-app/changes/<name>/` | identical | ✅ compatible |
 | `.spectra/` in `.gitignore` | n/a | `init` ensures the entry | ➕ spectra-only |
+
+The matrix's OpenSpectra column records the state before #26. Two later
+OpenSpectra-only additions (#98) do not fit that snapshot. First,
+`.spectra/changes/<name>.touched-baseline.json`, a per-task checkpoint. Second,
+trace data: OpenSpec has no trace concept, and OpenSpectra no longer writes the
+oracle's inline `<!-- @trace -->` footer under each requirement. Instead it
+writes `specs/<cap>/spec.trace.yaml` plus a one-line pointer in `spec.md`. See
+`docs/reverse-engineering/archive.md` › "Trace data".
 
 ### Key finding
 

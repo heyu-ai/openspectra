@@ -108,7 +108,9 @@ each followed by one or more `### Requirement: <name>` blocks.
 
 **Confirmed via golden run: `## ADDED Requirements` means "insert these
 requirement blocks into the canonical spec's `## Requirements` section,
-verbatim, each followed by its own trace footer"** — not a smart merge. Header
+verbatim, each followed by its own trace footer"** (the oracle's footer;
+OpenSpectra writes trace data to a sidecar instead, see "Trace data") — not a
+smart merge. Header
 recognition is ASCII-case-insensitive, so accepted hand-written forms such as
 `## added requirements`, `### requirement: Name`, `## requirements`, and
 `## purpose` retain their parsed raw block while participating in the same
@@ -140,37 +142,138 @@ TBD - created by archiving change '<source>'. Update Purpose after archive.
 ## Requirements
 ```
 
-Each appended requirement block gets a trace footer:
+### Trace data
+
+**Oracle behavior.** The oracle appends an inline footer under every ADDED
+requirement block, and (probed on v3.0.0, 2026-09-26) under every MODIFIED one
+as well:
 
 ```
 <!-- @trace
 source: <change-name>
 updated: <YYYY-MM-DD>
 code:
-  - <touched file 1>
-  - <touched file 2>
+  - <file 1>
+  - <file 2>
 -->
 ```
 
-**The `code:` list's exact source is unconfirmed** — every golden sample
-observed happened to show the same single file (`.spectra.yaml`, dirty for
-unrelated reasons in the scratch repo the whole time), which isn't enough
-to distinguish "files this change's tasks touched" from some other
-git-diff-based heuristic. OpenSpectra populates `code:` from this change's
-`.spectra/touched/<name>.json` (the same tracking file `task done` writes),
-sorted — a reasonable, self-consistent choice given the infrastructure
-already exists for exactly this purpose, but **not verified against the
-oracle**. `code: []` when no touched-file data exists for the change.
+The `code:` list is identical for every requirement of one archive, so a spec
+grows O(requirements × archives): downstream (heyu-ai/openspectra#98) measured
+trace footers at 67% of the bytes in yibi-mvp specs over 20 KB, 87% in the
+largest. The list itself is the change's session-wide dirty-file set:
+the v2.3.1 corpus contains fonts, screenshots, PID files and spreadsheets
+(kaochenlong/spectra-app#47, #95, #102). On v3.0.0 the same probe showed
+`code:` still including a file that was dirty before `new change`, and the
+footer was written even though `task done` had recorded nothing (it printed
+`touched_tracking_skipped_no_baseline_or_explicit_files`), so v3.0.0's list does
+not come from `.spectra/touched/<name>.json`. The v3.0.0 formatting puts two
+blank lines before the first footer and none after the last.
 
-Downstream corpus evidence (heyu-ai/openspectra#98: 96 specs archived by oracle
-2.3.1 in yibi-mvp, containing fonts, screenshots, PID files and spreadsheets in
-`code:`) plus the oracle's own open bug reports
-(kaochenlong/spectra-app#47, #95, #102) confirm that the v2.3.1 oracle's list
-is the change's session-wide dirty-file set, repeated verbatim under every
-requirement. The v3.0.0 oracle's bundled skills describe a per-task
-`task_baseline`; its collection behavior has not been probed yet.
+**OpenSpectra: `spec.trace.yaml` sidecar (deliberate divergence, #98).** The
+downstream ADR-0029 D3 (heyu-ai/yibi-mvp) ruled for moving trace data out of
+`spec.md`. OpenSpectra's archive writes no inline footer. Instead each archive
+appends one entry to `specs/<cap>/spec.trace.yaml`, and `spec.md` carries a
+single pointer line under its title:
 
-**Deliberate divergences (#98), both OpenSpectra-only (relative to v2.3.1):**
+```
+# <cap> Specification
+
+<!-- @trace-sidecar: spec.trace.yaml -->
+
+## Purpose
+```
+
+```yaml
+# Traceability for spec.md, written by `spectra archive` and
+# `spectra trace migrate`. One entry per archived change.
+version: 1
+traces:
+- source: add-login
+  updated: 2026-09-26
+  added:
+  - Login Button
+  code:
+  - src/auth.rs
+- source: tweak-login
+  updated: 2026-10-02
+  modified:
+  - Login Button
+  renamed:
+  - from: Sign In
+    to: Log In
+  code: []
+```
+
+- An entry lists the requirements that archive `added`, `modified`, `removed`
+  and `renamed`. Empty lists are omitted, except `code`, which is always
+  written. `code` is this change's touched files, sorted (see the divergences
+  below).
+- Before applying the delta, archive strips every parseable inline footer
+  outside code fences from the canonical spec and absorbs it into the sidecar.
+  This covers both footers the oracle wrote in a mixed setup and ones from
+  before this divergence. Stripping first means a MODIFIED or REMOVED block
+  does not take its footer with it. Footers with identical `source`, `updated`,
+  `code` and `tests` merge into one entry whose requirement names go under
+  `imported`: a footer does not record whether it came from ADDED or MODIFIED,
+  so none is guessed. Absorption is idempotent. A footer attributed to no
+  requirement (outside every requirement block) is still absorbed, with no
+  name. After the delta is applied, archive strips once more, so footers that
+  arrive inside the delta's own ADDED or MODIFIED blocks are absorbed too. This
+  happens because the convention is to paste a whole requirement into MODIFIED,
+  and a block copied from an oracle-written spec carries its footer.
+- A footer that opens with `<!-- @trace` but has an unknown key, a missing or
+  empty `source`/`updated`, a list item outside a `code:`/`tests:` list, or no
+  closing `-->` is not guessed at. It stays in `spec.md` and a warning names
+  its line in the written file. If a MODIFIED or REMOVED delta targets a
+  requirement holding such a footer, the archive fails (already at validation)
+  instead of discarding it.
+- RENAMED rewrites the old names recorded in earlier entries, so they keep
+  matching the current requirement. It rewrites only entries after the last
+  removal of that name, because an earlier requirement with the same name was a
+  different one. `removed` and `renamed` are history and are never rewritten.
+  A rename done by the oracle does not update the sidecar, so names in older
+  entries can go stale in a mixed setup. `spectra trace migrate` reports such
+  stale names: names whose last recorded event is not a removal but that match
+  no current requirement. Events are taken in entry order, and within an entry
+  `removed` comes before `modified`/`added`/`imported`. It does not fix them
+  automatically.
+- The sidecar goes through the same prepare/commit/rollback path as `spec.md`
+  (see "Architecture decision: atomicity versus recovery"). Retiring a
+  capability removes its sidecar too, so the directory does not linger with
+  only a YAML file. A sidecar that does not parse, has an unknown field, or
+  whose `version` is not `1` fails the archive before any canonical file is
+  written; it is never overwritten. Unknown fields are rejected, not ignored,
+  because a mistyped key in a hand-edited sidecar would otherwise be silently
+  dropped on the next rewrite.
+- `spectra trace migrate [--dry-run] [--check] [--json]` applies the same
+  absorption to every canonical spec without an archive, so existing bloated
+  specs can be migrated at once. For each spec it writes the sidecar before
+  `spec.md`, and a rerun after an interruption does not duplicate entries. A
+  corrupt sidecar fails only that spec and makes the command exit 1. `--check`
+  writes nothing and exits 1 if any spec still has an inline footer (parseable
+  or not), a stale trace name, or an unreadable sidecar. It is meant for CI or
+  pre-commit in a repo where the oracle may still archive.
+
+**Probed interoperability (v3.0.0, 2026-09-26).** With either a footer-free
+`spec.md` plus sidecar, or a spec that keeps only `source`/`updated` in each
+footer, the oracle validated and archived an ADDED + MODIFIED + REMOVED delta
+without complaint and left `spec.trace.yaml` byte-identical. It did write full
+inline footers again for the ADDED and MODIFIED requirements. A second probe
+alternated the two tools on one repo: oracle ADDED, then `trace migrate`, then
+OpenSpectra MODIFIED, oracle ADDED, and OpenSpectra ADDED. The oracle kept the
+`<!-- @trace-sidecar: spec.trace.yaml -->` pointer line, left the sidecar
+untouched, and footed only the requirement it added. The final OpenSpectra
+archive absorbed that footer, and both tools' `validate` passed afterwards.
+Hence the absorption above. Mixing the tools re-grows a capability's footers
+only until the next OpenSpectra archive that touches that capability, or the
+next `trace migrate`. An archive absorbs footers only in the capabilities its
+delta changes. `trace migrate --check` catches them in between. Footers absorbed this way keep the oracle's `code:` list
+as-is, so the collection divergences below apply only to entries OpenSpectra
+writes itself.
+
+**Deliberate divergences in `code` collection (#98), both OpenSpectra-only
+(relative to v2.3.1):**
 
 - **Task-scoped collection.** `spectra new change` and every `task done` that
   records successfully write a checkpoint,
@@ -202,10 +305,6 @@ requirement. The v3.0.0 oracle's bundled skills describe a per-task
   the path and prints a warning. `.spectra/touched/<name>.json` itself is not
   pruned, since commit tooling still needs to know which task deleted a file.
 
-The inline footer format and its repetition under every ADDED requirement
-(O(requirements × archives) growth) are unchanged; how to address that bloat
-is tracked separately on #98.
-
 OpenSpectra Phase 2 implements `MODIFIED`, `REMOVED`, and `RENAMED` against
 the **OpenSpec published convention** recorded in `docs/openspec-compat.md`,
 not against a golden oracle sample. No oracle samples were captured for
@@ -224,7 +323,8 @@ Application order is:
 3. `MODIFIED Requirements`: replace each matching canonical requirement block
    with the delta's block verbatim, including any `(Previously: ...)` line.
 4. `ADDED Requirements`: append new requirement blocks using the existing
-   insertion-point and trace-footer behavior described above.
+   insertion-point behavior described above. Trace data for all four kinds
+   goes to the sidecar (see "Trace data").
 
 A requirement block runs from a parsed level-three Requirement header up to,
 but not including, the next level-three header, the next level-two section, or
@@ -258,10 +358,13 @@ second would be dropped); the same requirement ADDED twice within one delta
 malformed `## RENAMED Requirements` FROM/TO pair (a FROM without a TO, a
 missing/unbalanced backtick, or backtick content that isn't a
 `### Requirement:` header). RENAMED accepts either `-` or `*` list bullets.
-Validation builds side-effect-free ADDED blocks without trace footers, because
-trace provenance is irrelevant to compatibility and reading this change's
-`.spectra/touched/` sidecar could rename a corrupt file aside. Trace footers
-are added only while preparing the exact bytes that will be committed.
+Validation computes the same merged blocks but builds no trace entry and does
+not read this change's `.spectra/touched/` sidecar, because trace provenance
+is irrelevant to compatibility. It does parse an existing `spec.trace.yaml`, so
+`spectra validate` already reports a corrupt sidecar. In `archive` the
+failure comes before any canonical file is written, and the frozen change is
+restored. The trace entry and the sidecar pointer are produced only while
+preparing the exact bytes that will be committed.
 
 ## Known limitations
 
@@ -277,7 +380,16 @@ Tasks-collision detection.
   `.openspec.yaml`/the canonical spec by hand (or via `git revert`, since
   archiving isn't its own commit).
 
-- **`code:` trace provenance** — see above.
+- **`code` trace provenance.** OpenSpectra fills `code` from
+  `.spectra/touched/<name>.json`; v3.0.0 demonstrably does not (see "Trace
+  data"), and how v3.0.0 derives its list is not reverse-engineered yet. Nor
+  are v3.0.0's `task start` and `task done --file`, which feed its per-task
+  baseline; OpenSpectra implements neither.
+- **MODIFIED drops the block's `---` separator.** A requirement block's range
+  includes the `---` line before the next requirement, and MODIFIED keeps only
+  the replaced block's trailing whitespace, so the separator after a modified
+  requirement disappears (the headers stay on their own lines). The v3.0.0
+  oracle keeps it. This predates the sidecar.
 
 ## Architecture decision: atomicity versus recovery
 

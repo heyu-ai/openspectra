@@ -235,6 +235,11 @@ enum Command {
         #[command(subcommand)]
         target: TaskTarget,
     },
+    /// Traceability sidecar operations (OpenSpectra-only).
+    Trace {
+        #[command(subcommand)]
+        target: TraceTarget,
+    },
     /// Update instruction files
     Update {
         /// Project path (defaults to current directory)
@@ -428,6 +433,24 @@ enum NewTarget {
         #[arg(long, help = "Overwrite existing artifact")]
         force: bool,
         #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TraceTarget {
+    /// Move inline `<!-- @trace -->` footers in canonical specs into each
+    /// capability's `spec.trace.yaml` sidecar (idempotent), and report
+    /// sidecar requirement names that no longer match the spec.
+    Migrate {
+        /// Report what would be migrated without writing any file.
+        #[arg(long)]
+        dry_run: bool,
+        /// Write nothing; exit 1 if any spec still has an inline footer, a
+        /// stale trace name, or an unreadable sidecar (for CI/pre-commit).
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
         json: bool,
     },
 }
@@ -1429,6 +1452,73 @@ fn parse_task_id(raw: &str) -> Result<usize> {
         .map_err(|_| anyhow::anyhow!("Invalid task ID '{raw}': must be a number"))
 }
 
+/// `spectra trace migrate`：只回報需要處理的 spec。一般模式下任何一份遷移
+/// 失敗就以 1 結束（其他 spec 照樣處理）；`--check` 不寫檔，只要有任何一份
+/// 需要處理就以 1 結束。
+fn cmd_trace_migrate(cfg: &Config, dry_run: bool, check: bool, as_json: bool) -> Result<i32> {
+    let write_nothing = dry_run || check;
+    let report = spectra_core::trace::migrate(cfg, write_nothing)?;
+    let failed = if check {
+        report.iter().any(|spec| spec.needs_attention())
+    } else {
+        report.iter().any(|spec| spec.error.is_some())
+    };
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "dry_run": dry_run,
+                "check": check,
+                "specs": report,
+            }))?
+        );
+        return Ok(i32::from(failed));
+    }
+    if report.is_empty() {
+        println!("No inline trace footers or stale trace names found.");
+        return Ok(0);
+    }
+    for spec in &report {
+        if let Some(error) = &spec.error {
+            eprintln!("error: {}: {error}", spec.capability);
+            continue;
+        }
+        if !spec.stale_names.is_empty() {
+            eprintln!(
+                "warning: {}: {} names requirement(s) not in spec.md: {} (renamed outside openspectra? fix the sidecar by hand)",
+                spec.capability,
+                spectra_core::trace::SIDECAR_FILE,
+                spec.stale_names.join(", ")
+            );
+        }
+        if spec.footers > 0 {
+            let verb = if check {
+                "has"
+            } else if dry_run {
+                "would move"
+            } else {
+                "moved"
+            };
+            let target = if check { "not yet in" } else { "into" };
+            println!(
+                "{}: {verb} {} inline trace footer(s) {target} {}",
+                spec.capability,
+                spec.footers,
+                spectra_core::trace::SIDECAR_FILE
+            );
+        }
+        if !spec.unparsed_lines.is_empty() {
+            eprintln!(
+                "warning: {}: left {} unrecognized `<!-- @trace` footer(s) in place ({})",
+                spec.capability,
+                spec.unparsed_lines.len(),
+                spectra_core::trace::describe_lines(&spec.unparsed_lines)
+            );
+        }
+    }
+    Ok(i32::from(failed))
+}
+
 fn cmd_task_done(
     cfg: &Config,
     change_name: Option<&str>,
@@ -1839,6 +1929,16 @@ fn run() -> Result<i32> {
             } => {
                 let cfg = require_initialized(&root)?;
                 cmd_task_done(&cfg, change.as_deref(), task_id, *json)
+            }
+        },
+        Command::Trace { target } => match target {
+            TraceTarget::Migrate {
+                dry_run,
+                check,
+                json,
+            } => {
+                let cfg = require_initialized(&root)?;
+                cmd_trace_migrate(&cfg, *dry_run, *check, *json)
             }
         },
         Command::Update { path, force } => {

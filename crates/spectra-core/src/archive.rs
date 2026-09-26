@@ -182,7 +182,10 @@ pub fn archive(
     Ok(ArchiveOutcome {
         name: name.to_string(),
         archived_name,
-        specs_applied: prepared.into_iter().map(|spec| spec.result).collect(),
+        specs_applied: prepared
+            .into_iter()
+            .filter_map(|spec| spec.result)
+            .collect(),
     })
 }
 
@@ -703,12 +706,31 @@ impl ArchivedMetadataUpdate {
     }
 }
 
+/// 一個要寫入（或 retire 時刪除）的 canonical 檔案：`spec.md`，或它的
+/// `spec.trace.yaml` sidecar（`result` 為 `None`）。兩者共用同一套
+/// commit／rollback，sidecar 因此跟 spec.md 同進同退。
 struct PreparedSpec {
     path: PathBuf,
     original: Option<Vec<u8>>,
     content: Option<String>,
-    result: SpecApplyResult,
+    result: Option<SpecApplyResult>,
     retire: bool,
+}
+
+/// 一個 capability 這次 archive 對追溯資料的影響，交給 `prepare_spec_deltas`
+/// 寫成 sidecar。
+#[derive(Debug, Default)]
+struct SpecTraceDelta {
+    /// 套 delta 前從既有 spec.md 剝出來的 inline footer（oracle 寫的，或
+    /// sidecar 之前的舊版）；記的是改名前的名稱，要先吸收再套 RENAMED。
+    footers: Vec<crate::trace::InlineFooter>,
+    /// 套完 delta 後才剝出來的 footer：delta 的 ADDED／MODIFIED 內容自己帶進來
+    /// 的（例如從 oracle 產出的 spec 整塊複製）；記的是新名稱，要在 RENAMED 之後吸收。
+    late_footers: Vec<crate::trace::InlineFooter>,
+    added: Vec<String>,
+    modified: Vec<String>,
+    removed: Vec<String>,
+    renamed: Vec<crate::trace::RenamedRequirement>,
 }
 
 /// Validate every delta merge and capability retirement without writing specs,
@@ -741,15 +763,17 @@ fn prepare_spec_deltas(
     dry_run: bool,
 ) -> Result<Vec<PreparedSpec>> {
     let mut prepared = Vec::new();
+    // 這次 archive 的 `code` 清單只跟 change 有關；第一個需要它的 capability
+    // 才算，之後共用（touched 只讀一次、警告只印一次）。
+    let mut code_files: Option<Vec<String>> = None;
     for (capability, delta) in crate::fsutil::collect_delta_specs(&change_dir.join("specs"))? {
         let path = cfg.specs_dir().join(&capability).join("spec.md");
         let original = read_optional_bytes(&path)?;
-        let (mut content, result) = merge_spec_delta(
+        let (mut content, result, trace_delta) = merge_spec_delta(
             cfg,
             &capability,
             &delta,
             source,
-            today,
             dry_run,
             retirement_declared,
         )?;
@@ -779,15 +803,97 @@ fn prepare_spec_deltas(
         } else {
             false
         };
+
+        // 驗證（dry_run，`spectra validate` 也走這裡）同樣解析 sidecar，所以壞掉
+        // 的 sidecar 在寫入任何 canonical 檔案之前就失敗，archive 會把凍結的
+        // change 還原。比對「寫入前沒被改過」與解析用的是同一份 bytes。
+        let sidecar_path = crate::trace::sidecar_path(&path);
+        let sidecar_original = read_optional_bytes(&sidecar_path)?;
+        let existing_trace = sidecar_original
+            .as_deref()
+            .map(|bytes| {
+                crate::trace::TraceFile::parse(&String::from_utf8_lossy(bytes), &sidecar_path)
+            })
+            .transpose()?;
+        let sidecar = if retire {
+            // capability retire 時 sidecar 一併移除；歷史仍在 git 與 archive 目錄裡。
+            sidecar_original.is_some().then_some(PreparedSpec {
+                path: sidecar_path,
+                original: sidecar_original,
+                content: None,
+                result: None,
+                retire: true,
+            })
+        } else if let (Some(rebuilt), false) = (content.as_deref(), dry_run) {
+            let mut trace = existing_trace.unwrap_or_default();
+            trace.absorb(&trace_delta.footers);
+            trace.apply_renames(&trace_delta.renamed);
+            trace.absorb(&trace_delta.late_footers);
+            trace.traces.push(crate::trace::TraceEntry {
+                source: source.to_string(),
+                updated: today.to_string(),
+                added: trace_delta.added,
+                modified: trace_delta.modified,
+                removed: trace_delta.removed,
+                renamed: trace_delta.renamed,
+                code: code_files
+                    .get_or_insert_with(|| trace_code_files(cfg, source))
+                    .clone(),
+                ..Default::default()
+            });
+            let rebuilt = crate::trace::ensure_pointer(rebuilt);
+            // 行號以實際要寫出的內容計算，使用者照著找得到。
+            let unparsed = crate::trace::extract_inline(&rebuilt).unparsed_lines;
+            if !unparsed.is_empty() {
+                eprintln!(
+                    "warning: {}: left {} unrecognized `<!-- @trace` footer(s) in place ({}); move them into {} by hand",
+                    path.display(),
+                    unparsed.len(),
+                    crate::trace::describe_lines(&unparsed),
+                    crate::trace::SIDECAR_FILE
+                );
+            }
+            content = Some(rebuilt);
+            Some(PreparedSpec {
+                path: sidecar_path,
+                original: sidecar_original,
+                content: Some(trace.to_yaml()?),
+                result: None,
+                retire: false,
+            })
+        } else {
+            None
+        };
         prepared.push(PreparedSpec {
             path,
             original,
             content,
-            result,
+            result: Some(result),
             retire,
         });
+        prepared.extend(sidecar);
     }
     Ok(prepared)
+}
+
+/// 這次 archive 的 `code:` 清單：這個 change 的 touched file，排除確定已不在
+/// 磁碟上的路徑（#98 D 項）。只讀 touched sidecar、不動它：`/spectra:commit`
+/// 仍需要知道哪些刪除是哪個 task 造成的。`symlink_metadata` 讓斷掉的 symlink
+/// 仍算存在；只有「確定不存在」才剔除，權限不足等其他 stat 錯誤保留並警告。
+fn trace_code_files(cfg: &Config, source: &str) -> Vec<String> {
+    let mut code_files: Vec<String> = touched::already_recorded_readonly(cfg, source)
+        .into_iter()
+        .filter(|f| match std::fs::symlink_metadata(cfg.root.join(f)) {
+            Ok(_) => true,
+            Err(e) if touched::is_gone(&e) => false,
+            Err(e) => {
+                eprintln!("warning: couldn't check {f} ({e}); keeping it in the trace code list");
+                true
+            }
+        })
+        .collect();
+    code_files.sort();
+    code_files
 }
 
 fn can_retire_spec(content: &str) -> bool {
@@ -809,6 +915,10 @@ fn can_retire_spec(content: &str) -> bool {
             continue;
         }
         if trimmed.starts_with("# ") && matches!(section, Section::Outside) {
+            continue;
+        }
+        // archive 自己加的 sidecar 指標不算「Purpose 與 Requirements 以外的內容」。
+        if crate::trace::is_pointer_line(trimmed) && matches!(section, Section::Outside) {
             continue;
         }
         if trimmed.eq_ignore_ascii_case("## Purpose") {
@@ -935,10 +1045,9 @@ fn merge_spec_delta(
     capability: &str,
     delta: &str,
     source: &str,
-    today: chrono::NaiveDate,
     dry_run: bool,
     retirement_declared: bool,
-) -> Result<(Option<String>, SpecApplyResult)> {
+) -> Result<(Option<String>, SpecApplyResult, SpecTraceDelta)> {
     let parsed = parse_requirement_delta(capability, delta)?;
     let planned =
         parsed.added.len() + parsed.modified.len() + parsed.removed.len() + parsed.renamed.len();
@@ -949,8 +1058,9 @@ fn merge_spec_delta(
         removed: 0,
         renamed: 0,
     };
+    let mut trace = SpecTraceDelta::default();
     if planned == 0 {
-        return Ok((None, result));
+        return Ok((None, result, trace));
     }
 
     let spec_path = cfg.specs_dir().join(capability).join("spec.md");
@@ -962,7 +1072,7 @@ fn merge_spec_delta(
         && parsed.renamed.is_empty()
         && !parsed.removed.is_empty()
     {
-        return Ok((None, result));
+        return Ok((None, result, trace));
     }
     let mut content = match existing {
         Some(content) => {
@@ -972,7 +1082,12 @@ fn merge_spec_delta(
                     spec_path.display()
                 );
             }
-            crate::markdown::normalize_markdown(&content).into_owned()
+            // 先把既有的 inline footer 剝出來，再套 delta：MODIFIED／REMOVED
+            // 會整塊替換或刪除 requirement，先剝才不會連同 footer 一起丟掉。
+            let normalized = crate::markdown::normalize_markdown(&content);
+            let extracted = crate::trace::extract_inline(&normalized);
+            trace.footers = extracted.footers;
+            extracted.content
         }
         None if parsed.modified.is_empty()
             && parsed.removed.is_empty()
@@ -1024,6 +1139,10 @@ fn merge_spec_delta(
                 &format!("### Requirement: {}", rename.to.trim()),
             );
             result.renamed += 1;
+            trace.renamed.push(crate::trace::RenamedRequirement {
+                from: block.name.clone(),
+                to: rename.to.trim().to_string(),
+            });
         } else if let Some(variant) = find_folded_requirement_block(&content, &rename.from) {
             return Err(requirement_spelling_error(
                 capability,
@@ -1053,8 +1172,10 @@ fn merge_spec_delta(
 
     for removed in &parsed.removed {
         if let Some(block) = find_requirement_block(&content, removed) {
+            refuse_to_discard_unrecognized_footer(capability, "REMOVE", &content, &block)?;
             content.replace_range(block.start..block.end, "");
             result.removed += 1;
+            trace.removed.push(block.name.clone());
         } else if let Some(variant) = find_folded_requirement_block(&content, removed) {
             return Err(requirement_spelling_error(
                 capability,
@@ -1089,6 +1210,7 @@ fn merge_spec_delta(
         if requirement_content_eq(&original, &modified.raw) {
             continue;
         }
+        refuse_to_discard_unrecognized_footer(capability, "MODIFY", &content, &block)?;
         let trailing = {
             let original = &content[block.start..block.end];
             original[original.trim_end().len()..].to_string()
@@ -1098,6 +1220,7 @@ fn merge_spec_delta(
             &format!("{}{trailing}", modified.raw),
         );
         result.modified += 1;
+        trace.modified.push(modified.name.clone());
     }
 
     let mut added_to_apply = Vec::new();
@@ -1124,19 +1247,44 @@ fn merge_spec_delta(
         }
         added_to_apply.push(added.raw.clone());
         result.added += 1;
+        trace.added.push(added.name.clone());
     }
-    if dry_run {
-        append_added_requirements_for_validation(&mut content, &added_to_apply);
-    } else {
-        append_added_requirements(&mut content, &added_to_apply, cfg, source, today);
-    }
+    append_added_requirements(&mut content, &added_to_apply);
+    // delta 的 ADDED／MODIFIED 內容本身可能帶著 inline footer（依慣例 MODIFIED
+    // 要貼整個 requirement，從 oracle 產出的 spec 複製時就會帶上）；它們也要
+    // 進 sidecar，不能原樣寫回 spec.md。
+    let late = crate::trace::extract_inline(&content);
+    content = late.content;
+    trace.late_footers = late.footers;
 
     let applied = result.added + result.modified + result.removed + result.renamed;
     if applied > 0 {
         content.truncate(content.trim_end_matches('\n').len());
         content.push('\n');
     }
-    Ok(((applied > 0).then_some(content), result))
+    Ok(((applied > 0).then_some(content), result, trace))
+}
+
+/// MODIFIED／REMOVED 會整塊替換或刪除 requirement。可解析的 footer 在這之前
+/// 已經剝進 sidecar，此時 block 裡若還有 `<!-- @trace`，就是認不得、無法搬
+/// 的那種：不猜怎麼保留，直接失敗（驗證階段就會擋下），請人先處理。
+fn refuse_to_discard_unrecognized_footer(
+    capability: &str,
+    operation: &str,
+    content: &str,
+    block: &RequirementBlock,
+) -> Result<()> {
+    if crate::trace::extract_inline(&content[block.start..block.end])
+        .unparsed_lines
+        .is_empty()
+    {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "capability '{capability}': cannot {operation} requirement '{}' -- it holds an unrecognized `<!-- @trace` footer that would be discarded; move it into {} or delete it by hand, then archive again",
+        block.name,
+        crate::trace::SIDECAR_FILE
+    )
 }
 
 fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
@@ -1305,11 +1453,13 @@ fn requirements_insertion_point(content: &str) -> usize {
         .unwrap_or(content.len())
 }
 
-/// Insert ADDED blocks during compatibility validation without reading touched
-/// sidecars. Trace content is irrelevant to conflicts and retirement, but the
-/// requirement blocks must be present so remove-and-add deltas are not
-/// mistaken for capability retirement.
-fn append_added_requirements_for_validation(content: &mut String, blocks: &[String]) {
+/// Append ADDED requirement blocks to `content` using the reverse-engineered
+/// placement rules. The earlier RENAMED/REMOVED/MODIFIED operations mutate
+/// `content` first, so ADDED's duplicate checks and insertion point see the
+/// post-merge canonical spec. Validation and application share this: trace
+/// data lives in the `spec.trace.yaml` sidecar (#98), so no inline `@trace`
+/// footer is appended here.
+fn append_added_requirements(content: &mut String, blocks: &[String]) {
     if blocks.is_empty() {
         return;
     }
@@ -1326,65 +1476,6 @@ fn append_added_requirements_for_validation(content: &mut String, blocks: &[Stri
         insertion.push('\n');
         has_existing_requirement = true;
     }
-    let point = requirements_insertion_point(content);
-    content.insert_str(point, &insertion);
-}
-
-/// Append ADDED requirement blocks to `content` using the original
-/// reverse-engineered placement and trace-footer rules. The earlier
-/// RENAMED/REMOVED/MODIFIED operations mutate `content` first, so ADDED's
-/// duplicate checks and insertion point see the post-merge canonical spec.
-fn append_added_requirements(
-    content: &mut String,
-    blocks: &[String],
-    cfg: &Config,
-    source: &str,
-    today: chrono::NaiveDate,
-) {
-    if blocks.is_empty() {
-        return;
-    }
-    // OpenSpectra-only divergence（heyu-ai/openspectra#98）：archive 當下已不在
-    // 磁碟上的路徑不寫進 `code:`。oracle 照單全收，trace 裡會留下永遠指不到
-    // 東西的路徑。只在這裡過濾、不動 touched sidecar：`/spectra:commit` 仍需要
-    // 知道哪些刪除是哪個 task 造成的。`symlink_metadata` 讓斷掉的 symlink 仍算存在；
-    // 只有「確定不存在」才剔除，權限不足等其他 stat 錯誤保留該路徑並警告。
-    let mut code_files: Vec<String> = touched::already_recorded_readonly(cfg, source)
-        .into_iter()
-        .filter(|f| match std::fs::symlink_metadata(cfg.root.join(f)) {
-            Ok(_) => true,
-            Err(e) if touched::is_gone(&e) => false,
-            Err(e) => {
-                eprintln!("warning: couldn't check {f} ({e}); keeping it in the @trace code: list");
-                true
-            }
-        })
-        .collect();
-    code_files.sort();
-    let code_yaml = if code_files.is_empty() {
-        "code: []".to_string()
-    } else {
-        let mut s = "code:".to_string();
-        for f in &code_files {
-            s.push_str(&format!("\n  - {f}"));
-        }
-        s
-    };
-
-    let mut has_existing_requirement =
-        !crate::markdown::parse_main_requirements(content).is_empty();
-    let mut insertion = String::new();
-    for block in blocks {
-        insertion.push_str(if has_existing_requirement {
-            "\n---\n"
-        } else {
-            "\n"
-        });
-        insertion.push_str(&format!(
-            "{block}\n\n<!-- @trace\nsource: {source}\nupdated: {today}\n{code_yaml}\n-->\n"
-        ));
-        has_existing_requirement = true;
-    }
 
     let mut point = requirements_insertion_point(content);
     if point == content.len() {
@@ -1394,7 +1485,7 @@ fn append_added_requirements(
         }
     } else {
         // Inserting before an existing trailing section: leave a blank line
-        // between the new trace footer and that section's header, matching
+        // between the new requirement and that section's header, matching
         // normal markdown spacing between sections.
         insertion.push('\n');
     }
@@ -1409,6 +1500,27 @@ mod tests {
     fn write(path: &Path, content: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
+    }
+
+    /// 讀 capability 的 `spec.trace.yaml`；不存在時 panic。
+    fn read_trace(c: &Config, capability: &str) -> crate::trace::TraceFile {
+        let path = crate::trace::sidecar_path(&c.specs_dir().join(capability).join("spec.md"));
+        crate::trace::TraceFile::load(&path)
+            .unwrap()
+            .unwrap_or_else(|| panic!("{} should exist", path.display()))
+    }
+
+    /// archive 後的 spec.md：追溯資料只在 sidecar，spec.md 只有一行指標。
+    fn assert_trace_lives_in_the_sidecar(spec: &str) {
+        assert!(
+            !spec.contains("<!-- @trace\n"),
+            "no inline footer expected:\n{spec}"
+        );
+        assert_eq!(
+            spec.matches(crate::trace::POINTER).count(),
+            1,
+            "exactly one sidecar pointer expected:\n{spec}"
+        );
     }
 
     struct TempDir(std::path::PathBuf);
@@ -1580,8 +1692,23 @@ mod tests {
         let original = "# a-first Specification\n\n## Purpose\n\nFirst.\n\n## Requirements\n\n\
             ### Requirement: Existing\nold text\n";
         write(&first_path, original);
+        // sidecar 與 spec.md 同進同退：已存在的要還原成原本的 bytes，
+        // 原本不存在的（b-mid）要被移除。
+        let first_sidecar = crate::trace::sidecar_path(&first_path);
+        let original_sidecar = "version: 1\ntraces:\n- source: earlier\n  updated: 2026-01-01\n  added:\n  - Existing\n  code: []\n";
+        write(&first_sidecar, original_sidecar);
+        let mid_path = c.specs_dir().join("b-mid").join("spec.md");
+        write(
+            &mid_path,
+            "# b-mid Specification\n\n## Purpose\n\nMid.\n\n## Requirements\n\n\
+            ### Requirement: Existing\nold text\n",
+        );
         write(
             &c.changes_dir().join("my-feature/specs/a-first/spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Existing\nnew text\n",
+        );
+        write(
+            &c.changes_dir().join("my-feature/specs/b-mid/spec.md"),
             "## MODIFIED Requirements\n\n### Requirement: Existing\nnew text\n",
         );
         write(
@@ -1597,6 +1724,11 @@ mod tests {
 
         result.unwrap_err();
         assert_eq!(std::fs::read_to_string(first_path).unwrap(), original);
+        assert_eq!(
+            std::fs::read_to_string(&first_sidecar).unwrap(),
+            original_sidecar
+        );
+        assert!(!crate::trace::sidecar_path(&mid_path).exists());
         assert!(c.changes_dir().join("my-feature").is_dir());
         let archive_dir = c.changes_dir().join("archive");
         assert!(
@@ -1633,13 +1765,13 @@ mod tests {
             path: path.clone(),
             original: Some(b"old".to_vec()),
             content: Some("new".to_string()),
-            result: SpecApplyResult {
+            result: Some(SpecApplyResult {
                 capability: "cap".to_string(),
                 added: 0,
                 modified: 1,
                 removed: 0,
                 renamed: 0,
-            },
+            }),
             retire: false,
         }];
 
@@ -1899,44 +2031,22 @@ mod tests {
         assert!(spec.contains("## Purpose"));
         assert!(spec.contains("TBD - created by archiving change 'my-feature'"));
         assert!(spec.contains("### Requirement: <!-- requirement name -->"));
-        assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
+        assert_trace_lives_in_the_sidecar(&spec);
+        assert!(spec.starts_with(&format!(
+            "# my-cap Specification\n\n{}\n\n## Purpose",
+            crate::trace::POINTER
+        )));
         // The very first requirement in a fresh spec has no "---" separator.
         assert!(!spec.contains("---"));
+        let trace = read_trace(&c, "my-cap");
+        assert_eq!(trace.traces.len(), 1);
+        assert_eq!(trace.traces[0].source, "my-feature");
+        assert_eq!(trace.traces[0].added, vec!["<!-- requirement name -->"]);
     }
 
-    #[test]
-    fn archive_trace_footer_omits_touched_paths_that_no_longer_exist() {
-        // #98：已從磁碟消失的路徑不寫進 `code:`，但 touched sidecar 本身不動。
-        let tmp = TempDir::new();
-        let c = cfg(&tmp);
-        change::create(&c, "my-feature").unwrap();
-        write(
-            &c.changes_dir()
-                .join("my-feature")
-                .join("specs")
-                .join("my-cap")
-                .join("spec.md"),
-            DELTA_TEMPLATE,
-        );
-        write(&tmp.join("src/kept.rs"), "// kept\n");
-        touched::record(
-            &c,
-            "my-feature",
-            1,
-            "t1",
-            vec!["src/kept.rs".to_string(), "src/gone.rs".to_string()],
-        )
-        .unwrap();
-
-        archive(&c, "my-feature", false, false, false).unwrap();
-
-        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap();
-        assert!(spec.contains("code:\n  - src/kept.rs\n-->"), "got:\n{spec}");
-        assert!(!spec.contains("src/gone.rs"), "got:\n{spec}");
-    }
-
-    #[cfg(unix)]
-    fn archive_with_touched(c: &Config, files: &[&str]) -> String {
+    /// 以 `files` 當這個 change 的 touched file 跑一次 archive，回傳 sidecar
+    /// 這次紀錄的 `code` 清單。
+    fn archive_with_touched(c: &Config, files: &[&str]) -> Vec<String> {
         change::create(c, "my-feature").unwrap();
         write(
             &c.changes_dir()
@@ -1949,24 +2059,36 @@ mod tests {
         let files = files.iter().map(|f| f.to_string()).collect();
         touched::record(c, "my-feature", 1, "t1", files).unwrap();
         archive(c, "my-feature", false, false, false).unwrap();
-        std::fs::read_to_string(c.specs_dir().join("my-cap").join("spec.md")).unwrap()
+        read_trace(c, "my-cap").traces.pop().unwrap().code
+    }
+
+    #[test]
+    fn archive_trace_code_omits_touched_paths_that_no_longer_exist() {
+        // #98：已從磁碟消失的路徑不寫進 `code`，但 touched sidecar 本身不動。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(&tmp.join("src/kept.rs"), "// kept\n");
+
+        let code = archive_with_touched(&c, &["src/kept.rs", "src/gone.rs"]);
+
+        assert_eq!(code, vec!["src/kept.rs"]);
     }
 
     #[cfg(unix)]
     #[test]
-    fn archive_trace_footer_keeps_a_dangling_symlink() {
+    fn archive_trace_code_keeps_a_dangling_symlink() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         std::os::unix::fs::symlink("nowhere", tmp.join("link")).unwrap();
 
-        let spec = archive_with_touched(&c, &["link"]);
+        let code = archive_with_touched(&c, &["link"]);
 
-        assert!(spec.contains("code:\n  - link\n-->"), "got:\n{spec}");
+        assert_eq!(code, vec!["link"]);
     }
 
     #[cfg(unix)]
     #[test]
-    fn archive_trace_footer_keeps_a_path_it_cannot_stat() {
+    fn archive_trace_code_keeps_a_path_it_cannot_stat() {
         use std::os::unix::fs::PermissionsExt;
         /// 測試結束（含 panic）時把目錄權限改回來，讓 TempDir 刪得掉。
         struct RestoreSearchable(PathBuf);
@@ -1987,26 +2109,23 @@ mod tests {
             return;
         }
 
-        let spec = archive_with_touched(&c, &["private/secret.rs"]);
+        let code = archive_with_touched(&c, &["private/secret.rs"]);
 
-        assert!(
-            spec.contains("code:\n  - private/secret.rs\n-->"),
-            "got:\n{spec}"
-        );
+        assert_eq!(code, vec!["private/secret.rs"]);
     }
 
     #[cfg(unix)]
     #[test]
-    fn archive_trace_footer_omits_a_path_whose_parent_became_a_file() {
+    fn archive_trace_code_omits_a_path_whose_parent_became_a_file() {
         // #173 round 2：上層目錄被換成一般檔案（NotADirectory），路徑同樣已不存在。
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         write(&tmp.join("a"), "now a file\n");
         write(&tmp.join("kept.rs"), "// kept\n");
 
-        let spec = archive_with_touched(&c, &["a/b.rs", "kept.rs"]);
+        let code = archive_with_touched(&c, &["a/b.rs", "kept.rs"]);
 
-        assert!(spec.contains("code:\n  - kept.rs\n-->"), "got:\n{spec}");
+        assert_eq!(code, vec!["kept.rs"]);
     }
 
     #[test]
@@ -2062,7 +2181,11 @@ mod tests {
         .unwrap();
         assert!(spec.starts_with("# Billing/Invoices Specification"));
         assert!(spec.contains("### Requirement: <!-- requirement name -->"));
-        assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
+        assert_trace_lives_in_the_sidecar(&spec);
+        assert_eq!(
+            read_trace(&c, "Billing/Invoices").traces[0].source,
+            "my-feature"
+        );
     }
 
     #[cfg(unix)]
@@ -2214,7 +2337,7 @@ mod tests {
         assert!(spec.contains("Some human-added trailing notes."));
         assert!(
             spec[..notes_idx].ends_with("\n\n"),
-            "a blank line must separate the inserted trace footer from '## Notes', got:\n{spec}"
+            "a blank line must separate the inserted requirement from '## Notes', got:\n{spec}"
         );
     }
 
@@ -2536,8 +2659,41 @@ mod tests {
         assert!(blocked_cfg.changes_dir().join("blocked").is_dir());
 
         let (_retired_tmp, retired_cfg, retired_path) = make("retired", true);
+        let retired_sidecar = crate::trace::sidecar_path(&retired_path);
+        write(&retired_sidecar, "version: 1\ntraces: []\n");
         archive(&retired_cfg, "retired", false, false, false).unwrap();
         assert!(!retired_path.exists());
+        // sidecar 一併移除，capability 目錄才不會只剩一個 yaml。
+        assert!(!retired_sidecar.exists());
+        assert!(!retired_path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn a_spec_with_a_sidecar_pointer_can_still_be_retired() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(
+            &spec_path,
+            &format!(
+                "# my-cap Specification\n\n{}\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+                 ### Requirement: Only\nThe system SHALL exist.\n",
+                crate::trace::POINTER
+            ),
+        );
+        change::create(&c, "retire").unwrap();
+        write(
+            &c.changes_dir().join("retire/.openspec.yaml"),
+            "schema: spec-driven\nretire_capabilities: true\n",
+        );
+        write(
+            &c.changes_dir().join("retire/specs/my-cap/spec.md"),
+            "## REMOVED Requirements\n\n### Requirement: Only\n",
+        );
+
+        archive(&c, "retire", false, false, false).unwrap();
+
+        assert!(!spec_path.exists());
     }
 
     #[test]
@@ -2613,7 +2769,302 @@ mod tests {
         assert!(spec.contains("### Requirement: Second"));
         assert!(!spec.contains("### Requirement: Third"));
         assert!(spec.contains("### Requirement: Fourth"));
-        assert!(spec.contains("<!-- @trace\nsource: my-feature\n"));
+        assert_trace_lives_in_the_sidecar(&spec);
+        let trace = read_trace(&c, "my-cap");
+        assert_eq!(trace.traces.len(), 1);
+        let entry = &trace.traces[0];
+        assert_eq!(entry.source, "my-feature");
+        assert_eq!(entry.added, vec!["Fourth"]);
+        assert_eq!(entry.modified, vec!["Renamed First"]);
+        assert_eq!(entry.removed, vec!["Third"]);
+        assert_eq!(
+            entry.renamed,
+            vec![crate::trace::RenamedRequirement {
+                from: "First".into(),
+                to: "Renamed First".into(),
+            }]
+        );
+    }
+
+    /// oracle 3.0.0 實際 archive 出來的 canonical spec 形狀（2026-09-26 實測）：
+    /// 每個 requirement 各一份 inline footer，第一份前面有兩個空行。
+    const ORACLE_ARCHIVED_SPEC: &str = "# my-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+### Requirement: Alpha\n\nThe system SHALL alpha.\n\n#### Scenario: a\n\n- **WHEN** x\n- **THEN** y\n\n\n\
+<!-- @trace\nsource: oracle-change\nupdated: 2026-09-01\ncode:\n  - pre.txt\n  - a.rs\n-->\n\n---\n\
+### Requirement: Beta\n\nThe system SHALL beta.\n\n#### Scenario: b\n\n- **WHEN** x\n- **THEN** y\n\n\
+<!-- @trace\nsource: oracle-change\nupdated: 2026-09-01\ncode:\n  - pre.txt\n  - a.rs\n-->";
+
+    #[test]
+    fn archive_absorbs_oracle_inline_footers_into_the_sidecar() {
+        // 混用情境：oracle 寫出的 inline footer，下一次 openspectra archive 要
+        // 吸收進 sidecar；MODIFIED 的 requirement 其 footer 必須在整塊替換前先剝出來。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(&c.specs_dir().join("my-cap/spec.md"), ORACLE_ARCHIVED_SPEC);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nThe system SHALL alpha, again.\n\n\
+             #### Scenario: a\n\n- **WHEN** x\n- **THEN** y2\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap/spec.md")).unwrap();
+        assert_trace_lives_in_the_sidecar(&spec);
+        assert!(spec.contains("The system SHALL alpha, again."));
+        // 沒被修改的 Beta：footer 連同前面的空行剝乾淨，檔尾只留一個換行。
+        assert!(
+            spec.ends_with(
+                "The system SHALL beta.\n\n#### Scenario: b\n\n- **WHEN** x\n- **THEN** y\n"
+            ),
+            "{spec}"
+        );
+        let trace = read_trace(&c, "my-cap");
+        assert_eq!(trace.traces.len(), 2, "{trace:?}");
+        assert_eq!(trace.traces[0].source, "oracle-change");
+        assert_eq!(trace.traces[0].imported, vec!["Alpha", "Beta"]);
+        assert_eq!(trace.traces[0].code, vec!["pre.txt", "a.rs"]);
+        assert_eq!(trace.traces[1].source, "my-feature");
+        assert_eq!(trace.traces[1].modified, vec!["Alpha"]);
+    }
+
+    #[test]
+    fn a_second_archive_appends_an_entry_and_keeps_one_pointer() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        for (name, requirement) in [("first", "One"), ("second", "Two")] {
+            change::create(&c, name).unwrap();
+            write(
+                &c.changes_dir().join(name).join("specs/my-cap/spec.md"),
+                &format!("## ADDED Requirements\n\n### Requirement: {requirement}\n\ntext\n"),
+            );
+            archive(&c, name, false, false, false).unwrap();
+        }
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap/spec.md")).unwrap();
+        assert_trace_lives_in_the_sidecar(&spec);
+        let trace = read_trace(&c, "my-cap");
+        let sources: Vec<&str> = trace.traces.iter().map(|t| t.source.as_str()).collect();
+        assert_eq!(sources, vec!["first", "second"]);
+        assert_eq!(trace.traces[1].added, vec!["Two"]);
+    }
+
+    #[test]
+    fn archive_renames_requirements_recorded_by_earlier_entries() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "first").unwrap();
+        write(
+            &c.changes_dir().join("first/specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Old\n\ntext\n",
+        );
+        archive(&c, "first", false, false, false).unwrap();
+        change::create(&c, "second").unwrap();
+        write(
+            &c.changes_dir().join("second/specs/my-cap/spec.md"),
+            "## RENAMED Requirements\n- FROM: `### Requirement: Old`\n- TO: `### Requirement: New`\n",
+        );
+
+        archive(&c, "second", false, false, false).unwrap();
+
+        let trace = read_trace(&c, "my-cap");
+        assert_eq!(trace.traces[0].added, vec!["New"]);
+        assert_eq!(trace.traces[1].renamed[0].from, "Old");
+        assert_eq!(trace.traces[1].renamed[0].to, "New");
+    }
+
+    #[test]
+    fn archive_refuses_to_overwrite_a_corrupt_sidecar() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(&spec_path, CANONICAL_SPEC);
+        let sidecar = crate::trace::sidecar_path(&spec_path);
+        write(&sidecar, "traces: [");
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Fourth\n\ntext\n",
+        );
+
+        let error = archive(&c, "my-feature", false, false, false).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("is not a valid trace sidecar"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), "traces: [");
+        assert_eq!(std::fs::read_to_string(&spec_path).unwrap(), CANONICAL_SPEC);
+        assert!(c.changes_dir().join("my-feature").is_dir());
+    }
+
+    #[test]
+    fn archive_leaves_an_unrecognized_footer_in_place() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let footer = "<!-- @trace\nsource: x\nupdated: y\nowner: someone\n-->";
+        write(
+            &c.specs_dir().join("my-cap/spec.md"),
+            &format!(
+                "# my-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+                 ### Requirement: Alpha\n\ntext\n\n{footer}\n"
+            ),
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Beta\n\ntext\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap/spec.md")).unwrap();
+        assert!(
+            spec.contains(footer),
+            "unrecognized footer must survive:\n{spec}"
+        );
+        assert_eq!(read_trace(&c, "my-cap").traces.len(), 1);
+    }
+
+    /// 一份 Alpha 裡帶著認不得 footer（未知欄位 `owner:`）的 canonical spec。
+    const SPEC_WITH_UNRECOGNIZED_FOOTER: &str =
+        "# my-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+### Requirement: Alpha\n\ntext\n\n<!-- @trace\nsource: x\nupdated: y\nowner: someone\n-->\n\n---\n\
+### Requirement: Beta\n\nbeta\n";
+
+    #[test]
+    fn archive_refuses_to_modify_or_remove_a_requirement_holding_an_unrecognized_footer() {
+        // #175 review：認不得的 footer 會隨 MODIFIED／REMOVED 整塊消失，不能先刪再說「保留」。
+        for delta in [
+            "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nnew text\n",
+            "## REMOVED Requirements\n\n### Requirement: Alpha\n",
+        ] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            let spec_path = c.specs_dir().join("my-cap/spec.md");
+            write(&spec_path, SPEC_WITH_UNRECOGNIZED_FOOTER);
+            change::create(&c, "my-feature").unwrap();
+            write(
+                &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+                delta,
+            );
+
+            let error = archive(&c, "my-feature", false, false, false).unwrap_err();
+
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("unrecognized `<!-- @trace` footer")
+                    && message.contains("'Alpha'"),
+                "{message}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(&spec_path).unwrap(),
+                SPEC_WITH_UNRECOGNIZED_FOOTER
+            );
+            assert!(c.changes_dir().join("my-feature").is_dir());
+        }
+    }
+
+    #[test]
+    fn archive_absorbs_footers_that_arrive_inside_delta_blocks() {
+        // #175 review：MODIFIED 依慣例貼整個 requirement，從 oracle 產出的 spec 複製時
+        // 會連 footer 一起帶進來；它們也要進 sidecar，不能原樣寫回 spec.md。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(&c.specs_dir().join("my-cap/spec.md"), CANONICAL_SPEC);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Fourth\n\nfourth text\n\n\
+             <!-- @trace\nsource: copied\nupdated: 2026-09-01\ncode:\n  - c.rs\n-->\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(c.specs_dir().join("my-cap/spec.md")).unwrap();
+        assert_trace_lives_in_the_sidecar(&spec);
+        let trace = read_trace(&c, "my-cap");
+        let copied = trace
+            .traces
+            .iter()
+            .find(|entry| entry.source == "copied")
+            .unwrap_or_else(|| panic!("{trace:?}"));
+        assert_eq!(copied.imported, vec!["Fourth"]);
+        assert_eq!(copied.code, vec!["c.rs"]);
+    }
+
+    #[test]
+    fn archive_renames_names_absorbed_from_inline_footers() {
+        // 吸收要在套 RENAMED 之前：footer 記的是改名前的名稱。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(&c.specs_dir().join("my-cap/spec.md"), ORACLE_ARCHIVED_SPEC);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## RENAMED Requirements\n- FROM: `### Requirement: Alpha`\n- TO: `### Requirement: Gamma`\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        assert_eq!(
+            read_trace(&c, "my-cap").traces[0].imported,
+            vec!["Gamma", "Beta"]
+        );
+    }
+
+    #[test]
+    fn footers_carried_in_by_the_delta_are_not_renamed() {
+        // delta 帶進來的 footer 記的是新名稱，要在套 RENAMED 之後才吸收：
+        // 這裡 Alpha 改名成 Gamma，同時又 ADD 一個新的 Alpha。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write(
+            &c.specs_dir().join("my-cap/spec.md"),
+            "# my-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n### Requirement: Alpha\n\nold\n",
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Alpha\n\nnew\n\n\
+             <!-- @trace\nsource: copied\nupdated: 2026-09-01\ncode: []\n-->\n\n\
+             ## RENAMED Requirements\n- FROM: `### Requirement: Alpha`\n- TO: `### Requirement: Gamma`\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let trace = read_trace(&c, "my-cap");
+        let copied = trace
+            .traces
+            .iter()
+            .find(|entry| entry.source == "copied")
+            .unwrap();
+        assert_eq!(copied.imported, vec!["Alpha"]);
+    }
+
+    #[test]
+    fn validation_rejects_a_corrupt_trace_sidecar() {
+        // `spectra validate` 走同一個相容性檢查，壞掉的 sidecar 要在這裡就被擋下。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(&spec_path, CANONICAL_SPEC);
+        write(&crate::trace::sidecar_path(&spec_path), "traces: [");
+        change::create(&c, "my-feature").unwrap();
+        let change_dir = c.changes_dir().join("my-feature");
+        write(
+            &change_dir.join("specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Fourth\n\ntext\n",
+        );
+
+        let error =
+            validate_archive_compatibility(&c, &change_dir, "my-feature", false).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("is not a valid trace sidecar"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -2920,26 +3371,30 @@ mod tests {
     }
 
     #[test]
-    fn merge_is_side_effect_free_on_the_touched_sidecar_in_both_modes() {
-        // Both validation (dry_run) and application use a read-only touched
-        // loader so a corrupt sidecar is never renamed aside during a
-        // transaction that may roll back.
+    fn preparing_specs_is_side_effect_free_on_the_touched_sidecar_in_both_modes() {
+        // Validation (dry_run) never reads the touched sidecar, and application
+        // reads it only through the read-only loader, so a corrupt touched file
+        // is never renamed aside during a transaction that may roll back.
         let tmp = TempDir::new();
         let c = cfg(&tmp);
         change::create(&c, "my-feature").unwrap();
+        let change_dir = c.changes_dir().join("my-feature");
+        write(
+            &change_dir.join("specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: New\n\ntext\n",
+        );
         let touched = crate::touched::touched_path(&c, "my-feature");
         write(&touched, "not valid json");
         let corrupt_backup = touched.with_extension("json.corrupt");
         let today = chrono::Local::now().date_naive();
-        let added_delta = "## ADDED Requirements\n\n### Requirement: New\n\ntext\n";
 
-        merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, true, false).unwrap();
+        prepare_spec_deltas(&c, &change_dir, "my-feature", today, false, false, true).unwrap();
         assert!(
             touched.is_file() && !corrupt_backup.exists(),
             "validation must not read or rename the touched sidecar"
         );
 
-        merge_spec_delta(&c, "my-cap", added_delta, "my-feature", today, false, false).unwrap();
+        prepare_spec_deltas(&c, &change_dir, "my-feature", today, false, false, false).unwrap();
         assert!(
             touched.is_file() && !corrupt_backup.exists(),
             "application must not rename the touched sidecar either"
