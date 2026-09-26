@@ -114,6 +114,44 @@ fn trace_migrate_check_fails_on_a_stale_name_left_by_an_outside_rename() {
 }
 
 #[test]
+fn trace_migrate_check_fails_on_an_unrecognized_footer_and_on_a_corrupt_sidecar_alone() {
+    // #175 review：只有認不得的 footer、或沒有 footer 但 sidecar 壞掉，`--check` 都要失敗。
+    let (root, spec) = project();
+    std::fs::write(
+        &spec,
+        "# cap Specification\n\n## Requirements\n\n### Requirement: A\n\ntext\n\n<!-- @trace\nsource: x\nupdated: y\nowner: someone\n-->\n",
+    )
+    .unwrap();
+
+    let unparsed = migrate(&root, &["--check"]);
+    assert_eq!(unparsed.status.code(), Some(1), "{unparsed:?}");
+    let plain = migrate(&root, &[]);
+    assert!(
+        String::from_utf8_lossy(&plain.stderr)
+            .contains("left 1 unrecognized `<!-- @trace` footer(s) in place (line 9)"),
+        "{plain:?}"
+    );
+
+    std::fs::write(
+        &spec,
+        "# cap Specification\n\n## Requirements\n\n### Requirement: A\n\ntext\n",
+    )
+    .unwrap();
+    std::fs::write(spec.with_file_name("spec.trace.yaml"), "traces: [").unwrap();
+    let corrupt = migrate(&root, &["--check"]);
+    assert_eq!(corrupt.status.code(), Some(1), "{corrupt:?}");
+}
+
+#[test]
+fn trace_migrate_check_json_reports_the_flags_the_user_passed() {
+    let (root, _spec) = project();
+    let output = migrate(&root, &["--check", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["check"], true);
+    assert_eq!(json["dry_run"], false);
+}
+
+#[test]
 fn trace_migrate_exits_1_on_a_corrupt_sidecar_and_leaves_the_spec_alone() {
     let (root, spec) = project();
     std::fs::write(spec.with_file_name("spec.trace.yaml"), "traces: [").unwrap();

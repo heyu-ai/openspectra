@@ -8,8 +8,9 @@
 //! [`POINTER`]。
 //!
 //! oracle 3.0.0 仍會寫 inline footer（實測：ADDED 與 MODIFIED 都會），所以
-//! 混用時 spec.md 裡會再出現 footer；[`extract_inline`] 在下一次 archive
-//! 或 `spectra trace migrate` 時把它們吸收進 sidecar。
+//! 混用時 spec.md 裡會再出現 footer；[`extract_inline`] 在下一次改到該
+//! capability 的 archive，或 `spectra trace migrate` 時把它們吸收進 sidecar
+//! （`trace migrate --check` 在那之前就能偵測到）。
 
 use std::path::{Path, PathBuf};
 
@@ -33,7 +34,10 @@ pub fn sidecar_path(spec_path: &Path) -> PathBuf {
     spec_path.with_file_name(SIDECAR_FILE)
 }
 
+/// 三個 sidecar 結構都 `deny_unknown_fields`：手改 sidecar 打錯的欄位若被
+/// 默默接受，下一次重寫就會把它丟掉，所以寧可讓它走「壞掉的 sidecar」路徑。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TraceFile {
     pub version: u32,
     #[serde(default)]
@@ -51,6 +55,7 @@ impl Default for TraceFile {
 
 /// 一次 archive（或一組被吸收的 inline footer）的追溯紀錄。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TraceEntry {
     pub source: String,
     pub updated: String,
@@ -73,6 +78,7 @@ pub struct TraceEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenamedRequirement {
     pub from: String,
     pub to: String,
@@ -102,7 +108,8 @@ pub struct Extracted {
 }
 
 /// 剝除 `content` 裡所有 code fence 以外、可解析的 `<!-- @trace ... -->`
-/// footer，連同它前面的空行一起移除。`content` 應已經過
+/// footer，連同它前面的空行一起移除；footer 後面若緊接著非空行，保留一個
+/// 空行，免得 `---` 貼上前一段而被渲染成 setext 標題。`content` 應已經過
 /// `markdown::normalize_markdown`。
 pub fn extract_inline(content: &str) -> Extracted {
     let requirements = crate::markdown::parse_main_requirements(content);
@@ -138,7 +145,7 @@ pub fn extract_inline(content: &str) -> Extracted {
         let requirement = requirements
             .iter()
             .rev()
-            .find(|requirement| requirement.start <= at)
+            .find(|requirement| requirement.start <= at && at < requirement.end)
             .map(|requirement| requirement.name.clone());
         footers.push(InlineFooter {
             requirement,
@@ -149,6 +156,12 @@ pub fn extract_inline(content: &str) -> Extracted {
         });
         while out.last().is_some_and(|last| last.trim().is_empty()) {
             out.pop();
+        }
+        let next_is_content = lines
+            .get(close + 1)
+            .is_some_and(|next| !next.trim().is_empty());
+        if next_is_content && out.last().is_some_and(|last| !last.trim().is_empty()) {
+            out.push("");
         }
         index = close + 1;
     }
@@ -222,7 +235,13 @@ impl TraceFile {
         let Some(text) = crate::fsutil::read_optional(path)? else {
             return Ok(None);
         };
-        let file: TraceFile = serde_yaml::from_str(&text)
+        Self::parse(&text, path).map(Some)
+    }
+
+    /// 解析已經讀進來的 sidecar 內容；`path` 只用在錯誤訊息。讓呼叫端能用同
+    /// 一份 bytes 同時做「寫入前沒被改過」的比對與解析，不必讀兩次。
+    pub fn parse(text: &str, path: &Path) -> Result<Self> {
+        let file: TraceFile = serde_yaml::from_str(text)
             .with_context(|| format!("{} is not a valid trace sidecar", path.display()))?;
         if file.version != FORMAT_VERSION {
             anyhow::bail!(
@@ -231,7 +250,7 @@ impl TraceFile {
                 file.version
             );
         }
-        Ok(Some(file))
+        Ok(file)
     }
 
     pub fn to_yaml(&self) -> Result<String> {
@@ -278,16 +297,23 @@ impl TraceFile {
     }
 
     /// 把既有紀錄裡的 requirement 名稱跟著 RENAMED 改名，讓舊紀錄仍對得到
-    /// 現在的 requirement。`renamed` 欄位本身記的是歷史，不改寫。
+    /// 現在的 requirement。只改最後一次移除該名稱之後的紀錄：被 RENAMED 的
+    /// 必定是現存的 requirement，更早被移除的同名 requirement 是另一個。
+    /// `removed`、`renamed` 記的是歷史，一律不改寫。
     pub fn apply_renames(&mut self, renames: &[RenamedRequirement]) {
         for rename in renames {
-            for entry in &mut self.traces {
-                for list in [
-                    &mut entry.added,
-                    &mut entry.modified,
-                    &mut entry.removed,
-                    &mut entry.imported,
-                ] {
+            let first = self
+                .traces
+                .iter()
+                .rposition(|entry| {
+                    entry
+                        .removed
+                        .iter()
+                        .any(|name| same_name(name, &rename.from))
+                })
+                .map_or(0, |index| index + 1);
+            for entry in &mut self.traces[first..] {
+                for list in [&mut entry.added, &mut entry.modified, &mut entry.imported] {
                     for name in list.iter_mut() {
                         if same_name(name, &rename.from) {
                             *name = rename.to.clone();
@@ -335,18 +361,34 @@ pub fn ensure_pointer(content: &str) -> String {
     out.join("\n")
 }
 
+/// 把 1-based 行號列成警告用的文字，例如 `line 3` 或 `lines 3, 9`。
+pub fn describe_lines(lines: &[usize]) -> String {
+    let joined = lines
+        .iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if lines.len() == 1 {
+        format!("line {joined}")
+    } else {
+        format!("lines {joined}")
+    }
+}
+
 /// 是否為 [`POINTER`] 那一行（給需要忽略它的結構檢查用）。
 pub(crate) fn is_pointer_line(line: &str) -> bool {
     line.trim() == POINTER
 }
 
-/// sidecar 裡記錄的 requirement 名稱中，對不到 `content` 裡任何現有
-/// requirement、也不在任何一筆 `removed` 裡的那些（依首次出現順序、去重）。
+/// sidecar 裡記錄的 requirement 名稱中，最後一個事件不是「移除」、卻對不到
+/// `content` 裡任何現有 requirement 的那些（依首次出現順序、去重）。
 ///
 /// 典型成因是 oracle 做了 RENAMED：它只改 spec.md 的標題、不認得 sidecar，
 /// 舊紀錄的名稱就此過時（openspectra 自己的 RENAMED 會同步改寫，見
-/// [`TraceFile::apply_renames`]）。只檢查 `added`／`modified`／`imported`：
-/// `removed` 與 `renamed` 記的是歷史，本來就可能對不到現況。
+/// [`TraceFile::apply_renames`]）。事件依紀錄順序判斷，同一筆紀錄內依
+/// archive 的套用順序（先 `removed`、後 `modified`／`added`）；`imported`
+/// 也算「存在」事件。所以名稱被移除後又重新加入時，舊的移除紀錄不會豁免
+/// 它。`renamed` 記的是歷史，不列入判斷。
 pub fn stale_names(trace: &TraceFile, content: &str) -> Vec<String> {
     let normalize = crate::markdown::normalize_name;
     let current: std::collections::HashSet<String> =
@@ -354,43 +396,48 @@ pub fn stale_names(trace: &TraceFile, content: &str) -> Vec<String> {
             .iter()
             .map(|requirement| normalize(&requirement.name))
             .collect();
-    let removed: std::collections::HashSet<String> = trace
-        .traces
-        .iter()
-        .flat_map(|entry| entry.removed.iter().map(|name| normalize(name)))
-        .collect();
-    let mut stale: Vec<String> = Vec::new();
+    // 每個名稱的最後一個事件是否為「移除」，以及它第一次出現時的寫法與順序。
+    let mut last_removed: std::collections::HashMap<String, bool> = Default::default();
+    let mut order: Vec<(String, String)> = Vec::new();
     for entry in &trace.traces {
-        for name in entry
-            .added
-            .iter()
-            .chain(&entry.modified)
-            .chain(&entry.imported)
-        {
+        let events = entry.removed.iter().map(|name| (name, true)).chain(
+            entry
+                .modified
+                .iter()
+                .chain(&entry.added)
+                .chain(&entry.imported)
+                .map(|name| (name, false)),
+        );
+        for (name, removed) in events {
             let key = normalize(name);
-            if !current.contains(&key)
-                && !removed.contains(&key)
-                && !stale.iter().any(|seen| same_name(seen, name))
-            {
-                stale.push(name.clone());
+            if !last_removed.contains_key(&key) {
+                order.push((key.clone(), name.clone()));
             }
+            last_removed.insert(key, removed);
         }
     }
-    stale
+    order
+        .into_iter()
+        .filter(|(key, _)| !last_removed[key] && !current.contains(key))
+        .map(|(_, name)| name)
+        .collect()
 }
 
 /// `spectra trace migrate` 對一份 canonical spec 的結果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MigratedSpec {
     pub capability: String,
-    /// 搬進 sidecar 的 inline footer 數。
+    /// 找到的可解析 inline footer 數；實際寫入時就是搬進 sidecar 的數量。
     pub footers: usize,
-    /// 認得開頭但無法解析、原樣留在 spec.md 的 footer 行號。
+    /// 認得開頭但無法解析、原樣留在 spec.md 的 footer 行號，以處理後的
+    /// spec.md 為準（沒有寫入時就是目前檔案的行號）。
     pub unparsed_lines: Vec<usize>,
     /// sidecar 裡對不到現有 requirement 的名稱（見 [`stale_names`]）；只回報、
     /// 不自動修正。
     pub stale_names: Vec<String>,
-    /// 這份 spec 遷移失敗的原因（例如 sidecar 壞掉）；有值時什麼都沒寫。
+    /// 這份 spec 處理失敗的原因（例如 sidecar 壞掉）。有值時 spec.md 沒被
+    /// 改寫；若失敗發生在寫 spec.md 那一步，sidecar 可能已經吸收了 footer，
+    /// 重跑是冪等的（見 [`migrate`]）。
     pub error: Option<String>,
 }
 
@@ -446,6 +493,8 @@ pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> 
                 .with_context(|| format!("writing {}", sidecar.display()))?;
             crate::fsutil::write_atomically(&spec_path, &content)
                 .with_context(|| format!("writing {}", spec_path.display()))?;
+            // 剝掉 footer、插入指標後行號會位移：改報寫出後檔案的行號。
+            entry.unparsed_lines = extract_inline(&content).unparsed_lines;
             Ok(())
         })();
         if let Err(error) = outcome {
@@ -462,6 +511,9 @@ pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> 
 mod tests {
     use super::*;
 
+    /// oracle 3.0.0 的 footer 形狀（第一份 footer 前兩個空行）。oracle 實際輸出
+    /// 在最後一個 `-->` 之後沒有換行（見 archive.rs 的 `ORACLE_ARCHIVED_SPEC`）；
+    /// 這裡刻意多一個換行，涵蓋被編輯器補上檔尾換行的變體。
     const ORACLE_SPEC: &str = "# cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
 ### Requirement: Alpha\n\nThe system SHALL alpha.\n\n#### Scenario: a\n\n- **WHEN** x\n- **THEN** y\n\n\n\
 <!-- @trace\nsource: demo\nupdated: 2026-09-26\ncode:\n  - pre.txt\n  - a.rs\n-->\n\n---\n\
@@ -715,6 +767,219 @@ mod tests {
         let content = "## Requirements\n\n### Requirement: Sign In Button\n\nx\n\n### Requirement: Kept\n\ny\n";
 
         assert_eq!(stale_names(&file, content), vec!["Login Button"]);
+    }
+
+    fn entry(source: &str) -> TraceEntry {
+        TraceEntry {
+            source: source.into(),
+            updated: "d".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stale_names_respects_event_order_for_a_removed_then_readded_name() {
+        // #175 review：Alpha 被刪掉又重新加入，之後被 oracle 改名成 Beta——
+        // 最早那筆 removed 不能豁免後來重新加入的 Alpha。
+        let mut file = TraceFile::default();
+        file.traces.push(TraceEntry {
+            added: vec!["Alpha".into()],
+            ..entry("one")
+        });
+        file.traces.push(TraceEntry {
+            removed: vec!["Alpha".into()],
+            ..entry("two")
+        });
+        file.traces.push(TraceEntry {
+            added: vec!["Alpha".into()],
+            ..entry("three")
+        });
+        let content = "## Requirements\n\n### Requirement: Beta\n\nx\n";
+        assert_eq!(stale_names(&file, content), vec!["Alpha"]);
+
+        // 對照：最後一個事件是 removed 時，對不到才是正常的。
+        file.traces.push(TraceEntry {
+            removed: vec!["Alpha".into()],
+            ..entry("four")
+        });
+        assert!(stale_names(&file, content).is_empty());
+    }
+
+    #[test]
+    fn stale_names_checks_the_modified_list_too() {
+        let mut file = TraceFile::default();
+        file.traces.push(TraceEntry {
+            modified: vec!["Old Mod".into()],
+            ..entry("a")
+        });
+        assert_eq!(
+            stale_names(&file, "## Requirements\n\n### Requirement: New Mod\n\nx\n"),
+            vec!["Old Mod"]
+        );
+    }
+
+    #[test]
+    fn apply_renames_leaves_removal_history_alone() {
+        // 被 RENAMED 的必定是現存的 requirement，同名的 removed 紀錄描述的是更早
+        // 被刪掉的另一個 requirement，改寫它會捏造「New 被刪過」的歷史。
+        let mut file = TraceFile::default();
+        file.traces.push(TraceEntry {
+            added: vec!["Old".into()],
+            ..entry("first-life")
+        });
+        file.traces.push(TraceEntry {
+            removed: vec!["Old".into()],
+            ..entry("a")
+        });
+        file.traces.push(TraceEntry {
+            added: vec!["Old".into()],
+            ..entry("b")
+        });
+        file.apply_renames(&[RenamedRequirement {
+            from: "Old".into(),
+            to: "New".into(),
+        }]);
+        // 被移除之前的那個 Old 是另一個 requirement，不跟著改名。
+        assert_eq!(file.traces[0].added, vec!["Old"]);
+        assert_eq!(file.traces[1].removed, vec!["Old"]);
+        assert_eq!(file.traces[2].added, vec!["New"]);
+    }
+
+    #[test]
+    fn extract_inline_does_not_attribute_a_footer_outside_every_requirement() {
+        let content = "## Requirements\n\n### Requirement: A\n\nx\n\n## Notes\n\n\
+<!-- @trace\nsource: s\nupdated: d\ncode: []\n-->\n";
+        let extracted = extract_inline(content);
+        assert_eq!(extracted.footers.len(), 1);
+        assert_eq!(extracted.footers[0].requirement, None);
+    }
+
+    #[test]
+    fn extract_inline_keeps_a_blank_line_before_a_following_separator() {
+        // 剝掉 footer 後若 `---` 直接貼在段落下面，CommonMark 會把段落渲染成 H2。
+        let content = "### Requirement: A\n\ntext\n\n<!-- @trace\nsource: s\nupdated: d\ncode: []\n-->\n---\n### Requirement: B\n";
+        assert_eq!(
+            extract_inline(content).content,
+            "### Requirement: A\n\ntext\n\n---\n### Requirement: B\n"
+        );
+    }
+
+    #[test]
+    fn extract_inline_rejects_malformed_footer_bodies() {
+        // 格式錯誤的 footer 不猜：不剝、不吸收，列出行號。
+        for body in [
+            "source: x\n- stray\nupdated: y",
+            "source: x",
+            "source:\nupdated: y",
+            "source: x\nupdated: y\ncode: []\n  - a.rs",
+        ] {
+            let content = format!("### Requirement: A\n\ntext\n\n<!-- @trace\n{body}\n-->\n");
+            let extracted = extract_inline(&content);
+            assert!(extracted.footers.is_empty(), "{body:?} → {extracted:?}");
+            assert_eq!(extracted.content, content, "{body:?}");
+            assert_eq!(extracted.unparsed_lines, vec![5], "{body:?}");
+        }
+    }
+
+    #[test]
+    fn absorb_records_a_footer_that_belongs_to_no_requirement() {
+        let mut file = TraceFile::default();
+        let mut orphan = footer("unused", "orphan", &["o.rs"]);
+        orphan.requirement = None;
+        file.absorb(&[orphan]);
+        assert_eq!(file.traces.len(), 1);
+        assert_eq!(file.traces[0].source, "orphan");
+        assert_eq!(file.traces[0].code, vec!["o.rs"]);
+        assert!(file.traces[0].imported.is_empty());
+    }
+
+    #[test]
+    fn ensure_pointer_ignores_a_heading_inside_a_code_fence() {
+        assert_eq!(
+            ensure_pointer("```\n# c\n```\n# T\n"),
+            format!("```\n# c\n```\n# T\n\n{POINTER}\n")
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_sidecar_with_unknown_fields() {
+        // #175 review：手改 sidecar 打錯欄位（`addded`）時，重寫會把它靜默丟掉。
+        let dir = crate::test_support::TempDir::new("trace-unknown-field");
+        let path = dir.join(SIDECAR_FILE);
+        std::fs::write(
+            &path,
+            "version: 1\ntraces:\n- source: a\n  updated: d\n  addded:\n  - Login Button\n  code: []\n",
+        )
+        .unwrap();
+        let error = TraceFile::load(&path).unwrap_err();
+        assert!(format!("{error:#}").contains("addded"), "{error:#}");
+    }
+
+    #[test]
+    fn migrate_keeps_going_after_one_corrupt_sidecar() {
+        // AC-5：某份 sidecar 壞掉只讓那一份失敗，其他照常處理。
+        let tmp = crate::test_support::TempDir::new("trace-migrate-mixed");
+        let cfg = migrate_cfg(&tmp);
+        let broken = write_spec(&cfg, "a-broken", ORACLE_SPEC);
+        std::fs::write(sidecar_path(&broken), "traces: [").unwrap();
+        let fine = write_spec(&cfg, "b-fine", ORACLE_SPEC);
+        let clean_broken = write_spec(
+            &cfg,
+            "c-clean",
+            "# c Specification\n\n## Requirements\n\n### Requirement: X\n\nx\n",
+        );
+        std::fs::write(sidecar_path(&clean_broken), "traces: [").unwrap();
+
+        let report = migrate(&cfg, false).unwrap();
+
+        let by_cap = |cap: &str| report.iter().find(|spec| spec.capability == cap).unwrap();
+        assert!(by_cap("a-broken").error.is_some());
+        assert!(by_cap("b-fine").error.is_none());
+        assert!(!std::fs::read_to_string(&fine)
+            .unwrap()
+            .contains("<!-- @trace\n"));
+        // 沒有 footer、但 sidecar 壞掉的 spec 也要回報。
+        assert!(by_cap("c-clean").error.is_some());
+        assert!(by_cap("c-clean").needs_attention());
+    }
+
+    #[test]
+    fn migrate_reports_unparsed_lines_of_the_rewritten_file() {
+        // 剝掉前面的 footer、插入指標後行號會位移，回報的要是寫出後的行號。
+        let tmp = crate::test_support::TempDir::new("trace-migrate-lines");
+        let cfg = migrate_cfg(&tmp);
+        let spec = write_spec(
+            &cfg,
+            "cap",
+            "# cap Specification\n\n## Requirements\n\n### Requirement: A\n\na\n\n\
+             <!-- @trace\nsource: s\nupdated: d\ncode: []\n-->\n\n---\n### Requirement: B\n\nb\n\n\
+             <!-- @trace\nsource: x\nupdated: y\nowner: someone\n-->\n",
+        );
+
+        let report = migrate(&cfg, false).unwrap();
+
+        let written = std::fs::read_to_string(&spec).unwrap();
+        let expected = written
+            .split('\n')
+            .position(|line| line == "<!-- @trace")
+            .unwrap()
+            + 1;
+        assert_eq!(report[0].unparsed_lines, vec![expected]);
+    }
+
+    #[test]
+    fn migrate_reports_a_spec_whose_only_footer_is_unrecognized() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate-unparsed");
+        let cfg = migrate_cfg(&tmp);
+        let content = "# cap Specification\n\n## Requirements\n\n### Requirement: A\n\ntext\n\n<!-- @trace\nsource: x\nupdated: y\nowner: someone\n-->\n";
+        write_spec(&cfg, "cap", content);
+
+        let report = migrate(&cfg, false).unwrap();
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].footers, 0);
+        assert_eq!(report[0].unparsed_lines, vec![9]);
+        assert!(report[0].needs_attention());
     }
 
     #[test]

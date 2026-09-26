@@ -1467,7 +1467,7 @@ fn cmd_trace_migrate(cfg: &Config, dry_run: bool, check: bool, as_json: bool) ->
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "dry_run": write_nothing,
+                "dry_run": dry_run,
                 "check": check,
                 "specs": report,
             }))?
@@ -1509,14 +1509,10 @@ fn cmd_trace_migrate(cfg: &Config, dry_run: bool, check: bool, as_json: bool) ->
         }
         if !spec.unparsed_lines.is_empty() {
             eprintln!(
-                "warning: {}: left {} unrecognized `<!-- @trace` footer(s) in place (line {})",
+                "warning: {}: left {} unrecognized `<!-- @trace` footer(s) in place ({})",
                 spec.capability,
                 spec.unparsed_lines.len(),
-                spec.unparsed_lines
-                    .iter()
-                    .map(usize::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                spectra_core::trace::describe_lines(&spec.unparsed_lines)
             );
         }
     }

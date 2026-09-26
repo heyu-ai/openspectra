@@ -26,8 +26,11 @@ changes.
   `code`, instead of an inline `<!-- @trace -->` footer under every requirement.
   `spec.md` keeps a single `<!-- @trace-sidecar: spec.trace.yaml -->` pointer
   under its title. Existing inline footers, including those the oracle keeps
-  writing in a mixed setup, are absorbed into the sidecar on the next archive.
-  MODIFIED requirements now leave a trace record too. This deliberately
+  writing in a mixed setup and those pasted into a delta block, are absorbed
+  into the sidecar by the next archive that touches that capability. A
+  MODIFIED or REMOVED delta aimed at a requirement holding an unrecognized
+  footer fails instead of discarding it. MODIFIED requirements now leave a
+  trace record too. This deliberately
   diverges from the oracle (v3.0.0 still writes inline footers), per the
   downstream ADR-0029 D3 (#98).
 
