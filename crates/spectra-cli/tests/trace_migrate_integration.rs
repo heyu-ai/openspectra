@@ -1,0 +1,89 @@
+//! `spectra trace migrate`（OpenSpectra-only，#98）在 CLI 層的契約：
+//! dry-run 不寫檔、實際遷移後冪等、壞掉的 sidecar 以狀態碼 1 回報。
+
+mod common;
+
+use std::path::Path;
+
+use common::{git, spectra, TempDir};
+
+/// oracle 3.0.0 實際 archive 出來的形狀（2026-09-26 實測）。
+const ORACLE_SPEC: &str = "# cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+### Requirement: Alpha\n\nThe system SHALL alpha.\n\n#### Scenario: a\n\n- **WHEN** x\n- **THEN** y\n\n\n\
+<!-- @trace\nsource: demo\nupdated: 2026-09-26\ncode:\n  - a.rs\n-->\n\n---\n\
+### Requirement: Beta\n\nThe system SHALL beta.\n\n#### Scenario: b\n\n- **WHEN** x\n- **THEN** y\n\n\
+<!-- @trace\nsource: demo\nupdated: 2026-09-26\ncode:\n  - a.rs\n-->";
+
+fn project() -> (TempDir, std::path::PathBuf) {
+    let root = TempDir::new("trace-migrate");
+    git(&root, &["init", "-q"]);
+    let output = spectra().arg("init").current_dir(&*root).output().unwrap();
+    assert!(output.status.success(), "init 失敗：{output:?}");
+    let spec = root.join("openspec/specs/cap/spec.md");
+    std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
+    std::fs::write(&spec, ORACLE_SPEC).unwrap();
+    (root, spec)
+}
+
+fn migrate(root: &Path, args: &[&str]) -> std::process::Output {
+    spectra()
+        .args(["trace", "migrate"])
+        .args(args)
+        .current_dir(root)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn trace_migrate_dry_run_reports_without_writing() {
+    let (root, spec) = project();
+
+    let output = migrate(&root, &["--dry-run"]);
+
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "cap: would move 2 inline trace footer(s) into spec.trace.yaml\n"
+    );
+    assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
+    assert!(!spec.with_file_name("spec.trace.yaml").exists());
+}
+
+#[test]
+fn trace_migrate_moves_footers_and_a_rerun_finds_nothing() {
+    let (root, spec) = project();
+
+    let first = migrate(&root, &[]);
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&first.stdout),
+        "cap: moved 2 inline trace footer(s) into spec.trace.yaml\n"
+    );
+    let migrated = std::fs::read_to_string(&spec).unwrap();
+    assert!(!migrated.contains("<!-- @trace\n"), "{migrated}");
+    assert!(migrated.contains("<!-- @trace-sidecar: spec.trace.yaml -->"));
+    let sidecar = std::fs::read_to_string(spec.with_file_name("spec.trace.yaml")).unwrap();
+    assert!(sidecar.contains("source: demo"), "{sidecar}");
+
+    let second = migrate(&root, &["--json"]);
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
+    let json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(json["dry_run"], false);
+    assert_eq!(json["specs"], serde_json::json!([]));
+}
+
+#[test]
+fn trace_migrate_exits_1_on_a_corrupt_sidecar_and_leaves_the_spec_alone() {
+    let (root, spec) = project();
+    std::fs::write(spec.with_file_name("spec.trace.yaml"), "traces: [").unwrap();
+
+    let output = migrate(&root, &[]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: cap:") && stderr.contains("is not a valid trace sidecar"),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
+}

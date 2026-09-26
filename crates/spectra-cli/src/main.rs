@@ -235,6 +235,11 @@ enum Command {
         #[command(subcommand)]
         target: TaskTarget,
     },
+    /// Traceability sidecar operations (OpenSpectra-only).
+    Trace {
+        #[command(subcommand)]
+        target: TraceTarget,
+    },
     /// Update instruction files
     Update {
         /// Project path (defaults to current directory)
@@ -428,6 +433,19 @@ enum NewTarget {
         #[arg(long, help = "Overwrite existing artifact")]
         force: bool,
         #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TraceTarget {
+    /// Move inline `<!-- @trace -->` footers in canonical specs into each
+    /// capability's `spec.trace.yaml` sidecar (idempotent).
+    Migrate {
+        /// Report what would be migrated without writing any file.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
         json: bool,
     },
 }
@@ -1429,6 +1447,55 @@ fn parse_task_id(raw: &str) -> Result<usize> {
         .map_err(|_| anyhow::anyhow!("Invalid task ID '{raw}': must be a number"))
 }
 
+/// `spectra trace migrate`：只回報有 footer 的 spec；任何一份遷移失敗就以 1
+/// 結束（其他 spec 照樣處理）。
+fn cmd_trace_migrate(cfg: &Config, dry_run: bool, as_json: bool) -> Result<i32> {
+    let report = spectra_core::trace::migrate(cfg, dry_run)?;
+    let failed = report.iter().any(|spec| spec.error.is_some());
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "dry_run": dry_run,
+                "specs": report,
+            }))?
+        );
+        return Ok(i32::from(failed));
+    }
+    if report.is_empty() {
+        println!("No inline trace footers found.");
+        return Ok(0);
+    }
+    for spec in &report {
+        if let Some(error) = &spec.error {
+            eprintln!("error: {}: {error}", spec.capability);
+            continue;
+        }
+        if spec.footers > 0 {
+            let verb = if dry_run { "would move" } else { "moved" };
+            println!(
+                "{}: {verb} {} inline trace footer(s) into {}",
+                spec.capability,
+                spec.footers,
+                spectra_core::trace::SIDECAR_FILE
+            );
+        }
+        if !spec.unparsed_lines.is_empty() {
+            eprintln!(
+                "warning: {}: left {} unrecognized `<!-- @trace` footer(s) in place (line {})",
+                spec.capability,
+                spec.unparsed_lines.len(),
+                spec.unparsed_lines
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+    }
+    Ok(i32::from(failed))
+}
+
 fn cmd_task_done(
     cfg: &Config,
     change_name: Option<&str>,
@@ -1839,6 +1906,12 @@ fn run() -> Result<i32> {
             } => {
                 let cfg = require_initialized(&root)?;
                 cmd_task_done(&cfg, change.as_deref(), task_id, *json)
+            }
+        },
+        Command::Trace { target } => match target {
+            TraceTarget::Migrate { dry_run, json } => {
+                let cfg = require_initialized(&root)?;
+                cmd_trace_migrate(&cfg, *dry_run, *json)
             }
         },
         Command::Update { path, force } => {

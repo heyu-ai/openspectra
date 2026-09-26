@@ -340,6 +340,68 @@ pub(crate) fn is_pointer_line(line: &str) -> bool {
     line.trim() == POINTER
 }
 
+/// `spectra trace migrate` 對一份 canonical spec 的結果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MigratedSpec {
+    pub capability: String,
+    /// 搬進 sidecar 的 inline footer 數。
+    pub footers: usize,
+    /// 認得開頭但無法解析、原樣留在 spec.md 的 footer 行號。
+    pub unparsed_lines: Vec<usize>,
+    /// 這份 spec 遷移失敗的原因（例如 sidecar 壞掉）；有值時什麼都沒寫。
+    pub error: Option<String>,
+}
+
+/// 把所有 canonical spec 裡的 inline `@trace` footer 搬進各自的 sidecar，並
+/// 補上 [`POINTER`]。只回報有 footer（或有無法解析的 footer）的 spec。
+///
+/// 每份 spec 先寫 sidecar、再寫 spec.md，各自原子寫入。中途失敗時 spec.md
+/// 仍保有 footer，重跑會再吸收一次；[`TraceFile::absorb`] 對相同內容是冪等
+/// 的，所以不會重複記錄。`dry_run` 只計算、不寫檔。
+pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> {
+    let specs_root = cfg.specs_dir();
+    let mut report = Vec::new();
+    for (capability, raw) in crate::fsutil::collect_delta_specs(&specs_root)? {
+        let normalized = crate::markdown::normalize_markdown(&raw);
+        let extracted = extract_inline(&normalized);
+        if extracted.footers.is_empty() && extracted.unparsed_lines.is_empty() {
+            continue;
+        }
+        let mut entry = MigratedSpec {
+            capability: capability.clone(),
+            footers: extracted.footers.len(),
+            unparsed_lines: extracted.unparsed_lines.clone(),
+            error: None,
+        };
+        if extracted.footers.is_empty() {
+            report.push(entry);
+            continue;
+        }
+        let spec_path = specs_root.join(&capability).join("spec.md");
+        let sidecar = sidecar_path(&spec_path);
+        let outcome = (|| -> Result<()> {
+            let mut trace = TraceFile::load(&sidecar)?.unwrap_or_default();
+            trace.absorb(&extracted.footers);
+            let yaml = trace.to_yaml()?;
+            let mut content = ensure_pointer(&extracted.content);
+            content.truncate(content.trim_end_matches('\n').len());
+            content.push('\n');
+            if !dry_run {
+                crate::fsutil::write_atomically(&sidecar, &yaml)
+                    .with_context(|| format!("writing {}", sidecar.display()))?;
+                crate::fsutil::write_atomically(&spec_path, &content)
+                    .with_context(|| format!("writing {}", spec_path.display()))?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = outcome {
+            entry.error = Some(format!("{error:#}"));
+        }
+        report.push(entry);
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,17 +569,109 @@ mod tests {
         assert_eq!(parsed, file);
     }
 
+    fn migrate_cfg(tmp: &crate::test_support::TempDir) -> crate::Config {
+        crate::Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        }
+    }
+
+    fn write_spec(cfg: &crate::Config, capability: &str, content: &str) -> PathBuf {
+        let path = cfg.specs_dir().join(capability).join("spec.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn migrate_moves_footers_into_the_sidecar_and_is_idempotent() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate");
+        let cfg = migrate_cfg(&tmp);
+        let spec = write_spec(&cfg, "cap", ORACLE_SPEC);
+        let clean = "# clean Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n### Requirement: X\n\ntext\n";
+        let clean_path = write_spec(&cfg, "clean", clean);
+
+        let report = migrate(&cfg, false).unwrap();
+
+        assert_eq!(
+            report,
+            vec![MigratedSpec {
+                capability: "cap".into(),
+                footers: 2,
+                unparsed_lines: vec![],
+                error: None,
+            }]
+        );
+        let migrated = std::fs::read_to_string(&spec).unwrap();
+        assert!(!migrated.contains("<!-- @trace\n"), "{migrated}");
+        assert!(migrated.starts_with(&format!("# cap Specification\n\n{POINTER}\n\n")));
+        let trace = TraceFile::load(&sidecar_path(&spec)).unwrap().unwrap();
+        assert_eq!(trace.traces.len(), 1);
+        assert_eq!(trace.traces[0].imported, vec!["Alpha", "Beta"]);
+        // 沒有 footer 的 spec 完全不動，也不會多出 sidecar。
+        assert_eq!(std::fs::read_to_string(&clean_path).unwrap(), clean);
+        assert!(!sidecar_path(&clean_path).exists());
+
+        assert!(
+            migrate(&cfg, false).unwrap().is_empty(),
+            "second run finds nothing"
+        );
+    }
+
+    #[test]
+    fn migrate_rerun_after_a_partial_failure_does_not_duplicate_entries() {
+        // 模擬「sidecar 寫好、spec.md 還沒寫」就中斷：spec.md 仍有 footer。
+        let tmp = crate::test_support::TempDir::new("trace-migrate-rerun");
+        let cfg = migrate_cfg(&tmp);
+        let spec = write_spec(&cfg, "cap", ORACLE_SPEC);
+        migrate(&cfg, false).unwrap();
+        let sidecar_before = std::fs::read_to_string(sidecar_path(&spec)).unwrap();
+        std::fs::write(&spec, ORACLE_SPEC).unwrap();
+
+        migrate(&cfg, false).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(sidecar_path(&spec)).unwrap(),
+            sidecar_before
+        );
+    }
+
+    #[test]
+    fn migrate_dry_run_writes_nothing() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate-dry");
+        let cfg = migrate_cfg(&tmp);
+        let spec = write_spec(&cfg, "cap", ORACLE_SPEC);
+
+        let report = migrate(&cfg, true).unwrap();
+
+        assert_eq!(report[0].footers, 2);
+        assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
+        assert!(!sidecar_path(&spec).exists());
+    }
+
+    #[test]
+    fn migrate_reports_a_corrupt_sidecar_and_leaves_the_spec_alone() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate-corrupt");
+        let cfg = migrate_cfg(&tmp);
+        let spec = write_spec(&cfg, "cap", ORACLE_SPEC);
+        std::fs::write(sidecar_path(&spec), "traces: [").unwrap();
+
+        let report = migrate(&cfg, false).unwrap();
+
+        let error = report[0].error.as_deref().unwrap();
+        assert!(error.contains("is not a valid trace sidecar"), "{error}");
+        assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
+        assert_eq!(
+            std::fs::read_to_string(sidecar_path(&spec)).unwrap(),
+            "traces: ["
+        );
+    }
+
     #[test]
     fn load_rejects_a_corrupt_or_unknown_version_sidecar() {
-        let dir = std::env::temp_dir().join(format!(
-            "spectra-trace-load-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_support::TempDir::new("trace-load");
         let path = dir.join(SIDECAR_FILE);
         assert!(TraceFile::load(&path).unwrap().is_none());
         std::fs::write(&path, "traces: [").unwrap();
@@ -528,6 +682,5 @@ mod tests {
             error.contains("unsupported trace sidecar version 2"),
             "{error}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
