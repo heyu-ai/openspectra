@@ -12,10 +12,12 @@ changes.
 
 ### Added
 
-- `spectra trace migrate [--dry-run] [--json]` (OpenSpectra-only) moves the
-  inline `<!-- @trace -->` footers of every canonical spec into its
-  `spec.trace.yaml` sidecar. It is idempotent and exits 1 if a sidecar is
-  corrupt (#98).
+- `spectra trace migrate [--dry-run] [--check] [--json]` (OpenSpectra-only)
+  moves the inline `<!-- @trace -->` footers of every canonical spec into its
+  `spec.trace.yaml` sidecar, and reports sidecar requirement names that no
+  longer match the spec (for example after a rename done by the oracle). It is
+  idempotent and exits 1 if a sidecar is corrupt. `--check` writes nothing and
+  exits 1 whenever anything needs attention, for use in CI (#98).
 
 ### Changed
 

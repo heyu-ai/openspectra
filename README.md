@@ -81,7 +81,7 @@ spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifac
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
 spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md checkbox done, records touched files
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete]  # transactional merge/move with rollback; honors skip_specs/retire_capabilities metadata; trace data goes to specs/<cap>/spec.trace.yaml
-spectra trace migrate [--dry-run] [--json]       # OpenSpectra-only: moves inline <!-- @trace --> footers into spec.trace.yaml sidecars (idempotent)
+spectra trace migrate [--dry-run] [--check] [--json]  # OpenSpectra-only: moves inline <!-- @trace --> footers into spec.trace.yaml sidecars (idempotent), reports stale trace names; --check is a CI gate
 spectra completion generate [SHELL]              # prints a shell completion script (bash|zsh|fish|elvish|powershell; detects $SHELL when omitted)
 spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
 spectra completion uninstall [SHELL] [-y]         # removes that file

@@ -340,6 +340,45 @@ pub(crate) fn is_pointer_line(line: &str) -> bool {
     line.trim() == POINTER
 }
 
+/// sidecar 裡記錄的 requirement 名稱中，對不到 `content` 裡任何現有
+/// requirement、也不在任何一筆 `removed` 裡的那些（依首次出現順序、去重）。
+///
+/// 典型成因是 oracle 做了 RENAMED：它只改 spec.md 的標題、不認得 sidecar，
+/// 舊紀錄的名稱就此過時（openspectra 自己的 RENAMED 會同步改寫，見
+/// [`TraceFile::apply_renames`]）。只檢查 `added`／`modified`／`imported`：
+/// `removed` 與 `renamed` 記的是歷史，本來就可能對不到現況。
+pub fn stale_names(trace: &TraceFile, content: &str) -> Vec<String> {
+    let normalize = crate::markdown::normalize_name;
+    let current: std::collections::HashSet<String> =
+        crate::markdown::parse_main_requirements(content)
+            .iter()
+            .map(|requirement| normalize(&requirement.name))
+            .collect();
+    let removed: std::collections::HashSet<String> = trace
+        .traces
+        .iter()
+        .flat_map(|entry| entry.removed.iter().map(|name| normalize(name)))
+        .collect();
+    let mut stale: Vec<String> = Vec::new();
+    for entry in &trace.traces {
+        for name in entry
+            .added
+            .iter()
+            .chain(&entry.modified)
+            .chain(&entry.imported)
+        {
+            let key = normalize(name);
+            if !current.contains(&key)
+                && !removed.contains(&key)
+                && !stale.iter().any(|seen| same_name(seen, name))
+            {
+                stale.push(name.clone());
+            }
+        }
+    }
+    stale
+}
+
 /// `spectra trace migrate` 對一份 canonical spec 的結果。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MigratedSpec {
@@ -348,12 +387,27 @@ pub struct MigratedSpec {
     pub footers: usize,
     /// 認得開頭但無法解析、原樣留在 spec.md 的 footer 行號。
     pub unparsed_lines: Vec<usize>,
+    /// sidecar 裡對不到現有 requirement 的名稱（見 [`stale_names`]）；只回報、
+    /// 不自動修正。
+    pub stale_names: Vec<String>,
     /// 這份 spec 遷移失敗的原因（例如 sidecar 壞掉）；有值時什麼都沒寫。
     pub error: Option<String>,
 }
 
+impl MigratedSpec {
+    /// spec.md 裡還有 inline footer（可解析或不可解析）、sidecar 有過時名稱，
+    /// 或處理失敗——`spectra trace migrate --check` 據此以非零結束。
+    pub fn needs_attention(&self) -> bool {
+        self.footers > 0
+            || !self.unparsed_lines.is_empty()
+            || !self.stale_names.is_empty()
+            || self.error.is_some()
+    }
+}
+
 /// 把所有 canonical spec 裡的 inline `@trace` footer 搬進各自的 sidecar，並
-/// 補上 [`POINTER`]。只回報有 footer（或有無法解析的 footer）的 spec。
+/// 補上 [`POINTER`]；同時回報 sidecar 裡的過時名稱。只回報
+/// [`MigratedSpec::needs_attention`] 的 spec。
 ///
 /// 每份 spec 先寫 sidecar、再寫 spec.md，各自原子寫入。中途失敗時 spec.md
 /// 仍保有 footer，重跑會再吸收一次；[`TraceFile::absorb`] 對相同內容是冪等
@@ -364,40 +418,42 @@ pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> 
     for (capability, raw) in crate::fsutil::collect_delta_specs(&specs_root)? {
         let normalized = crate::markdown::normalize_markdown(&raw);
         let extracted = extract_inline(&normalized);
-        if extracted.footers.is_empty() && extracted.unparsed_lines.is_empty() {
-            continue;
-        }
+        let spec_path = specs_root.join(&capability).join("spec.md");
+        let sidecar = sidecar_path(&spec_path);
         let mut entry = MigratedSpec {
             capability: capability.clone(),
             footers: extracted.footers.len(),
             unparsed_lines: extracted.unparsed_lines.clone(),
+            stale_names: Vec::new(),
             error: None,
         };
-        if extracted.footers.is_empty() {
-            report.push(entry);
-            continue;
-        }
-        let spec_path = specs_root.join(&capability).join("spec.md");
-        let sidecar = sidecar_path(&spec_path);
         let outcome = (|| -> Result<()> {
-            let mut trace = TraceFile::load(&sidecar)?.unwrap_or_default();
+            let existing = TraceFile::load(&sidecar)?;
+            if existing.is_none() && extracted.footers.is_empty() {
+                return Ok(());
+            }
+            let mut trace = existing.unwrap_or_default();
             trace.absorb(&extracted.footers);
+            entry.stale_names = stale_names(&trace, &extracted.content);
+            if extracted.footers.is_empty() || dry_run {
+                return Ok(());
+            }
             let yaml = trace.to_yaml()?;
             let mut content = ensure_pointer(&extracted.content);
             content.truncate(content.trim_end_matches('\n').len());
             content.push('\n');
-            if !dry_run {
-                crate::fsutil::write_atomically(&sidecar, &yaml)
-                    .with_context(|| format!("writing {}", sidecar.display()))?;
-                crate::fsutil::write_atomically(&spec_path, &content)
-                    .with_context(|| format!("writing {}", spec_path.display()))?;
-            }
+            crate::fsutil::write_atomically(&sidecar, &yaml)
+                .with_context(|| format!("writing {}", sidecar.display()))?;
+            crate::fsutil::write_atomically(&spec_path, &content)
+                .with_context(|| format!("writing {}", spec_path.display()))?;
             Ok(())
         })();
         if let Err(error) = outcome {
             entry.error = Some(format!("{error:#}"));
         }
-        report.push(entry);
+        if entry.needs_attention() {
+            report.push(entry);
+        }
     }
     Ok(report)
 }
@@ -601,6 +657,7 @@ mod tests {
                 capability: "cap".into(),
                 footers: 2,
                 unparsed_lines: vec![],
+                stale_names: vec![],
                 error: None,
             }]
         );
@@ -635,6 +692,53 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(sidecar_path(&spec)).unwrap(),
             sidecar_before
+        );
+    }
+
+    #[test]
+    fn stale_names_flags_names_missing_from_the_spec_but_not_removed_ones() {
+        let mut file = TraceFile::default();
+        file.traces.push(TraceEntry {
+            source: "a".into(),
+            updated: "d".into(),
+            added: vec!["Login Button".into(), "Gone".into(), "Kept".into()],
+            imported: vec!["Login Button".into()],
+            ..Default::default()
+        });
+        file.traces.push(TraceEntry {
+            source: "b".into(),
+            updated: "d".into(),
+            removed: vec!["Gone".into()],
+            ..Default::default()
+        });
+        // oracle 把 Login Button 改名成 Sign In Button，sidecar 沒跟著改。
+        let content = "## Requirements\n\n### Requirement: Sign In Button\n\nx\n\n### Requirement: Kept\n\ny\n";
+
+        assert_eq!(stale_names(&file, content), vec!["Login Button"]);
+    }
+
+    #[test]
+    fn migrate_reports_stale_names_in_a_spec_without_footers_and_writes_nothing() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate-stale");
+        let cfg = migrate_cfg(&tmp);
+        let content = format!(
+            "# cap Specification\n\n{POINTER}\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+             ### Requirement: Sign In Button\n\ntext\n"
+        );
+        let spec = write_spec(&cfg, "cap", &content);
+        let sidecar = "version: 1\ntraces:\n- source: a\n  updated: d\n  added:\n  - Login Button\n  code: []\n";
+        std::fs::write(sidecar_path(&spec), sidecar).unwrap();
+
+        let report = migrate(&cfg, false).unwrap();
+
+        assert_eq!(report.len(), 1);
+        assert_eq!(report[0].footers, 0);
+        assert_eq!(report[0].stale_names, vec!["Login Button"]);
+        assert!(report[0].needs_attention());
+        assert_eq!(std::fs::read_to_string(&spec).unwrap(), content);
+        assert_eq!(
+            std::fs::read_to_string(sidecar_path(&spec)).unwrap(),
+            sidecar
         );
     }
 

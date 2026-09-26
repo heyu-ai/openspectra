@@ -73,6 +73,47 @@ fn trace_migrate_moves_footers_and_a_rerun_finds_nothing() {
 }
 
 #[test]
+fn trace_migrate_check_fails_on_inline_footers_without_writing_and_passes_once_clean() {
+    let (root, spec) = project();
+
+    let dirty = migrate(&root, &["--check"]);
+    assert_eq!(dirty.status.code(), Some(1), "{dirty:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&dirty.stdout),
+        "cap: has 2 inline trace footer(s) not yet in spec.trace.yaml\n"
+    );
+    assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
+    assert!(!spec.with_file_name("spec.trace.yaml").exists());
+
+    assert_eq!(migrate(&root, &[]).status.code(), Some(0));
+
+    let clean = migrate(&root, &["--check"]);
+    assert_eq!(clean.status.code(), Some(0), "{clean:?}");
+}
+
+#[test]
+fn trace_migrate_check_fails_on_a_stale_name_left_by_an_outside_rename() {
+    // oracle 做 RENAMED 只改 spec.md 標題、不動 sidecar：舊名稱要被報出來。
+    let (root, spec) = project();
+    assert_eq!(migrate(&root, &[]).status.code(), Some(0));
+    let renamed = std::fs::read_to_string(&spec)
+        .unwrap()
+        .replace("### Requirement: Alpha", "### Requirement: Alpha Renamed");
+    std::fs::write(&spec, renamed).unwrap();
+
+    let output = migrate(&root, &["--check"]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("warning: cap: spec.trace.yaml names requirement(s) not in spec.md: Alpha"),
+        "{stderr}"
+    );
+    // 一般模式只警告，不當成失敗。
+    assert_eq!(migrate(&root, &[]).status.code(), Some(0));
+}
+
+#[test]
 fn trace_migrate_exits_1_on_a_corrupt_sidecar_and_leaves_the_spec_alone() {
     let (root, spec) = project();
     std::fs::write(spec.with_file_name("spec.trace.yaml"), "traces: [").unwrap();

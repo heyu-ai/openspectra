@@ -222,17 +222,23 @@ traces:
 - RENAMED rewrites the old names recorded in earlier entries, so they keep
   matching the current requirement. The `renamed` list itself is history and is
   not rewritten. A rename done by the oracle does not update the sidecar, so
-  names in older entries can go stale in a mixed setup.
+  names in older entries can go stale in a mixed setup. `spectra trace
+  migrate` reports such stale names: any name under `added`, `modified` or
+  `imported` that matches no current requirement and appears in no entry's
+  `removed`. It does not fix them automatically.
 - The sidecar goes through the same prepare/commit/rollback path as `spec.md`
   (see "Architecture decision: atomicity versus recovery"). Retiring a
   capability removes its sidecar too, so the directory does not linger with
   only a YAML file. A sidecar that does not parse, or whose `version` is not
   `1`, fails the archive before anything is written; it is never overwritten.
-- `spectra trace migrate [--dry-run] [--json]` applies the same absorption to
-  every canonical spec without an archive, so existing bloated specs can be
-  migrated at once. For each spec it writes the sidecar before `spec.md`, and a
-  rerun after an interruption does not duplicate entries. A corrupt sidecar
-  fails only that spec and makes the command exit 1.
+- `spectra trace migrate [--dry-run] [--check] [--json]` applies the same
+  absorption to every canonical spec without an archive, so existing bloated
+  specs can be migrated at once. For each spec it writes the sidecar before
+  `spec.md`, and a rerun after an interruption does not duplicate entries. A
+  corrupt sidecar fails only that spec and makes the command exit 1. `--check`
+  writes nothing and exits 1 if any spec still has an inline footer (parseable
+  or not), a stale trace name, or an unreadable sidecar. It is meant for CI or
+  pre-commit in a repo where the oracle may still archive.
 
 **Probed interoperability (v3.0.0, 2026-09-26).** With either a footer-free
 `spec.md` plus sidecar, or a spec that keeps only `source`/`updated` in each
@@ -240,7 +246,10 @@ footer, the oracle validated and archived an ADDED + MODIFIED + REMOVED delta
 without complaint and left `spec.trace.yaml` byte-identical. It did write full
 inline footers again for the ADDED and MODIFIED requirements. Hence the
 absorption above: mixing the two tools re-grows footers only until the next
-OpenSpectra archive or `trace migrate`.
+OpenSpectra archive or `trace migrate`, and `trace migrate --check` catches
+them in between. Footers absorbed this way keep the oracle's `code:` list
+as-is, so the collection divergences below apply only to entries OpenSpectra
+writes itself.
 
 **Deliberate divergences in `code` collection (#98), both OpenSpectra-only
 (relative to v2.3.1):**
