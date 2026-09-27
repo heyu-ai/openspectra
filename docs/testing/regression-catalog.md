@@ -121,6 +121,48 @@ harness 本身的負向對照（2026-09-27 實測）：選錯測試得到 SURVIV
   `newly_created_file_mode_uses_a_0666_base_filtered_by_umask`。
 - row 25：修正在 PR #52（temp 檔加 rename），PR #54 只補了測試。
 
+## cargo-mutants 全量結果（spectra-core）
+
+2026-09-27 對 base `7131cb4` 執行（這一輪新增的測試尚未計入），`--test-workspace=true`，
+也就是 core 的 mutant 用兩個 crate 的全部測試判定。為了降低機器負載分三階段跑：
+先只跑 core 的測試篩選，再用較長的 timeout 重判 timeout，最後以 `--iterate`
+把 missed 交給整個 workspace 的測試重判。
+
+| 結果 | 數量 |
+|---|---|
+| caught | 1103 |
+| unviable（無法編譯） | 111 |
+| missed | 240 |
+| timeout（`+=` 改成 `*=` 之類的無窮迴圈） | 3 |
+
+扣除 unviable 後 mutation score 約 82%。missed 清單完整保存在
+`docs/testing/cargo-mutants-missed.txt`，依檔案分布如下：
+
+- `search.rs` 44、`schema.rs` 36、`archive.rs` 36、`validate.rs` 17、`spec.rs` 15、
+  `spec_diff.rs` 15、`markdown.rs` 13、其餘各檔 11 以下。
+- 多數不在已回報 bug 的範圍內（例如 `spectra search` 佔了 32 個）。
+
+落在已修正 bug 範圍內、值得優先補測試的：
+
+- **`archive.rs::rollback_prepared_specs`（#160-3）**：5 個 guard，都是還原時
+  「目前內容已等於原始內容就跳過」與「原本不存在」的分支。主要的 rollback 行為
+  已由 `37-*` 的 case 驗證，這些細部分支還沒有測試觀察到。
+- **`archive.rs` 的 `NotFound` guard**（`restore_file`、`read_optional_bytes`、
+  `has_any_file`、`path_entry_exists_io`）：要能注入 I/O 錯誤才測得到，和 row 74
+  的 #162 同一類。
+- **`schema.rs::yaml_inline_comment_start`（12 個）**：與 #160-7 的「fork 只改頂層
+  `name`、保留 YAML 格式」相鄰，現有 fork 測試沒有涵蓋行內註解的各種形狀。
+- **`archive.rs:98`（#142 `archive --no-validate`）**：`!skip_specs && !no_validate`
+  的突變存活。原因很可能是後面的 `prepare_spec_deltas` 會對同一批錯誤報錯，所以是
+  等價 mutant，還沒查證。
+
+重跑建議用溫和的設定，避免拖垮機器：
+
+```sh
+CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
+  --test-workspace=true --timeout 600 -j 2 -o <output-dir>
+```
+
 ## 對照表
 
 欄位「mutation case」列出 `scripts/mutations.toml` 裡的 case id，全部實測 KILLED。
