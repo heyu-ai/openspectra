@@ -52,3 +52,1393 @@ replace = "        if !matches!(response.chars().next(), Some('y' | 'Y' | 'n')) 
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "archive_prompts_and_aborts_on_a_terminal"
+
+[[case]]
+id = "155-created-sort-no-mtime-fallback"
+issue = "#155-1"
+file = "crates/spectra-core/src/change.rs"
+find = "        created.or(modified).ok()"
+replace = "        created.ok()"
+package = "spectra-core"
+test = "created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable"
+
+[[case]]
+id = "155-created-sort-prefers-mtime"
+issue = "#155-1"
+file = "crates/spectra-core/src/change.rs"
+find = "        created.or(modified).ok()"
+replace = "        modified.or(created).ok()"
+package = "spectra-core"
+test = "created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable"
+
+[[case]]
+id = "160-4-identical-modified-counted"
+issue = "#160-4"
+file = "crates/spectra-core/src/archive.rs"
+find = """
+        if requirement_content_eq(&original, &modified.raw) {
+            continue;
+        }"""
+replace = """
+        if false && requirement_content_eq(&original, &modified.raw) {
+            continue;
+        }"""
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_treats_identical_added_and_modified_requirements_as_already_synced"
+
+# ==================== A-C 區：drift、tasks、touched、analyze、artifact ====================
+
+[[case]]
+id = "01-structure-category-weight"
+issue = "PR #2"
+file = "crates/spectra-core/src/calibration.rs"
+find = '''    (2 * d + 3).min(2 * d + broken_cliflags as i64)'''
+replace = '''    2 * d + 3'''
+package = "spectra-core"
+test = "structure_score_is_category_weighted"
+
+# 列 2：#10 / PR #35 的三個獨立邊界修正，各還原一個。
+
+[[case]]
+id = "02-time-aging-stale-edge"
+issue = "#10 / PR #35"
+file = "crates/spectra-core/src/calibration.rs"
+find = '''    } else if days < 22 {'''
+replace = '''    } else if days < 21 {'''
+package = "spectra-core"
+test = "time_bucket_boundaries_pinned_against_oracle"
+
+[[case]]
+id = "02-time-stale-abandoned-edge"
+issue = "#10 / PR #35"
+file = "crates/spectra-core/src/calibration.rs"
+find = '''    } else if days < 61 {'''
+replace = '''    } else if days < 60 {'''
+package = "spectra-core"
+test = "time_bucket_boundaries_pinned_against_oracle"
+
+[[case]]
+id = "02-time-abandoned-score"
+issue = "#10 / PR #35"
+file = "crates/spectra-core/src/calibration.rs"
+find = '''        ("abandoned", 4)'''
+replace = '''        ("abandoned", 3)'''
+package = "spectra-core"
+test = "time_bucket_boundaries_pinned_against_oracle"
+
+# 列 3：v0.1.0 把 severity 對應成 exit code（light 0、medium 1、heavy 2）。
+
+[[case]]
+id = "03-drift-exit-code-severity-map"
+issue = "#37 / PR #38"
+file = "crates/spectra-core/src/drift.rs"
+find = '''    pub fn exit_code(&self) -> i32 {
+        0
+    }'''
+replace = '''    pub fn exit_code(&self) -> i32 {
+        match self.severity.as_str() {
+            "light" => 0,
+            "medium" => 1,
+            _ => 2,
+        }
+    }'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "drift_exits_zero_even_when_severity_is_medium_or_higher"
+
+# 列 4：issue #12 原本建議的 `-o`（only-matching）會吃掉重疊的 needle。
+
+[[case]]
+id = "04-grep-only-matching"
+issue = "#12 / PR #25"
+file = "crates/spectra-core/src/git.rs"
+find = '''    args.push("-h".to_string());'''
+replace = '''    args.push("-h".to_string());
+    args.push("-o".to_string());'''
+package = "spectra-core"
+test = "grep_existing_resolves_partially_overlapping_needles"
+
+# 列 5：拿掉 `--no-color`，使用者的 `color.grep=always` 會把 ANSI 色碼塞進輸出。
+
+[[case]]
+id = "05-grep-no-color"
+issue = "PR #25 後續"
+file = "crates/spectra-core/src/git.rs"
+find = '''    args.push("--no-color".to_string());'''
+replace = ''''''
+package = "spectra-core"
+test = "grep_existing_ignores_user_color_grep_always"
+
+# 列 6：git grep exit >1 時回傳空集合 = 所有 needle 都報 broken。
+
+[[case]]
+id = "06-grep-error-treated-as-resolved"
+issue = "PR #25"
+file = "crates/spectra-core/src/git.rs"
+find = '''                     treating all {} anchor(s) as resolved to avoid over-reporting drift",
+                    all.len()
+                );
+                all
+            }
+        },'''
+replace = '''                     treating all {} anchor(s) as resolved to avoid over-reporting drift",
+                    all.len()
+                );
+                HashSet::new()
+            }
+        },'''
+package = "spectra-core"
+test = "grep_existing_treats_non_repo_errors_as_resolved"
+
+# 列 7：PR #124 之前的 `out.truncate(ANCHOR_CAP)`（逐字還原）。
+
+[[case]]
+id = "07-anchor-cap-truncate"
+issue = "#119 / PR #124"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''    sample_over_cap(out)'''
+replace = '''    out.truncate(ANCHOR_CAP);
+    out'''
+package = "spectra-core"
+test = "over_cap_sets_are_sampled_evenly_per_category"
+
+# 列 8：#83 把 CliFlag 與找不到的 Function 歸成 unresolved（逐字還原 PR #124 前的形狀）。
+
+[[case]]
+id = "08-cliflag-unresolved"
+issue = "#119 C02 / PR #124"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''                AnchorKind::CliFlag => broken.push(BrokenAnchor {
+                    anchor: anchor.text.clone(),
+                    category,
+                    reason: "not in --help".to_string(),'''
+replace = '''                AnchorKind::CliFlag => unresolved.push(UnresolvedAnchor {
+                    anchor: anchor.text.clone(),
+                    category,
+                    reason: "no target --help".to_string(),'''
+package = "spectra-core"
+test = "cli_flags_are_broken_when_no_target_help_can_confirm_them"
+
+[[case]]
+id = "08-function-unresolved"
+issue = "#119 C02 / PR #124"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''                        broken.push(BrokenAnchor {
+                            anchor: anchor.text.clone(),
+                            category,
+                            reason: "function not found in repo".to_string(),'''
+replace = '''                        unresolved.push(UnresolvedAnchor {
+                            anchor: anchor.text.clone(),
+                            category,
+                            reason: "not first-party".to_string(),'''
+package = "spectra-core"
+target = ["--test", "drift_integration"]
+test = "drift_separates_broken_and_unresolved_anchors"
+
+# 列 9：PR #104 之前，缺少的 FilePath 一律 broken（沒有 forward reference）。
+
+[[case]]
+id = "09-forward-reference"
+issue = "#83 / PR #104"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''                    if matches!(existed_at_baseline, Some(false)) {'''
+replace = '''                    if false {'''
+package = "spectra-core"
+target = ["--test", "drift_integration"]
+test = "drift_separates_broken_and_unresolved_anchors"
+
+# 列 9（反方向）：baseline 不可用（None）時必須退回 broken，不能當成 forward reference。
+
+[[case]]
+id = "09-forward-reference-needs-usable-baseline"
+issue = "#83 / PR #104 review"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''                    if matches!(existed_at_baseline, Some(false)) {'''
+replace = '''                    if !matches!(existed_at_baseline, Some(true)) {'''
+package = "spectra-core"
+target = ["--test", "drift_integration"]
+test = "drift_falls_back_to_broken_when_the_baseline_is_missing_or_malformed"
+
+# 列 10：拿掉 `(?:[\w.-]+/)*` 前綴 head，回到 oracle 的 `.rodata` 形式（剝掉第一段）。
+
+[[case]]
+id = "10-filepath-leading-segments"
+issue = "#123 / PR #130"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/'''
+replace = '''    Regex::new(r"(?:src-tauri|src|crates|docs)/'''
+package = "spectra-core"
+test = "file_paths_keep_leading_path_segments"
+
+# 列 10：拿掉左邊界檢查，`mysrc/foo.rs` 會產生幽靈錨點 `src/foo.rs`。
+
+[[case]]
+id = "10-filepath-left-boundary"
+issue = "#123 / PR #130"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''        if !starts_at_path_boundary(design, m.start()) || escapes_project_root(m.as_str()) {'''
+replace = '''        if escapes_project_root(m.as_str()) {'''
+package = "spectra-core"
+test = "file_paths_reject_matches_starting_mid_token"
+
+# 列 11：拿掉 `..` 防護。
+
+[[case]]
+id = "11-filepath-dotdot-guard"
+issue = "PR #130 review"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''        if !starts_at_path_boundary(design, m.start()) || escapes_project_root(m.as_str()) {'''
+replace = '''        if !starts_at_path_boundary(design, m.start()) {'''
+package = "spectra-core"
+test = "file_paths_reject_segments_that_escape_the_project_root"
+
+# 列 12：PR #130 初稿只查寫出來的路徑，不取 oracle 截斷形式的聯集。
+
+[[case]]
+id = "12-path-candidates-union"
+issue = "PR #130"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''            candidates.push(m.as_str());'''
+replace = ''''''
+package = "spectra-core"
+test = "monorepo_path_resolves_against_the_oracle_truncation"
+
+# 列 13：baseline probe 只查寫出來的路徑，不用與現況 probe 相同的聯集。
+
+[[case]]
+id = "13-baseline-probe-union"
+issue = "PR #135"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''                        candidates
+                            .iter()
+                            .map(|p| git::path_exists_at(self.root, sha, p))'''
+replace = '''                        [anchor.text.as_str()]
+                            .iter()
+                            .map(|p| git::path_exists_at(self.root, sha, p))'''
+package = "spectra-core"
+test = "baseline_probe_uses_the_same_union_as_the_present_day_probe"
+
+# 列 14：stop-list 少了 `JSON`。
+
+[[case]]
+id = "14-stoplist-json"
+issue = "#51 / PR #130"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''        "CLI", "GUI", "API", "IPC", "JSON",'''
+replace = '''        "CLI", "GUI", "API", "IPC",'''
+package = "spectra-core"
+test = "design_template_symbols_match_the_oracle_stoplist"
+
+# 列 15：PR #137 加入的 20 個 probe 詞整批還原掉。
+
+[[case]]
+id = "15-stoplist-133-sweep"
+issue = "#133 / PR #137"
+file = "crates/spectra-core/src/anchors.rs"
+find = '''        // Rust standard-library types and traits (#133 probe).
+        "Copy", "Send", "Sync", "Drop", "From", "Into", "Iterator", "Cell", "Path",
+        // Rust keywords and idiom (#133 probe).
+        "Self", "Some", "None", "Enum", "Type", "Function", "Item",
+        // Formats and languages (#133 probe).
+        "Markdown", "Rust",
+        // Gherkin (#133 probe; `Given` is already in the `.rodata` core).
+        "When", "Then",
+'''
+replace = ''''''
+package = "spectra-core"
+test = "probe_recovered_symbol_stoplist_entries_match_the_oracle"
+
+# ------------------------------------------------- B. tasks、touched、task done
+
+# 列 16：`tasks.rs` 把 `- [ ] `（只有尾端空白）算成 task。
+
+[[case]]
+id = "16-tasks-empty-description"
+issue = "PR #54"
+file = "crates/spectra-core/src/tasks.rs"
+find = '''        .is_some_and(|c| !c[2].trim().is_empty())'''
+replace = '''        .is_some()'''
+package = "spectra-core"
+test = "empty_description_checkboxes_are_not_tasks_across_parse_and_mark_done"
+
+# 列 16：apply 端的同一條規則。
+
+[[case]]
+id = "16-apply-empty-description"
+issue = "PR #54"
+file = "crates/spectra-core/src/instructions.rs"
+find = '''            if raw_description.is_empty() {
+                return None;
+            }'''
+replace = ''''''
+package = "spectra-core"
+test = "apply_parser_drops_checkboxes_with_only_a_trailing_space"
+
+# 列 17：PR #177 之前 `CHECKBOX_RE` 只認 `-` bullet。
+
+[[case]]
+id = "17-checkbox-bullet-styles"
+issue = "#172 / PR #177"
+file = "crates/spectra-core/src/tasks.rs"
+find = '''Regex::new(r"^\s*[-*+]\s*\[(.)\]\s*(.+)$")'''
+replace = '''Regex::new(r"^\s*-\s*\[(.)\]\s*(.+)$")'''
+package = "spectra-core"
+test = "parse_counts_star_and_plus_bullets_and_only_x_marks_done"
+
+# 列 17：PR #177 之前 marker 只認 ` `/`x`/`X`，`[~]` 不算 task。
+
+[[case]]
+id = "17-checkbox-any-marker"
+issue = "#172 / PR #177"
+file = "crates/spectra-core/src/tasks.rs"
+find = '''Regex::new(r"^\s*[-*+]\s*\[(.)\]\s*(.+)$")'''
+replace = '''Regex::new(r"^\s*[-*+]\s*\[( |x|X)\]\s*(.+)$")'''
+package = "spectra-core"
+test = "mark_done_on_a_non_checkbox_marker_reports_done_without_rewriting"
+
+# 列 17：PR #177 之前 `done = &c[1] != " "`，`[~]`/`[-]` 被算成 done。
+
+[[case]]
+id = "17-done-marker-only-x"
+issue = "#172 / PR #177"
+file = "crates/spectra-core/src/tasks.rs"
+find = '''    matches!(marker, "x" | "X")'''
+replace = '''    marker != " "'''
+package = "spectra-core"
+test = "parse_counts_star_and_plus_bullets_and_only_x_marks_done"
+
+# 列 17：`task done` 對 `[~]` 應回報 done 但不改寫檔案。
+
+[[case]]
+id = "17-mark-done-other-marker-untouched"
+issue = "#172 / PR #177"
+file = "crates/spectra-core/src/tasks.rs"
+find = '''    if state.as_str() != " " {
+        return Ok((md.to_string(), description));
+    }'''
+replace = ''''''
+package = "spectra-core"
+test = "mark_done_on_a_non_checkbox_marker_reports_done_without_rewriting"
+
+# 列 18：`task done` 沒排除 `.spectra/` 自己的狀態檔。
+
+[[case]]
+id = "18-touched-excludes-state-dir"
+issue = "PR #19 / PR #23"
+file = "crates/spectra-core/src/change.rs"
+find = '''                !under_change_dir && !under_spectra_state_dir'''
+replace = '''                !under_change_dir'''
+package = "spectra-core"
+test = "mark_task_done_never_records_its_own_state_directory"
+
+# 列 19：不比對 baseline 指紋 = 回到 session-wide 收集（change 開始前就 dirty 的檔案也被記）。
+
+[[case]]
+id = "19-touched-baseline-fingerprint"
+issue = "#98 D / PR #173"
+file = "crates/spectra-core/src/touched.rs"
+find = '''            (Some(Some(before)), Some(now)) => before != now,
+'''
+replace = ''''''
+package = "spectra-core"
+test = "mark_task_done_skips_files_already_dirty_before_the_change_and_left_unchanged"
+
+# 列 19（review 追加）：檢查點時 dirty、現在變乾淨的檔案也是候選。
+
+[[case]]
+id = "19-touched-now-clean-candidates"
+issue = "#98 D / PR #173 review"
+file = "crates/spectra-core/src/touched.rs"
+find = '''        .chain(now_clean)
+'''
+replace = ''''''
+package = "spectra-core"
+test = "mark_task_done_records_a_pre_dirty_file_a_task_restored_to_its_committed_content"
+
+# 列 20：archive 的 `@trace` `code:` 照單全收（oracle 行為）。
+
+[[case]]
+id = "20-trace-omits-missing-paths"
+issue = "PR #173"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            Err(e) if touched::is_gone(&e) => false,'''
+replace = '''            Err(e) if touched::is_gone(&e) => true,'''
+package = "spectra-core"
+test = "archive_trace_footer_omits_touched_paths_that_no_longer_exist"
+
+# 列 20：`is_gone` 只認 NotFound，上層目錄被換成檔案（NotADirectory）的路徑會被保留。
+
+[[case]]
+id = "20-trace-not-a-directory-is-gone"
+issue = "PR #173 round 2"
+file = "crates/spectra-core/src/touched.rs"
+find = '''    matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)'''
+replace = '''    matches!(e.kind(), ErrorKind::NotFound)'''
+package = "spectra-core"
+test = "archive_trace_footer_omits_a_path_whose_parent_became_a_file"
+
+# 列 20：用 `metadata`（跟隨 symlink）會把斷掉的 symlink 當成不存在。
+
+[[case]]
+id = "20-trace-keeps-dangling-symlink"
+issue = "PR #173"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        .filter(|f| match std::fs::symlink_metadata(cfg.root.join(f)) {'''
+replace = '''        .filter(|f| match std::fs::metadata(cfg.root.join(f)) {'''
+package = "spectra-core"
+test = "archive_trace_footer_keeps_a_dangling_symlink"
+
+# 列 20：archive 成功後沒清掉 touched baseline sidecar。
+
+[[case]]
+id = "20-archive-clears-baseline-sidecar"
+issue = "PR #173"
+file = "crates/spectra-core/src/change.rs"
+find = '''        crate::touched::touched_path(cfg, name),
+        crate::touched::baseline_path(cfg, name),
+    ];'''
+replace = '''        crate::touched::touched_path(cfg, name),
+    ];'''
+package = "spectra-core"
+test = "archive_clears_touched_json_on_success"
+
+# 列 21：不用 `-z`，回到會 quote／以 " -> " 串接的人類可讀 porcelain 輸出。
+
+[[case]]
+id = "21-dirty-files-nul-delimited"
+issue = "PR #19 review"
+file = "crates/spectra-core/src/git.rs"
+find = '''        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],'''
+replace = '''        &["status", "--porcelain=v1", "--untracked-files=all"],'''
+package = "spectra-core"
+test = "dirty_files_preserves_spaces_and_non_ascii_bytes_without_quoting"
+
+# 列 21：rename 的舊路徑欄位沒被吃掉，被誤讀成另一筆 status。
+
+[[case]]
+id = "21-dirty-files-rename-old-path"
+issue = "PR #19 review"
+file = "crates/spectra-core/src/git.rs"
+find = '''        if is_rename_or_copy {
+            fields.next();
+        }'''
+replace = ''''''
+package = "spectra-core"
+test = "dirty_files_reports_the_new_path_for_a_rename"
+
+# 列 22：損壞的 touched JSON 被靜默丟掉（`load_readonly` 的形狀）。
+
+[[case]]
+id = "22-touched-corrupt-backup"
+issue = "review"
+file = "crates/spectra-core/src/touched.rs"
+find = '''        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+            let backup = non_colliding_backup_path(&path);'''
+replace = '''        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+            if true {
+                return empty();
+            }
+            let backup = non_colliding_backup_path(&path);'''
+package = "spectra-core"
+test = "load_backs_up_a_corrupt_tracking_file_instead_of_discarding_it"
+
+# 列 22：第二次損壞時覆寫第一份備份。
+
+[[case]]
+id = "22-touched-corrupt-backup-no-clobber"
+issue = "review"
+file = "crates/spectra-core/src/touched.rs"
+find = '''    if !base.exists() {
+        return base;
+    }'''
+replace = '''    if true {
+        return base;
+    }'''
+package = "spectra-core"
+test = "load_does_not_clobber_a_prior_corrupt_backup_on_a_second_corruption"
+
+# ------------------------------------------------ C. analyze、artifact、new change
+
+# 列 23：PR #54 之前的五詞清單（should/may/might/TBD/???）。
+
+[[case]]
+id = "23-weak-language-nine-words"
+issue = "PR #54"
+file = "crates/spectra-core/src/analyze.rs"
+find = '''        ("consider", "consider"),
+        ("possibly", "possibly"),
+        ("tbd", "TBD"),
+        ("todo", "TODO"),
+        ("???", "???"),
+        ("tktk", "TKTK"),'''
+replace = '''        ("tbd", "TBD"),
+        ("???", "???"),'''
+package = "spectra-core"
+test = "weak_language_is_case_insensitive_substring_priority_and_canonicalized"
+
+# 列 24：PR #54 之前掃 `specs/` 下所有 `*.md`（逐字還原）。
+
+[[case]]
+id = "24-analyze-only-spec-md"
+issue = "PR #54"
+file = "crates/spectra-core/src/analyze.rs"
+find = '''        } else if file_type.is_file() && path.file_name().is_some_and(|name| name == "spec.md") {'''
+replace = '''        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {'''
+package = "spectra-cli"
+target = ["--test", "analyze_integration"]
+test = "analyze_ignores_markdown_sidecars_next_to_spec_md"
+
+# 列 25：`--force` 直接 `fs::write(path, ...)`，會跟隨預先放好的 symlink。
+
+[[case]]
+id = "25-artifact-force-no-symlink-follow"
+issue = "PR #52（測試於 PR #54 補上）"
+file = "crates/spectra-core/src/artifact.rs"
+find = '''        std::fs::rename(&tmp, &path)'''
+replace = '''        std::fs::write(&path, &content)'''
+package = "spectra-core"
+test = "force_write_through_a_symlinked_artifact_path_cannot_escape_the_change_dir"
+
+# 列 26：PR #52 之前 `created_by` 以原始字串串接（逐字還原當時的 format!）。
+
+[[case]]
+id = "26-created-by-yaml-quoting"
+issue = "PR #48 / PR #52"
+file = "crates/spectra-core/src/change.rs"
+find = '''    let yaml = serde_yaml::to_string(&metadata)
+        .with_context(|| format!("serializing metadata for {}", metadata_path.display()))?;'''
+replace = '''    let yaml = format!(
+        "schema: spec-driven\ncreated: {today}\ncreated_by: {}\n",
+        metadata.created_by.as_deref().unwrap_or_default()
+    );'''
+package = "spectra-core"
+test = "create_round_trips_yaml_special_git_identity"
+
+# 列 26：archive 的 `archived_by` 以原始字串附加在 serde 輸出後面。
+
+[[case]]
+id = "26-archived-by-yaml-quoting"
+issue = "PR #48 / PR #52"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            bytes: serde_yaml::to_string(&metadata)?.into_bytes(),'''
+replace = '''            bytes: {
+                let by = metadata.archived_by.take();
+                let mut s = serde_yaml::to_string(&metadata)?;
+                if let Some(by) = by {
+                    s.push_str(&format!("archived_by: {by}\n"));
+                }
+                s.into_bytes()
+            },'''
+package = "spectra-core"
+test = "archive_stamps_archived_by_containing_yaml_special_characters_round_trips"
+
+# 列 27（目錄評為 weak）：非 --force 用會覆寫的 copy 取代 no-clobber 的 hard_link。
+# 測試依賴 8 個 thread 同時越過前面的 `path.exists()` 檢查，預期可能 SURVIVED。
+
+[[case]]
+id = "27-artifact-no-clobber-install"
+issue = "PR #52"
+file = "crates/spectra-core/src/artifact.rs"
+find = '''        std::fs::hard_link(&tmp, &path)'''
+replace = '''        std::fs::copy(&tmp, &path).map(|_| ())'''
+package = "spectra-core"
+test = "concurrent_non_force_creates_yield_exactly_one_winner"
+
+# 列 28：done-check 不跟隨目錄 symlink。
+
+[[case]]
+id = "28-specs-done-follows-dir-symlink"
+issue = "PR #52"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        let metadata = match std::fs::metadata(&path) {'''
+replace = '''        let metadata = match std::fs::symlink_metadata(&path) {'''
+package = "spectra-core"
+test = "specs_behind_a_directory_symlink_count_as_done"
+
+# 列 28：I/O 錯誤被折成「not done」。
+
+[[case]]
+id = "28-specs-io-error-not-not-done"
+issue = "PR #52"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        Some(error) => Err(error),
+        None => Ok(false),'''
+replace = '''        Some(_) => Ok(false),
+        None => Ok(false),'''
+package = "spectra-core"
+test = "unreadable_specs_directory_is_an_error_not_not_done"
+
+# 列 28：visited 集合不擋重複目錄，symlink 迴圈無法收斂。
+
+[[case]]
+id = "28-specs-symlink-cycle-terminates"
+issue = "PR #52"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            if !visited.insert(canonical) {
+                return false;
+            }'''
+replace = '''            visited.insert(canonical);'''
+package = "spectra-core"
+test = "symlink_cycle_in_specs_terminates_without_matches"
+
+# ---------------------------------------------------------------- 未收錄
+#
+# 列 6 的 `grep_existing_empty_needles_returns_empty_set`：拿掉空集合的
+#   early return 後，`git grep` 沒有 pattern 會 exit 128，走「全部視為 resolved」
+#   分支回傳空集合，結果相同——該測試守的是效能（不 spawn），不是可觀察行為，
+#   值層級突變殺不掉，因此不列。
+# 列 17 的「apply 與 task done 共用同一條 regex」：兩邊現在是同一個 static，
+#   還原成各自一條相同的 regex 沒有行為差異，無法以單一字串突變表達。
+# 列 28 的 `found_markdown_wins_over_an_unreadable_sibling_directory`：修正前的
+#   錯誤依 read_dir 的列舉順序才會出現，突變後測試是否失敗取決於檔案系統順序，
+#   不是確定性的 case。
+
+# ==================== D 區：archive、validate、markdown ====================
+
+[[case]]
+id = "29-one-level-walk"
+issue = "#39 / PR #41"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        if file_type.is_dir() {
+            collect_delta_specs_into(specs_root, &path, out)?;'''
+replace = '''        if file_type.is_dir() && dir == specs_root {
+            collect_delta_specs_into(specs_root, &path, out)?;'''
+package = "spectra-core"
+test = "archive_applies_a_nested_capability_delta"
+
+# 回到舊 archive 以 fs::metadata 跟隨目錄 symlink 的形狀；specs/loop -> specs 會無界遞迴（ELOOP 或 stack overflow）
+
+[[case]]
+id = "30-follow-dir-symlinks"
+issue = "PR #41"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        if file_type.is_dir() {
+            collect_delta_specs_into(specs_root, &path, out)?;'''
+replace = '''        if file_type.is_dir() || (file_type.is_symlink() && symlink_target_is_dir(&path)?) {
+            collect_delta_specs_into(specs_root, &path, out)?;'''
+package = "spectra-core"
+test = "does_not_follow_a_symlink_cycle_under_specs"
+
+# specs/spec.md 直接放在根下時不再報錯，以空 capability id 靜默處理
+
+[[case]]
+id = "31-orphan-root-spec"
+issue = "PR #41"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''    if parts.is_empty() {
+        return Err(anyhow!('''
+replace = '''    if false && parts.is_empty() {
+        return Err(anyhow!('''
+package = "spectra-core"
+test = "errors_on_a_spec_md_directly_under_specs_root"
+
+# RENAME 目標已是既有 requirement 時不再擋下
+
+[[case]]
+id = "32-rename-onto-existing-target"
+issue = "PR #32 (Gemini P1)"
+file = "crates/spectra-core/src/archive.rs"
+find = '''if let Some(existing_target) = find_folded_requirement_block(&content, &rename.to) {'''
+replace = '''if let Some(existing_target) = find_folded_requirement_block(&content, &rename.to).filter(|_| false) {'''
+package = "spectra-core"
+test = "archive_errors_on_a_renamed_delta_for_an_existing_target_requirement"
+
+# RENAMED FROM 與其他 operation 的衝突比對不做空白正規化（`Old   Name` 與 `Old Name` 視為不同）
+
+[[case]]
+id = "32-rename-from-unnormalized"
+issue = "PR #32 (Gemini P1)"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''        .map(|rename| normalize_name(&rename.from))
+        .collect();'''
+replace = '''        .map(|rename| rename.from.clone())
+        .collect();'''
+package = "spectra-core"
+test = "rejects_normalized_rename_conflicts_with_other_operations"
+
+# 重複名稱偵測不做空白正規化，重複的 RENAMED FROM/TO 漏網
+
+[[case]]
+id = "32-duplicate-unnormalized"
+issue = "PR #32 (Gemini P1)"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''        .map(normalize_name)
+        .find(|name| !seen.insert(name.clone()))'''
+replace = '''        .map(str::to_string)
+        .find(|name| !seen.insert(name.clone()))'''
+package = "spectra-core"
+test = "rejects_duplicate_normalized_rename_sources_and_targets"
+
+# MODIFIED 替換內容丟掉原 block 的結尾換行（trim_end 過的 raw 直接覆蓋），下一個 ### Requirement: 黏到前一行尾
+
+[[case]]
+id = "33-modified-glue"
+issue = "review"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            &format!("{}{trailing}", modified.raw),'''
+replace = '''            &format!("{}", modified.raw),'''
+package = "spectra-core"
+test = "archive_modify_on_a_spectra_produced_spec_keeps_following_headers_line_anchored"
+
+# 沒有 ## Requirements 時不退回 ## Purpose 之後，直接附加到檔尾（落進 trailing section）
+
+[[case]]
+id = "34-blind-eof-append"
+issue = "review"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        .or_else(|| crate::markdown::main_purpose_insertion_point(content))
+'''
+replace = ""
+package = "spectra-core"
+test = "archive_inserts_new_requirements_before_a_trailing_section_when_the_canonical_spec_has_no_requirements_header"
+
+# archive 不檢查 MODIFIED 遺失的 scenario（只要還有 scenario 就通過），其他 scenario 被刪掉。validate 端另有獨立的同名檢查，所以這裡以 CLI 測試的 archive 段落擊殺
+
+[[case]]
+id = "35-archive-scenario-loss"
+issue = "#160-1 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        if !missing.is_empty() {
+            anyhow::bail!(
+                "capability '{capability}': MODIFIED requirement'''
+replace = '''        if false && !missing.is_empty() {
+            anyhow::bail!(
+                "capability '{capability}': MODIFIED requirement'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "validate_rejects_a_modified_requirement_that_drops_a_current_scenario"
+
+# 反查 rename 只走一步，不跟隨 A->B->C 鏈
+
+[[case]]
+id = "35-rename-chain-single-step"
+issue = "#160-1 / PR #161"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        current = normalize_name(&rename.from);
+    }
+    current'''
+replace = '''        current = normalize_name(&rename.from);
+        break;
+    }
+    current'''
+package = "spectra-core"
+test = "reverse_rename_resolution_is_transitive_and_cycle_safe"
+
+# requirement header 偵測不看 fence mask，code block 內的 ### Requirement: 被當成真的 requirement
+
+[[case]]
+id = "36-requirement-header-unmasked"
+issue = "#160-2 / PR #161"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''        if !mask[index] && heading_text(lines[index], 3).is_some() {'''
+replace = '''        if heading_text(lines[index], 3).is_some() {'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_ignores_requirement_headers_inside_fenced_examples"
+
+# 找 ## Requirements 插入點時不看 fence mask，code block 內的 ## requirements 被當成真的 section
+
+[[case]]
+id = "36-section-end-unmasked"
+issue = "#160-2 / PR #161"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''        (!mask[index]
+            && heading_text(line, 2).is_some_and(|text| text.eq_ignore_ascii_case(section_name)))'''
+replace = '''        (heading_text(line, 2).is_some_and(|text| text.eq_ignore_ascii_case(section_name)))'''
+package = "spectra-core"
+test = "archive_ignores_fenced_requirements_heading_when_placing_added_blocks"
+
+# fence 開/關不限制最多 3 個前導空白，縮排 4 格的 closer 提早關閉 fence、暴露 REMOVED
+
+[[case]]
+id = "36-fence-indent-unbounded"
+issue = "#160-2 / PR #161"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''    (indent <= 3).then(|| &line[indent..])'''
+replace = '''    Some(&line[indent..])'''
+package = "spectra-core"
+test = "an_over_indented_closer_does_not_expose_destructive_delta_operations"
+
+# 寫入失敗時不把凍結的 change 搬回 active 路徑（留下一半已 archive 的狀態）
+
+[[case]]
+id = "37-no-change-restore"
+issue = "#160-3 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        if let Err(rollback) = restore_frozen_change(&ch.dir, &staged, &dest) {'''
+replace = '''        if let Err(rollback) = Ok::<(), anyhow::Error>(()) {'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_write_failure_keeps_the_change_active"
+
+# 後面的 spec 寫入失敗時不 rollback 已寫入的前一份 spec
+
+[[case]]
+id = "37-no-spec-rollback"
+issue = "#160-3 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        if let Err(rollback) = rollback_prepared_specs(&prepared) {'''
+replace = '''        if let Err(rollback) = Ok::<(), anyhow::Error>(()) {'''
+package = "spectra-core"
+test = "archive_rolls_back_an_earlier_spec_when_a_later_write_fails"
+
+# rollback 不比對目前內容就還原，覆蓋掉並行的 spec 編輯
+
+[[case]]
+id = "37-rollback-clobbers-concurrent-spec"
+issue = "#160-3 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            Ok(Some(current)) if current.as_slice() == expected => {'''
+replace = '''            Ok(Some(current)) if !current.is_empty() || current.as_slice() == expected => {'''
+package = "spectra-core"
+test = "rollback_refuses_to_overwrite_a_concurrent_spec_edit"
+
+# .openspec.yaml rollback 不比對目前內容就還原，覆蓋掉並行編輯
+
+[[case]]
+id = "37-metadata-rollback-clobbers-concurrent"
+issue = "#160-3 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        if current.as_deref() != Some(expected) {'''
+replace = '''        if false && current.as_deref() != Some(expected) {'''
+package = "spectra-core"
+test = "metadata_rollback_preserves_a_concurrent_edit"
+
+# 先 sync 再 archive：與 canonical 完全相同的 ADDED 被當成衝突拒絕
+
+[[case]]
+id = "38-added-already-synced-rejected"
+issue = "#160-4 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            if requirement_content_eq(&original, &added.raw) {'''
+replace = '''            if false && requirement_content_eq(&original, &added.raw) {'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_treats_identical_added_and_modified_requirements_as_already_synced"
+
+# 先 sync 再 archive：目標已存在、來源已不存在的 RENAME 被當成缺漏拒絕
+
+[[case]]
+id = "38-rename-already-synced-rejected"
+issue = "#160-4 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        } else if find_requirement_block(&content, &rename.to).is_none() {'''
+replace = '''        } else if find_requirement_block(&content, &rename.to).is_none() || true {'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_treats_an_existing_rename_target_as_already_synced"
+
+# 已同步容忍放太寬：找不到的 REMOVE 目標被當成已同步而略過
+
+[[case]]
+id = "38-missing-remove-over-tolerated"
+issue = "#160-4 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            return Err(missing_requirement_error(
+                capability, "REMOVE", removed, &spec_path,
+            ));'''
+replace = '''            continue;'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_rejects_case_variant_and_missing_removal_targets"
+
+# list --specs 只掃一層，巢狀 canonical spec 看不到
+
+[[case]]
+id = "39-list-specs-one-level"
+issue = "#160-5 / PR #161"
+file = "crates/spectra-core/src/spec.rs"
+find = '''        if metadata.is_dir() {
+            collect_specs('''
+replace = '''        if metadata.is_dir() && relative.as_os_str().is_empty() {
+            collect_specs('''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "list_and_show_support_nested_canonical_spec_ids"
+
+# show 的 spec id 只接受單一路徑元件，identity/auth 被拒
+
+[[case]]
+id = "39-show-single-component-id"
+issue = "#160-5 / PR #161"
+file = "crates/spectra-core/src/spec.rs"
+find = '''    !id.is_empty() && !id.contains('\\') && id.split('/').all(is_valid_name)'''
+replace = '''    !id.is_empty() && !id.contains('\\') && is_valid_name(id)'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "list_and_show_support_nested_canonical_spec_ids"
+
+# 新 capability 忽略 delta 已撰寫的 Purpose，一律寫入 TBD
+
+[[case]]
+id = "40-purpose-replaced-by-tbd"
+issue = "#160-6 / PR #161"
+file = "crates/spectra-core/src/archive.rs"
+find = '''            let purpose = parsed.purpose.clone().unwrap_or_else(|| {'''
+replace = '''            let purpose = None::<String>.unwrap_or_else(|| {'''
+package = "spectra-core"
+test = "archive_preserves_an_authored_purpose_for_a_new_capability"
+
+# schema fork 複製後不改寫 schema.yaml 的 name，仍以來源名稱自稱
+
+[[case]]
+id = "41-fork-keeps-source-name"
+issue = "#160-7 / PR #161"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        rewrite_schema_name(&stage.join("schema.yaml"), target)?;
+'''
+replace = ""
+package = "spectra-cli"
+target = ["--test", "schema_fork_integration"]
+test = "fork_copies_a_project_schema_tree_and_updates_its_identity"
+
+# name 改寫不限頂層，block scalar 內縮排的 `name:` 行先被改掉
+
+[[case]]
+id = "41-fork-rewrites-nested-name"
+issue = "#160-7 / PR #161"
+file = "crates/spectra-core/src/schema.rs"
+find = '''(!replaced).then(|| body.strip_prefix("name:"))'''
+replace = '''(!replaced).then(|| body.trim_start().strip_prefix("name:"))'''
+package = "spectra-cli"
+target = ["--test", "schema_fork_integration"]
+test = "fork_rewrites_only_the_top_level_name_and_preserves_yaml_formatting"
+
+# 重建後的 spec 不收斂結尾換行（保留原檔多餘的空行）
+
+[[case]]
+id = "42-final-newline-not-canonicalized"
+issue = "v0.12.0 Fixed"
+file = "crates/spectra-core/src/archive.rs"
+find = '''        content.truncate(content.trim_end_matches('\n').len());
+'''
+replace = ""
+package = "spectra-core"
+test = "archive_canonicalizes_rebuilt_specs_to_one_final_newline"
+
+# requirement text 收集不停在第一個 scenario，scenario 內的 SHALL 被算成 normative
+
+[[case]]
+id = "43-no-metadata-fallback"
+issue = "#80 follow-up / PR #161 (OpenSpec 1.12)"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''                metadata_lines.join("\n")
+'''
+replace = '''                String::new()
+'''
+package = "spectra-core"
+test = "metadata_lines_supply_text_only_when_ordinary_prose_is_absent"
+
+# validate <打錯的名稱> 仍當成 change 驗證，回報誤導的 no delta 而不是 not found
+
+[[case]]
+id = "44-validate-typo-as-change"
+issue = "mob review"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            None => anyhow::bail!("Change '{item}' not found."),'''
+replace = '''            None => spectra_core::validate::validate_change(cfg, item, strict)?,'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "validate_errors_change_not_found_for_a_nonexistent_explicit_name"
+
+# ==================== E-F 區：CLI、change 生命週期、schema、init、fsutil、update ====================
+
+[[case]]
+id = "45a-no-active-read-cmd-exits-1"
+issue = "#134 / PR #138"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    let name = change::resolve_optional(cfg, explicit)?;'''
+replace = '''    let name = Some(change::resolve(cfg, explicit)?);'''
+package = "spectra-cli"
+target = ["--test", "no_active_changes_integration"]
+test = "read_commands_treat_no_active_changes_as_a_normal_empty_state"
+
+[[case]]
+id = "45b-resolve-optional-empty-is-error"
+issue = "#134 / PR #138"
+file = "crates/spectra-core/src/change.rs"
+find = '''        0 => Ok(None),'''
+replace = '''        0 => Err(anyhow!(NO_ACTIVE_CHANGES_MESSAGE)),'''
+package = "spectra-core"
+test = "resolve_optional_exposes_the_empty_state_without_changing_required_resolution"
+
+[[case]]
+id = "48a-park-clobbers-existing-parked"
+issue = "PR #125"
+file = "crates/spectra-core/src/change.rs"
+find = '''    if target.exists() {
+        return Err(anyhow!(
+            "a parked change named '{name}' already exists at {}; unpark or remove it first",
+            target.display()
+        ));
+    }'''
+replace = '''    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }'''
+package = "spectra-core"
+test = "park_refuses_to_overwrite_an_existing_parked_change"
+
+[[case]]
+id = "48b-park-swallows-archive"
+issue = "PR #125"
+file = "crates/spectra-core/src/change.rs"
+find = '''    if name == "archive" {'''
+replace = '''    if name == "archive-guard-disabled" {'''
+package = "spectra-core"
+test = "park_refuses_to_swallow_the_archive_directory"
+
+[[case]]
+id = "49a-config-schema-ignored-falls-back-to-builtin"
+issue = "#117 / PR #128"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        .or_else(|| configured_schema_name(cfg))
+        .unwrap_or_else(|| SCHEMA_NAME.to_string());'''
+replace = '''        .unwrap_or_else(|| SCHEMA_NAME.to_string());'''
+package = "spectra-core"
+test = "require_supported_uses_the_oracle_wording_for_a_schema_that_resolves_nowhere"
+
+[[case]]
+id = "49b-change-level-schema-ignored"
+issue = "#117 / PR #128"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        .or_else(|| change.and_then(|change| change.metadata.schema.clone()))
+'''
+replace = ''''''
+package = "spectra-cli"
+target = ["--test", "schema_selector_integration"]
+test = "a_change_recording_an_unknown_schema_fails_even_with_a_healthy_project_config"
+
+[[case]]
+id = "50-new-change-hardcodes-spec-driven"
+issue = "#117"
+file = "crates/spectra-core/src/change.rs"
+find = '''            crate::schema::configured_schema_name(cfg)
+                .unwrap_or_else(|| crate::schema::SCHEMA_NAME.to_string()),'''
+replace = '''            crate::schema::SCHEMA_NAME.to_string(),'''
+package = "spectra-cli"
+target = ["--test", "schema_selector_integration"]
+test = "new_change_stamps_the_configured_schema_so_the_gate_stays_reachable"
+
+[[case]]
+id = "51-custom-schema-yaml-never-loaded"
+issue = "#126 / PR #150"
+file = "crates/spectra-core/src/schema.rs"
+find = '''    if project_dir.join("schema.yaml").is_file() {'''
+replace = '''    if false && project_dir.join("schema.yaml").is_file() {'''
+package = "spectra-core"
+test = "resolve_schema_loads_a_present_custom_schema_instead_of_rejecting_it"
+
+[[case]]
+id = "52a-instructions-json-drops-context"
+issue = "#127 / PR #136"
+file = "crates/spectra-core/src/instructions.rs"
+find = '''        context,
+        rules,
+        locale: LOCALE.to_string(),'''
+replace = '''        context: None,
+        rules,
+        locale: LOCALE.to_string(),'''
+package = "spectra-core"
+test = "artifact_context_is_trimmed_and_preserves_internal_newlines"
+
+[[case]]
+id = "52b-instructions-json-drops-rules"
+issue = "#127 / PR #136"
+file = "crates/spectra-core/src/instructions.rs"
+find = '''        context,
+        rules,
+        locale: LOCALE.to_string(),'''
+replace = '''        context,
+        rules: None,
+        locale: LOCALE.to_string(),'''
+package = "spectra-core"
+test = "artifact_rules_are_flattened_for_the_matching_artifact"
+
+[[case]]
+id = "53a-list-json-readds-summary"
+issue = "#88 / PR #154"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            "totalTasks": total,
+        }));'''
+replace = '''            "totalTasks": total,
+            "summary": first_line(&ch.proposal_md()),
+        }));'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "list_changes_flag_output_is_byte_identical_to_the_default"
+
+[[case]]
+id = "53b-list-human-drops-bullets"
+issue = "#88 / PR #154"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            println!("  • {}", it["name"].as_str().unwrap_or(""));'''
+replace = '''            println!("{}", it["name"].as_str().unwrap_or(""));'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "list_changes_flag_output_is_byte_identical_to_the_default"
+
+[[case]]
+id = "54-list-specs-flag-inert"
+issue = "#3 / PR #13"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    if want_specs {
+        return cmd_list_specs(cfg, as_json);
+    }'''
+replace = '''    let _ = want_specs;'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+# 目錄列的兩個測試（main.rs::list_specs_items_shape_* 直接呼叫 list_specs_items、
+# init_integration 只呼叫 spec::list）都碰不到旗標接線；這個整合測試才會。
+test = "list_and_show_support_nested_canonical_spec_ids"
+
+[[case]]
+id = "55-list-parked-flag-inert"
+issue = "#4 / PR #14"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    let names = if want_parked {
+        change::list_parked_sorted(cfg, sort_key)'''
+replace = '''    let names = if false {
+        change::list_parked_sorted(cfg, sort_key)'''
+package = "spectra-cli"
+target = ["--bin", "spectra"]
+test = "list_change_items_parked_flag_selects_parked_changes"
+
+[[case]]
+id = "56-no-color-flag-inert"
+issue = "#6 / PR #16"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    let use_color = color_enabled(cli.no_color);'''
+replace = '''    let use_color = color_enabled(false);'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+# 原本 EXPECT-SURVIVE，已補 PTY 測試：只有 color_enabled_from 的純函式測試；整合測試的 --no-color
+# 都跑在 piped stdout（非 TTY），接線斷了輸出也不會有色碼。
+test = "no_color_flag_strips_ansi_codes_on_a_terminal"
+
+[[case]]
+id = "57-archive-tty-lowercase-y-rejected"
+issue = "#155-2"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        if !matches!(response.chars().next(), Some('y' | 'Y')) {'''
+replace = '''        if !matches!(response.chars().next(), Some('Y')) {'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+# 原本 EXPECT-SURVIVE，已補 PTY 測試：唯一的 PTY 測試只送 "n\n"，接受路徑沒有測試。
+test = "archive_accepts_y_and_capital_y_on_a_terminal"
+
+[[case]]
+id = "59a-temp-file-follows-symlink"
+issue = "#90"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''    opts.write(true).create_new(true);'''
+replace = '''    opts.write(true).create(true).truncate(true);'''
+package = "spectra-core"
+test = "write_via_temp_refuses_a_pre_created_temp_symlink_instead_of_writing_through_it"
+
+[[case]]
+id = "59b-init-gitignore-plain-write"
+issue = "#90"
+file = "crates/spectra-core/src/init.rs"
+find = '''    write_atomically(&path, &updated)'''
+replace = '''    std::fs::write(&path, &updated)'''
+package = "spectra-core"
+test = "init_gitignore_update_routes_through_write_atomically_not_a_plain_write"
+
+[[case]]
+id = "60-completion-temp-follows-symlink"
+issue = "PR #87 R2"
+file = "crates/spectra-cli/src/completion.rs"
+find = '''            .write(true)
+            .create_new(true)
+            .open(&tmp_path)'''
+replace = '''            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path)'''
+package = "spectra-cli"
+target = ["--bin", "spectra"]
+test = "write_replacing_any_symlink_never_writes_through_a_symlinked_temp_path"
+
+[[case]]
+id = "61a-completion-accepts-empty-relative-xdg-unit"
+issue = "PR #87"
+file = "crates/spectra-cli/src/completion.rs"
+find = '''    value.map(PathBuf::from).filter(|path| path.is_absolute())'''
+replace = '''    value.map(PathBuf::from)'''
+package = "spectra-cli"
+target = ["--bin", "spectra"]
+test = "usable_base_dir_rejects_absent_empty_and_relative_values"
+
+[[case]]
+id = "62a-new-file-mode-0600"
+issue = "#93 / PR #100"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        Ok(TargetMode::Absent) => Some(create_mode(process_umask())),'''
+replace = '''        Ok(TargetMode::Absent) => Some(0o600),'''
+package = "spectra-core"
+test = "write_atomically_creates_a_missing_target_at_0666_filtered_by_the_umask"
+
+[[case]]
+id = "62b-hardcoded-umask-022"
+issue = "#93 / PR #100"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        mode_bits(old)'''
+replace = '''        mode_bits(old) & 0 | 0o022'''
+package = "spectra-core"
+test = "read_umask_reports_the_mask_actually_in_effect_and_restores_it"
+
+[[case]]
+id = "62c-new-file-mode-0600-cross-umask"
+issue = "#93 / PR #100"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        Ok(TargetMode::Absent) => Some(create_mode(process_umask())),'''
+replace = '''        Ok(TargetMode::Absent) => Some(0o600),'''
+package = "spectra-core"
+target = ["--test", "umask_create_integration"]
+test = "init_creates_files_at_0666_filtered_by_each_contract_umask"
+
+[[case]]
+id = "63a-symlinked-target-widened"
+issue = "PR #100 review"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        Ok(TargetMode::NonRegular) => Some(0o600),'''
+replace = '''        Ok(TargetMode::NonRegular) => Some(create_mode(process_umask())),'''
+package = "spectra-core"
+test = "write_atomically_keeps_0600_when_replacing_a_symlinked_target"
+
+[[case]]
+id = "63b-existing-mode-not-preserved"
+issue = "PR #86 R2 / PR #100 review"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '''        Ok(TargetMode::Regular(bits)) => Some(bits),'''
+replace = '''        Ok(TargetMode::Regular(_)) => Some(create_mode(process_umask())),'''
+package = "spectra-core"
+test = "write_atomically_preserves_an_existing_files_permission_bits"
+
+[[case]]
+id = "64a-init-no-changes-archive"
+issue = "#94 / PR #101"
+file = "crates/spectra-core/src/init.rs"
+find = '''    std::fs::create_dir_all(root.join(&spec_dir).join("changes/archive"))'''
+replace = '''    std::fs::create_dir_all(root.join(&spec_dir).join("changes"))'''
+package = "spectra-core"
+test = "init_creates_an_empty_changes_archive_directory"
+
+[[case]]
+id = "64b-init-no-config-yaml"
+issue = "#94 / PR #101"
+file = "crates/spectra-core/src/init.rs"
+find = '''        write_atomically(&spec_config_path, SPEC_CONFIG_TEMPLATE)'''
+replace = '''        Ok::<(), std::io::Error>(())'''
+package = "spectra-core"
+test = "init_creates_the_oracle_spec_config_template"
+
+[[case]]
+id = "64c-init-spectra-yaml-one-line"
+issue = "#94 / PR #101"
+file = "crates/spectra-core/src/init.rs"
+find = '''    write_atomically(&root.join(".spectra.yaml"), &spectra_config(&spec_dir))'''
+replace = '''    write_atomically(&root.join(".spectra.yaml"), &format!("spec_dir: {spec_dir}\n"))'''
+package = "spectra-core"
+test = "init_creates_the_oracle_spectra_config_template"
+
+[[case]]
+id = "64d-init-gitignore-no-header"
+issue = "#94 / PR #101"
+file = "crates/spectra-core/src/init.rs"
+find = '''    updated.push_str(GITIGNORE_COMMENT);
+    updated.push_str(newline);
+'''
+replace = ''''''
+package = "spectra-core"
+test = "init_appends_the_oracle_block_to_a_non_empty_gitignore"
+
+[[case]]
+id = "64e-init-stdout-old-wording"
+issue = "#94 / PR #101"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            "✓ Initialized at {}",'''
+replace = '''            "Initialized spectra project in {}.",'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "init_text_output_matches_the_oracle"
+
+[[case]]
+id = "65a-managed-block-eats-start-line-prefix"
+issue = "PR #86 review"
+file = "crates/spectra-core/src/update.rs"
+find = '''                    format!("{}{}{}", &content[..start], block, &content[end..])'''
+replace = '''                    format!("{}{}{}", &content[..content[..start].rfind('\n').map_or(0, |i| i + 1)], block, &content[end..])'''
+package = "spectra-core"
+test = "managed_text_before_the_start_marker_on_the_same_line_survives"
+
+[[case]]
+id = "65b-managed-block-eats-end-line-suffix"
+issue = "PR #86 review"
+file = "crates/spectra-core/src/update.rs"
+find = '''                    let mut end = start + rel + MARKER_END.len();'''
+replace = '''                    let mut end = content[start + rel..].find('\n').map_or(content.len(), |i| start + rel + i);'''
+package = "spectra-core"
+test = "managed_trailing_text_after_the_end_marker_survives"
+
+[[case]]
+id = "66-update-aborts-on-non-utf8"
+issue = "PR #86 review"
+file = "crates/spectra-core/src/update.rs"
+find = '''        Ok(bytes) => Ok(String::from_utf8(bytes).ok()),'''
+replace = '''        Ok(bytes) => Ok(Some(String::from_utf8(bytes)?)),'''
+package = "spectra-cli"
+target = ["--test", "update_integration"]
+test = "a_non_utf8_existing_file_does_not_abort_the_run"
+
+[[case]]
+id = "67-read-existing-adds-path-context"
+issue = "PR #86 R2"
+file = "crates/spectra-core/src/update.rs"
+find = '''        // ClaudeSettings 的三種失敗形狀因此多出一段絕對路徑。
+        Err(e) => Err(e.into()),'''
+replace = '''        // ClaudeSettings 的三種失敗形狀因此多出一段絕對路徑。
+        Err(e) => Err(anyhow::Error::from(e).context(format!("reading {}", path.display()))),'''
+package = "spectra-cli"
+target = ["--test", "update_integration"]
+test = "a_directory_at_a_managed_target_reports_the_oracle_errno"
+
+[[case]]
+id = "68-global-config-non-utf8-is-io-error"
+issue = "PR #84"
+file = "crates/spectra-core/src/global_config.rs"
+find = '''    let Ok(text) = String::from_utf8(bytes) else {
+        return Ok(Mapping::new());
+    };'''
+replace = '''    let text = String::from_utf8(bytes)?;'''
+package = "spectra-cli"
+target = ["--test", "config_integration"]
+test = "non_utf8_config_reads_as_empty_and_is_overwritten_by_set"
+
+[[case]]
+id = "69a-unknown-tool-silently-ignored"
+issue = "#167 / PR #171"
+file = "crates/spectra-core/src/update.rs"
+find = '''            None => anyhow::bail!(
+                "Unsupported coding agent: {}. Supported agents: {}",
+                id,
+                update_manifest::TOOLS
+                    .iter()
+                    .map(|t| t.id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),'''
+replace = '''            None => continue,'''
+package = "spectra-core"
+test = "requested_tools_reject_unknown_ids"
+
+[[case]]
+id = "46b-parked-store-location-literal-path"
+issue = "#118 / PR #125"
+file = "crates/spectra-core/src/change.rs"
+find = '''    crate::git::common_dir(&cfg.root).map(|d| d.join("spectra-app").join("changes"))'''
+replace = '''    crate::git::common_dir(&cfg.root).map(|d| d.join("spectra").join("parked"))'''
+package = "spectra-core"
+# 目前唯一把 .git/spectra-app/changes 寫成字面路徑的測試（#118 worktree 那支）。
+test = "parking_from_a_linked_worktree_lands_in_the_shared_store"

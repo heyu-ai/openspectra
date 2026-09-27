@@ -697,6 +697,13 @@ fn archive_treats_identical_added_and_modified_requirements_as_already_synced() 
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     assert_eq!(std::fs::read_to_string(main).unwrap(), original);
+    // 已同步的 operation 不算 applied。只看檔案內容守不住 MODIFIED 這一半：
+    // 把相同內容再替換一次，結果逐位元組相同，只有計數會變。
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .contains("Specs applied: auth (added: 0, modified: 0, removed: 0, renamed: 0)"),
+        "{out:?}"
+    );
 }
 
 #[test]
@@ -1788,4 +1795,37 @@ fn no_color_flag_strips_ansi_codes_on_a_terminal() {
         !plain.contains("\x1b["),
         "--no-color leaked ANSI codes: {plain:?}"
     );
+}
+
+/// Issue #159（oracle 的 bug，不要移植過來）：git worktree 會帶著 active
+/// change 的副本，oracle 的 archive 看到 `.claude/worktrees/` 下的同名副本
+/// 就拒絕執行。OpenSpectra 只處理自己專案根下的 change，副本不構成衝突，
+/// 也不能被動到。
+#[test]
+fn archive_ignores_same_named_change_copies_inside_worktrees() {
+    let tmp = TempDir::new("archive-worktree-copy");
+    init_project_with_change(&tmp, "feat");
+    let copy = tmp.join(".claude/worktrees/wt/openspec/changes/feat");
+    std::fs::create_dir_all(&copy).unwrap();
+    let mut copied = Vec::new();
+    for entry in std::fs::read_dir(tmp.join("openspec/changes/feat")).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), copy.join(entry.file_name())).unwrap();
+            copied.push(entry.file_name());
+        }
+    }
+    assert!(!copied.is_empty(), "fixture must seed a non-empty copy");
+
+    let out = spectra()
+        .args(["archive", "feat", "--yes", "--skip-specs"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{out:?}");
+    assert!(!tmp.join("openspec/changes/feat").exists());
+    for name in copied {
+        assert!(copy.join(&name).is_file(), "worktree copy lost {name:?}");
+    }
 }

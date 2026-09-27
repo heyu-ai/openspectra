@@ -516,6 +516,22 @@ pub enum SortKey {
     Created,
 }
 
+/// 選出排序用的時間戳。部分 Unix 檔案系統不提供 birth time；`Created` 仍先
+/// 讀取 created，無法取得時以 modified 維持穩定且有用的排序（#155-1）。
+/// 拆成接收 `io::Result` 的純函式，是因為 APFS 與 ext4 都有 birth time，
+/// 整合測試永遠走不到 fallback 分支。
+fn sort_timestamp(
+    sort_key: SortKey,
+    created: std::io::Result<std::time::SystemTime>,
+    modified: std::io::Result<std::time::SystemTime>,
+) -> Option<std::time::SystemTime> {
+    if sort_key == SortKey::Modified {
+        modified.ok()
+    } else {
+        created.or(modified).ok()
+    }
+}
+
 fn sort_names_by_metadata(names: &mut [String], root: &Path, sort_key: SortKey) {
     if sort_key == SortKey::Name {
         names.sort();
@@ -527,13 +543,7 @@ fn sort_names_by_metadata(names: &mut [String], root: &Path, sort_key: SortKey) 
             std::fs::metadata(root.join(name))
                 .ok()
                 .and_then(|metadata| {
-                    if sort_key == SortKey::Modified {
-                        metadata.modified().ok()
-                    } else {
-                        // 部分 Unix 檔案系統不提供 birth time；仍先讀取
-                        // created，無法取得時以 modified 維持穩定且有用的排序。
-                        metadata.created().or_else(|_| metadata.modified()).ok()
-                    }
+                    sort_timestamp(sort_key, metadata.created(), metadata.modified())
                 })
         };
 
@@ -931,6 +941,31 @@ mod tests {
         );
         assert_eq!(list_parked(&main_cfg), vec!["from-wt".to_string()]);
         assert_eq!(list_parked(&wt_cfg), vec!["from-wt".to_string()]);
+    }
+
+    #[test]
+    fn created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable() {
+        use std::time::{Duration, SystemTime};
+        let born = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let touched = SystemTime::UNIX_EPOCH + Duration::from_secs(200);
+        let unsupported = || Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+
+        assert_eq!(
+            sort_timestamp(SortKey::Created, Ok(born), Ok(touched)),
+            Some(born)
+        );
+        assert_eq!(
+            sort_timestamp(SortKey::Created, unsupported(), Ok(touched)),
+            Some(touched)
+        );
+        assert_eq!(
+            sort_timestamp(SortKey::Modified, Ok(born), Ok(touched)),
+            Some(touched)
+        );
+        assert_eq!(
+            sort_timestamp(SortKey::Created, unsupported(), unsupported()),
+            None
+        );
     }
 
     #[test]
