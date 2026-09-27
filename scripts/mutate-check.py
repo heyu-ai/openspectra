@@ -28,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CASES = ROOT / "scripts" / "mutations.toml"
+TIMEOUT_SECS = 900
 
 
 def run_case(case: dict) -> str:
@@ -43,7 +44,14 @@ def run_case(case: dict) -> str:
         cmd = ["cargo", "test", "-q", "-p", case["package"]]
         cmd += case.get("target", ["--lib"])
         cmd += [case["test"]]
-        result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+        try:
+            result = subprocess.run(
+                cmd, cwd=ROOT, capture_output=True, text=True, timeout=TIMEOUT_SECS
+            )
+        except subprocess.TimeoutExpired:
+            # 與 cargo-mutants 相同：timeout 不算 KILLED，視為未驗證
+            print(f"[FAIL] {case['id']}: TIMEOUT（超過 {TIMEOUT_SECS}s）")
+            return "TIMEOUT"
         out = result.stdout + result.stderr
         if "error[E" in out or "could not compile" in out:
             print(f"[FAIL] {case['id']}: mutant 無法編譯（case 本身寫錯）")

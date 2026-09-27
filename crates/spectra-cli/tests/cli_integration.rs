@@ -460,39 +460,8 @@ fn archive_prompts_and_aborts_on_a_terminal() {
     let tmp = TempDir::new("archive-prompt");
     init_project_with_change(&tmp, "prompt-change");
 
-    let mut command = Command::new("script");
-    #[cfg(target_os = "macos")]
-    command.args([
-        "-q",
-        "/dev/null",
-        env!("CARGO_BIN_EXE_spectra"),
-        "archive",
-        "prompt-change",
-        "--skip-specs",
-    ]);
-    #[cfg(not(target_os = "macos"))]
-    let script_command = format!(
-        "{} archive prompt-change --skip-specs",
-        env!("CARGO_BIN_EXE_spectra")
-    );
-    #[cfg(not(target_os = "macos"))]
-    command.args(["-q", "-c", &script_command, "/dev/null"]);
-
-    let mut child = command
-        .current_dir(&*tmp)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    std::io::Write::write_all(child.stdin.as_mut().unwrap(), b"n\n").unwrap();
-    drop(child.stdin.take());
-    let out = child.wait_with_output().unwrap();
-    let output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let (out, output) =
+        run_on_terminal(&tmp, &["archive", "prompt-change", "--skip-specs"], b"n\n");
 
     assert!(out.status.success(), "終端機提示測試失敗：{out:?}");
     assert!(output.contains("Archive 'prompt-change'? (y/N) "));
@@ -1730,4 +1699,93 @@ fn show_diff_and_validation_propagate_unreadable_canonical_spec_errors() {
         assert!(stderr.contains("reading"), "{stderr}");
         assert!(stderr.contains("openspec/specs/auth/spec.md"), "{stderr}");
     }
+}
+
+/// 在 `script` 建立的 PTY 裡執行 spectra，讓 stdout/stdin 都是終端機。
+/// 回傳 (process output, stdout+stderr 合併的文字)。
+fn run_on_terminal(tmp: &TempDir, args: &[&str], stdin: &[u8]) -> (std::process::Output, String) {
+    let mut command = Command::new("script");
+    #[cfg(target_os = "macos")]
+    {
+        command.args(["-q", "/dev/null", env!("CARGO_BIN_EXE_spectra")]);
+        command.args(args);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let script_command = format!("{} {}", env!("CARGO_BIN_EXE_spectra"), args.join(" "));
+    #[cfg(not(target_os = "macos"))]
+    command.args(["-q", "-c", &script_command, "/dev/null"]);
+
+    let mut child = command
+        .current_dir(&**tmp)
+        .env_remove("NO_COLOR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // stdin 要撐到子程序結束才關：`script` 在 stdin EOF 時會對 PTY 送 ^D，
+    // 若先關掉，程式可能先讀到 EOF 而不是我們送的回答（macOS 實測）。
+    let mut stdin_handle = child.stdin.take().unwrap();
+    std::io::Write::write_all(&mut stdin_handle, stdin).unwrap();
+    let out = child.wait_with_output().unwrap();
+    drop(stdin_handle);
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out, output)
+}
+
+/// Issue #155-2：終端機確認提示的「接受」路徑。`y` 與 `Y` 都要接受，
+/// 所以兩個都測，拿掉任一個字母的 match arm 都會失敗。
+#[test]
+fn archive_accepts_y_and_capital_y_on_a_terminal() {
+    for answer in ["y\n", "Y\n"] {
+        let tmp = TempDir::new("archive-prompt-accept");
+        init_project_with_change(&tmp, "prompt-change");
+
+        let (out, output) = run_on_terminal(
+            &tmp,
+            &["archive", "prompt-change", "--skip-specs"],
+            answer.as_bytes(),
+        );
+
+        assert!(out.status.success(), "answer {answer:?}: {output}");
+        assert!(output.contains("Archive 'prompt-change'? (y/N) "));
+        assert!(!output.contains("Aborted."), "answer {answer:?}: {output}");
+        assert!(!tmp.join("openspec/changes/prompt-change").exists());
+        let archived: Vec<_> = std::fs::read_dir(tmp.join("openspec/changes/archive"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            archived.iter().any(|n| n.ends_with("-prompt-change")),
+            "answer {answer:?}: archive dir holds {archived:?}"
+        );
+    }
+}
+
+/// Issue #6：全域 `--no-color` 必須真的接到輸出。非 TTY 下本來就不上色，
+/// 所以要在 PTY 下測；先斷言沒有旗標時確實有 ANSI 碼（正向對照），
+/// 否則「沒有 ANSI 碼」這個斷言沒有資訊量。
+#[test]
+fn no_color_flag_strips_ansi_codes_on_a_terminal() {
+    let tmp = TempDir::new("no-color-tty");
+    init_project_with_change(&tmp, "some-change");
+
+    let (out, colored) = run_on_terminal(&tmp, &["schemas"], b"");
+    assert!(out.status.success(), "{colored}");
+    assert!(
+        colored.contains("\x1b["),
+        "positive control: a terminal run must be colored, got {colored:?}"
+    );
+
+    let (out, plain) = run_on_terminal(&tmp, &["--no-color", "schemas"], b"");
+    assert!(out.status.success(), "{plain}");
+    assert!(plain.contains("Available schemas:"), "{plain}");
+    assert!(
+        !plain.contains("\x1b["),
+        "--no-color leaked ANSI codes: {plain:?}"
+    );
 }

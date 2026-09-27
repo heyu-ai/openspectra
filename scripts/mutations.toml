@@ -32,3 +32,23 @@ find = "if scenarios.is_empty() && !trimmed.is_empty() {"
 replace = "if !trimmed.is_empty() {"
 package = "spectra-core"
 test = "a_shall_that_appears_only_inside_a_scenario_is_not_normative"
+
+[[case]]
+id = "155-tty-capital-y-rejected"
+issue = "#155-2"
+file = "crates/spectra-cli/src/main.rs"
+find = "        if !matches!(response.chars().next(), Some('y' | 'Y')) {"
+replace = "        if !matches!(response.chars().next(), Some('y')) {"
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_accepts_y_and_capital_y_on_a_terminal"
+
+[[case]]
+id = "155-tty-n-accepted"
+issue = "#155-2"
+file = "crates/spectra-cli/src/main.rs"
+find = "        if !matches!(response.chars().next(), Some('y' | 'Y')) {"
+replace = "        if !matches!(response.chars().next(), Some('y' | 'Y' | 'n')) {"
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_prompts_and_aborts_on_a_terminal"
