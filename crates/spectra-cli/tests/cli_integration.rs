@@ -1038,6 +1038,149 @@ fn validate_archived_fails_on_incomplete_tasks() {
 }
 
 #[test]
+fn validate_archived_counts_star_plus_and_non_x_markers_as_incomplete() {
+    // `[~]` survives `--mark-tasks-complete` (only `[ ]` flips), so it still
+    // counts as incomplete here; `*`/`+` bullets are tasks like `-` (#172).
+    let tmp = TempDir::new("validate-archived-markers");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/tasks.md"),
+        "## 1. Work\n- [x] 1.1 done\n* [ ] 1.2 star\n+ [x] 1.3 plus done\n- [~] 1.4 tilde\n",
+    )
+    .unwrap();
+    let archived = spectra()
+        .args(["archive", "feat", "--yes", "--skip-specs"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(archived.status.success(), "{archived:?}");
+
+    let validated = spectra()
+        .args(["validate", "--archived", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(validated.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&validated.stdout).unwrap();
+    assert_eq!(
+        report["items"][0]["issues"][0]["message"],
+        "2 incomplete archived task(s)"
+    );
+}
+
+fn write_ready_change(tmp: &Path, name: &str, tasks: &str) -> PathBuf {
+    let dir = tmp.join("openspec/changes").join(name);
+    std::fs::write(
+        dir.join("proposal.md"),
+        "## Why\n\nProbe.\n\n## What Changes\n\n- probe\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("specs/widget")).unwrap();
+    std::fs::write(
+        dir.join("specs/widget/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Widget\n\nThe system SHALL render a widget.\n\n#### Scenario: Render\n\n- **WHEN** asked\n- **THEN** it renders\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("tasks.md"), tasks).unwrap();
+    dir
+}
+
+#[test]
+fn apply_task_ids_and_task_done_target_the_same_line_for_every_bullet_style() {
+    // An id read from `instructions apply` must flip that same line through
+    // `task done`, and `list` must count the same tasks (#172).
+    let tmp = TempDir::new("apply-task-done-bullets");
+    init_project_with_change(&tmp, "feat");
+    let tasks_md = "## 1. Work\n- [x] 1.1 a\n* [ ] 1.2 b\n+ [ ] 1.3 c\n- [~] 1.4 d\n";
+    let dir = write_ready_change(&tmp, "feat", tasks_md);
+
+    let apply = spectra()
+        .args(["instructions", "apply", "--change", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(apply.status.success(), "{apply:?}");
+    let apply: serde_json::Value = serde_json::from_slice(&apply.stdout).unwrap();
+    let id = apply["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["description"] == "1.3 c")
+        .expect("apply lists the `+` task")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let list = spectra()
+        .args(["list", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    let list: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
+    assert_eq!(list["changes"][0]["totalTasks"], 4);
+    assert_eq!(list["changes"][0]["completedTasks"], 1);
+
+    let done = spectra()
+        .args(["task", "done", &id, "--change", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("tasks.md")).unwrap(),
+        "## 1. Work\n- [x] 1.1 a\n* [ ] 1.2 b\n+ [x] 1.3 c\n- [~] 1.4 d\n"
+    );
+
+    // Oracle v3.0.0: a `[~]` task reports done but tasks.md is unchanged.
+    let before = std::fs::read(dir.join("tasks.md")).unwrap();
+    let tilde = spectra()
+        .args(["task", "done", "4", "--change", "feat", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(tilde.status.success(), "{tilde:?}");
+    let tilde: serde_json::Value = serde_json::from_slice(&tilde.stdout).unwrap();
+    assert_eq!(tilde["status"], "done");
+    assert_eq!(tilde["task_desc"], "1.4 d");
+    assert_eq!(std::fs::read(dir.join("tasks.md")).unwrap(), before);
+}
+
+#[test]
+fn archive_mark_tasks_complete_flips_every_bullet_style_but_not_other_markers() {
+    // Matches oracle v3.0.0 `archive --mark-tasks-complete` on the same input.
+    let tmp = TempDir::new("archive-mark-bullets");
+    init_project_with_change(&tmp, "feat");
+    std::fs::write(
+        tmp.join("openspec/changes/feat/tasks.md"),
+        "## 1. Work\n- [ ] a\n* [ ] b\n+ [ ] c\n- [~] d\n  + [ ] e\n- [ ] \n",
+    )
+    .unwrap();
+    let archived = spectra()
+        .args([
+            "archive",
+            "feat",
+            "--yes",
+            "--skip-specs",
+            "--mark-tasks-complete",
+        ])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(archived.status.success(), "{archived:?}");
+
+    let archive_root = tmp.join("openspec/changes/archive");
+    let entries: Vec<_> = std::fs::read_dir(&archive_root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(
+        std::fs::read_to_string(entries[0].join("tasks.md")).unwrap(),
+        "## 1. Work\n- [x] a\n* [x] b\n+ [x] c\n- [~] d\n  + [x] e\n- [x] \n"
+    );
+}
+
+#[test]
 fn validate_errors_change_not_found_for_a_nonexistent_explicit_name() {
     // Regression (mob review): an explicit typo'd / archived name must report
 

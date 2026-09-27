@@ -12,13 +12,20 @@ changes.
 
 ### Fixed
 
-- `list`, `task done`, `drift`, and `archive --mark-tasks-complete` now
-  recognize `*` and `+` checkbox bullets and treat any non-`x` marker
-  (`[~]`, `[-]`) as pending, matching the v3.0.0 oracle and
-  `instructions apply`. Previously only `- [ ]`/`- [x]` counted, so a
-  `task done <id>` taken from the apply task list could flip a different
-  line. `task done` on a `[~]`/`[-]` task reports done without rewriting
-  `tasks.md`, as the oracle does.
+- `list`, `task done`, `drift`, `archive --mark-tasks-complete`, and the
+  archived-change task check in `validate` now recognize `*` and `+`
+  checkbox bullets and treat any marker other than `x`/`X` (`[~]`, `[-]`)
+  as pending, matching the v3.0.0 oracle and `instructions apply`.
+  Previously only `- [ ]`/`- [x]` counted, so a `task done <id>` taken from
+  the apply task list could flip a different line. `task done` on a
+  `[~]`/`[-]` task reports done without changing `tasks.md`, as the oracle
+  does. Because `--mark-tasks-complete` leaves `[~]`/`[-]` in place, an
+  archived change with such a task now fails `validate`'s archived-task
+  check (the oracle has no archived validation; this follows OpenSpec,
+  which also treats unknown markers as incomplete).
+- `archive --mark-tasks-complete` now also flips blank checkboxes with no
+  description (`- [ ]`, `- [ ] `), matching the v3.0.0 oracle. They still do
+  not count as tasks for numbering or progress.
 
 ## [0.12.0] - 2026-09-25
 

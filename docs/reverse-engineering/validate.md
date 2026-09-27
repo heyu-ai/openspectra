@@ -74,6 +74,14 @@ Rules include:
 9. Duplicate task IDs and task IDs under the wrong numbered group are warnings
    with line numbers.
 10. `--archived` fails when an archived change still has pending tasks.
+    "Pending" uses the shared task rule (`tasks::parse`, see `task.md`): any
+    `-`/`*`/`+` checkbox with a non-blank description whose marker is not
+    `x`/`X`, so `[~]`/`[-]` count as pending. `archive --mark-tasks-complete`
+    leaves those markers in place, so such a change fails here after archive.
+    The oracle rejects `--archived` (clap error, rc 2), so this is not
+    oracle-verified. OpenSpec 1.13.1 (#1761) likewise counts unrecognized
+    markers as incomplete, but also counts ordered-list checkboxes
+    (`1. [ ]`), which the shared rule does not.
 
 ## JSON contract
 

@@ -23,6 +23,13 @@ preflight but the frozen deltas are still prepared and applied before the
 final archive move; `--skip-specs` skips both steps. This is independent of
 the implemented top-level `spectra validate` command.
 
+`--mark-tasks-complete` rewrites every `[ ]` checkbox on a `-`/`*`/`+`
+bullet (indented or not) to `[x]` — including blank-description ones such as
+`- [ ]` and `- [ ] `, which do not count as tasks elsewhere — and leaves
+`[x]`/`[X]`, other markers (`[~]`, `[-]`), and every non-bullet line
+untouched. Probed on oracle v3.0.0 during the #177 review; before that
+OpenSpectra skipped blank-description checkboxes.
+
 **No `--json` flag exists on the reference `archive` command** — confirmed
 via `--help`, unlike every other mutating command (`park`, `unpark`,
 `new change`, `task done`), which all have `--json`. OpenSpectra matches
