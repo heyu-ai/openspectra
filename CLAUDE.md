@@ -34,6 +34,14 @@ this file is agent-facing operational context.
   registry, and pins the unknown-skill stderr/exit contract. The assets are the oracle captures and
   the TSV pins their provenance; both are generated artifacts. Any drift exits
   non-zero; `--write` regenerates both and re-verifies. Never hand-edit them.
+- `scripts/capture-trace-interop.py` — same constraints (macOS + reference
+  binary 3.0.0, plus a clean release build of OpenSpectra at
+  `target/release/spectra` or `--openspectra-bin`). It probes what the oracle
+  does to a sidecar-migrated spec (ADDED/MODIFIED with a clean and a dirty
+  tree, each RENAMED spelling, a RENAMED archive) and compares the observables
+  with `docs/reverse-engineering/golden/trace-interop-3.0.0.tsv`. Each probe
+  runs in its own jail; a mismatch exits non-zero and keeps the jails. `--write`
+  regenerates the TSV and re-verifies. Never hand-edit it.
 
 - `scripts/mutate-check.py` + `scripts/mutations.toml` — value-level mutation
   contract for previously fixed bugs. Each case reverts one fix to its original

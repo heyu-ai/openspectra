@@ -179,7 +179,12 @@ the v2.3.1 corpus contains fonts, screenshots, PID files and spreadsheets
 footer was written even though `task done` had recorded nothing (it printed
 `touched_tracking_skipped_no_baseline_or_explicit_files`), so v3.0.0's list does
 not come from `.spectra/touched/<name>.json`. The v3.0.0 formatting puts two
-blank lines before the first footer and none after the last.
+blank lines before the first footer and none after the last. When the working
+tree has no uncommitted file at archive time, v3.0.0 writes no footer at all:
+the ADDED and MODIFIED requirements are applied and nothing records them
+(`scripts/capture-trace-interop.py`, probes `mixed-archive-clean` and
+`mixed-archive-dirty`; one uncommitted file is enough for both footers to
+appear, each listing it).
 
 **OpenSpectra: `spec.trace.yaml` sidecar (deliberate divergence, #98).** The
 downstream ADR-0029 D3 (heyu-ai/yibi-mvp) ruled for moving trace data out of
@@ -271,10 +276,15 @@ traces:
   different one. That includes the `added`/`modified`/`imported` names of the
   removal entry itself, since `removed` comes first within an entry. `removed`
   and `renamed` are history and are never rewritten.
-  The oracle never writes the sidecar (the v3.0.0 interop probe left
-  `spec.trace.yaml` byte-identical; RENAMED was not part of that probe), so
-  a rename done by the oracle is expected to leave names in older entries
-  stale in a mixed setup. `spectra trace migrate` reports such
+  The oracle never writes the sidecar: `scripts/capture-trace-interop.py`
+  records `spec.trace.yaml` byte-identical after an oracle v3.0.0 archive of
+  ADDED + MODIFIED (clean and dirty tree) and of RENAMED, and the pointer line
+  kept. Its golden output is
+  `docs/reverse-engineering/golden/trace-interop-3.0.0.tsv`. A rename done by
+  the oracle therefore leaves names in older entries stale in a mixed setup
+  (the same script records the resulting `--check` warning). The oracle only
+  accepts a RENAMED spelling that OpenSpectra rejects, and the reverse (see
+  "Spec delta format" and #192). `spectra trace migrate` reports such
   stale names: names whose last recorded event is not a removal but that match
   no current requirement. Events are taken in entry order, and within an entry
   `removed` comes before `modified`/`added`/`imported`. It does not fix them
@@ -360,13 +370,24 @@ writes itself.
 
 OpenSpectra Phase 2 implements `MODIFIED`, `REMOVED`, and `RENAMED` against
 the **OpenSpec published convention** recorded in `docs/openspec-compat.md`,
-not against a golden oracle sample. No golden samples were captured for
-these delta kinds, so the closed-source reference could still diverge in edge
+not against a golden oracle sample. Apart from the RENAMED spelling probe
+below, no golden samples were captured for these delta kinds, so the
+closed-source reference could still diverge in edge
 cases such as conflict wording. The oracle's trace-footer treatment of
 MODIFIED has since been probed on v3.0.0 (see "Trace data"). That probe also
 applied a REMOVED delta, but what happened to the removed block's footer was
-not recorded; RENAMED has not been probed. For Phase 2, the OpenSpec
-convention is the compatibility target.
+not recorded. RENAMED was probed on v3.0.0 (2026-09-27,
+`scripts/capture-trace-interop.py`, probes `renamed-validate-*` and
+`renamed-archive`): the oracle rejects the OpenSpec bullet spelling below
+(`Delta spec must contain at least one operation`, with or without a blank
+line after the heading) and accepts only `FROM: ### Requirement: <name>` /
+`TO: ### Requirement: <name>` lines without a bullet or backticks. With that
+spelling it applies the rename (`renamed: 1`, heading rewritten). OpenSpectra
+rejects the oracle's spelling (`section contains no recognizable entries`).
+Both sides fail loud, so a RENAMED delta written for one tool is refused by
+the other rather than skipped. Whether OpenSpectra should also accept the
+oracle's spelling is open (#192). For Phase 2, the OpenSpec convention is the
+compatibility target.
 
 Application order is:
 

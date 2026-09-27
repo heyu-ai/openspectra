@@ -1,0 +1,33 @@
+probe	observable	value
+oracle	version	3.0.0
+mixed-archive-clean	oracle_archive_rc	0
+mixed-archive-clean	oracle_specs_applied	Specs applied: my-cap (added: 1, modified: 1, removed: 0, renamed: 0)
+mixed-archive-clean	sidecar_unchanged	true
+mixed-archive-clean	pointer_kept	true
+mixed-archive-clean	inline_footers_after	0
+mixed-archive-clean	footer_lists_dirty_file	false
+mixed-archive-clean	headings_after	Alpha,Beta,Gamma
+mixed-archive-dirty	oracle_archive_rc	0
+mixed-archive-dirty	oracle_specs_applied	Specs applied: my-cap (added: 1, modified: 1, removed: 0, renamed: 0)
+mixed-archive-dirty	sidecar_unchanged	true
+mixed-archive-dirty	pointer_kept	true
+mixed-archive-dirty	inline_footers_after	2
+mixed-archive-dirty	footer_lists_dirty_file	true
+mixed-archive-dirty	headings_after	Alpha,Beta,Gamma
+mixed-archive-dirty	openspectra_check_rc	1
+renamed-validate-bullet-backtick-heading	oracle_validate_rc	1
+renamed-validate-bullet-backtick-heading	openspectra_validate_rc	0
+renamed-validate-bullet-backtick-heading-blank-line	oracle_validate_rc	1
+renamed-validate-bullet-backtick-heading-blank-line	openspectra_validate_rc	0
+renamed-validate-bullet-plain-name	oracle_validate_rc	1
+renamed-validate-bullet-plain-name	openspectra_validate_rc	1
+renamed-validate-bullet-backtick-name	oracle_validate_rc	1
+renamed-validate-bullet-backtick-name	openspectra_validate_rc	1
+renamed-validate-plain-heading	oracle_validate_rc	0
+renamed-validate-plain-heading	openspectra_validate_rc	1
+renamed-archive	oracle_archive_rc	0
+renamed-archive	oracle_specs_applied	Specs applied: my-cap (added: 0, modified: 0, removed: 0, renamed: 1)
+renamed-archive	headings_after	Omega,Beta
+renamed-archive	sidecar_unchanged	true
+renamed-archive	openspectra_check_rc	1
+renamed-archive	openspectra_check_stale	warning: my-cap: spec.trace.yaml names requirement(s) not in spec.md: Alpha (renamed outside openspectra? fix the sidecar by hand)
