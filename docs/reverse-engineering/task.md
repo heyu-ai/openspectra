@@ -264,8 +264,8 @@ filter when `new change` wrote one) — the `session-wide-touched` class.
   carrying `./src/c.rs` fails earlier on its spec-directory path.
 * Each tracking entry gains a fourth field, `provenance`.
 
-Porting this surface is tracked separately; replacing or keeping
-OpenSpectra's #98 per-change baseline is an open architecture decision.
+Porting this surface is tracked in #190; replacing or keeping OpenSpectra's
+#98 per-change baseline is an open architecture decision recorded there.
 
 ## Resolved discrepancy: `new change`'s scaffold
 
