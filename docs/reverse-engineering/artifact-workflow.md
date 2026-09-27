@@ -192,7 +192,8 @@ schemaName, contextFiles, progress{total,complete,remaining},
 tasks[{id,description,done,parallel}], state, missingArtifacts?, locale,
 instruction, preflight?}`.
 
-- Apply uses its own loose checkbox parser `^\s*[-*+]\s*\[(.)\]\s*(.+)$`:
+- Apply uses the loose checkbox parser `^\s*[-*+]\s*\[(.)\]\s*(.+)$`
+  (shared with `task done`/`list`/`drift` since #172, see `task.md`):
   any single-char state counts as a task, only `x`/`X` is done, and an
   uppercase `[P]` immediately after the checkbox is stripped into
   `parallel: true`.

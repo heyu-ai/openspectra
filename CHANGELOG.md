@@ -35,6 +35,16 @@ changes.
   diverges from the oracle (v3.0.0 still writes inline footers), per the
   downstream ADR-0029 D3 (#98).
 
+### Fixed
+
+- `list`, `task done`, `drift`, and `archive --mark-tasks-complete` now
+  recognize `*` and `+` checkbox bullets and treat any non-`x` marker
+  (`[~]`, `[-]`) as pending, matching the v3.0.0 oracle and
+  `instructions apply`. Previously only `- [ ]`/`- [x]` counted, so a
+  `task done <id>` taken from the apply task list could flip a different
+  line. `task done` on a `[~]`/`[-]` task reports done without rewriting
+  `tasks.md`, as the oracle does.
+
 ## [0.12.0] - 2026-09-25
 
 ### Added

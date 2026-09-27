@@ -1,6 +1,7 @@
 //! `tasks.md` parsing and task/commit collision detection.
 //!
-//! Tasks are GitHub-style checkboxes (`- [ ]` pending, `- [x]` done). Inline
+//! Tasks are checkboxes on a `-`, `*`, or `+` bullet; only `[x]`/`[X]` is
+//! done, any other single-character marker (`[ ]`, `[~]`, …) is pending. Inline
 //! backtick spans hold the file paths a task touches. Drift flags pending tasks
 //! that collide with work that happened outside the change:
 //!   * `tasks_blocked_external`: a referenced file was modified by a commit
@@ -21,18 +22,25 @@ use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
 
-static CHECKBOX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*-\s*\[( |x|X)\]\s*(.+)$").unwrap());
+/// The oracle's (v3.0.0) task-line rule. Shared with
+/// `instructions.rs::parse_apply_tasks` so the apply-mode task list and
+/// `task done <id>` number the same lines.
+pub(crate) static CHECKBOX_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^\s*[-*+]\s*\[(.)\]\s*(.+)$").unwrap());
 static BACKTICK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"`([^`]+)`").unwrap());
+
+fn is_done_marker(marker: &str) -> bool {
+    matches!(marker, "x" | "X")
+}
 
 /// Whether a line is a real task: a checkbox whose description is non-empty
 /// after trimming. `- [ ]` and `- [ ] ` (only trailing whitespace) are NOT
 /// tasks — the oracle drops them from numbering, progress, and `task done`
 /// targeting alike (`CHECKBOX_RE`'s `\s*(.+)` otherwise backtracks and
-/// captures a lone trailing space). Every call site that counts, targets, or
-/// flips a checkbox routes through here so their notion of "a task" can't
-/// drift — a `task done <id>` that renumbered differently from the apply-mode
-/// task list (`instructions.rs::parse_apply_tasks`) would silently mark the
-/// wrong line.
+/// captures a lone trailing space). `parse`, `mark_done`, and
+/// `mark_all_done` all route through here, and `parse_apply_tasks` applies
+/// the same regex and empty-description rule, so a `task done <id>` taken
+/// from the apply-mode list targets the same line.
 fn is_task_line(line: &str) -> bool {
     CHECKBOX_RE
         .captures(line)
@@ -61,23 +69,23 @@ pub struct TaskCollision {
 /// Parse all checkbox tasks from `tasks.md` text.
 pub fn parse(md: &str) -> Vec<Task> {
     md.lines()
-        .filter_map(|line| {
-            let c = CHECKBOX_RE.captures(line)?;
-            let done = &c[1] != " ";
+        .filter(|line| is_task_line(line))
+        .map(|line| {
+            let c = CHECKBOX_RE
+                .captures(line)
+                .expect("is_task_line matched CHECKBOX_RE");
+            let done = is_done_marker(&c[1]);
             let description = c[2].trim().to_string();
-            if description.is_empty() {
-                return None;
-            }
             let files = BACKTICK_RE
                 .captures_iter(&description)
                 .map(|m| m[1].to_string())
                 .filter(|s| PATHLIKE_RE.is_match(s))
                 .collect();
-            Some(Task {
+            Task {
                 done,
                 description,
                 files,
-            })
+            }
         })
         .collect()
 }
@@ -90,7 +98,11 @@ pub fn parse(md: &str) -> Vec<Task> {
 /// exactly (reverse-engineered against `/Applications/Spectra.app` v2.3.1):
 /// - `task_id == 0` → "Task ID must be >= 1"
 /// - `task_id` exceeds the total checkbox count → "Task {id} not found (total: {n})"
-/// - the task is already `[x]` → "Task {id} is already done"
+/// - the task is already `[x]`/`[X]` → "Task {id} is already done"
+///
+/// Any other non-blank marker (`[~]`, `[-]`) returns `Ok` with `md`
+/// unchanged: oracle v3.0.0 reports such a task as done yet leaves tasks.md
+/// byte-identical (probed in #172).
 pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     if task_id == 0 {
         return Err(anyhow!("Task ID must be >= 1"));
@@ -115,8 +127,11 @@ pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
         .get(1)
         .expect("group 1 always captures on a CHECKBOX_RE match");
     let description = caps[2].trim().to_string();
-    if state.as_str() != " " {
+    if is_done_marker(state.as_str()) {
         return Err(anyhow!("Task {task_id} is already done"));
+    }
+    if state.as_str() != " " {
+        return Ok((md.to_string(), description));
     }
 
     let mut new_line = line.to_string();
@@ -130,14 +145,15 @@ pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     Ok((new_md, description))
 }
 
-/// Flip every pending (`[ ]`) checkbox in `md` to done (`[x]`), leaving
-/// already-done checkboxes and every other line untouched. Used by
+/// Flip every blank (`[ ]`) checkbox in `md` to done (`[x]`), leaving
+/// already-done checkboxes, other markers (`[~]`, `[-]`, matching oracle
+/// v3.0.0), and every other line untouched. Used by
 /// `spectra archive --mark-tasks-complete`.
 pub fn mark_all_done(md: &str) -> String {
     let mut new_md: String = md
         .lines()
         .map(|line| match CHECKBOX_RE.captures(line) {
-            Some(caps) if &caps[1] == " " && !caps[2].trim().is_empty() => {
+            Some(caps) if is_task_line(line) && &caps[1] == " " => {
                 let state = caps
                     .get(1)
                     .expect("group 1 always captures on a CHECKBOX_RE match");
@@ -221,6 +237,72 @@ mod tests {
         let (new_md, desc) = mark_done(md, 2).unwrap();
         assert_eq!(desc, "second real task");
         assert_eq!(new_md, "- [x] first task\n- [ ] \n- [x] second real task\n");
+    }
+
+    #[test]
+    fn parse_counts_star_and_plus_bullets_and_only_x_marks_done() {
+        // Probed against Spectra.app v3.0.0 (issue #172): `*`/`+` bullets are
+        // tasks, and any marker other than x/X (`[~]`, `[-]`) counts as pending.
+        let md = "- [x] a\n* [ ] b\n+ [ ] c\n* [x] d\n+ [X] e\n- [~] f\n- [-] g\n  + [ ] h\n";
+        let tasks = parse(md);
+        let states: Vec<(&str, bool)> = tasks
+            .iter()
+            .map(|t| (t.description.as_str(), t.done))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("a", true),
+                ("b", false),
+                ("c", false),
+                ("d", true),
+                ("e", true),
+                ("f", false),
+                ("g", false),
+                ("h", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_drops_ordered_list_padded_and_empty_markers_like_the_oracle() {
+        // Oracle v3.0.0 drops these too; counting them would diverge (#172).
+        let md = "1. [ ] a\n1) [ ] b\n- [ x] c\n- [] d\n";
+        assert!(parse(md).is_empty());
+    }
+
+    #[test]
+    fn mark_done_targets_star_and_plus_bullets_by_the_same_numbering_as_parse() {
+        let md = "- [x] 1.1 a\n* [ ] 1.2 b\n+ [ ] 1.3 c\n";
+        let (new_md, desc) = mark_done(md, 3).unwrap();
+        assert_eq!(desc, "1.3 c");
+        assert_eq!(new_md, "- [x] 1.1 a\n* [ ] 1.2 b\n+ [x] 1.3 c\n");
+    }
+
+    #[test]
+    fn mark_done_rejects_an_already_done_plus_bullet() {
+        let err = mark_done("+ [x] a\n", 1).unwrap_err();
+        assert_eq!(err.to_string(), "Task 1 is already done");
+    }
+
+    #[test]
+    fn mark_done_on_a_non_checkbox_marker_reports_done_without_rewriting() {
+        // Oracle v3.0.0: `task done` on `- [~]` exits 0 with status "done" but
+        // leaves tasks.md byte-identical.
+        let md = "- [x] a\n- [~] b\n";
+        let (new_md, desc) = mark_done(md, 2).unwrap();
+        assert_eq!(desc, "b");
+        assert_eq!(new_md, md);
+    }
+
+    #[test]
+    fn mark_all_done_flips_every_bullet_style_but_leaves_other_markers() {
+        // Oracle v3.0.0 `archive --mark-tasks-complete` on the same input.
+        let md = "- [ ] a\n* [ ] b\n+ [ ] c\n- [~] d\n- [-] e\n  + [ ] f\n";
+        assert_eq!(
+            mark_all_done(md),
+            "- [x] a\n* [x] b\n+ [x] c\n- [~] d\n- [-] e\n  + [x] f\n"
+        );
     }
 
     #[test]
