@@ -241,16 +241,19 @@ impl TraceFile {
     /// 解析已經讀進來的 sidecar 內容；`path` 只用在錯誤訊息。讓呼叫端能用同
     /// 一份 bytes 同時做「寫入前沒被改過」的比對與解析，不必讀兩次。
     pub fn parse(text: &str, path: &Path) -> Result<Self> {
-        let file: TraceFile = serde_yaml::from_str(text)
-            .with_context(|| format!("{} is not a valid trace sidecar", path.display()))?;
-        if file.version != FORMAT_VERSION {
-            anyhow::bail!(
-                "{} has unsupported trace sidecar version {} (expected {FORMAT_VERSION})",
-                path.display(),
-                file.version
-            );
+        let invalid = || format!("{} is not a valid trace sidecar", path.display());
+        // 先只看 `version`：未來版本多出的欄位會被 `deny_unknown_fields` 擋下，
+        // 但該報的是「版本不支援」，不是「不認得的欄位」。
+        let value: serde_yaml::Value = serde_yaml::from_str(text).with_context(invalid)?;
+        if let Some(version) = value.get("version").and_then(serde_yaml::Value::as_u64) {
+            if version != u64::from(FORMAT_VERSION) {
+                anyhow::bail!(
+                    "{} has unsupported trace sidecar version {version} (expected {FORMAT_VERSION})",
+                    path.display()
+                );
+            }
         }
-        Ok(file)
+        serde_yaml::from_value(value).with_context(invalid)
     }
 
     pub fn to_yaml(&self) -> Result<String> {
@@ -297,9 +300,10 @@ impl TraceFile {
     }
 
     /// 把既有紀錄裡的 requirement 名稱跟著 RENAMED 改名，讓舊紀錄仍對得到
-    /// 現在的 requirement。只改最後一次移除該名稱之後的紀錄：被 RENAMED 的
+    /// 現在的 requirement。只改最後一次移除該名稱之後的事件：被 RENAMED 的
     /// 必定是現存的 requirement，更早被移除的同名 requirement 是另一個。
-    /// `removed`、`renamed` 記的是歷史，一律不改寫。
+    /// 那筆移除紀錄本身也要改，因為同一筆裡 `removed` 在前、其餘在後（與
+    /// [`stale_names`] 的順序一致）。`removed`、`renamed` 記的是歷史，一律不改寫。
     pub fn apply_renames(&mut self, renames: &[RenamedRequirement]) {
         for rename in renames {
             let first = self
@@ -311,7 +315,7 @@ impl TraceFile {
                         .iter()
                         .any(|name| same_name(name, &rename.from))
                 })
-                .map_or(0, |index| index + 1);
+                .unwrap_or(0);
             for entry in &mut self.traces[first..] {
                 for list in [&mut entry.added, &mut entry.modified, &mut entry.imported] {
                     for name in list.iter_mut() {
@@ -359,6 +363,23 @@ pub fn ensure_pointer(content: &str) -> String {
     }
     out.extend_from_slice(rest);
     out.join("\n")
+}
+
+/// `content` 裡認不得的 footer 原文（從 `<!-- @trace` 到它的 `-->`，沒有結尾
+/// 時到檔尾），依出現順序。
+pub fn unrecognized_footers(content: &str) -> Vec<String> {
+    let lines: Vec<&str> = content.split('\n').collect();
+    extract_inline(content)
+        .unparsed_lines
+        .into_iter()
+        .map(|line| {
+            let start = line - 1;
+            let end = (start + 1..lines.len())
+                .find(|index| lines[*index].trim() == "-->")
+                .map_or(lines.len(), |close| close + 1);
+            lines[start..end].join("\n")
+        })
+        .collect()
 }
 
 /// 把 1-based 行號列成警告用的文字，例如 `line 3` 或 `lines 3, 9`。
@@ -803,6 +824,36 @@ mod tests {
             ..entry("four")
         });
         assert!(stale_names(&file, content).is_empty());
+    }
+
+    #[test]
+    fn apply_renames_covers_a_readdition_recorded_in_the_removal_entry() {
+        // archive 本身不會產生（delta 驗證拒絕同名 ADDED＋REMOVED），但手改的
+        // sidecar 可能有：同一筆裡 removed 在前、added 在後，added 是現存的那個。
+        let mut file = TraceFile::default();
+        file.traces.push(TraceEntry {
+            removed: vec!["Old".into()],
+            added: vec!["Old".into()],
+            ..entry("same")
+        });
+        file.apply_renames(&[RenamedRequirement {
+            from: "Old".into(),
+            to: "New".into(),
+        }]);
+        assert_eq!(file.traces[0].added, vec!["New"]);
+        assert_eq!(file.traces[0].removed, vec!["Old"]);
+    }
+
+    #[test]
+    fn load_reports_an_unsupported_version_before_unknown_fields() {
+        let dir = crate::test_support::TempDir::new("trace-future-version");
+        let path = dir.join(SIDECAR_FILE);
+        std::fs::write(&path, "version: 2\nfuture_field: true\ntraces: []\n").unwrap();
+        let error = format!("{:#}", TraceFile::load(&path).unwrap_err());
+        assert!(
+            error.contains("unsupported trace sidecar version 2"),
+            "{error}"
+        );
     }
 
     #[test]

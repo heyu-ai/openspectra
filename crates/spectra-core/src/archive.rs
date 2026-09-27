@@ -812,7 +812,11 @@ fn prepare_spec_deltas(
         let existing_trace = sidecar_original
             .as_deref()
             .map(|bytes| {
-                crate::trace::TraceFile::parse(&String::from_utf8_lossy(bytes), &sidecar_path)
+                // 不能 lossy 解碼：壞掉的 bytes 會被換成 U+FFFD 後寫回，原始內容就沒了。
+                let text = std::str::from_utf8(bytes).with_context(|| {
+                    format!("{} is not a valid trace sidecar", sidecar_path.display())
+                })?;
+                crate::trace::TraceFile::parse(text, &sidecar_path)
             })
             .transpose()?;
         let sidecar = if retire {
@@ -1172,7 +1176,7 @@ fn merge_spec_delta(
 
     for removed in &parsed.removed {
         if let Some(block) = find_requirement_block(&content, removed) {
-            refuse_to_discard_unrecognized_footer(capability, "REMOVE", &content, &block)?;
+            refuse_to_discard_unrecognized_footer(capability, "REMOVE", &content, &block, None)?;
             content.replace_range(block.start..block.end, "");
             result.removed += 1;
             trace.removed.push(block.name.clone());
@@ -1210,7 +1214,13 @@ fn merge_spec_delta(
         if requirement_content_eq(&original, &modified.raw) {
             continue;
         }
-        refuse_to_discard_unrecognized_footer(capability, "MODIFY", &content, &block)?;
+        refuse_to_discard_unrecognized_footer(
+            capability,
+            "MODIFY",
+            &content,
+            &block,
+            Some(&modified.raw),
+        )?;
         let trailing = {
             let original = &content[block.start..block.end];
             original[original.trim_end().len()..].to_string()
@@ -1268,16 +1278,19 @@ fn merge_spec_delta(
 /// MODIFIED／REMOVED 會整塊替換或刪除 requirement。可解析的 footer 在這之前
 /// 已經剝進 sidecar，此時 block 裡若還有 `<!-- @trace`，就是認不得、無法搬
 /// 的那種：不猜怎麼保留，直接失敗（驗證階段就會擋下），請人先處理。
+/// `replacement` 是 MODIFIED 貼進來的新內容（REMOVED 為 `None`）；認不得的
+/// footer 若原樣出現在新內容裡，就沒有東西會遺失，不擋。
 fn refuse_to_discard_unrecognized_footer(
     capability: &str,
     operation: &str,
     content: &str,
     block: &RequirementBlock,
+    replacement: Option<&str>,
 ) -> Result<()> {
-    if crate::trace::extract_inline(&content[block.start..block.end])
-        .unparsed_lines
-        .is_empty()
-    {
+    let discarded = crate::trace::unrecognized_footers(&content[block.start..block.end])
+        .into_iter()
+        .any(|footer| !replacement.is_some_and(|new| new.contains(&footer)));
+    if !discarded {
         return Ok(());
     }
     anyhow::bail!(
@@ -3041,6 +3054,55 @@ mod tests {
             .find(|entry| entry.source == "copied")
             .unwrap();
         assert_eq!(copied.imported, vec!["Alpha"]);
+    }
+
+    #[test]
+    fn archive_refuses_a_non_utf8_sidecar_and_leaves_its_bytes_alone() {
+        // #175 round 2：以 lossy 解碼會把壞掉的 bytes 換成 U+FFFD 後寫回，原始內容就沒了。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(&spec_path, CANONICAL_SPEC);
+        let sidecar = crate::trace::sidecar_path(&spec_path);
+        let bytes =
+            b"version: 1\ntraces:\n- source: \"a\xFFb\"\n  updated: d\n  code: []\n".to_vec();
+        std::fs::write(&sidecar, &bytes).unwrap();
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## ADDED Requirements\n\n### Requirement: Fourth\n\ntext\n",
+        );
+
+        let error = archive(&c, "my-feature", false, false, false).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("is not a valid trace sidecar"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(&sidecar).unwrap(), bytes);
+        assert_eq!(std::fs::read_to_string(&spec_path).unwrap(), CANONICAL_SPEC);
+    }
+
+    #[test]
+    fn archive_allows_modifying_a_requirement_whose_pasted_block_keeps_its_unrecognized_footer() {
+        // #175 round 2：依慣例 MODIFIED 貼整個 requirement；認不得的 footer 若原樣
+        // 跟著貼過來，就沒有東西會遺失，不該拒絕。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(&spec_path, SPEC_WITH_UNRECOGNIZED_FOOTER);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nnew text\n\n\
+             <!-- @trace\nsource: x\nupdated: y\nowner: someone\n-->\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let spec = std::fs::read_to_string(&spec_path).unwrap();
+        assert!(spec.contains("new text"), "{spec}");
+        assert!(spec.contains("owner: someone"), "{spec}");
     }
 
     #[test]

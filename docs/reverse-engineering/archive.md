@@ -225,13 +225,16 @@ traces:
 - A footer that opens with `<!-- @trace` but has an unknown key, a missing or
   empty `source`/`updated`, a list item outside a `code:`/`tests:` list, or no
   closing `-->` is not guessed at. It stays in `spec.md` and a warning names
-  its line in the written file. If a MODIFIED or REMOVED delta targets a
-  requirement holding such a footer, the archive fails (already at validation)
-  instead of discarding it.
+  its line in the written file. A REMOVED delta targeting a requirement that
+  holds such a footer fails the archive (already at validation) instead of
+  discarding it. A MODIFIED delta fails the same way unless its pasted block
+  carries that footer unchanged, in which case nothing is lost.
 - RENAMED rewrites the old names recorded in earlier entries, so they keep
-  matching the current requirement. It rewrites only entries after the last
+  matching the current requirement. It rewrites only events after the last
   removal of that name, because an earlier requirement with the same name was a
-  different one. `removed` and `renamed` are history and are never rewritten.
+  different one. That includes the `added`/`modified`/`imported` names of the
+  removal entry itself, since `removed` comes first within an entry. `removed`
+  and `renamed` are history and are never rewritten.
   A rename done by the oracle does not update the sidecar, so names in older
   entries can go stale in a mixed setup. `spectra trace migrate` reports such
   stale names: names whose last recorded event is not a removal but that match
@@ -241,9 +244,11 @@ traces:
 - The sidecar goes through the same prepare/commit/rollback path as `spec.md`
   (see "Architecture decision: atomicity versus recovery"). Retiring a
   capability removes its sidecar too, so the directory does not linger with
-  only a YAML file. A sidecar that does not parse, has an unknown field, or
-  whose `version` is not `1` fails the archive before any canonical file is
-  written; it is never overwritten. Unknown fields are rejected, not ignored,
+  only a YAML file. A sidecar that is not valid UTF-8, does not parse, has an
+  unknown field, or whose `version` is not `1` fails the archive before any
+  canonical file is written; it is never overwritten. The version is checked
+  first, so a future-version sidecar reports the version rather than its new
+  fields. Unknown fields are rejected, not ignored,
   because a mistyped key in a hand-edited sidecar would otherwise be silently
   dropped on the next rewrite.
 - `spectra trace migrate [--dry-run] [--check] [--json]` applies the same
