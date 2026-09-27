@@ -22,14 +22,18 @@ use regex::Regex;
 use serde::Serialize;
 use std::path::Path;
 
-/// The oracle's (v3.0.0) task-line rule. Shared with
+/// The oracle's (v3.0.0) task-line regex. Shared with
 /// `instructions.rs::parse_apply_tasks` so the apply-mode task list and
-/// `task done <id>` number the same lines.
+/// `task done <id>` number the same lines. A match is a task only if the
+/// description is also non-blank — see `is_task_line`.
 pub(crate) static CHECKBOX_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*[-*+]\s*\[(.)\]\s*(.+)$").unwrap());
+/// Any blank checkbox on a bullet, description or not: what oracle v3.0.0
+/// `archive --mark-tasks-complete` flips (probed in the #177 review).
+static BLANK_CHECKBOX_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*[-*+]\s*\[( )\]").unwrap());
 static BACKTICK_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"`([^`]+)`").unwrap());
 
-fn is_done_marker(marker: &str) -> bool {
+pub(crate) fn is_done_marker(marker: &str) -> bool {
     matches!(marker, "x" | "X")
 }
 
@@ -37,10 +41,11 @@ fn is_done_marker(marker: &str) -> bool {
 /// after trimming. `- [ ]` and `- [ ] ` (only trailing whitespace) are NOT
 /// tasks — the oracle drops them from numbering, progress, and `task done`
 /// targeting alike (`CHECKBOX_RE`'s `\s*(.+)` otherwise backtracks and
-/// captures a lone trailing space). `parse`, `mark_done`, and
-/// `mark_all_done` all route through here, and `parse_apply_tasks` applies
-/// the same regex and empty-description rule, so a `task done <id>` taken
-/// from the apply-mode list targets the same line.
+/// captures a lone trailing space). `parse` and `mark_done` route through
+/// here, and `parse_apply_tasks` applies the same regex and
+/// empty-description rule, so a `task done <id>` taken from the apply-mode
+/// list targets the same line. `mark_all_done` deliberately does not: it
+/// numbers nothing, and the oracle flips blank-description checkboxes too.
 fn is_task_line(line: &str) -> bool {
     CHECKBOX_RE
         .captures(line)
@@ -95,14 +100,17 @@ pub fn parse(md: &str) -> Vec<Task> {
 /// Returns the rewritten markdown and the task's raw description text
 /// (everything after the checkbox marker, matching the reference CLI's
 /// `spectra task done` output). Error wording matches the reference CLI
-/// exactly (reverse-engineered against `/Applications/Spectra.app` v2.3.1):
+/// exactly as reverse-engineered against `/Applications/Spectra.app` v2.3.1
+/// (the "already done" case was re-probed on v3.0.0 in #172; v3.0.0 reworded
+/// the not-found error to `Task {id} not found for change '<name>'`, not yet
+/// ported):
 /// - `task_id == 0` → "Task ID must be >= 1"
 /// - `task_id` exceeds the total checkbox count → "Task {id} not found (total: {n})"
 /// - the task is already `[x]`/`[X]` → "Task {id} is already done"
 ///
 /// Any other non-blank marker (`[~]`, `[-]`) returns `Ok` with `md`
-/// unchanged: oracle v3.0.0 reports such a task as done yet leaves tasks.md
-/// byte-identical (probed in #172).
+/// unchanged: oracle v3.0.0 reports such a task as done yet leaves the
+/// content of tasks.md unchanged (probed in #172).
 pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     if task_id == 0 {
         return Err(anyhow!("Task ID must be >= 1"));
@@ -145,18 +153,19 @@ pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     Ok((new_md, description))
 }
 
-/// Flip every blank (`[ ]`) checkbox in `md` to done (`[x]`), leaving
-/// already-done checkboxes, other markers (`[~]`, `[-]`, matching oracle
-/// v3.0.0), and every other line untouched. Used by
+/// Flip every blank (`[ ]`) checkbox on a `-`/`*`/`+` bullet in `md` to done
+/// (`[x]`) — including ones with a blank description, which are not tasks
+/// for numbering — leaving already-done checkboxes, other markers (`[~]`,
+/// `[-]`), and every other line untouched. Matches oracle v3.0.0
 /// `spectra archive --mark-tasks-complete`.
 pub fn mark_all_done(md: &str) -> String {
     let mut new_md: String = md
         .lines()
-        .map(|line| match CHECKBOX_RE.captures(line) {
-            Some(caps) if is_task_line(line) && &caps[1] == " " => {
+        .map(|line| match BLANK_CHECKBOX_RE.captures(line) {
+            Some(caps) => {
                 let state = caps
                     .get(1)
-                    .expect("group 1 always captures on a CHECKBOX_RE match");
+                    .expect("group 1 always captures on a BLANK_CHECKBOX_RE match");
                 let mut new_line = line.to_string();
                 new_line.replace_range(state.range(), "x");
                 new_line
@@ -224,8 +233,8 @@ mod tests {
     #[test]
     fn empty_description_checkboxes_are_not_tasks_across_parse_and_mark_done() {
         // A `- [ ] ` line (only trailing whitespace after the marker) is not a
-        // task: the oracle drops it from numbering, so `parse` (progress,
-        // `instructions apply`) and `mark_done` (`task done <id>`) must agree,
+        // task: the oracle drops it from numbering, so `parse` (`list`/`drift`
+        // progress) and `mark_done` (`task done <id>`) must agree,
         // otherwise following an id from one into the other marks the wrong
         // line. Probed against Spectra.app v2.3.1: `task done 2` on this input
         // targets "second real task", not the blank line.
@@ -293,6 +302,27 @@ mod tests {
         let (new_md, desc) = mark_done(md, 2).unwrap();
         assert_eq!(desc, "b");
         assert_eq!(new_md, md);
+    }
+
+    #[test]
+    fn mark_all_done_flips_blank_description_checkboxes_like_the_oracle() {
+        // Oracle v3.0.0 `archive --mark-tasks-complete` flips these too, even
+        // though they are not tasks for numbering (`is_task_line`).
+        let md = "- [ ] a\n- [ ] \n* [ ]   \n- [ ]\n* [ ] b\n";
+        assert_eq!(
+            mark_all_done(md),
+            "- [x] a\n- [x] \n* [x]   \n- [x]\n* [x] b\n"
+        );
+    }
+
+    #[test]
+    fn mark_all_done_leaves_non_bullet_checkboxes_like_the_oracle() {
+        // Same input probed on oracle v3.0.0 `archive --mark-tasks-complete`.
+        let md = "1. [ ] a\n1) [ ] b\n[ ] c\ntext [ ] d\n- [ x] e\n- [~] f\n    - [ ] g\n- [ ] h\n";
+        assert_eq!(
+            mark_all_done(md),
+            "1. [ ] a\n1) [ ] b\n[ ] c\ntext [ ] d\n- [ x] e\n- [~] f\n    - [x] g\n- [x] h\n"
+        );
     }
 
     #[test]

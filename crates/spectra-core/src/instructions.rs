@@ -200,7 +200,7 @@ fn parse_apply_tasks(markdown: &str) -> Vec<ApplyTask> {
         .map(|(index, (state, description, parallel))| ApplyTask {
             id: (index + 1).to_string(),
             description,
-            done: state == "x" || state == "X",
+            done: crate::tasks::is_done_marker(&state),
             parallel,
         })
         .collect()
