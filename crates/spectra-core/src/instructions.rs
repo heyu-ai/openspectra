@@ -9,8 +9,6 @@ use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-static APPLY_TASK_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^\s*[-*+]\s*\[(.)\]\s*(.+)$").unwrap());
 static BACKTICK_PATH_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"`([^`]*?/[^`]*?\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))`"#)
         .unwrap()
@@ -179,7 +177,7 @@ fn parse_apply_tasks(markdown: &str) -> Vec<ApplyTask> {
     markdown
         .lines()
         .filter_map(|line| {
-            let captures = APPLY_TASK_RE.captures(line)?;
+            let captures = crate::tasks::CHECKBOX_RE.captures(line)?;
             let raw_description = captures[2].trim();
             // A checkbox whose description is only trailing whitespace
             // (`- [ ] `) is not a task: the regex's `(.+)` backtracks onto the
@@ -794,6 +792,24 @@ mod tests {
         assert_eq!(tasks[0].description, "first task");
         assert_eq!(tasks[1].id, "2");
         assert_eq!(tasks[1].description, "second real task");
+    }
+
+    #[test]
+    fn apply_parser_and_task_done_parser_number_every_marker_style_identically() {
+        // An id read from `instructions apply` is fed to `task done <id>`
+        // (`tasks::mark_done`); if the two parsers disagree on which lines are
+        // tasks, `task done` flips the wrong line (#172).
+        let md = "- [x] a\n* [ ] b\n+ [ ] c\n- [~] d\n1. [ ] skip\n- [ x] skip\n  + [X] e\n- [ ] \n- [ ] f\n";
+        let apply: Vec<(String, bool)> = parse_apply_tasks(md)
+            .into_iter()
+            .map(|t| (t.description, t.done))
+            .collect();
+        let counted: Vec<(String, bool)> = crate::tasks::parse(md)
+            .into_iter()
+            .map(|t| (t.description, t.done))
+            .collect();
+        assert_eq!(apply, counted);
+        assert_eq!(apply.len(), 6);
     }
 
     #[test]

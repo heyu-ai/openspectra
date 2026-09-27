@@ -159,7 +159,8 @@ numerator, `total_score`, or severity short-circuit.
 > `>30%` decay also forces `heavy` severity — `calibration::structure_score`.
 
 ### 3. Tasks — collisions with external work
-Parses `tasks.md` checkboxes (`- [ ]` / `- [x]`) and the inline backtick file
+Parses `tasks.md` checkboxes (`-`/`*`/`+` bullets, only `[x]`/`[X]` done —
+the shared rule in `task.md`) and the inline backtick file
 paths each task names. For pending tasks:
 * `tasks_blocked_external` — a referenced file was changed by external commits
   since the `.started` baseline.

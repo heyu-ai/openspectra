@@ -21,6 +21,14 @@ spectra task done <TASK_ID> [--change <NAME>] [--json]
 
 * `TASK_ID` — 1-based index across **every** checkbox in `tasks.md`, counted
   top-to-bottom in file order, ignoring any `## N.` group headers. A
+  checkbox is any line matching `^\s*[-*+]\s*\[(.)\]\s*(.+)$` with a
+  non-blank description — the same rule `instructions apply` uses (the code
+  shares one regex, `tasks::CHECKBOX_RE`). Oracle v3.0.0 probe (#172):
+  `* [ ]`, `+ [ ]`, `- [~]`, `- [-]` are tasks (pending); ordered-list
+  `1. [ ]` / `1) [ ]`, `- [ x]`, and `- []` are not. Before #172 OpenSpectra
+  only recognized `- [ ]`/`- [x]`/`- [X]`, so a `*`/`+` task was invisible
+  to `list`, `task done`, `drift`, and `archive --mark-tasks-complete` while
+  `instructions apply` still counted it — the two numberings diverged. A
   `tasks.md` with two `##` groups of two tasks each numbers its checkboxes
   1–4 regardless of the `1.1`/`1.2`/`2.1`/`2.2` labels written in the task
   text itself — those labels are just prose, not the identifier `task done`
@@ -46,7 +54,12 @@ here for accuracy rather than presented as oracle-verified):
    the change/`tasks.md` load above):
    * `0` → `Task ID must be >= 1`
    * greater than the total checkbox count → `Task <id> not found (total: <n>)`
-   * already `[x]` → `Task <id> is already done`
+   * already `[x]` or `[X]` → `Task <id> is already done`
+   * any other non-blank marker (`[~]`, `[-]`) → **success** with
+     `tasks.md` left byte-identical: oracle v3.0.0 exits 0 with
+     `status: "done"` but does not rewrite the file (probed in #172).
+     OpenSpectra reproduces this; steps 3–4 still run (step 3 writes the
+     unchanged content back).
 3. Flip that checkbox from `[ ]` to `[x]`, rewriting `tasks.md` with every
    other line's content preserved verbatim. (LF line endings; a CRLF
    `tasks.md` is normalized to LF as a side effect of the line-based
