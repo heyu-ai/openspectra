@@ -116,6 +116,19 @@ why; never add a blanket `#[allow]` just to make the check pass.
   blank-description checkboxes too, so locking the guard would have fossilized
   it; #178 removed it instead. The same review's "`task done` on `[~]` still
   records touched files" finding turned out to be oracle behavior as well).
+- PTY tests via `script(1)`: keep the child's stdin open until it exits. If the
+  test writes its answer and closes stdin immediately, `script` sends `^D` to
+  the PTY and the program may read EOF instead of the answer — so an
+  "answering `n` aborts" test passes whether or not `n` was ever read (PR #182:
+  the old `archive_prompts_and_aborts_on_a_terminal` survived a mutant that
+  accepted `n`). Use the shared `run_on_terminal` helper in `cli_integration.rs`.
+- A test that derives its expected value from the production helper it guards
+  (e.g. building the parked path via `parked_root()`) cannot detect that
+  helper being changed — the expectation moves with it. Assert the literal
+  oracle path/output instead. Reading a test and judging it "pinned" is not
+  evidence; revert the fix and watch it fail (PR #182: rows judged pinned by
+  reading — #118's parked-store location, #160-4's already-synced MODIFIED
+  count, `list --specs` wiring — turned out unguarded or cited the wrong test).
 
 ## Agent conduct
 
