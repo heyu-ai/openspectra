@@ -1,0 +1,240 @@
+crates/spectra-core/src/lib.rs:39:5: replace version -> &'static str with ""
+crates/spectra-core/src/lib.rs:39:5: replace version -> &'static str with "xyzzy"
+crates/spectra-core/src/analyze.rs:133:13: delete match arm "## REMOVED Requirements" in DeltaSection::from_heading
+crates/spectra-core/src/analyze.rs:134:13: delete match arm "## RENAMED Requirements" in DeltaSection::from_heading
+crates/spectra-core/src/analyze.rs:795:32: replace && with || in analyze
+crates/spectra-core/src/archive.rs:98:24: replace && with || in archive
+crates/spectra-core/src/archive.rs:98:12: delete ! in archive
+crates/spectra-core/src/archive.rs:98:27: delete ! in archive
+crates/spectra-core/src/archive.rs:110:37: replace && with || in archive
+crates/spectra-core/src/archive.rs:242:9: replace FileSnapshot::expect_bytes with ()
+crates/spectra-core/src/archive.rs:349:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in path_entry_exists_io
+crates/spectra-core/src/archive.rs:404:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in read_optional_bytes
+crates/spectra-core/src/archive.rs:420:27: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in restore_file
+crates/spectra-core/src/archive.rs:420:27: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in restore_file
+crates/spectra-core/src/archive.rs:420:40: replace == with != in restore_file
+crates/spectra-core/src/archive.rs:428:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in has_any_file
+crates/spectra-core/src/archive.rs:438:42: replace && with || in has_any_file
+crates/spectra-core/src/archive.rs:466:23: replace match guard is_cross_device_error(&error) with true in move_directory_with
+crates/spectra-core/src/archive.rs:484:5: replace is_cross_device_error -> bool with true
+crates/spectra-core/src/archive.rs:529:25: replace match guard cleanup.kind() == std::io::ErrorKind::NotFound with true in clean_failed_copy
+crates/spectra-core/src/archive.rs:529:25: replace match guard cleanup.kind() == std::io::ErrorKind::NotFound with false in clean_failed_copy
+crates/spectra-core/src/archive.rs:529:40: replace == with != in clean_failed_copy
+crates/spectra-core/src/archive.rs:584:5: replace copy_symlink -> std::io::Result<()> with Ok(())
+crates/spectra-core/src/archive.rs:591:5: replace directories_equal -> std::io::Result<bool> with Ok(true)
+crates/spectra-core/src/archive.rs:865:32: replace match guard current == spec.original with false in rollback_prepared_specs
+crates/spectra-core/src/archive.rs:865:40: replace == with != in rollback_prepared_specs
+crates/spectra-core/src/archive.rs:883:28: replace match guard current == spec.original with false in rollback_prepared_specs
+crates/spectra-core/src/archive.rs:889:25: replace match guard spec.original.is_none() with true in rollback_prepared_specs
+crates/spectra-core/src/archive.rs:889:25: replace match guard spec.original.is_none() with false in rollback_prepared_specs
+crates/spectra-core/src/archive.rs:977:17: replace match guard parsed.modified.is_empty() && parsed.removed.is_empty() && parsed.renamed.is_empty() with true in merge_spec_delta
+crates/spectra-core/src/archive.rs:969:41: replace && with || in merge_spec_delta
+crates/spectra-core/src/archive.rs:969:44: delete ! in merge_spec_delta
+crates/spectra-core/src/archive.rs:979:13: replace && with || in merge_spec_delta
+crates/spectra-core/src/archive.rs:978:13: replace && with || in merge_spec_delta
+crates/spectra-core/src/archive.rs:1135:16: replace > with >= in merge_spec_delta
+crates/spectra-core/src/archive.rs:1139:18: replace > with >= in merge_spec_delta
+crates/spectra-core/src/archive.rs:1190:28: replace == with != in requirement_content_eq::normalize
+crates/spectra-core/src/archive.rs:1199:56: replace || with && in requirement_content_eq::normalize
+crates/spectra-core/src/archive.rs:1313:5: replace append_added_requirements_for_validation with ()
+crates/spectra-core/src/archive.rs:1317:9: delete ! in append_added_requirements_for_validation
+crates/spectra-core/src/archive.rs:1391:12: delete ! in append_added_requirements
+crates/spectra-core/src/artifact.rs:261:19: replace match guard !force && e.kind() == std::io::ErrorKind::AlreadyExists with true in create
+crates/spectra-core/src/artifact.rs:261:26: replace && with || in create
+crates/spectra-core/src/calibration.rs:95:19: replace || with && in structure_score
+crates/spectra-core/src/calibration.rs:145:5: replace tasks_score -> i64 with 0
+crates/spectra-core/src/calibration.rs:147:9: delete match arm 1 in tasks_score
+crates/spectra-core/src/calibration.rs:148:9: delete match arm 2 in tasks_score
+crates/spectra-core/src/calibration.rs:149:9: delete match arm 3 in tasks_score
+crates/spectra-core/src/calibration.rs:145:19: replace + with - in tasks_score
+crates/spectra-core/src/calibration.rs:145:19: replace + with * in tasks_score
+crates/spectra-core/src/calibration.rs:156:43: replace > with >= in severity
+crates/spectra-core/src/change.rs:180:23: replace match guard e.kind() == ErrorKind::NotFound with false in clear_stale_sidecar_state
+crates/spectra-core/src/change.rs:317:18: replace match guard m.is_dir() with true in try_load_at
+crates/spectra-core/src/change.rs:319:19: replace match guard e.kind() == ErrorKind::NotFound with true in try_load_at
+crates/spectra-core/src/change.rs:402:39: replace != with == in create
+crates/spectra-core/src/change.rs:502:13: replace || with && in walk_names_in
+crates/spectra-core/src/change.rs:586:44: replace && with || in list_parked
+crates/spectra-core/src/change.rs:604:44: replace && with || in list_parked_sorted
+crates/spectra-core/src/change.rs:665:19: replace match guard e.kind() == ErrorKind::NotFound with true in mark_task_done
+crates/spectra-core/src/change.rs:682:17: replace match guard !crate::git::is_repo(&cfg.root) with true in mark_task_done
+crates/spectra-core/src/change.rs:682:17: replace match guard !crate::git::is_repo(&cfg.root) with false in mark_task_done
+crates/spectra-core/src/change.rs:682:17: delete ! in mark_task_done
+crates/spectra-core/src/fsutil.rs:20:19: replace match guard e.kind() == ErrorKind::NotFound with true in read_optional
+crates/spectra-core/src/fsutil.rs:31:19: replace match guard e.kind() == ErrorKind::NotFound with true in read_dir_optional
+crates/spectra-core/src/fsutil.rs:106:23: replace match guard e.kind() == ErrorKind::NotFound with true in collect_delta_specs_into
+crates/spectra-core/src/fsutil.rs:106:23: replace match guard e.kind() == ErrorKind::NotFound with false in collect_delta_specs_into
+crates/spectra-core/src/fsutil.rs:106:32: replace == with != in collect_delta_specs_into
+crates/spectra-core/src/fsutil.rs:111:42: replace && with || in collect_delta_specs_into
+crates/spectra-core/src/fsutil.rs:157:5: replace symlink_target_is_dir -> Result<bool> with Ok(true)
+crates/spectra-core/src/fsutil.rs:157:5: replace symlink_target_is_dir -> Result<bool> with Ok(false)
+crates/spectra-core/src/fsutil.rs:159:19: replace match guard e.kind() == ErrorKind::NotFound with true in symlink_target_is_dir
+crates/spectra-core/src/fsutil.rs:430:19: replace match guard e.kind() == ErrorKind::NotFound with true in target_mode
+crates/spectra-core/src/fsutil.rs:502:21: replace != with == in cleanup_temp_file
+crates/spectra-core/src/git.rs:28:5: replace is_repo -> bool with true
+crates/spectra-core/src/git.rs:56:5: replace ls_files -> HashSet<String> with HashSet::new()
+crates/spectra-core/src/git.rs:56:5: replace ls_files -> HashSet<String> with HashSet::from_iter([String::new()])
+crates/spectra-core/src/git.rs:56:5: replace ls_files -> HashSet<String> with HashSet::from_iter(["xyzzy".into()])
+crates/spectra-core/src/git.rs:77:43: replace && with || in path_exists_at
+crates/spectra-core/src/git.rs:109:24: replace || with && in user_identity
+crates/spectra-core/src/git.rs:135:5: replace commits_since -> u64 with 0
+crates/spectra-core/src/git.rs:135:5: replace commits_since -> u64 with 1
+crates/spectra-core/src/init.rs:216:19: replace match guard e.kind() == std::io::ErrorKind::NotFound with true in detect_adopt_spec_dir
+crates/spectra-core/src/init.rs:260:19: replace match guard e.kind() == std::io::ErrorKind::NotFound with true in read_gitignore
+crates/spectra-core/src/instructions.rs:248:35: replace + with - in proposal_references
+crates/spectra-core/src/instructions.rs:248:35: replace + with * in proposal_references
+crates/spectra-core/src/instructions.rs:400:23: replace match guard error.kind() == ErrorKind::NotFound with true in read_optional
+crates/spectra-core/src/markdown.rs:8:37: replace == with != in normalize_markdown
+crates/spectra-core/src/markdown.rs:134:35: replace > with == in heading_text
+crates/spectra-core/src/markdown.rs:134:35: replace > with >= in heading_text
+crates/spectra-core/src/markdown.rs:200:17: replace || with && in requirement_blocks
+crates/spectra-core/src/markdown.rs:199:17: replace || with && in requirement_blocks
+crates/spectra-core/src/markdown.rs:226:27: replace + with - in requirement_blocks
+crates/spectra-core/src/markdown.rs:226:27: replace + with * in requirement_blocks
+crates/spectra-core/src/markdown.rs:521:46: replace + with * in parse_main_requirements
+crates/spectra-core/src/markdown.rs:534:23: delete ! in parse_main_purpose
+crates/spectra-core/src/markdown.rs:550:37: replace && with || in main_section_end
+crates/spectra-core/src/markdown.rs:567:5: replace main_purpose_insertion_point -> Option<usize> with Some(0)
+crates/spectra-core/src/markdown.rs:567:5: replace main_purpose_insertion_point -> Option<usize> with Some(1)
+crates/spectra-core/src/markdown.rs:575:13: replace && with || in is_placeholder_purpose
+crates/spectra-core/src/schema.rs:436:17: replace && with || in is_transient_schema_dir
+crates/spectra-core/src/schema.rs:435:17: replace && with || in is_transient_schema_dir
+crates/spectra-core/src/schema.rs:438:60: replace && with || in is_transient_schema_dir
+crates/spectra-core/src/schema.rs:446:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in schema_directory_names
+crates/spectra-core/src/schema.rs:446:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in schema_directory_names
+crates/spectra-core/src/schema.rs:446:36: replace == with != in schema_directory_names
+crates/spectra-core/src/schema.rs:825:5: replace user_schemas_dir -> Option<std::path::PathBuf> with None
+crates/spectra-core/src/schema.rs:825:5: replace user_schemas_dir -> Option<std::path::PathBuf> with Some(Default::default())
+crates/spectra-core/src/schema.rs:982:34: replace || with && in init_schema
+crates/spectra-core/src/schema.rs:982:37: delete ! in init_schema
+crates/spectra-core/src/schema.rs:988:16: delete ! in init_schema
+crates/spectra-core/src/schema.rs:1053:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in prepare_config_update
+crates/spectra-core/src/schema.rs:1053:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in prepare_config_update
+crates/spectra-core/src/schema.rs:1053:36: replace == with != in prepare_config_update
+crates/spectra-core/src/schema.rs:1092:51: replace || with && in fork
+crates/spectra-core/src/schema.rs:1203:5: replace validate_prepared_schema -> anyhow::Result<()> with Ok(())
+crates/spectra-core/src/schema.rs:1281:27: replace match guard character == '\'' with true in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1281:27: replace match guard character == '\'' with false in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1288:26: replace match guard character == '\\' with true in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1288:26: replace match guard character == '\\' with false in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1291:26: replace match guard character == '"' with true in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1291:26: replace match guard character == '"' with false in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1293:21: replace match guard character == '\'' || character == '"' with false in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1281:37: replace == with != in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1282:63: replace == with != in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1288:36: replace == with != in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1291:36: replace == with != in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1293:39: replace || with && in yaml_inline_comment_start
+crates/spectra-core/src/schema.rs:1329:38: replace - with / in rewrite_schema_name
+crates/spectra-core/src/schema.rs:1535:23: replace match guard e.kind() == std::io::ErrorKind::NotFound with true in scan_for_markdown
+crates/spectra-core/src/schema.rs:1535:23: replace match guard e.kind() == std::io::ErrorKind::NotFound with false in scan_for_markdown
+crates/spectra-core/src/schema.rs:1535:32: replace == with != in scan_for_markdown
+crates/spectra-core/src/schema.rs:1576:12: delete ! in planning_artifact_ids
+crates/spectra-core/src/schema.rs:1687:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in read_spec_config
+crates/spectra-core/src/schema.rs:1687:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in read_spec_config
+crates/spectra-core/src/schema.rs:1687:36: replace == with != in read_spec_config
+crates/spectra-core/src/search.rs:40:19: replace || with && in search
+crates/spectra-core/src/search.rs:102:67: replace / with % in search
+crates/spectra-core/src/search.rs:102:67: replace / with * in search
+crates/spectra-core/src/search.rs:133:56: replace / with * in search
+crates/spectra-core/src/search.rs:133:49: replace + with * in search
+crates/spectra-core/src/search.rs:133:44: replace - with + in search
+crates/spectra-core/src/search.rs:133:44: replace - with / in search
+crates/spectra-core/src/search.rs:133:62: replace + with - in search
+crates/spectra-core/src/search.rs:133:62: replace + with * in search
+crates/spectra-core/src/search.rs:134:51: replace == with != in search
+crates/spectra-core/src/search.rs:137:36: replace / with % in search
+crates/spectra-core/src/search.rs:137:36: replace / with * in search
+crates/spectra-core/src/search.rs:140:44: replace / with * in search
+crates/spectra-core/src/search.rs:140:31: replace * with + in search
+crates/spectra-core/src/search.rs:140:31: replace * with / in search
+crates/spectra-core/src/search.rs:140:37: replace + with - in search
+crates/spectra-core/src/search.rs:140:37: replace + with * in search
+crates/spectra-core/src/search.rs:140:57: replace + with * in search
+crates/spectra-core/src/search.rs:140:62: replace * with + in search
+crates/spectra-core/src/search.rs:140:62: replace * with / in search
+crates/spectra-core/src/search.rs:140:73: replace + with - in search
+crates/spectra-core/src/search.rs:140:73: replace + with * in search
+crates/spectra-core/src/search.rs:140:69: replace - with + in search
+crates/spectra-core/src/search.rs:140:69: replace - with / in search
+crates/spectra-core/src/search.rs:140:77: replace * with + in search
+crates/spectra-core/src/search.rs:140:77: replace * with / in search
+crates/spectra-core/src/search.rs:143:21: replace * with + in search
+crates/spectra-core/src/search.rs:143:21: replace * with / in search
+crates/spectra-core/src/search.rs:142:21: replace * with + in search
+crates/spectra-core/src/search.rs:142:21: replace * with / in search
+crates/spectra-core/src/search.rs:143:28: replace + with - in search
+crates/spectra-core/src/search.rs:149:38: replace / with % in search
+crates/spectra-core/src/search.rs:187:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in collect_markdown
+crates/spectra-core/src/search.rs:187:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in collect_markdown
+crates/spectra-core/src/search.rs:187:36: replace == with != in collect_markdown
+crates/spectra-core/src/search.rs:199:13: replace && with || in collect_markdown
+crates/spectra-core/src/search.rs:198:13: replace && with || in collect_markdown
+crates/spectra-core/src/search.rs:262:5: replace is_cjk -> bool with true
+crates/spectra-core/src/search.rs:306:57: replace / with % in snippet
+crates/spectra-core/src/search.rs:306:57: replace / with * in snippet
+crates/spectra-core/src/search.rs:314:14: replace > with < in snippet
+crates/spectra-core/src/search.rs:317:12: replace < with == in snippet
+crates/spectra-core/src/search.rs:317:12: replace < with > in snippet
+crates/spectra-core/src/search.rs:317:12: replace < with <= in snippet
+crates/spectra-core/src/spec.rs:30:5: replace is_valid_capability_id -> bool with true
+crates/spectra-core/src/spec.rs:30:42: replace && with || in is_valid_capability_id
+crates/spectra-core/src/spec.rs:30:20: replace && with || in is_valid_capability_id
+crates/spectra-core/src/spec.rs:57:23: replace match guard error.kind() == ErrorKind::NotFound with true in collect_specs
+crates/spectra-core/src/spec.rs:79:27: replace match guard error.kind() == ErrorKind::NotFound with true in collect_specs
+crates/spectra-core/src/spec.rs:79:27: replace match guard error.kind() == ErrorKind::NotFound with false in collect_specs
+crates/spectra-core/src/spec.rs:79:40: replace == with != in collect_specs
+crates/spectra-core/src/spec.rs:86:59: replace && with || in collect_specs
+crates/spectra-core/src/spec.rs:86:38: replace && with || in collect_specs
+crates/spectra-core/src/spec.rs:110:18: replace match guard m.is_file() with true in try_load
+crates/spectra-core/src/spec.rs:112:19: replace match guard e.kind() == ErrorKind::NotFound with true in try_load
+crates/spectra-core/src/spec.rs:129:18: replace match guard m.is_file() with true in load
+crates/spectra-core/src/spec.rs:137:19: replace match guard e.kind() == ErrorKind::NotFound with true in load
+crates/spectra-core/src/spec.rs:137:19: replace match guard e.kind() == ErrorKind::NotFound with false in load
+crates/spectra-core/src/spec.rs:137:28: replace == with != in load
+crates/spectra-core/src/spec_diff.rs:28:27: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in change_diff
+crates/spectra-core/src/spec_diff.rs:110:72: replace == with != in original_requirement_name
+crates/spectra-core/src/spec_diff.rs:125:52: replace == with != in line_diff
+crates/spectra-core/src/spec_diff.rs:126:46: replace + with * in line_diff
+crates/spectra-core/src/spec_diff.rs:126:30: replace + with * in line_diff
+crates/spectra-core/src/spec_diff.rs:126:41: replace + with * in line_diff
+crates/spectra-core/src/spec_diff.rs:128:30: replace + with * in line_diff
+crates/spectra-core/src/spec_diff.rs:128:66: replace + with * in line_diff
+crates/spectra-core/src/spec_diff.rs:134:40: replace < with > in line_diff
+crates/spectra-core/src/spec_diff.rs:135:17: replace < with <= in line_diff
+crates/spectra-core/src/spec_diff.rs:140:22: replace == with != in line_diff
+crates/spectra-core/src/spec_diff.rs:140:61: replace + with - in line_diff
+crates/spectra-core/src/spec_diff.rs:140:61: replace + with * in line_diff
+crates/spectra-core/src/spec_diff.rs:140:82: replace + with - in line_diff
+crates/spectra-core/src/spec_diff.rs:140:82: replace + with * in line_diff
+crates/spectra-core/src/tasks.rs:191:5: replace analyze -> TaskAnalysis with Default::default()
+crates/spectra-core/src/tasks.rs:192:55: delete ! in analyze
+crates/spectra-core/src/tasks.rs:202:56: replace || with && in analyze
+crates/spectra-core/src/tasks.rs:202:8: delete ! in analyze
+crates/spectra-core/src/touched.rs:63:19: replace match guard e.kind() == ErrorKind::NotFound with true in load
+crates/spectra-core/src/touched.rs:63:19: replace match guard e.kind() == ErrorKind::NotFound with false in load
+crates/spectra-core/src/touched.rs:63:28: replace == with != in load
+crates/spectra-core/src/touched.rs:213:19: replace match guard is_gone(&e) with false in fingerprint
+crates/spectra-core/src/touched.rs:227:14: replace ^= with |= in fingerprint
+crates/spectra-core/src/touched.rs:227:14: replace ^= with &= in fingerprint
+crates/spectra-core/src/touched.rs:290:19: replace match guard e.kind() == ErrorKind::NotFound with true in touched_since_baseline
+crates/spectra-core/src/touched.rs:290:19: replace match guard e.kind() == ErrorKind::NotFound with false in touched_since_baseline
+crates/spectra-core/src/touched.rs:290:28: replace == with != in touched_since_baseline
+crates/spectra-core/src/update.rs:266:19: replace match guard e.kind() == std::io::ErrorKind::NotFound with true in read_existing
+crates/spectra-core/src/validate.rs:163:43: replace == with != in report_from_items
+crates/spectra-core/src/validate.rs:199:9: replace == with != in validate_change
+crates/spectra-core/src/validate.rs:225:13: replace + with * in validate_change
+crates/spectra-core/src/validate.rs:224:13: replace + with * in validate_change
+crates/spectra-core/src/validate.rs:276:75: replace == with != in validate_change
+crates/spectra-core/src/validate.rs:281:20: delete ! in validate_change
+crates/spectra-core/src/validate.rs:407:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with true in validate_archived
+crates/spectra-core/src/validate.rs:407:23: replace match guard error.kind() == std::io::ErrorKind::NotFound with false in validate_archived
+crates/spectra-core/src/validate.rs:407:36: replace == with != in validate_archived
+crates/spectra-core/src/validate.rs:455:5: replace elapsed_ms -> u64 with 0
+crates/spectra-core/src/validate.rs:455:5: replace elapsed_ms -> u64 with 1
+crates/spectra-core/src/validate.rs:482:27: replace != with == in task_numbering_issues
+crates/spectra-core/src/validate.rs:521:55: replace == with != in original_requirement_name
+crates/spectra-core/src/validate.rs:531:5: replace missing_scenarios -> Vec<String> with vec![]
+crates/spectra-core/src/validate.rs:531:5: replace missing_scenarios -> Vec<String> with vec![String::new()]
+crates/spectra-core/src/validate.rs:531:5: replace missing_scenarios -> Vec<String> with vec!["xyzzy".into()]
+crates/spectra-core/src/validate.rs:534:78: replace == with != in missing_scenarios
