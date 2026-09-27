@@ -26,6 +26,7 @@ pub mod templates;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod touched;
+pub mod trace;
 pub mod update;
 pub(crate) mod update_manifest;
 pub mod validate;
