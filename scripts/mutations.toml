@@ -1,0 +1,12 @@
+# 已回報並修正的 bug 的「值層級」mutation case，給 scripts/mutate-check.py 用。
+# 每個 case 把修正還原成當初的錯誤形狀，並指定應該因此失敗的回歸測試。
+# 對照表見 docs/testing/regression-catalog.md。
+
+[[case]]
+id = "118-common-dir"
+issue = "#118"
+file = "crates/spectra-core/src/git.rs"
+find = '&["rev-parse", "--git-common-dir"]'
+replace = '&["rev-parse", "--git-dir"]'
+package = "spectra-core"
+test = "parking_from_a_linked_worktree_lands_in_the_shared_store"

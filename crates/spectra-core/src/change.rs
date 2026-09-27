@@ -888,6 +888,51 @@ mod tests {
         );
     }
 
+    /// Issue #118 的 worktree 半邊：parked store 必須落在**共用**的 git dir。
+    /// 若 `common_dir` 誤用 `--git-dir`，從 linked worktree park 會寫進
+    /// `.git/worktrees/<name>/spectra-app/`，main checkout 就看不到它。
+    #[test]
+    fn parking_from_a_linked_worktree_lands_in_the_shared_store() {
+        let tmp = TempDir::new();
+        let main_cfg = git_repo_cfg(&tmp);
+        let wt_parent = TempDir::new();
+        let wt = wt_parent.join("wt");
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&*tmp)
+            .args(["worktree", "add", "-q", "--detach"])
+            .arg(&wt)
+            .output()
+            .unwrap()
+            .status
+            .success());
+        let wt_cfg = Config {
+            root: wt.clone(),
+            ..main_cfg.clone()
+        };
+        write(
+            &wt_cfg.changes_dir().join("from-wt").join("proposal.md"),
+            "# From worktree\n",
+        );
+
+        park(&wt_cfg, "from-wt").unwrap();
+
+        let shared = tmp
+            .canonicalize()
+            .unwrap()
+            .join(".git")
+            .join("spectra-app")
+            .join("changes")
+            .join("from-wt")
+            .join("proposal.md");
+        assert_eq!(
+            std::fs::read_to_string(&shared).unwrap(),
+            "# From worktree\n"
+        );
+        assert_eq!(list_parked(&main_cfg), vec!["from-wt".to_string()]);
+        assert_eq!(list_parked(&wt_cfg), vec!["from-wt".to_string()]);
+    }
+
     #[test]
     fn parking_an_already_parked_change_reports_it_as_nonexistent() {
         // Matching the oracle: once parked the change is gone from
