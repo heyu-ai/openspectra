@@ -10,6 +10,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-27
+
 ### Added
 
 - `spectra trace migrate [--dry-run] [--check] [--json]` (OpenSpectra-only)
