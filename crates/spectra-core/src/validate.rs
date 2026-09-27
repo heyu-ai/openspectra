@@ -612,6 +612,59 @@ mod tests {
         fs::write(dir.join("spec.md"), content).unwrap();
     }
 
+    /// Issue #80 的後續：PR #82 曾把 SHALL/MUST 限縮到第一個文字區塊，
+    /// OpenSpec 1.12 的 `extractRequirementBody` 改回讀取第一個 header 之前的
+    /// 整段 body，PR #161 跟進。這裡釘住 1.12 語義的兩條邊界，任一邊回到
+    /// #82 的形狀或放寬到 scenario 內都會失敗。
+    #[test]
+    fn a_goal_first_requirement_passes_because_the_whole_body_is_normative_text() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(
+            &c,
+            "feat",
+            "auth",
+            "## ADDED Requirements\n\n\
+             ### Requirement: Login\n\n\
+             > **Goal**: users can sign in\n\n\
+             The system SHALL authenticate users.\n\n\
+             #### Scenario: Valid credentials\n\n\
+             - **WHEN** a user submits valid credentials\n\
+             - **THEN** they are logged in\n",
+        );
+
+        let result = validate_change(&c, "feat", true).unwrap();
+        assert!(result.valid, "got: {:?}", result.issues);
+    }
+
+    #[test]
+    fn a_shall_that_appears_only_inside_a_scenario_is_not_normative() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(
+            &c,
+            "feat",
+            "auth",
+            "## ADDED Requirements\n\n\
+             ### Requirement: Login\n\n\
+             Users sign in with a password.\n\n\
+             #### Scenario: Valid credentials\n\n\
+             - **WHEN** a user submits valid credentials\n\
+             - **THEN** the system SHALL log them in\n",
+        );
+
+        let result = validate_change(&c, "feat", true).unwrap();
+        assert!(!result.valid);
+        assert!(
+            result
+                .issues
+                .iter()
+                .any(|i| i.message.contains("should state a normative SHALL or MUST")),
+            "got: {:?}",
+            result.issues
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn validate_change_does_not_follow_a_symlink_cycle_under_specs() {

@@ -10,3 +10,25 @@ find = '&["rev-parse", "--git-common-dir"]'
 replace = '&["rev-parse", "--git-dir"]'
 package = "spectra-core"
 test = "parking_from_a_linked_worktree_lands_in_the_shared_store"
+
+[[case]]
+id = "80-first-block-only"
+issue = "#80 / OpenSpec 1.12"
+file = "crates/spectra-core/src/markdown.rs"
+find = '''            } else {
+                text_lines.join("\n")
+            },'''
+replace = '''            } else {
+                text_lines[0].to_string()
+            },'''
+package = "spectra-core"
+test = "a_goal_first_requirement_passes"
+
+[[case]]
+id = "80-scenario-text-counts"
+issue = "#80 / OpenSpec 1.12"
+file = "crates/spectra-core/src/markdown.rs"
+find = "if scenarios.is_empty() && !trimmed.is_empty() {"
+replace = "if !trimmed.is_empty() {"
+package = "spectra-core"
+test = "a_shall_that_appears_only_inside_a_scenario_is_not_normative"
