@@ -186,10 +186,13 @@ by hand.
 
 #### Divergence from the reverse-engineered oracle
 
-`docs/reverse-engineering/archive.md` records that the **closed-source
-`Spectra.app` oracle's** exact MODIFIED/REMOVED/RENAMED behavior was never
-captured (no golden samples), which is why OpenSpectra originally *rejected*
-those deltas rather than guess. This change implements them against the
+`docs/reverse-engineering/archive.md` records that no golden samples of the
+**closed-source `Spectra.app` oracle's** MODIFIED/REMOVED/RENAMED behavior
+were captured, which is why OpenSpectra originally *rejected* those deltas
+rather than guess (its MODIFIED trace-footer behavior has since been probed on
+v3.0.0; that probe also applied a REMOVED delta without recording what became
+of the removed block's footer, and RENAMED has not been probed; see that
+file's "Trace data"). This change implements them against the
 **OpenSpec published convention** instead — the right source of truth for the
 Phase 2 goal ("run on a real OpenSpec project"). The two may differ in
 edge-case wording or the `code:`/trace-footer treatment of

@@ -447,7 +447,8 @@ enum TraceTarget {
         #[arg(long)]
         dry_run: bool,
         /// Write nothing; exit 1 if any spec still has an inline footer, a
-        /// stale trace name, or an unreadable sidecar (for CI/pre-commit).
+        /// stale trace name, an unreadable sidecar, or a pointer to a missing
+        /// sidecar (for CI/pre-commit).
         #[arg(long)]
         check: bool,
         #[arg(long)]
