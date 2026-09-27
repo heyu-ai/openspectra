@@ -35,6 +35,15 @@ this file is agent-facing operational context.
   the TSV pins their provenance; both are generated artifacts. Any drift exits
   non-zero; `--write` regenerates both and re-verifies. Never hand-edit them.
 
+- `scripts/mutate-check.py` + `scripts/mutations.toml` — value-level mutation
+  contract for previously fixed bugs. Each case reverts one fix to its original
+  buggy shape and asserts the named regression test fails; missing/duplicate
+  anchors, unviable mutants, empty test filters, and survivors all exit
+  non-zero. It edits files in place (restoring and `touch`-ing afterwards), so
+  never run it alongside another cargo process or while editing sources. When
+  you fix a bug, add its case in the same PR. See
+  `docs/testing/regression-catalog.md`.
+
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 
 Run before claiming a change is done or pushing:
