@@ -34,6 +34,16 @@ this file is agent-facing operational context.
   registry, and pins the unknown-skill stderr/exit contract. The assets are the oracle captures and
   the TSV pins their provenance; both are generated artifacts. Any drift exits
   non-zero; `--write` regenerates both and re-verifies. Never hand-edit them.
+- `scripts/capture-task-done.py` — same constraints (macOS + reference binary,
+  version-pinned to 3.0.0, `--spectra-bin`/`SPECTRA_BIN` override). Runs the
+  `task done`/`task start` scenarios in scratch git repos and writes the
+  self-describing `docs/reverse-engineering/golden/task-done-3.0.0.json`,
+  which `task_done_golden_integration.rs` replays. Drift exits non-zero and
+  keeps the scratch repos; `--write` regenerates and re-verifies. The golden
+  is generated — never hand-edit it. Its sibling
+  `task-done-3.0.0.divergences.json` is the opposite: a hand-curated ledger
+  of OpenSpectra's pinned divergent values, edited deliberately when a
+  divergence is closed or accepted (the replay fails on stale entries).
 
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 

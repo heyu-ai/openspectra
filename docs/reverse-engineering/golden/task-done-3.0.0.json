@@ -1052,6 +1052,138 @@
       ]
     },
     {
+      "name": "baseline-exclusions",
+      "description": "v3.0.0 with a baseline and .spectra/ NOT ignored: are .spectra/ paths, the change dir, another change, and canonical specs written after task start attributed?",
+      "git": true,
+      "base": {
+        ".spectra.yaml": "spec_dir: docs/spectra\n",
+        "docs/spectra/config.yaml": "schema: spec-driven\n",
+        "docs/spectra/specs/.gitkeep": "",
+        "docs/spectra/changes/archive/.gitkeep": "",
+        "docs/spectra/changes/demo/.openspec.yaml": "schema: spec-driven\ncreated: 2026-01-01\ncreated_by: Golden <golden@example.com>\n",
+        "docs/spectra/changes/demo/tasks.md": "## 1. Core\n\n- [ ] 1.1 first core task\n- [ ] 1.2 second core task\n\n## 2. Polish\n\n- [ ] 2.1 first polish task\n- [ ] 2.2 second polish task\n",
+        "src/a.rs": "fn a() {}\n",
+        "src/b.rs": "fn b() {}\n",
+        "src/old.rs": "fn old() {}\n",
+        "docs/gone.md": "gone\n"
+      },
+      "steps": [
+        {
+          "op": "spectra",
+          "args": [
+            "task",
+            "start",
+            "1"
+          ],
+          "expect": {
+            "exit": 0,
+            "stdout": "✓ Task 1 baseline captured\n",
+            "stderr": "",
+            "tasks_md": "## 1. Core\n\n- [ ] 1.1 first core task\n- [ ] 1.2 second core task\n\n## 2. Polish\n\n- [ ] 2.1 first polish task\n- [ ] 2.2 second polish task\n",
+            "touched": "{\n  \"change\": \"demo\",\n  \"touched\": [],\n  \"review_base\": {\n    \"head_revision\": \"5843eaf603f8a683148211114a76b07deac8edab\",\n    \"dirty_fingerprints\": []\n  }\n}",
+            "spectra_state_files": [
+              ".spectra/task-baselines/demo/1.json",
+              ".spectra/touched/demo.json",
+              ".spectra/touched/demo.lock"
+            ]
+          }
+        },
+        {
+          "op": "write",
+          "path": ".spectra/other-state.txt",
+          "content": "tool state\n"
+        },
+        {
+          "op": "write",
+          "path": "docs/spectra/changes/demo/design.md",
+          "content": "# design\n"
+        },
+        {
+          "op": "write",
+          "path": "docs/spectra/changes/archive/2026-01-01-old/proposal.md",
+          "content": "# old\n"
+        },
+        {
+          "op": "write",
+          "path": "docs/spectra/specs/cap/spec.md",
+          "content": "# spec\n"
+        },
+        {
+          "op": "write",
+          "path": "src/a.rs",
+          "content": "fn a() { 1 }\n"
+        },
+        {
+          "op": "spectra",
+          "args": [
+            "task",
+            "done",
+            "1",
+            "--json"
+          ],
+          "expect": {
+            "exit": 0,
+            "stdout": "{\"change\":\"demo\",\"provenance\":\"task_baseline\",\"status\":\"done\",\"task_desc\":\"1.1 first core task\",\"task_id\":\"1\",\"touched_files\":[\"src/a.rs\"],\"warnings\":[]}\n",
+            "stderr": "",
+            "tasks_md": "## 1. Core\n\n- [x] 1.1 first core task\n- [ ] 1.2 second core task\n\n## 2. Polish\n\n- [ ] 2.1 first polish task\n- [ ] 2.2 second polish task\n",
+            "touched": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ],\n      \"provenance\": \"task_baseline\"\n    }\n  ],\n  \"review_base\": {\n    \"head_revision\": \"5843eaf603f8a683148211114a76b07deac8edab\",\n    \"dirty_fingerprints\": []\n  }\n}",
+            "spectra_state_files": [
+              ".spectra/other-state.txt",
+              ".spectra/touched/demo.json",
+              ".spectra/touched/demo.lock"
+            ]
+          }
+        },
+        {
+          "op": "spectra",
+          "args": [
+            "task",
+            "start",
+            "2"
+          ],
+          "expect": {
+            "exit": 0,
+            "stdout": "✓ Task 2 baseline captured\n",
+            "stderr": "",
+            "tasks_md": "## 1. Core\n\n- [x] 1.1 first core task\n- [ ] 1.2 second core task\n\n## 2. Polish\n\n- [ ] 2.1 first polish task\n- [ ] 2.2 second polish task\n",
+            "touched": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ],\n      \"provenance\": \"task_baseline\"\n    }\n  ],\n  \"review_base\": {\n    \"head_revision\": \"5843eaf603f8a683148211114a76b07deac8edab\",\n    \"dirty_fingerprints\": []\n  }\n}",
+            "spectra_state_files": [
+              ".spectra/other-state.txt",
+              ".spectra/task-baselines/demo/2.json",
+              ".spectra/touched/demo.json",
+              ".spectra/touched/demo.lock"
+            ]
+          }
+        },
+        {
+          "op": "write",
+          "path": "src/b.rs",
+          "content": "fn b() { 2 }\n"
+        },
+        {
+          "op": "spectra",
+          "args": [
+            "task",
+            "done",
+            "2",
+            "--json"
+          ],
+          "expect": {
+            "exit": 0,
+            "stdout": "{\"change\":\"demo\",\"provenance\":\"task_baseline\",\"status\":\"done\",\"task_desc\":\"1.2 second core task\",\"task_id\":\"2\",\"touched_files\":[\"src/b.rs\"],\"warnings\":[]}\n",
+            "stderr": "",
+            "tasks_md": "## 1. Core\n\n- [x] 1.1 first core task\n- [x] 1.2 second core task\n\n## 2. Polish\n\n- [ ] 2.1 first polish task\n- [ ] 2.2 second polish task\n",
+            "touched": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ],\n      \"provenance\": \"task_baseline\"\n    },\n    {\n      \"task_id\": \"2\",\n      \"task_desc\": \"1.2 second core task\",\n      \"files\": [\n        \"src/b.rs\"\n      ],\n      \"provenance\": \"task_baseline\"\n    }\n  ],\n  \"review_base\": {\n    \"head_revision\": \"5843eaf603f8a683148211114a76b07deac8edab\",\n    \"dirty_fingerprints\": []\n  }\n}",
+            "spectra_state_files": [
+              ".spectra/other-state.txt",
+              ".spectra/touched/demo.json",
+              ".spectra/touched/demo.lock"
+            ]
+          }
+        }
+      ]
+    },
+    {
       "name": "explicit-file-attribution",
       "description": "v3.0.0: --file attributes named paths (existing or not, repeatable, duplicates, change-dir paths) without a baseline.",
       "git": true,

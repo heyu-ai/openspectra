@@ -225,6 +225,25 @@ SCENARIOS = [
         ],
     },
     {
+        "name": "baseline-exclusions",
+        "description": "v3.0.0 with a baseline and .spectra/ NOT ignored: are "
+        ".spectra/ paths, the change dir, another change, and canonical specs "
+        "written after task start attributed?",
+        "base_overrides": {".gitignore": None},
+        "steps": [
+            s("task", "start", "1"),
+            w(".spectra/other-state.txt", "tool state\n"),
+            w(f"{CHANGE_DIR}/design.md", "# design\n"),
+            w("docs/spectra/changes/archive/2026-01-01-old/proposal.md", "# old\n"),
+            w("docs/spectra/specs/cap/spec.md", "# spec\n"),
+            w("src/a.rs", "fn a() { 1 }\n"),
+            done("1", "--json"),
+            s("task", "start", "2"),
+            w("src/b.rs", "fn b() { 2 }\n"),
+            done("2", "--json"),
+        ],
+    },
+    {
         "name": "explicit-file-attribution",
         "description": "v3.0.0: --file attributes named paths (existing or not, "
         "repeatable, duplicates, change-dir paths) without a baseline.",
