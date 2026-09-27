@@ -67,7 +67,11 @@ why; never add a blanket `#[allow]` just to make the check pass.
   observable chain (score → severity → exit code → CI gate), not just the
   constant itself: a locally-correct fix can widen a latent divergence in a
   behavior that consumes it (PR #35: the abandoned score fix exposed the
-  severity-mapped exit codes as an unverified guess).
+  severity-mapped exit codes as an unverified guess). The same goes for a
+  shared parser: grep every caller before writing the CHANGELOG's list of
+  affected commands (PR #177 changed `tasks::parse` and listed four commands,
+  missing `validate`'s archived-task check at `validate.rs:433`, which five
+  reviewers then caught independently).
 - Calibration scripts are verification contracts, not printers: compare the
   recovered values against the pinned expectations, exit non-zero on drift or
   on a scan too short to cover them, and preserve the failing synthetic repo
@@ -94,6 +98,15 @@ why; never add a blanket `#[allow]` just to make the check pass.
   attributed to cases they didn't cover), and one was reintroduced *by the fix*
   for another. When you touch a comment, check every claim it makes against
   the implementation before committing.
+- Probe the oracle before acting on a review finding, in either direction. A
+  reviewer's "this mutation survives, add a test that locks it" or "this is an
+  unaccepted silent failure" is reasoned from the code, not from the oracle,
+  and in a port the surviving mutant can be the oracle-correct behavior (PR
+  #177: the untested `is_task_line` guard in `mark_all_done` was the
+  divergence — oracle v3.0.0 `archive --mark-tasks-complete` flips
+  blank-description checkboxes too, so locking the guard would have fossilized
+  it; #178 removed it instead. The same review's "`task done` on `[~]` still
+  records touched files" finding turned out to be oracle behavior as well).
 
 ## Agent conduct
 
