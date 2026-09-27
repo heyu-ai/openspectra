@@ -31,16 +31,15 @@ changes.
   into the sidecar by the next archive that touches that capability. A
   REMOVED delta aimed at a requirement holding an unrecognized footer fails
   instead of discarding it, and so does a MODIFIED one unless its pasted block
-  keeps that footer. MODIFIED requirements now leave a
-  trace record too. A footer is recognized whether or not there is whitespace
-  between `<!--` and `@trace`; one inside an indented code block is left alone,
-  and so is a pointer example there; an unchanged ADDED/MODIFIED block pasted
-  with such a footer is still a no-op; and a footer is attributed to its requirement in any `##` section, not only
-  the first `## Requirements`. A `spec.md` whose pointer names a missing
-  sidecar fails the archive instead of starting a new, empty sidecar (#179).
-  This deliberately
-  diverges from the oracle (v3.0.0 still writes inline footers), per the
-  downstream ADR-0029 D3 (#98).
+  keeps that footer. MODIFIED requirements now leave a trace record too. A
+  footer is recognized whether or not there is whitespace between `<!--` and
+  `@trace`; one inside an indented code block is left alone, and so is a
+  pointer example there; an unchanged ADDED/MODIFIED block pasted with such a
+  footer is still a no-op; and a footer is attributed to its requirement in
+  any `##` section, not only the first `## Requirements`. A `spec.md` whose
+  pointer names a missing sidecar fails the archive instead of starting a new,
+  empty sidecar (#179). This deliberately diverges from the oracle (v3.0.0
+  still writes inline footers), per the downstream ADR-0029 D3 (#98).
 
 ### Fixed
 

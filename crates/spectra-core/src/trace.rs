@@ -448,7 +448,7 @@ pub fn has_pointer(content: &str) -> bool {
 /// 重建，否則舊紀錄就此遺失且沒有任何訊號（#179）。
 pub fn missing_sidecar_error(sidecar: &Path) -> anyhow::Error {
     anyhow::anyhow!(
-        "{} is missing but spec.md points to it ({POINTER}); restore it (for example from git) before continuing, or, if it cannot be recovered, delete that pointer line from spec.md to start a new, empty sidecar",
+        "{} is missing but spec.md points to it ({POINTER}); restore it (for example from git) before continuing, or, if it cannot be recovered, delete that pointer line from spec.md so the next archive starts a new sidecar",
         sidecar.display()
     )
 }

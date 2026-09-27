@@ -3983,6 +3983,40 @@ mod tests {
     }
 
     #[test]
+    fn archive_applies_a_modified_requirement_that_changes_text_after_a_single_line_footer() {
+        // 開頭行帶內容的 footer（含單行 `<!-- @trace ... -->`）無法解析，不是多行
+        // footer 的開頭：它後面的內容仍要參與比對，否則之後的改動會被當成 no-op
+        // 而靜默丟掉。
+        let requirement = |detail: &str| {
+            format!(
+                "### Requirement: Alpha\nThe system SHALL alpha.\n\n<!-- @trace source: x -->\n\n{detail}\n"
+            )
+        };
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(
+            &spec_path,
+            &format!(
+                "# my-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n{}",
+                requirement("Old detail.")
+            ),
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            &format!("## MODIFIED Requirements\n\n{}", requirement("New detail.")),
+        );
+
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied[0].modified, 1);
+        let spec = fs::read_to_string(&spec_path).unwrap();
+        assert!(spec.contains("New detail."), "{spec}");
+        assert!(!spec.contains("Old detail."), "{spec}");
+    }
+
+    #[test]
     fn archive_applies_a_modified_requirement_that_only_changes_a_code_example() {
         // 縮排 code block 或 code fence 裡的 footer 範例不是 footer：只改範例的
         // MODIFIED 要真的套用，不能被當成「內容相同」而靜默丟掉。

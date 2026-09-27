@@ -247,9 +247,10 @@ traces:
   application itself still sees only the first section (not probed against
   the oracle). A footer attributed to no requirement (outside every
   requirement block) is still absorbed, with no name. After the delta is
-  applied, archive strips once more, so footers that arrive inside the delta's own ADDED or MODIFIED blocks are absorbed too. This
-  happens because the convention is to paste a whole requirement into MODIFIED,
-  and a block copied from an oracle-written spec carries its footer. The
+  applied, archive strips once more, so footers that arrive inside the
+  delta's own ADDED or MODIFIED blocks are absorbed too. This happens because
+  the convention is to paste a whole requirement into MODIFIED, and a block
+  copied from an oracle-written spec carries its footer. The
   "identical content" check that makes an ADDED or MODIFIED block a no-op
   ignores multi-line footers recognized by the same opener rule, so an
   unchanged block pasted with a `<!--@trace` footer is still a no-op, and a
@@ -270,8 +271,10 @@ traces:
   different one. That includes the `added`/`modified`/`imported` names of the
   removal entry itself, since `removed` comes first within an entry. `removed`
   and `renamed` are history and are never rewritten.
-  A rename done by the oracle does not update the sidecar, so names in older
-  entries can go stale in a mixed setup. `spectra trace migrate` reports such
+  The oracle never writes the sidecar (the v3.0.0 interop probe left
+  `spec.trace.yaml` byte-identical; RENAMED was not part of that probe), so
+  a rename done by the oracle is expected to leave names in older entries
+  stale in a mixed setup. `spectra trace migrate` reports such
   stale names: names whose last recorded event is not a removal but that match
   no current requirement. Events are taken in entry order, and within an entry
   `removed` comes before `modified`/`added`/`imported`. It does not fix them
