@@ -27,7 +27,8 @@ pub const POINTER: &str = "<!-- @trace-sidecar: spec.trace.yaml -->";
 const FORMAT_VERSION: u32 = 1;
 
 const HEADER: &str = "# Traceability for spec.md, written by `spectra archive` and\n\
-# `spectra trace migrate`. One entry per archived change.\n";
+# `spectra trace migrate`. Entries are appended in order: one per archive,\n\
+# plus entries absorbed from inline footers.\n";
 
 /// `spec.md` 對應的 sidecar 路徑。
 pub fn sidecar_path(spec_path: &Path) -> PathBuf {
@@ -101,8 +102,10 @@ pub struct Extracted {
     /// 剝掉可解析 footer 之後的內容。
     pub content: String,
     pub footers: Vec<InlineFooter>,
-    /// 認得開頭、但內容無法解析（缺 `source`／`updated`、有不認得的欄位、
-    /// 沒有結尾 `-->`）而原樣留在 spec.md 的 footer，記 1-based 行號。
+    /// 認得開頭、但無法解析而原樣留在 spec.md 的 footer，記 1-based 行號。
+    /// 無法解析的原因包括：開頭行本身帶內容（例如單行 footer）、缺少或重複
+    /// `source`／`updated`、不認得的欄位、沒有冒號的行、`code:`／`tests:` 清單
+    /// 外的 `- ` 項、flow 寫法（`code: [a]`）、沒有單獨成行的結尾 `-->`。
     /// 不認得的內容不猜，保留原文讓人處理。
     pub unparsed_lines: Vec<usize>,
 }
@@ -112,7 +115,8 @@ pub struct Extracted {
 /// 空行，免得 `---` 貼上前一段而被渲染成 setext 標題。`content` 應已經過
 /// `markdown::normalize_markdown`。
 pub fn extract_inline(content: &str) -> Extracted {
-    let requirements = crate::markdown::parse_main_requirements(content);
+    // 歸屬看所有章節的 requirement，不只第一個 `## Requirements`（#179）。
+    let requirements = crate::markdown::parse_all_requirements(content);
     let lines: Vec<&str> = content.split('\n').collect();
     let mask = crate::markdown::fenced_line_mask(&lines);
     let mut offsets = Vec::with_capacity(lines.len());
@@ -128,7 +132,19 @@ pub fn extract_inline(content: &str) -> Extracted {
     let mut index = 0;
     while index < lines.len() {
         let line = lines[index];
-        if mask[index] || line.trim() != "<!-- @trace" {
+        let opener = if mask[index] {
+            None
+        } else {
+            footer_opener(line)
+        };
+        let Some(block_opener) = opener else {
+            out.push(line);
+            index += 1;
+            continue;
+        };
+        if !block_opener {
+            // 開頭行本身帶內容（例如單行 footer）：不猜格式，原樣保留。
+            unparsed_lines.push(index + 1);
             out.push(line);
             index += 1;
             continue;
@@ -172,10 +188,33 @@ pub fn extract_inline(content: &str) -> Extracted {
     }
 }
 
+/// 判斷一行是不是 footer 的開頭。`None`：不是；`Some(true)`：多行 footer 的
+/// 開頭（`@trace` 之後沒有其他內容）；`Some(false)`：開頭行本身還帶內容，
+/// 例如單行的 `<!-- @trace source: x -->`，一律當成無法解析、原樣保留。
+///
+/// `<!--` 與 `@trace` 之間可以有任意空白（下游 yibi-mvp 以 `<!--\s*@trace`
+/// 辨識 footer，#179）；`@trace` 後面必須是行尾或空白，所以
+/// [`POINTER`] 的 `@trace-sidecar` 不算。開頭縮排 4 格以上或以 tab 縮排時是
+/// CommonMark 的縮排 code block，不是 HTML comment。
+fn footer_opener(line: &str) -> Option<bool> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = &line[indent..];
+    if indent > 3 || rest.starts_with('\t') {
+        return None;
+    }
+    let rest = rest.strip_prefix("<!--")?.trim_start();
+    let rest = rest.strip_prefix("@trace")?;
+    if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(rest.trim().is_empty())
+}
+
 type FooterBody = (String, String, Vec<String>, Vec<String>);
 
 /// 解析 footer 內文（oracle 的格式：`source:`、`updated:`、`code:`／`tests:`
-/// 清單）。任何不認得的行都讓整個 footer 視為無法解析。
+/// 清單）。任何不認得的行、以及重複的 `source:`／`updated:`（無法判斷哪個
+/// 才對），都讓整個 footer 視為無法解析。
 fn parse_footer_body(lines: &[&str]) -> Option<FooterBody> {
     let mut source = None;
     let mut updated = None;
@@ -194,11 +233,11 @@ fn parse_footer_body(lines: &[&str]) -> Option<FooterBody> {
         let (key, value) = trimmed.split_once(':')?;
         let value = value.trim();
         match key.trim() {
-            "source" if !value.is_empty() => {
+            "source" if !value.is_empty() && source.is_none() => {
                 source = Some(unquote(value).to_string());
                 list = None;
             }
-            "updated" if !value.is_empty() => {
+            "updated" if !value.is_empty() && updated.is_none() => {
                 updated = Some(unquote(value).to_string());
                 list = None;
             }
@@ -336,15 +375,11 @@ fn same_name(left: &str, right: &str) -> bool {
 /// 確保 `content` 在標題（第一個 code fence 外的 `# ` 行）下有 [`POINTER`]；
 /// 沒有標題時放在最前面。已經有就原樣回傳。
 pub fn ensure_pointer(content: &str) -> String {
-    let lines: Vec<&str> = content.split('\n').collect();
-    let mask = crate::markdown::fenced_line_mask(&lines);
-    if lines
-        .iter()
-        .enumerate()
-        .any(|(index, line)| !mask[index] && line.trim() == POINTER)
-    {
+    if has_pointer(content) {
         return content.to_string();
     }
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mask = crate::markdown::fenced_line_mask(&lines);
     let title = lines
         .iter()
         .enumerate()
@@ -365,8 +400,9 @@ pub fn ensure_pointer(content: &str) -> String {
     out.join("\n")
 }
 
-/// `content` 裡認不得的 footer 原文（從 `<!-- @trace` 到它的 `-->`，沒有結尾
-/// 時到檔尾），依出現順序。
+/// `content` 裡認不得的 footer 原文，依出現順序：開頭行本身以 `-->` 結尾時
+/// （單行 footer）就是那一行；否則從開頭行到其後第一個單獨成行的 `-->`，
+/// 找不到時到檔尾。
 pub fn unrecognized_footers(content: &str) -> Vec<String> {
     let lines: Vec<&str> = content.split('\n').collect();
     extract_inline(content)
@@ -374,12 +410,35 @@ pub fn unrecognized_footers(content: &str) -> Vec<String> {
         .into_iter()
         .map(|line| {
             let start = line - 1;
+            if lines[start].trim_end().ends_with("-->") {
+                return lines[start].to_string();
+            }
             let end = (start + 1..lines.len())
                 .find(|index| lines[*index].trim() == "-->")
                 .map_or(lines.len(), |close| close + 1);
             lines[start..end].join("\n")
         })
         .collect()
+}
+
+/// `content` 在 code fence 外是否有 [`POINTER`]。
+pub fn has_pointer(content: &str) -> bool {
+    let lines: Vec<&str> = content.split('\n').collect();
+    let mask = crate::markdown::fenced_line_mask(&lines);
+    lines
+        .iter()
+        .enumerate()
+        .any(|(index, line)| !mask[index] && line.trim() == POINTER)
+}
+
+/// spec.md 有 [`POINTER`]、sidecar 卻不存在：多半是新產生的 sidecar 沒被
+/// `git add`，或 merge 時被刪掉。這時不能當成「還沒有追溯資料」而從空白
+/// 重建，否則舊紀錄就此遺失且沒有任何訊號（#179）。
+pub fn missing_sidecar_error(sidecar: &Path) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{} is missing but spec.md points to it ({POINTER}); restore it (for example from git) before continuing",
+        sidecar.display()
+    )
 }
 
 /// 把 1-based 行號列成警告用的文字，例如 `line 3` 或 `lines 3, 9`。
@@ -409,11 +468,13 @@ pub(crate) fn is_pointer_line(line: &str) -> bool {
 /// [`TraceFile::apply_renames`]）。事件依紀錄順序判斷，同一筆紀錄內依
 /// archive 的套用順序（先 `removed`、後 `modified`／`added`）；`imported`
 /// 也算「存在」事件。所以名稱被移除後又重新加入時，舊的移除紀錄不會豁免
-/// 它。`renamed` 記的是歷史，不列入判斷。
+/// 它。`renamed` 記的是歷史，不列入判斷。「現有 requirement」與
+/// [`extract_inline`] 的歸屬用同一套判斷（所有章節，不只第一個
+/// `## Requirements`），否則第二個區段的名稱會被誤報成過時。
 pub fn stale_names(trace: &TraceFile, content: &str) -> Vec<String> {
     let normalize = crate::markdown::normalize_name;
     let current: std::collections::HashSet<String> =
-        crate::markdown::parse_main_requirements(content)
+        crate::markdown::parse_all_requirements(content)
             .iter()
             .map(|requirement| normalize(&requirement.name))
             .collect();
@@ -481,6 +542,19 @@ impl MigratedSpec {
 /// 仍保有 footer，重跑會再吸收一次；[`TraceFile::absorb`] 對相同內容是冪等
 /// 的，所以不會重複記錄。`dry_run` 只計算、不寫檔。
 pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> {
+    migrate_with(cfg, dry_run, &mut |path, contents| {
+        crate::fsutil::write_atomically(path, contents)
+    })
+}
+
+/// [`migrate`] 的本體，寫檔函式由呼叫端注入，讓「先寫 sidecar、再寫
+/// spec.md」這個順序可以用一個會失敗的 writer 確定性地測試（同
+/// `fsutil::write_with_retry` 注入暫存路徑的做法）。
+fn migrate_with(
+    cfg: &crate::Config,
+    dry_run: bool,
+    write: &mut dyn FnMut(&Path, &str) -> std::io::Result<()>,
+) -> Result<Vec<MigratedSpec>> {
     let specs_root = cfg.specs_dir();
     let mut report = Vec::new();
     for (capability, raw) in crate::fsutil::collect_delta_specs(&specs_root)? {
@@ -497,6 +571,9 @@ pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> 
         };
         let outcome = (|| -> Result<()> {
             let existing = TraceFile::load(&sidecar)?;
+            if existing.is_none() && has_pointer(&normalized) {
+                return Err(missing_sidecar_error(&sidecar));
+            }
             if existing.is_none() && extracted.footers.is_empty() {
                 return Ok(());
             }
@@ -510,9 +587,8 @@ pub fn migrate(cfg: &crate::Config, dry_run: bool) -> Result<Vec<MigratedSpec>> 
             let mut content = ensure_pointer(&extracted.content);
             content.truncate(content.trim_end_matches('\n').len());
             content.push('\n');
-            crate::fsutil::write_atomically(&sidecar, &yaml)
-                .with_context(|| format!("writing {}", sidecar.display()))?;
-            crate::fsutil::write_atomically(&spec_path, &content)
+            write(&sidecar, &yaml).with_context(|| format!("writing {}", sidecar.display()))?;
+            write(&spec_path, &content)
                 .with_context(|| format!("writing {}", spec_path.display()))?;
             // 剝掉 footer、插入指標後行號會位移：改報寫出後檔案的行號。
             entry.unparsed_lines = extract_inline(&content).unparsed_lines;
@@ -1102,5 +1178,245 @@ mod tests {
             error.contains("unsupported trace sidecar version 2"),
             "{error}"
         );
+    }
+
+    // ---- #179：footer 偵測邊界 ----
+
+    #[test]
+    fn extract_inline_recognizes_opener_whitespace_variants() {
+        // 下游 yibi-mvp 用 `<!--\s*@trace\n` 辨識 footer；這些寫法都要被吸收，
+        // 否則 MODIFIED／REMOVED 會把它們連同 requirement 一起靜默丟掉。
+        for opener in [
+            "<!--@trace",
+            "<!--  @trace",
+            "<!--\t@trace",
+            "<!-- @trace  ",
+        ] {
+            let content = format!(
+                "## Requirements\n\n### Requirement: A\n\ntext\n\n{opener}\nsource: s\nupdated: d\ncode:\n  - a.rs\n-->\n"
+            );
+            let extracted = extract_inline(&content);
+            assert_eq!(
+                extracted.footers.len(),
+                1,
+                "opener {opener:?} not absorbed: {extracted:?}"
+            );
+            assert_eq!(extracted.footers[0].requirement.as_deref(), Some("A"));
+            assert!(extracted.unparsed_lines.is_empty(), "{opener:?}");
+        }
+    }
+
+    #[test]
+    fn extract_inline_keeps_a_single_line_footer_as_unrecognized() {
+        let content = "### Requirement: A\n\ntext\n\n<!-- @trace source: s updated: d -->\n";
+        let extracted = extract_inline(content);
+        assert!(extracted.footers.is_empty());
+        assert_eq!(extracted.unparsed_lines, vec![5]);
+        assert_eq!(extracted.content, content);
+        assert_eq!(
+            unrecognized_footers(content),
+            vec!["<!-- @trace source: s updated: d -->".to_string()],
+            "a single-line footer ends on its own line"
+        );
+    }
+
+    #[test]
+    fn extract_inline_keeps_an_opener_line_that_carries_content() {
+        // 開頭行本身帶內容、後面接著完整可解析的 body：若把它當成一般開頭，
+        // 開頭行上的內容（這裡的 `jira: KAN-1`）會被靜默丟掉。
+        let content = "### Requirement: A\n\ntext\n\n<!-- @trace jira: KAN-1\nsource: s\nupdated: d\ncode: []\n-->\n";
+        let extracted = extract_inline(content);
+        assert!(extracted.footers.is_empty(), "{extracted:?}");
+        assert_eq!(extracted.unparsed_lines, vec![5]);
+        assert_eq!(extracted.content, content);
+    }
+
+    #[test]
+    fn extract_inline_ignores_the_sidecar_pointer() {
+        let content = format!("# cap Specification\n\n{POINTER}\n\n## Purpose\n\nP.\n");
+        let extracted = extract_inline(&content);
+        assert!(extracted.footers.is_empty());
+        assert!(extracted.unparsed_lines.is_empty());
+        assert_eq!(extracted.content, content);
+    }
+
+    #[test]
+    fn extract_inline_leaves_footer_examples_in_indented_code_blocks_alone() {
+        // CommonMark：開頭縮排 4 格（或 tab）是縮排 code block，不是 HTML comment。
+        for indent in ["    ", "\t"] {
+            let example = [
+                "<!-- @trace",
+                "source: example",
+                "updated: d",
+                "code: []",
+                "-->",
+            ]
+            .map(|line| format!("{indent}{line}"))
+            .join("\n");
+            let content = format!(
+                "### Requirement: A\n\nFooter format example:\n\n{example}\n\nMore text.\n"
+            );
+            let extracted = extract_inline(&content);
+            assert!(extracted.footers.is_empty(), "{indent:?}: {extracted:?}");
+            assert!(extracted.unparsed_lines.is_empty(), "{indent:?}");
+            assert_eq!(extracted.content, content, "{indent:?}");
+        }
+    }
+
+    #[test]
+    fn extract_inline_still_accepts_up_to_three_spaces_of_indent() {
+        let content =
+            "### Requirement: A\n\ntext\n\n   <!-- @trace\nsource: s\nupdated: d\ncode: []\n-->\n";
+        assert_eq!(extract_inline(content).footers.len(), 1);
+    }
+
+    #[test]
+    fn parse_footer_body_rejects_duplicate_source_or_updated() {
+        for body in [
+            "source: a\nsource: b\nupdated: d\ncode: []",
+            "source: a\nupdated: d\nupdated: e\ncode: []",
+        ] {
+            let content = format!("### Requirement: A\n\ntext\n\n<!-- @trace\n{body}\n-->\n");
+            let extracted = extract_inline(&content);
+            assert!(extracted.footers.is_empty(), "{body:?}");
+            assert_eq!(extracted.unparsed_lines, vec![5], "{body:?}");
+        }
+    }
+
+    // ---- #179：footer 歸屬 ----
+
+    #[test]
+    fn extract_inline_attributes_footers_outside_the_first_requirements_section() {
+        // yibi-mvp 實例：同一份 spec 有第二個 `## Requirements` 區段，或殘留的
+        // `## ADDED Requirements` 區段。footer 的歸屬以前一個 requirement 標題判定。
+        let content = "# cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+### Requirement: First\n\ntext\n\n\
+<!-- @trace\nsource: s1\nupdated: d\ncode: []\n-->\n\n\
+## Stats\n\n## Requirements\n\n### Requirement: Second\n\ntext\n\n\
+<!-- @trace\nsource: s2\nupdated: d\ncode: []\n-->\n\n\
+## ADDED Requirements\n\n### Requirement: Third\n\ntext\n\n\
+<!-- @trace\nsource: s3\nupdated: d\ncode: []\n-->\n";
+        let names: Vec<_> = extract_inline(content)
+            .footers
+            .into_iter()
+            .map(|footer| footer.requirement)
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                Some("First".to_string()),
+                Some("Second".to_string()),
+                Some("Third".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_inline_does_not_attribute_across_a_section_boundary() {
+        // 標題之後遇到新的 `## ` 章節，footer 就不再屬於前一個 requirement。
+        let content = "## Requirements\n\n### Requirement: A\n\ntext\n\n## Notes\n\n\
+<!-- @trace\nsource: s\nupdated: d\ncode: []\n-->\n";
+        assert_eq!(extract_inline(content).footers[0].requirement, None);
+    }
+
+    #[test]
+    fn stale_names_counts_requirements_outside_the_first_section_as_present() {
+        let mut file = TraceFile::default();
+        file.traces.push(TraceEntry {
+            source: "s".into(),
+            updated: "d".into(),
+            imported: vec!["Second".into()],
+            ..Default::default()
+        });
+        let content = "## Requirements\n\n### Requirement: First\n\ntext\n\n\
+## Stats\n\n## Requirements\n\n### Requirement: Second\n\ntext\n";
+        assert!(stale_names(&file, content).is_empty());
+    }
+
+    // ---- #179：absorb 的分組鍵 ----
+
+    #[test]
+    fn absorb_keeps_footers_apart_when_code_updated_or_tests_differ() {
+        let base = footer("Alpha", "demo", &["a.rs"]);
+        let variants = [
+            ("code", footer("Beta", "demo", &["b.rs"])),
+            (
+                "updated",
+                InlineFooter {
+                    requirement: Some("Beta".into()),
+                    updated: "2026-01-01".into(),
+                    ..base.clone()
+                },
+            ),
+            (
+                "tests",
+                InlineFooter {
+                    requirement: Some("Beta".into()),
+                    tests: vec!["t.rs".into()],
+                    ..base.clone()
+                },
+            ),
+        ];
+        for (key, other) in variants {
+            let mut file = TraceFile::default();
+            file.absorb(&[base.clone(), other.clone()]);
+            assert_eq!(
+                file.traces.len(),
+                2,
+                "footers differing only in `{key}` must not merge: {file:?}"
+            );
+            assert_eq!(file.traces[1].imported, vec!["Beta"], "{key}");
+        }
+    }
+
+    // ---- #179：有指標、沒有 sidecar ----
+
+    #[test]
+    fn migrate_reports_a_pointer_whose_sidecar_is_missing() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate-missing-sidecar");
+        let cfg = migrate_cfg(&tmp);
+        let content = format!(
+            "# cap Specification\n\n{POINTER}\n\n## Purpose\n\nP.\n\n## Requirements\n\n### Requirement: A\n\ntext\n"
+        );
+        let spec = write_spec(&cfg, "cap", &content);
+
+        for dry_run in [true, false] {
+            let report = migrate(&cfg, dry_run).unwrap();
+            assert_eq!(report.len(), 1, "dry_run={dry_run}: {report:?}");
+            let error = report[0].error.as_deref().unwrap_or_default();
+            assert!(error.contains("spec.trace.yaml"), "{error}");
+            assert!(report[0].needs_attention());
+        }
+        assert_eq!(std::fs::read_to_string(&spec).unwrap(), content);
+        assert!(!sidecar_path(&spec).exists());
+    }
+
+    // ---- #179：migrate 的寫入順序 ----
+
+    #[test]
+    fn migrate_leaves_spec_md_untouched_when_the_sidecar_write_fails() {
+        // 先寫 sidecar、再寫 spec.md：sidecar 寫不進去時 spec.md 必須仍保有
+        // footer，否則 footer 已從 spec.md 移除、卻沒進 sidecar，就此遺失。
+        let tmp = crate::test_support::TempDir::new("trace-migrate-order");
+        let cfg = migrate_cfg(&tmp);
+        let spec = write_spec(&cfg, "cap", ORACLE_SPEC);
+        let mut written = Vec::new();
+
+        let report = migrate_with(&cfg, false, &mut |path, contents| {
+            written.push(path.to_path_buf());
+            if path.ends_with(SIDECAR_FILE) {
+                return Err(std::io::Error::other("injected sidecar write failure"));
+            }
+            crate::fsutil::write_atomically(path, contents)
+        })
+        .unwrap();
+
+        assert!(report[0].error.is_some(), "{report:?}");
+        assert_eq!(
+            written,
+            vec![sidecar_path(&spec)],
+            "spec.md must not be written"
+        );
+        assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
     }
 }

@@ -819,8 +819,16 @@ fn prepare_spec_deltas(
                 crate::trace::TraceFile::parse(text, &sidecar_path)
             })
             .transpose()?;
+        if existing_trace.is_none()
+            && original
+                .as_deref()
+                .is_some_and(|bytes| crate::trace::has_pointer(&String::from_utf8_lossy(bytes)))
+        {
+            return Err(crate::trace::missing_sidecar_error(&sidecar_path));
+        }
         let sidecar = if retire {
-            // capability retire 時 sidecar 一併移除；歷史仍在 git 與 archive 目錄裡。
+            // capability retire 時 sidecar 一併移除。archive 目錄不保存 sidecar，
+            // 已移除的追溯紀錄只能從 git history 找回。
             sidecar_original.is_some().then_some(PreparedSpec {
                 path: sidecar_path,
                 original: sidecar_original,
@@ -1754,6 +1762,10 @@ mod tests {
                         .to_string_lossy()
                         .ends_with("-my-feature")))
         );
+        // 前提對照：同一個 change 在不被擋的情況下確實會寫出 b-mid 的 sidecar，
+        // 所以上面「不存在」證明的是 rollback 移除了它，而不是它從沒被寫出。
+        archive(&c, "my-feature", false, false, false).unwrap();
+        assert!(crate::trace::sidecar_path(&mid_path).exists());
     }
 
     #[test]
@@ -2694,6 +2706,12 @@ mod tests {
                 crate::trace::POINTER
             ),
         );
+        // 有指標就要有 sidecar（指標對到不存在的檔案會讓 archive 失敗，#179）。
+        let sidecar = crate::trace::sidecar_path(&spec_path);
+        write(
+            &sidecar,
+            "version: 1\ntraces:\n- source: s\n  updated: d\n  added:\n  - Only\n  code: []\n",
+        );
         change::create(&c, "retire").unwrap();
         write(
             &c.changes_dir().join("retire/.openspec.yaml"),
@@ -2707,6 +2725,7 @@ mod tests {
         archive(&c, "retire", false, false, false).unwrap();
 
         assert!(!spec_path.exists());
+        assert!(!sidecar.exists());
     }
 
     #[test]
@@ -3785,5 +3804,125 @@ mod tests {
             full_chain.to_lowercase().contains("permission denied"),
             "expected the permission-denied cause in the error chain, got: {full_chain}"
         );
+    }
+
+    // ---- #179 ----
+
+    #[test]
+    fn archive_refuses_a_pointer_whose_sidecar_is_missing() {
+        // spec.md 有指標、sidecar 卻不見了（例如沒被 git add）：不能從空白重建，
+        // 否則舊紀錄就此遺失。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        let spec = format!(
+            "# my-cap Specification\n\n{}\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+             ### Requirement: Existing\nold text\n",
+            crate::trace::POINTER
+        );
+        write(&spec_path, &spec);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## MODIFIED Requirements\n\n### Requirement: Existing\nnew text\n",
+        );
+
+        let error = archive(&c, "my-feature", false, false, false).unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains(crate::trace::SIDECAR_FILE),
+            "{error:#}"
+        );
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), spec);
+        assert!(!crate::trace::sidecar_path(&spec_path).exists());
+        assert!(c.changes_dir().join("my-feature").is_dir());
+    }
+
+    #[test]
+    fn archive_absorbs_a_footer_with_a_nonstandard_opener_before_removing_its_requirement() {
+        // `<!--@trace`（沒有空白）以前完全不被偵測：REMOVED 會把它連同
+        // requirement 一起丟掉，也不警告（#179）。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("my-cap/spec.md");
+        write(
+            &spec_path,
+            "# my-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+             ### Requirement: Alpha\nThe system SHALL alpha.\n\n\
+             <!--@trace\nsource: oracle-change\nupdated: 2026-09-01\ncode:\n  - a.rs\n-->\n\n\
+             ### Requirement: Beta\nThe system SHALL beta.\n",
+        );
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir().join("my-feature/specs/my-cap/spec.md"),
+            "## REMOVED Requirements\n\n### Requirement: Alpha\n",
+        );
+
+        archive(&c, "my-feature", false, false, false).unwrap();
+
+        let trace = read_trace(&c, "my-cap");
+        assert_eq!(trace.traces[0].source, "oracle-change");
+        assert_eq!(trace.traces[0].imported, vec!["Alpha"]);
+        assert_eq!(trace.traces[0].code, vec!["a.rs"]);
+        assert_eq!(trace.traces[1].removed, vec!["Alpha"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archive_rolls_back_the_sidecar_of_a_retired_capability() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        let spec_path = c.specs_dir().join("a-cap/spec.md");
+        let spec = "# a-cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
+                    ### Requirement: Only\nThe system SHALL exist.\n";
+        write(&spec_path, spec);
+        let sidecar = crate::trace::sidecar_path(&spec_path);
+        let sidecar_content =
+            "version: 1\ntraces:\n- source: s\n  updated: d\n  added:\n  - Only\n  code:\n  - x.rs\n";
+        write(&sidecar, sidecar_content);
+        change::create(&c, "retire").unwrap();
+        write(
+            &c.changes_dir().join("retire/.openspec.yaml"),
+            "schema: spec-driven\nretire_capabilities: true\n",
+        );
+        write(
+            &c.changes_dir().join("retire/specs/a-cap/spec.md"),
+            "## REMOVED Requirements\n\n### Requirement: Only\n",
+        );
+        write(
+            &c.changes_dir().join("retire/specs/z-last/spec.md"),
+            DELTA_TEMPLATE,
+        );
+        let blocked = c.specs_dir().join("z-last");
+        fs::create_dir_all(&blocked).unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = archive(&c, "retire", false, false, false);
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
+
+        result.unwrap_err();
+        assert_eq!(fs::read_to_string(&spec_path).unwrap(), spec);
+        assert_eq!(fs::read_to_string(&sidecar).unwrap(), sidecar_content);
+    }
+
+    #[test]
+    fn commit_refuses_a_sidecar_changed_since_it_was_prepared() {
+        let tmp = TempDir::new();
+        let sidecar = tmp.join("my-cap").join(crate::trace::SIDECAR_FILE);
+        write(&sidecar, "concurrent edit\n");
+        let prepared = [PreparedSpec {
+            path: sidecar.clone(),
+            original: Some(b"prepared from this\n".to_vec()),
+            content: Some("new sidecar\n".to_string()),
+            result: None,
+            retire: false,
+        }];
+
+        let error = commit_prepared_specs(&prepared).unwrap_err();
+
+        assert!(format!("{error:#}").contains("changed while archive was preparing"));
+        assert_eq!(fs::read_to_string(&sidecar).unwrap(), "concurrent edit\n");
     }
 }

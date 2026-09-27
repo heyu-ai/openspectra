@@ -521,6 +521,28 @@ pub(crate) fn parse_main_requirements(content: &str) -> Vec<Requirement> {
     requirement_blocks(&lines, &mask, header + 1, end)
 }
 
+/// 所有 `## ` 章節裡的 requirement，依出現順序。與 [`parse_main_requirements`]
+/// 不同，不只看第一個 `## Requirements`：spec 可能有第二個 `## Requirements`
+/// 區段，或殘留的 `## ADDED Requirements`（yibi-mvp 實例，#179）。delta 的套用
+/// 仍只看第一個區段（oracle 的行為）；這個函式只給「這個名稱存在嗎」與
+/// 「footer 屬於哪個 requirement」這類判斷用。
+pub(crate) fn parse_all_requirements(content: &str) -> Vec<Requirement> {
+    let normalized = normalize_markdown(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let mask = fenced_line_mask(&lines);
+    let headers: Vec<usize> = (0..lines.len())
+        .filter(|index| !mask[*index] && heading_text(lines[*index], 2).is_some())
+        .collect();
+    headers
+        .iter()
+        .enumerate()
+        .flat_map(|(position, &header)| {
+            let end = headers.get(position + 1).copied().unwrap_or(lines.len());
+            requirement_blocks(&lines, &mask, header + 1, end)
+        })
+        .collect()
+}
+
 pub(crate) fn parse_main_purpose(content: &str) -> Option<String> {
     let normalized = normalize_markdown(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
