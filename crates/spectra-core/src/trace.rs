@@ -110,9 +110,10 @@ pub struct Extracted {
     pub unparsed_lines: Vec<usize>,
 }
 
-/// 剝除 `content` 裡所有 code fence 以外、可解析的 `<!-- @trace ... -->`
-/// footer，連同它前面的空行一起移除；footer 後面若緊接著非空行，保留一個
-/// 空行，免得 `---` 貼上前一段而被渲染成 setext 標題。`content` 應已經過
+/// 剝除 `content` 裡所有 code fence 與縮排 code block 以外、可解析的
+/// `<!-- @trace ... -->` footer（開頭判斷見 `footer_opener`），連同它前面的
+/// 空行一起移除；footer 後面若緊接著非空行，保留一個空行，免得 `---` 貼上
+/// 前一段而被渲染成 setext 標題。`content` 應已經過
 /// `markdown::normalize_markdown`。
 pub fn extract_inline(content: &str) -> Extracted {
     // 歸屬看所有章節的 requirement，不只第一個 `## Requirements`（#179）。
@@ -192,22 +193,33 @@ pub fn extract_inline(content: &str) -> Extracted {
 /// 開頭（`@trace` 之後沒有其他內容）；`Some(false)`：開頭行本身還帶內容，
 /// 例如單行的 `<!-- @trace source: x -->`，一律當成無法解析、原樣保留。
 ///
-/// `<!--` 與 `@trace` 之間可以有任意空白（下游 yibi-mvp 以 `<!--\s*@trace`
-/// 辨識 footer，#179）；`@trace` 後面必須是行尾或空白，所以
-/// [`POINTER`] 的 `@trace-sidecar` 不算。開頭縮排 4 格以上或以 tab 縮排時是
-/// CommonMark 的縮排 code block，不是 HTML comment。
-fn footer_opener(line: &str) -> Option<bool> {
-    let indent = line.len() - line.trim_start_matches(' ').len();
-    let rest = &line[indent..];
-    if indent > 3 || rest.starts_with('\t') {
-        return None;
-    }
-    let rest = rest.strip_prefix("<!--")?.trim_start();
+/// `<!--` 與 `@trace` 之間可以有任意空白（下游 yibi-mvp 的
+/// `backend/scripts/generate_epic_handbook.py` 以 `<!--\s*@trace\n` 辨識 footer，
+/// #179）；`@trace` 後面必須是行尾或空白，所以
+/// [`POINTER`] 的 `@trace-sidecar` 不算（`@trace:`、`@trace-->` 這類緊接其他
+/// 字元的寫法同樣不算，回 `None`）。縮排規則見 [`html_block_start`]。
+/// 呼叫端要自己排除 code fence 內的行。
+pub(crate) fn footer_opener(line: &str) -> Option<bool> {
+    let rest = html_block_start(line)?.strip_prefix("<!--")?.trim_start();
     let rest = rest.strip_prefix("@trace")?;
     if !rest.is_empty() && !rest.starts_with(char::is_whitespace) {
         return None;
     }
     Some(rest.trim().is_empty())
+}
+
+/// 去掉一行開頭最多 3 格空白後的內容；縮排 4 格以上、或空白後接著 tab 時回
+/// `None`——CommonMark 裡那是縮排 code block，不是 HTML comment。footer 開頭與
+/// [`POINTER`] 的偵測共用這條規則。
+///
+/// 1–3 格空白後接 tab 也排除：CommonMark 的 tab stop 是 4，這樣同樣到達第 4
+/// 欄。對 [`footer_opener`] 而言 tab 檢查是等價的（以 tab 開頭本來就不會
+/// 以 `<!--` 開頭），但 [`has_pointer`] 會先 trim 再比對，少了這個檢查就會
+/// 把 tab 縮排的指標範例當成真的指標。
+fn html_block_start(line: &str) -> Option<&str> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = &line[indent..];
+    (indent <= 3 && !rest.starts_with('\t')).then_some(rest)
 }
 
 type FooterBody = (String, String, Vec<String>, Vec<String>);
@@ -421,14 +433,14 @@ pub fn unrecognized_footers(content: &str) -> Vec<String> {
         .collect()
 }
 
-/// `content` 在 code fence 外是否有 [`POINTER`]。
+/// `content` 在 code fence 與縮排 code block 外是否有 [`POINTER`]（縮排規則與
+/// footer 開頭相同，見 [`html_block_start`]）。
 pub fn has_pointer(content: &str) -> bool {
     let lines: Vec<&str> = content.split('\n').collect();
     let mask = crate::markdown::fenced_line_mask(&lines);
-    lines
-        .iter()
-        .enumerate()
-        .any(|(index, line)| !mask[index] && line.trim() == POINTER)
+    lines.iter().enumerate().any(|(index, line)| {
+        !mask[index] && html_block_start(line).is_some_and(|rest| rest.trim() == POINTER)
+    })
 }
 
 /// spec.md 有 [`POINTER`]、sidecar 卻不存在：多半是新產生的 sidecar 沒被
@@ -436,7 +448,7 @@ pub fn has_pointer(content: &str) -> bool {
 /// 重建，否則舊紀錄就此遺失且沒有任何訊號（#179）。
 pub fn missing_sidecar_error(sidecar: &Path) -> anyhow::Error {
     anyhow::anyhow!(
-        "{} is missing but spec.md points to it ({POINTER}); restore it (for example from git) before continuing",
+        "{} is missing but spec.md points to it ({POINTER}); restore it (for example from git) before continuing, or, if it cannot be recovered, delete that pointer line from spec.md to start a new, empty sidecar",
         sidecar.display()
     )
 }
@@ -1184,7 +1196,8 @@ mod tests {
 
     #[test]
     fn extract_inline_recognizes_opener_whitespace_variants() {
-        // 下游 yibi-mvp 用 `<!--\s*@trace\n` 辨識 footer；這些寫法都要被吸收，
+        // 下游 yibi-mvp（`backend/scripts/generate_epic_handbook.py`）用
+        // `<!--\s*@trace\n` 辨識 footer；這些寫法都要被吸收，
         // 否則 MODIFIED／REMOVED 會把它們連同 requirement 一起靜默丟掉。
         for opener in [
             "<!--@trace",
@@ -1288,7 +1301,8 @@ mod tests {
     #[test]
     fn extract_inline_attributes_footers_outside_the_first_requirements_section() {
         // yibi-mvp 實例：同一份 spec 有第二個 `## Requirements` 區段，或殘留的
-        // `## ADDED Requirements` 區段。footer 的歸屬以前一個 requirement 標題判定。
+        // `## ADDED Requirements` 區段。footer 歸屬於包含它的 requirement
+        // （看所有章節，不只第一個 `## Requirements`）。
         let content = "# cap Specification\n\n## Purpose\n\nP.\n\n## Requirements\n\n\
 ### Requirement: First\n\ntext\n\n\
 <!-- @trace\nsource: s1\nupdated: d\ncode: []\n-->\n\n\
@@ -1389,6 +1403,44 @@ mod tests {
         }
         assert_eq!(std::fs::read_to_string(&spec).unwrap(), content);
         assert!(!sidecar_path(&spec).exists());
+    }
+
+    /// Purpose 裡用縮排 code block（4 格或 tab）示範指標的 spec；沒有真正的指標。
+    fn spec_with_indented_pointer_example(indent: &str) -> String {
+        format!(
+            "# cap Specification\n\n## Purpose\n\nThe pointer looks like:\n\n{indent}{POINTER}\n\n\
+             ## Requirements\n\n### Requirement: A\n\ntext\n"
+        )
+    }
+
+    #[test]
+    fn has_pointer_ignores_a_pointer_example_in_an_indented_code_block() {
+        // 與 `footer_opener` 同一條縮排規則：縮排 4 格以上或以 tab 開頭是
+        // CommonMark 的縮排 code block，不是 HTML comment（PR #180 review）。
+        for indent in ["    ", "\t", "  \t"] {
+            let content = spec_with_indented_pointer_example(indent);
+            assert!(!has_pointer(&content), "{indent:?}");
+            let ensured = ensure_pointer(&content);
+            assert!(
+                ensured.split('\n').any(|line| line == POINTER),
+                "{indent:?}: ensure_pointer must insert a real pointer:\n{ensured}"
+            );
+        }
+        assert!(has_pointer(&format!("# t\n\n   {POINTER}\n")));
+    }
+
+    #[test]
+    fn migrate_does_not_treat_an_indented_pointer_example_as_a_missing_sidecar() {
+        let tmp = crate::test_support::TempDir::new("trace-migrate-indented-pointer");
+        let cfg = migrate_cfg(&tmp);
+        write_spec(&cfg, "cap", &spec_with_indented_pointer_example("    "));
+
+        let report = migrate(&cfg, true).unwrap();
+
+        assert!(
+            report.iter().all(|entry| entry.error.is_none()),
+            "{report:?}"
+        );
     }
 
     // ---- #179：migrate 的寫入順序 ----
