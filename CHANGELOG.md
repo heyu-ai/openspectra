@@ -68,6 +68,11 @@ changes.
 
 ### Changed
 
+- The built-in `spec-driven` schema's texts match v3.0.0: the `design`
+  instruction and template gain the Design Source section (and the template a
+  `**Supersedes**:` convention for decisions), and the `specs` instruction
+  gains the `## Purpose` rule for new capabilities and a scenario-subject rule.
+  `scripts/capture-schemas.py` now captures and verifies `spec-driven` as well.
 - Human `spectra drift` output is the v3.0.0 table (`Drift Report: <c>`,
   dimension / status / score rows, `Broken anchors`, `Severity: <LEVEL>
   drift`, `> <recommendation>`, with the oracle's TTY colours) instead of

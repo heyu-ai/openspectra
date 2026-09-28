@@ -42,7 +42,7 @@ DEFAULT_BIN = "/Applications/Spectra.app/Contents/MacOS/spectra"
 REPO = Path(__file__).resolve().parent.parent
 ASSETS = REPO / "crates/spectra-core/assets/schemas"
 SENTINEL = "__SPECDIR__"
-SCHEMAS = ("no-spec",)
+SCHEMAS = ("no-spec", "spec-driven")
 
 
 def fail(msg: str) -> NoReturn:
