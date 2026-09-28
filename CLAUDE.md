@@ -24,7 +24,7 @@ this file is agent-facing operational context.
   exits non-zero keeping its sandboxes. Never hand-edit its outputs.
 - `scripts/capture-skills.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0); the default application path can be overridden by
-  `--spectra-bin` or `SPECTRA_BIN`. It verifies all 15 embedded skill assets
+  `--spectra-bin` or `SPECTRA_BIN`. It verifies all 20 embedded skill assets
   byte-exact against the oracle, checks their byte lengths and SHA-256 values
   against `docs/reverse-engineering/golden/skills-3.0.0.tsv`, verifies the
   oracle still rejects the known-absent enumeration candidates (fails loud if

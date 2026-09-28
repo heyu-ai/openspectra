@@ -44,6 +44,13 @@ SKILLS = (
     "review",
     "sync",
     "clarify",
+    # 以下 5 個不在 KNOWN_ABSENT 列舉範圍內而漏抓；來源是 oracle binary 的
+    # registry 字串（`strings <oracle> | grep verify-spec-coverage`），順序照該字串。
+    "test-scope",
+    "commit-archive",
+    "ingest-plan-mapping",
+    "ingest-context-mapping",
+    "verify-spec-coverage",
 )
 KNOWN_ABSENT = (
     "ask",
@@ -200,9 +207,9 @@ def capture_bodies(binary: Path, repo: Path) -> dict[str, bytes]:
         for failure in failures:
             print(f"[FAIL] {failure}", file=sys.stderr)
         raise SystemExit(2)
-    if len(bodies) != len(SKILLS) or len(SKILLS) != 15:
+    if len(bodies) != len(SKILLS) or len(SKILLS) != 20:
         fail(
-            f"skill 數量不符：擷取 {len(bodies)}、registry {len(SKILLS)}，預期 15。"
+            f"skill 數量不符：擷取 {len(bodies)}、registry {len(SKILLS)}，預期 20。"
         )
     return bodies
 
@@ -348,7 +355,8 @@ def verify_rust_registry(repo: Path) -> list[str]:
         return [f"{path.relative_to(repo)}：找不到 const SKILLS registry。"]
     registry = text[start : end + 2]
     entries = tuple(
-        re.findall(r'^\s*\("([^"]+)",', registry, re.MULTILINE)
+        # rustfmt 會把過長的條目折成 `(\n    "name",\n    include_str!(...),\n)`，兩種寫法都要認得。
+        re.findall(r'^\s*\(\s*"([^"]+)",', registry, re.MULTILINE)
     )
     if entries == SKILLS:
         return []

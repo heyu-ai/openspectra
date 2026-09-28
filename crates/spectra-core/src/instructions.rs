@@ -60,12 +60,164 @@ pub struct ArtifactInstructions {
     pub instruction: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    /// 3.0.0 新增：`fnv1a64:<16 位 hex>:<byte 長度>`，對 trim 後的 `context` 計算；
+    /// 只在 `context` 存在時輸出，`--omit-context` 拿掉 `context` 但保留它。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rules: Option<Vec<String>>,
     pub locale: String,
     pub template: String,
     pub dependencies: Vec<ArtifactDependency>,
     pub unlocks: Vec<String>,
+}
+
+/// `instructions proposal --type` 的範本變體（oracle 3.0.0）。只替換 `template`，
+/// `instruction` 與一般 proposal 相同（已 probe）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalType {
+    BugFix,
+    Refactor,
+}
+
+impl ProposalType {
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw {
+            "bug-fix" => Ok(Self::BugFix),
+            "refactor" => Ok(Self::Refactor),
+            _ => anyhow::bail!("invalid --type value '{raw}': expected 'bug-fix' or 'refactor'"),
+        }
+    }
+
+    fn template(self) -> &'static str {
+        match self {
+            Self::BugFix => include_str!("../assets/templates/proposal-bug-fix.md"),
+            Self::Refactor => include_str!("../assets/templates/proposal-refactor.md"),
+        }
+    }
+}
+
+/// `--compact`／`--summary`／`--omit-context`：對 JSON 輸出的投影（oracle 3.0.0）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Projection {
+    pub compact: bool,
+    pub summary: bool,
+    pub omit_context: bool,
+}
+
+impl Projection {
+    fn names(self) -> Vec<&'static str> {
+        [
+            (self.compact, "--compact"),
+            (self.summary, "--summary"),
+            (self.omit_context, "--omit-context"),
+        ]
+        .into_iter()
+        .filter_map(|(on, name)| on.then_some(name))
+        .collect()
+    }
+
+    pub fn is_empty(self) -> bool {
+        self.names().is_empty()
+    }
+
+    /// 不需要讀專案就能判斷的組合錯誤，依 oracle 的檢查順序：互斥 → 缺 `--json` → 搭配 `--skill`。
+    pub fn validate_flags(self, json: bool, skill: bool) -> Result<()> {
+        let names = self.names();
+        match names.as_slice() {
+            [] => Ok(()),
+            [_, _, ..] => anyhow::bail!(
+                "invalid projection combination: {} cannot be used together",
+                names.join(", ")
+            ),
+            [name] if !json => {
+                anyhow::bail!("invalid projection combination: {name} requires --json")
+            }
+            [name] if skill => {
+                anyhow::bail!("invalid projection combination: {name} cannot be used with --skill")
+            }
+            [_] => Ok(()),
+        }
+    }
+
+    /// 依解析出的 artifact 判斷；`explicit_artifact` 是使用者給的位置參數。
+    fn validate_target(
+        self,
+        explicit_artifact: Option<&str>,
+        selected_is_apply: bool,
+    ) -> Result<()> {
+        if self.compact && explicit_artifact != Some("apply") {
+            anyhow::bail!(
+                "invalid projection combination: --compact requires an explicit apply artifact"
+            );
+        }
+        if self.summary && !selected_is_apply {
+            anyhow::bail!("invalid projection combination: --summary is only valid for apply");
+        }
+        if self.omit_context && selected_is_apply {
+            anyhow::bail!(
+                "invalid projection combination: --omit-context is only valid for artifact instructions"
+            );
+        }
+        Ok(())
+    }
+
+    /// 把輸出投影成 JSON。`--compact`／`--omit-context` 的 oracle 輸出 key 依字母排序
+    /// （轉成 map 後重新序列化的結果），serde_json 的 `Value` 物件本來就是排序 map。
+    /// `--summary` 則維持 `state`、`progress` 的原順序，所以用有序的 struct 序列化。
+    pub fn render(self, output: &InstructionOutput) -> Result<String> {
+        if self.summary {
+            if let InstructionOutput::Apply(apply) = output {
+                #[derive(Serialize)]
+                struct Summary<'a> {
+                    state: &'a ApplyState,
+                    progress: &'a Progress,
+                }
+                let summary = Summary {
+                    state: &apply.state,
+                    progress: &apply.progress,
+                };
+                return Ok(serde_json::to_string_pretty(&summary)?);
+            }
+        }
+        let mut value = serde_json::to_value(output)?;
+        if let Some(map) = value.as_object_mut() {
+            if self.compact {
+                map.remove("tasks");
+            }
+            if self.omit_context {
+                map.remove("context");
+            }
+        }
+        if self.compact || self.omit_context {
+            return Ok(serde_json::to_string_pretty(&value)?);
+        }
+        Ok(serde_json::to_string_pretty(output)?)
+    }
+}
+
+/// 64-bit FNV-1a，供 `contextRef` 使用。
+fn fnv1a64(data: &[u8]) -> u64 {
+    data.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+fn context_ref(context: &str) -> String {
+    format!(
+        "fnv1a64:{:016x}:{}",
+        fnv1a64(context.as_bytes()),
+        context.len()
+    )
+}
+
+/// 內建 schema 的 instruction／template 以 `{{SPEC_DIR}}specs/` 表示 spec 目錄；
+/// `instructions` 輸出時代入（`new artifact` 寫檔則保留字面值，與 oracle 相同）。
+pub(crate) fn render_spec_dir(text: &str, spec_dir: &str) -> String {
+    text.replace(
+        "{{SPEC_DIR}}",
+        &format!("{}/", spec_dir.trim_end_matches('/')),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -376,6 +528,7 @@ pub fn artifact_instructions(
         })
         .collect();
     let unlocks = derive_unlocks(schema, &artifact.id, &done_ids);
+    let context_ref = context.as_deref().map(context_ref);
 
     Ok(ArtifactInstructions {
         change_name: change.name.clone(),
@@ -384,11 +537,12 @@ pub fn artifact_instructions(
         change_dir: change_dir.to_string_lossy().into_owned(),
         output_path: artifact.output_path.clone(),
         description: artifact.description.clone(),
-        instruction: artifact.instruction.clone(),
+        instruction: render_spec_dir(&artifact.instruction, &cfg.spec_dir),
         context,
+        context_ref,
         rules,
         locale: LOCALE.to_string(),
-        template: artifact.template.clone(),
+        template: render_spec_dir(&artifact.template, &cfg.spec_dir),
         dependencies,
         unlocks,
     })
@@ -564,11 +718,17 @@ pub fn apply_instructions(
     })
 }
 
-pub fn get(
+/// `get` 加上 3.0.0 的 projection 與 `--type`。與專案無關的旗標檢查
+/// （[`Projection::validate_flags`]、[`ProposalType::parse`]）由呼叫端先做；這裡只做
+/// 需要知道解析出哪個 artifact 的檢查，順序在 change 解析之後（oracle 對不存在的
+/// change 先報 `Change 'X' not found.`）。
+pub fn get_with(
     cfg: &crate::Config,
     explicit_change: Option<&str>,
     schema_name: Option<&str>,
     artifact_id: Option<&str>,
+    projection: Projection,
+    proposal_type: Option<ProposalType>,
 ) -> Result<InstructionOutput> {
     // Change first, then the schema gate: probed, the oracle reports
     // `Change 'X' not found.` ahead of the schema error, and the change's own
@@ -581,13 +741,39 @@ pub fn get(
         Some(artifact_id) => Some(artifact_id.to_string()),
         None => next_artifact(&schema, &change.dir)?,
     };
+    let selected_is_apply = matches!(selected.as_deref(), Some("apply") | None);
+    projection.validate_target(artifact_id, selected_is_apply)?;
+    if proposal_type.is_some() && selected.as_deref() != Some("proposal") {
+        anyhow::bail!("invalid --type combination: --type is only valid for proposal instructions");
+    }
     match selected.as_deref() {
         Some("apply") | None => {
             apply_instructions(cfg, &change, &schema).map(InstructionOutput::Apply)
         }
-        Some(artifact_id) => artifact_instructions(cfg, &change, artifact_id, &schema)
-            .map(InstructionOutput::Artifact),
+        Some(artifact_id) => {
+            let mut report = artifact_instructions(cfg, &change, artifact_id, &schema)?;
+            if let Some(variant) = proposal_type {
+                report.template = variant.template().to_string();
+            }
+            Ok(InstructionOutput::Artifact(report))
+        }
     }
+}
+
+pub fn get(
+    cfg: &crate::Config,
+    explicit_change: Option<&str>,
+    schema_name: Option<&str>,
+    artifact_id: Option<&str>,
+) -> Result<InstructionOutput> {
+    get_with(
+        cfg,
+        explicit_change,
+        schema_name,
+        artifact_id,
+        Projection::default(),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -616,6 +802,185 @@ mod tests {
 
     fn write_spec_config(cfg: &crate::Config, body: &str) {
         std::fs::write(cfg.root.join(&cfg.spec_dir).join("config.yaml"), body).unwrap();
+    }
+
+    #[test]
+    fn context_ref_hashes_the_trimmed_context_like_the_oracle() {
+        // 兩組值取自 oracle 3.0.0 輸出（單行與含中文的多行 context）。
+        assert_eq!(
+            context_ref("Project context line."),
+            "fnv1a64:3951a95bb8e245c9:21"
+        );
+        assert_eq!(
+            context_ref("Line one.\nLine two 中文."),
+            "fnv1a64:9a1756e47a692f85:26"
+        );
+
+        let (_tmp, cfg, change) = project("instructions-context-ref");
+        write_spec_config(&cfg, "context: |\n  Project context line.\n");
+        let with = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
+        assert_eq!(
+            with.context_ref.as_deref(),
+            Some("fnv1a64:3951a95bb8e245c9:21")
+        );
+
+        write_spec_config(&cfg, "context: \"   \"\n");
+        let blank = artifact_instructions(
+            &cfg,
+            &change,
+            "proposal",
+            &crate::schema::ResolvedSchema::builtin(),
+        )
+        .unwrap();
+        assert_eq!(blank.context_ref, None);
+    }
+
+    #[test]
+    fn artifact_text_renders_the_spec_dir_placeholder() {
+        let (_tmp, mut cfg, change) = project("instructions-spec-dir");
+        cfg.spec_dir = "docs/spectra".to_string();
+        std::fs::create_dir_all(cfg.root.join("docs/spectra")).unwrap();
+        let schema = crate::schema::ResolvedSchema::builtin();
+        let proposal = artifact_instructions(&cfg, &change, "proposal", &schema).unwrap();
+        assert!(proposal
+            .instruction
+            .contains("Check `docs/spectra/specs/` for existing spec names."));
+        assert!(proposal
+            .template
+            .contains("Use existing spec names from docs/spectra/specs/."));
+        assert!(!proposal.template.contains("{{SPEC_DIR}}"));
+        let specs = artifact_instructions(&cfg, &change, "specs", &schema).unwrap();
+        assert!(specs.instruction.contains(
+            "Locate the existing requirement in docs/spectra/specs/<capability>/spec.md"
+        ));
+    }
+
+    #[test]
+    fn proposal_type_parses_only_the_two_oracle_variants() {
+        assert_eq!(
+            ProposalType::parse("bug-fix").unwrap(),
+            ProposalType::BugFix
+        );
+        assert_eq!(
+            ProposalType::parse("refactor").unwrap(),
+            ProposalType::Refactor
+        );
+        assert_eq!(
+            ProposalType::parse("BUG-FIX").unwrap_err().to_string(),
+            "invalid --type value 'BUG-FIX': expected 'bug-fix' or 'refactor'"
+        );
+        assert!(ProposalType::BugFix
+            .template()
+            .starts_with("## Problem\n\n## Root Cause\n"));
+        assert!(ProposalType::Refactor
+            .template()
+            .starts_with("## Summary\n\n## Motivation\n"));
+    }
+
+    #[test]
+    fn projection_flag_errors_follow_the_oracle_order_and_wording() {
+        let p = |compact, summary, omit_context| Projection {
+            compact,
+            summary,
+            omit_context,
+        };
+        let msg = |r: Result<()>| r.unwrap_err().to_string();
+        assert_eq!(
+            msg(p(true, true, true).validate_flags(true, false)),
+            "invalid projection combination: --compact, --summary, --omit-context cannot be used together"
+        );
+        assert_eq!(
+            msg(p(false, true, true).validate_flags(false, true)),
+            "invalid projection combination: --summary, --omit-context cannot be used together"
+        );
+        assert_eq!(
+            msg(p(true, false, false).validate_flags(false, true)),
+            "invalid projection combination: --compact requires --json"
+        );
+        assert_eq!(
+            msg(p(false, false, true).validate_flags(true, true)),
+            "invalid projection combination: --omit-context cannot be used with --skill"
+        );
+        assert!(p(false, true, false).validate_flags(true, false).is_ok());
+        assert!(Projection::default().validate_flags(false, true).is_ok());
+
+        assert_eq!(
+            msg(p(true, false, false).validate_target(None, true)),
+            "invalid projection combination: --compact requires an explicit apply artifact"
+        );
+        assert!(p(true, false, false)
+            .validate_target(Some("apply"), true)
+            .is_ok());
+        assert_eq!(
+            msg(p(false, true, false).validate_target(Some("proposal"), false)),
+            "invalid projection combination: --summary is only valid for apply"
+        );
+        assert!(p(false, true, false).validate_target(None, true).is_ok());
+        assert_eq!(
+            msg(p(false, false, true).validate_target(Some("apply"), true)),
+            "invalid projection combination: --omit-context is only valid for artifact instructions"
+        );
+    }
+
+    #[test]
+    fn projections_render_the_oracle_shapes() {
+        let (_tmp, cfg, change) = project("instructions-projection");
+        write_spec_config(&cfg, "context: |\n  Ctx.\n");
+        let dir = cfg.root.join(&change.dir);
+        std::fs::write(dir.join("tasks.md"), "- [ ] 1.1 First\n- [x] 1.2 Second\n").unwrap();
+        let schema = crate::schema::ResolvedSchema::builtin();
+
+        let apply = InstructionOutput::Apply(apply_instructions(&cfg, &change, &schema).unwrap());
+        let summary = Projection {
+            summary: true,
+            ..Projection::default()
+        }
+        .render(&apply)
+        .unwrap();
+        assert_eq!(
+            summary,
+            "{\n  \"state\": \"ready\",\n  \"progress\": {\n    \"total\": 2,\n    \"complete\": 1,\n    \"remaining\": 1\n  }\n}"
+        );
+
+        let compact: serde_json::Value = serde_json::from_str(
+            &Projection {
+                compact: true,
+                ..Projection::default()
+            }
+            .render(&apply)
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(compact.get("tasks").is_none());
+        assert!(compact.get("progress").is_some());
+        let keys: Vec<&String> = compact.as_object().unwrap().keys().collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(
+            keys, sorted,
+            "compact keys are alphabetical like the oracle"
+        );
+
+        let artifact = InstructionOutput::Artifact(
+            artifact_instructions(&cfg, &change, "proposal", &schema).unwrap(),
+        );
+        let omitted: serde_json::Value = serde_json::from_str(
+            &Projection {
+                omit_context: true,
+                ..Projection::default()
+            }
+            .render(&artifact)
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(omitted.get("context").is_none());
+        assert!(omitted.get("contextRef").is_some());
     }
 
     #[test]

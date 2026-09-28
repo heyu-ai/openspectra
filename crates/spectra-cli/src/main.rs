@@ -143,6 +143,21 @@ enum Command {
         /// Embedded skill name (outputs skill body directly).
         #[arg(long)]
         skill: Option<String>,
+        /// Target agent used to render an embedded skill body.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Omit task descriptions from apply JSON.
+        #[arg(long)]
+        compact: bool,
+        /// Return only apply state and progress.
+        #[arg(long)]
+        summary: bool,
+        /// Omit artifact project context while retaining contextRef.
+        #[arg(long)]
+        omit_context: bool,
+        /// Proposal template type variant (bug-fix or refactor).
+        #[arg(long = "type", value_name = "TYPE")]
+        proposal_type: Option<String>,
     },
     /// Validate changes against the OpenSpec structural rules (a change needs
     /// at least one requirement delta; with --strict, each ADDED/MODIFIED
@@ -1333,13 +1348,22 @@ fn cmd_instructions(
     change_name: Option<&str>,
     schema_name: Option<&str>,
     as_json: bool,
+    projection: instructions::Projection,
+    proposal_type: Option<instructions::ProposalType>,
 ) -> Result<i32> {
     let Some(change_name) = resolve_read_change(cfg, change_name)? else {
         return Ok(0);
     };
-    let report = instructions::get(cfg, Some(&change_name), schema_name, artifact_id)?;
+    let report = instructions::get_with(
+        cfg,
+        Some(&change_name),
+        schema_name,
+        artifact_id,
+        projection,
+        proposal_type,
+    )?;
     let output = if as_json {
-        format!("{}\n", serde_json::to_string_pretty(&report)?)
+        format!("{}\n", projection.render(&report)?)
     } else {
         match &report {
             instructions::InstructionOutput::Artifact(report) => {
@@ -1819,7 +1843,29 @@ fn run() -> Result<i32> {
             schema,
             json,
             skill,
+            agent,
+            compact,
+            summary,
+            omit_context,
+            proposal_type,
         } => {
+            // 與專案無關的旗標檢查先於一切（oracle 3.0.0 probe 的順序）。
+            let projection = instructions::Projection {
+                compact: *compact,
+                summary: *summary,
+                omit_context: *omit_context,
+            };
+            projection.validate_flags(*json, skill.is_some())?;
+            let proposal_type = match proposal_type {
+                Some(_) if skill.is_some() => {
+                    anyhow::bail!("invalid --type combination: --type cannot be used with --skill")
+                }
+                Some(raw) => Some(instructions::ProposalType::parse(raw)?),
+                None => None,
+            };
+            if agent.is_some() && skill.is_none() {
+                anyhow::bail!("--agent requires --skill");
+            }
             // The skill lookup intentionally precedes all project/change/
             // schema work (including require_initialized) so --skill always
             // wins, even outside an initialized project — matching the oracle.
@@ -1827,7 +1873,19 @@ fn run() -> Result<i32> {
                 let Some(body) = skills::skill_body(skill) else {
                     anyhow::bail!("Unknown skill: {skill}");
                 };
-                std::io::stdout().write_all(body.as_bytes())?;
+                let rendered = match agent {
+                    // 未初始化時以預設 spec_dir 代入（oracle 在非專案目錄同樣輸出 `openspec/`）。
+                    Some(agent) => {
+                        let spec_dir = if Config::is_initialized(&root) {
+                            Config::load(&root)?.spec_dir
+                        } else {
+                            spectra_core::config::DEFAULT_SPEC_DIR.to_string()
+                        };
+                        skills::render_for_agent(body, agent, &spec_dir)?
+                    }
+                    None => body.to_string(),
+                };
+                std::io::stdout().write_all(rendered.as_bytes())?;
                 return Ok(0);
             }
             let cfg = require_initialized(&root)?;
@@ -1837,6 +1895,8 @@ fn run() -> Result<i32> {
                 change.as_deref(),
                 schema.as_deref(),
                 *json,
+                projection,
+                proposal_type,
             )
         }
         Command::Validate {

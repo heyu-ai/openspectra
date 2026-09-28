@@ -226,6 +226,19 @@ instruction, preflight?}`.
 
 ### Embedded skills
 
+> **Superseded count (2026-09-28, oracle 3.0.0).** The oracle has **20**
+> skills, not 15. The 15 below come from the 2.3.1-era enumeration; 3.0.0
+> dropped `ask`, added `review`, and also ships `test-scope`,
+> `commit-archive`, `ingest-plan-mapping`, `ingest-context-mapping` and
+> `verify-spec-coverage`, which the wordlist never covered. They were found in
+> the binary's registry string (`strings <oracle> | grep verify-spec-coverage`
+> prints one line listing all names) and confirmed one by one with
+> `spectra instructions --skill <name>` (exit 0). The current registry order
+> is `skills.rs`; the unit test
+> `every_skill_referenced_by_an_embedded_asset_is_in_the_registry` now fails
+> if any embedded body or `update` template references a `--skill` name that
+> is not embedded. See "3.0.0 flags" below for `--agent`.
+
 `--skill <name>` selects one of exactly 15 embedded bodies, as established by
 the [dated enumeration probe record](#enumeration-probe-record-2026-08-11), in
 canonical registry order: `tdd`, `audit`, `apply`, `archive`, `ask`, `commit`,
@@ -273,6 +286,94 @@ provenance by byte length and SHA-256 digest. Both the assets and manifest are
 generated artifacts and must never be hand-edited. By default,
 `scripts/capture-skills.py` re-captures the bodies and verifies both; its
 explicit `--write` mode regenerates both and then re-verifies them.
+
+### 3.0.0 flags: `--agent`, `--compact`, `--summary`, `--omit-context`, `--type`
+
+Probed against oracle 3.0.0 on 2026-09-28 (one jail per operation, projects
+created by the oracle's own `init` and `new change`). Acceptance: a matrix of
+208 invocations (34 flag combinations in a fresh and a completed change, plus
+each of the 20 skills raw and rendered for all 6 agents) run by both binaries
+in the same jail. All skill renders and all error cases match byte for byte;
+the 4 remaining differences are content outside this section (the 3.0.0
+`dormancy` field and the 3.0.0 `specs` instruction text), tracked as W7 in
+`docs/migration-plan.md`.
+
+**Flag validation, in the oracle's order** (all exit 1, `Error: <msg>`):
+
+1. Project-independent checks, before any project or change lookup:
+   - more than one projection → `invalid projection combination: --compact,
+     --summary, --omit-context cannot be used together` (only the flags given,
+     always in that order);
+   - one projection without `--json` → `… --<flag> requires --json`;
+   - a projection with `--skill` → `… --<flag> cannot be used with --skill`
+     (ahead of the unknown-skill check);
+   - `--type` with `--skill` → `invalid --type combination: --type cannot be
+     used with --skill`;
+   - a `--type` value other than exactly `bug-fix` or `refactor` (case
+     sensitive) → `invalid --type value '<v>': expected 'bug-fix' or 'refactor'`;
+   - `--agent` without `--skill` → `--agent requires --skill`.
+2. Skill mode: `Unknown skill: <name>`, then `Unknown agent: <a>. Supported
+   agents: antigravity, claude, codex, cursor, github-copilot, junie`.
+3. Project mode: the change is resolved first (`Change 'X' not found.`), then
+   the checks that need the resolved artifact:
+   - `--compact` needs the literal `apply` argument, not an implicit apply →
+     `… --compact requires an explicit apply artifact`;
+   - `--summary` needs the resolved artifact to be apply (implicit is fine) →
+     `… --summary is only valid for apply`;
+   - `--omit-context` needs a non-apply artifact → `… --omit-context is only
+     valid for artifact instructions`;
+   - `--type` needs the resolved artifact to be `proposal` (implicit is fine)
+     → `invalid --type combination: --type is only valid for proposal
+     instructions`.
+
+**Projections.**
+
+- `--compact`: the apply object minus the whole `tasks` array (not just the
+  descriptions, despite the help text), with every key alphabetical — the
+  oracle re-serializes through a sorted map.
+- `--summary`: exactly `{"state", "progress"}` in that order.
+- `--omit-context`: the artifact object minus `context`, keys alphabetical;
+  `contextRef` stays.
+
+**`contextRef`** (new in 3.0.0 artifact JSON, between `context` and `rules`):
+`fnv1a64:<16 hex digits>:<byte length>` of the *trimmed* context, present
+exactly when `context` is. Pinned values: `"Project context line."` →
+`fnv1a64:3951a95bb8e245c9:21`; `"Line one.\nLine two 中文."` →
+`fnv1a64:9a1756e47a692f85:26`.
+
+**`--type`** replaces only `template` (the `instruction` is unchanged) with
+the bodies in `crates/spectra-core/assets/templates/proposal-{bug-fix,refactor}.md`,
+extracted verbatim from the oracle's `template` field.
+
+**Spec directory in instruction text.** The built-in proposal and specs texts
+say `{{SPEC_DIR}}specs/`. `instructions` renders it as the configured
+`spec_dir` plus `/`; `new artifact` writes the placeholder **literally** into
+the file (probed: the oracle's `proposal.md` contains `{{SPEC_DIR}}specs/`).
+OpenSpectra keeps both behaviors; before this, it hard-coded `openspec/specs/`
+everywhere.
+
+**`--agent` rendering** of an embedded skill:
+
+- `{{TOOL}}` → the agent id; `{{SPEC_DIR}}` → `spec_dir` with any trailing
+  `/` removed, plus `/` (bodies write `{{SPEC_DIR}}changes/`).
+- Skill invocations `/spectra:<name>` become `/spectra-<name>` for `claude`
+  and `junie`, `$spectra-<name>` for `codex`, and stay as they are for
+  `antigravity`, `cursor` and `github-copilot`. `claude_slash_commands` has no
+  effect (probed both values).
+- Plan placeholders in `ingest`/`propose`: `claude` has the plan directory
+  `~/.claude/plans/`, `cursor` has `.cursor/plans/`, the rest have none.
+  `{{PLAN_DIR}}` becomes that directory or the empty string, and
+  `{{PLAN_SUPPORT_NOTE}}`/`{{PLAN_DISCOVERY_RULE}}` become one of two fixed
+  sentences (see `skills::render_for_agent`).
+- Without `--agent` the raw body, placeholders included, is printed as before.
+- Outside an initialized project the default `openspec` spec dir is used.
+  **Unexplained observation:** in one directory (a linked git worktree nested
+  under another repo's `.claude/worktrees/`) the oracle instead failed with
+  `Not initialized. Run 'spectra init' to initialize.`; copying that tree's
+  contents into a fresh repo, a linked worktree, or directories with
+  `openspec/`, `docs/openspec/`, `.spectra/` or `.gitignore` did not
+  reproduce it. OpenSpectra uses the default spec dir in every
+  non-initialized directory.
 
 ### Preflight (recovered by disassembly + behaviour matrix)
 

@@ -27,7 +27,7 @@ Sections:
 - **Non-Goals** (optional): Scope exclusions and rejected approaches. If design.md will be created, Non-Goals belong there (in Goals/Non-Goals section) — leave this section empty or omit it. If design.md will be skipped, write Non-Goals here so rejected approaches and scope exclusions are recorded in a persistent artifact.
 - **Capabilities**: Identify which specs will be created or modified:
   - **New Capabilities**: List capabilities being introduced. Each becomes a new `specs/<name>/spec.md`. Use kebab-case names (e.g., `user-auth`, `data-export`).
-  - **Modified Capabilities**: List existing capabilities whose REQUIREMENTS are changing. Only include if spec-level behavior changes (not just implementation details). Each needs a delta spec file. Check `openspec/specs/` for existing spec names. Leave empty if no requirement changes.
+  - **Modified Capabilities**: List existing capabilities whose REQUIREMENTS are changing. Only include if spec-level behavior changes (not just implementation details). Each needs a delta spec file. Check `{{SPEC_DIR}}specs/` for existing spec names. Leave empty if no requirement changes.
 - **Impact**: Affected code, APIs, dependencies, or systems.
 
 IMPORTANT: The Capabilities section is critical. It creates the contract between
@@ -66,7 +66,7 @@ pub const PROPOSAL_TEMPLATE: &str = r#"## Why
 
 <!-- Existing capabilities whose REQUIREMENTS are changing (not just implementation).
      Only list here if spec-level behavior changes. Each needs a delta spec file.
-     Use existing spec names from openspec/specs/. Leave empty if no requirement changes. -->
+     Use existing spec names from {{SPEC_DIR}}specs/. Leave empty if no requirement changes. -->
 
 - `<existing-name>`: <what requirement is changing>
 
@@ -154,7 +154,7 @@ pub const SPECS_INSTRUCTION: &str = r#"Create specification files that define WH
 
 Create one spec file per capability listed in the proposal's Capabilities section.
 - New capabilities: use the exact kebab-case name from the proposal (specs/<capability>/spec.md).
-- Modified capabilities: use the existing spec folder name from openspec/specs/<capability>/ when creating the delta spec at specs/<capability>/spec.md.
+- Modified capabilities: use the existing spec folder name from {{SPEC_DIR}}specs/<capability>/ when creating the delta spec at specs/<capability>/spec.md.
 
 Delta operations (use ## headers):
 - **ADDED Requirements**: New capabilities
@@ -170,7 +170,7 @@ Format requirements:
 - Every requirement MUST have at least one scenario.
 
 MODIFIED requirements workflow:
-1. Locate the existing requirement in openspec/specs/<capability>/spec.md
+1. Locate the existing requirement in {{SPEC_DIR}}specs/<capability>/spec.md
 2. Copy the ENTIRE requirement block (from `### Requirement:` through all scenarios)
 3. Paste under `## MODIFIED Requirements` and edit to reflect new behavior
 4. Ensure header text matches exactly (whitespace-insensitive)
@@ -1983,11 +1983,16 @@ mod tests {
                 artifact.description,
                 golden["description"].as_str().unwrap()
             );
+            // 內建文字以 `{{SPEC_DIR}}` 表示 spec 目錄；golden 是在 spec_dir 為
+            // `openspec` 的專案擷取的（見其 changeDir），所以比對代入後的結果。
             assert_eq!(
-                artifact.instruction,
+                crate::instructions::render_spec_dir(artifact.instruction, "openspec"),
                 golden["instruction"].as_str().unwrap()
             );
-            assert_eq!(artifact.template, golden["template"].as_str().unwrap());
+            assert_eq!(
+                crate::instructions::render_spec_dir(artifact.template, "openspec"),
+                golden["template"].as_str().unwrap()
+            );
             // Structural fields, previously pinned only by an inline
             // re-declaration (self-referential): compare against the oracle
             // capture directly.
