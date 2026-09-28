@@ -4,6 +4,8 @@
 //! `update`, `config`, `search`, `templates`.
 
 mod completion;
+#[cfg(test)]
+mod template_cli_check;
 
 use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};

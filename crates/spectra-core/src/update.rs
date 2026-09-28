@@ -110,6 +110,11 @@ pub struct ToolDef {
     pub files: &'static [FileSpec],
 }
 
+/// 完整的工具 registry（oracle 順序），供驗證模板內容的測試使用。
+pub fn registry() -> &'static [ToolDef] {
+    update_manifest::TOOLS
+}
+
 /// 依 oracle registry 順序回傳偵測到的工具（訊息的排序就是這個順序）。
 pub fn detect_tools(root: &Path) -> Vec<&'static ToolDef> {
     update_manifest::TOOLS
