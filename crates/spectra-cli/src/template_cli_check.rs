@@ -18,9 +18,6 @@ const KNOWN_GAPS: &[&str] = &[
     "task done --change x 1.1 --file src/lib.rs",
     "task start",
     "task start --change x 1.1",
-    // W5：archive --preview／--json
-    "archive x --json",
-    "archive x --preview --json",
     // W6：scope（#165）
     "scope --change x --check-snapshot x --json",
     "scope --change x --json",

@@ -440,6 +440,85 @@ fn new_change_text_output_and_flags_match_the_oracle() {
 }
 
 #[test]
+fn archive_preview_and_json_match_the_oracle_shapes() {
+    let tmp = TempDir::new("archive-preview");
+    init_project_with_change(&tmp, "demo");
+    let change = tmp.join("openspec/changes/demo");
+    std::fs::create_dir_all(change.join("specs/billing")).unwrap();
+    std::fs::write(
+        change.join("specs/billing/spec.md"),
+        "## Purpose\n\nBilling capability for invoices.\n\n## ADDED Requirements\n\n### Requirement: Invoice\nThe system SHALL invoice.\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n",
+    )
+    .unwrap();
+    std::fs::write(change.join("tasks.md"), "- [ ] 1.1 open\n").unwrap();
+
+    let human = spectra()
+        .args(["archive", "demo", "--preview"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(human.status.success(), "{human:?}");
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "Archive preview: demo\nIncomplete tasks: 1\nSpec updates: 1\n"
+    );
+
+    let json = spectra()
+        .args(["archive", "demo", "--preview", "--json", "--skip-specs"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(json.stdout).unwrap(),
+        "{\"change_id\":\"demo\",\"spec_updates\":[{\"capability\":\"billing\",\"exists\":false,\"added\":1,\"modified\":0,\"removed\":0,\"renamed\":0,\"conflict_source\":null}],\"incomplete_tasks\":1,\"warnings\":[],\"has_delta_specs\":true}\n",
+        "--skip-specs does not affect the preview (oracle)"
+    );
+    assert!(change.is_dir(), "preview must not archive");
+    assert!(!tmp.join("openspec/specs/billing").exists());
+
+    let missing = spectra()
+        .args(["archive", "nope", "--preview", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(missing.stderr).unwrap(),
+        "Error: Change 'nope' does not exist\n"
+    );
+
+    let run = spectra()
+        .args(["archive", "demo", "--json", "--yes"])
+        .current_dir(&*tmp)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{run:?}");
+    let raw = String::from_utf8(run.stdout).unwrap();
+    assert_eq!(raw.lines().count(), 1, "single-line JSON like the oracle");
+    // serde_json::Value 會把 key 排序，所以直接在原始字串上檢查 oracle 的 key 順序。
+    let positions: Vec<usize> = [
+        "archived_id",
+        "archived_path",
+        "applied_specs",
+        "snapshot_created",
+        "total_added",
+        "total_modified",
+        "total_removed",
+        "total_renamed",
+        "cleanup_warnings",
+    ]
+    .iter()
+    .map(|key| raw.find(&format!("\"{key}\":")).expect(key))
+    .collect();
+    assert!(positions.windows(2).all(|w| w[0] < w[1]), "{raw}");
+    let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(value["applied_specs"], serde_json::json!(["billing"]));
+    assert_eq!(value["snapshot_created"], false);
+    assert_eq!(value["total_added"], 1);
+}
+
+#[test]
 fn archive_yes_skips_confirmation_and_archives() {
     let tmp = TempDir::new("archive-yes");
     init_project_with_change(&tmp, "ready");

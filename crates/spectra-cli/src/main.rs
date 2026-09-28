@@ -280,6 +280,12 @@ enum Command {
         yes: bool,
         #[arg(long = "no-validate")]
         no_validate: bool,
+        /// Preview archive effects without modifying files.
+        #[arg(long)]
+        preview: bool,
+        /// Output preview or execution result as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Config management commands
     Config {
@@ -1599,6 +1605,7 @@ fn cmd_archive(
     no_validate: bool,
     mark_tasks_complete: bool,
     yes: bool,
+    as_json: bool,
 ) -> Result<i32> {
     let name = change::resolve(cfg, change_name)?;
     if std::io::stdin().is_terminal() && !yes {
@@ -1613,15 +1620,88 @@ fn cmd_archive(
     }
     let outcome =
         spectra_core::archive::archive(cfg, &name, skip_specs, no_validate, mark_tasks_complete)?;
-    println!(
-        "Archived '{}' as '{}'.",
-        outcome.name, outcome.archived_name
-    );
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string(&archive_result_json(cfg, &outcome))?
+        );
+        return Ok(0);
+    }
+    // oracle 3.0.0 的第一行；它之後的 `Snapshot created for unarchive support.` 不印，
+    // 因為 OpenSpectra 沒有 snapshot 機制（#111）。
+    println!("✓ Archived: {} → {}", outcome.name, outcome.archived_name);
     for applied in &outcome.specs_applied {
         println!(
             "Specs applied: {} (added: {}, modified: {}, removed: {}, renamed: {})",
             applied.capability, applied.added, applied.modified, applied.removed, applied.renamed
         );
+    }
+    Ok(0)
+}
+
+/// `archive --json` 的執行結果（oracle 3.0.0 的欄位與順序）。`snapshot_created` 固定為
+/// `false`：oracle 會為 unarchive 建立 snapshot，OpenSpectra 沒有這個機制（#111）。
+/// `cleanup_warnings` 在已 probe 的情境一律為空。
+#[derive(serde::Serialize)]
+struct ArchiveResultJson {
+    archived_id: String,
+    archived_path: String,
+    applied_specs: Vec<String>,
+    snapshot_created: bool,
+    total_added: usize,
+    total_modified: usize,
+    total_removed: usize,
+    total_renamed: usize,
+    cleanup_warnings: Vec<String>,
+}
+
+fn archive_result_json(
+    cfg: &Config,
+    outcome: &spectra_core::archive::ArchiveOutcome,
+) -> ArchiveResultJson {
+    let sum = |f: fn(&spectra_core::archive::SpecApplyResult) -> usize| {
+        outcome.specs_applied.iter().map(f).sum::<usize>()
+    };
+    let archived_path = cfg
+        .root
+        .join(cfg.changes_dir())
+        .join("archive")
+        .join(&outcome.archived_name);
+    ArchiveResultJson {
+        archived_id: outcome.archived_name.clone(),
+        archived_path: archived_path.to_string_lossy().into_owned(),
+        applied_specs: outcome
+            .specs_applied
+            .iter()
+            .map(|s| s.capability.clone())
+            .collect(),
+        snapshot_created: false,
+        total_added: sum(|s| s.added),
+        total_modified: sum(|s| s.modified),
+        total_removed: sum(|s| s.removed),
+        total_renamed: sum(|s| s.renamed),
+        cleanup_warnings: Vec::new(),
+    }
+}
+
+/// `archive --preview`：不詢問確認、不修改檔案。明確給名稱時直接交給 core，
+/// 找不到 change 的訊息才會是 oracle 的 `Change '<name>' does not exist`。
+fn cmd_archive_preview(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
+    let name = match change_name {
+        Some(name) => name.to_string(),
+        None => change::resolve(cfg, None)?,
+    };
+    let preview = spectra_core::archive::preview(cfg, &name)?;
+    if as_json {
+        println!("{}", serde_json::to_string(&preview)?);
+    } else {
+        println!("Archive preview: {}", preview.change_id);
+        println!("Incomplete tasks: {}", preview.incomplete_tasks);
+        if preview.spec_updates.is_empty() {
+            println!("Spec updates: none");
+        } else {
+            println!("Spec updates: {}", preview.spec_updates.len());
+        }
     }
     Ok(0)
 }
@@ -2055,8 +2135,13 @@ fn run() -> Result<i32> {
             mark_tasks_complete,
             yes,
             no_validate,
+            preview,
+            json,
         } => {
             let cfg = require_initialized(&root)?;
+            if *preview {
+                return cmd_archive_preview(&cfg, change.as_deref(), *json);
+            }
             cmd_archive(
                 &cfg,
                 change.as_deref(),
@@ -2064,6 +2149,7 @@ fn run() -> Result<i32> {
                 *no_validate,
                 *mark_tasks_complete,
                 *yes,
+                *json,
             )
         }
         // Global config management needs no project (like `init`/`schemas`).

@@ -34,6 +34,121 @@ pub struct ArchiveOutcome {
     pub specs_applied: Vec<SpecApplyResult>,
 }
 
+/// `archive --preview` 對單一 capability 的預估（oracle 3.0.0 的 JSON 欄位名稱與順序）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct PreviewSpecUpdate {
+    pub capability: String,
+    pub exists: bool,
+    pub added: usize,
+    pub modified: usize,
+    pub removed: usize,
+    pub renamed: usize,
+    /// oracle 在所有已 probe 的情境（包括另一個 active change 修改同一 capability）
+    /// 都輸出 `null`，觸發條件未知，這裡固定為 `None`。
+    pub conflict_source: Option<String>,
+}
+
+/// `archive --preview` 的結果。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ArchivePreview {
+    pub change_id: String,
+    pub spec_updates: Vec<PreviewSpecUpdate>,
+    pub incomplete_tasks: usize,
+    /// 同 `conflict_source`：probe 過的情境一律是空陣列。
+    pub warnings: Vec<String>,
+    pub has_delta_specs: bool,
+}
+
+/// 不修改任何檔案，預估 archive 會套用什麼（oracle 3.0.0 probe，見 `archive.md`）。
+///
+/// - 各計數只算**能成功套用**的操作：MODIFIED／REMOVED 指向不存在的 requirement、
+///   ADDED 已存在的 requirement 都不計，也不報錯（真正 archive 時才會失敗）。
+/// - `--skip-specs`、`--mark-tasks-complete`、`--no-validate` 都不影響 preview；
+///   只有 `.openspec.yaml` 的 `skip_specs: true` 會讓 spec_updates 變空。
+/// - delta 檔沒有任何操作 section 時直接報錯，與 oracle 相同。
+/// - capability 依名稱排序；oracle 用檔案系統的 readdir 順序（刻意分歧）。
+pub fn preview(cfg: &Config, name: &str) -> Result<ArchivePreview> {
+    let ch =
+        change::try_load(cfg, name)?.ok_or_else(|| anyhow!("Change '{name}' does not exist"))?;
+    let metadata = load_change_metadata(&ch.dir)?;
+    let mut spec_updates = Vec::new();
+    if metadata.skip_specs != Some(true) {
+        for (capability, delta) in crate::fsutil::collect_delta_specs(&ch.dir.join("specs"))? {
+            let doc = crate::markdown::parse_delta(&delta)
+                .map_err(|e| anyhow!("Failed to parse delta spec: {e}"))?;
+            if !(doc.added_present
+                || doc.modified_present
+                || doc.removed_present
+                || doc.renamed_present)
+            {
+                anyhow::bail!(
+                    "Failed to parse delta spec: Invalid format: Delta spec must contain at least one operation (ADDED, MODIFIED, REMOVED, or RENAMED)"
+                );
+            }
+            let path = cfg.specs_dir().join(&capability).join("spec.md");
+            let existing = read_optional(&path)?;
+            spec_updates.push(count_applicable(capability, existing.as_deref(), &doc));
+        }
+    }
+    let incomplete_tasks = read_optional(&ch.dir.join("tasks.md"))?
+        .map(|md| crate::tasks::parse(&md).iter().filter(|t| !t.done).count())
+        .unwrap_or(0);
+    Ok(ArchivePreview {
+        change_id: name.to_string(),
+        has_delta_specs: !spec_updates.is_empty(),
+        spec_updates,
+        incomplete_tasks,
+        warnings: Vec::new(),
+    })
+}
+
+/// 依 archive 的套用順序（RENAMED → REMOVED → MODIFIED → ADDED）對照 canonical spec
+/// 的 requirement 名稱，只計入能套用的操作。
+fn count_applicable(
+    capability: String,
+    existing: Option<&str>,
+    doc: &crate::markdown::DeltaDocument,
+) -> PreviewSpecUpdate {
+    use crate::markdown::normalize_name;
+    let mut names: std::collections::HashSet<String> = existing
+        .map(crate::markdown::parse_main_requirements)
+        .unwrap_or_default()
+        .iter()
+        .map(|r| normalize_name(&r.name))
+        .collect();
+    let mut update = PreviewSpecUpdate {
+        capability,
+        exists: existing.is_some(),
+        added: 0,
+        modified: 0,
+        removed: 0,
+        renamed: 0,
+        conflict_source: None,
+    };
+    for rename in &doc.renamed {
+        if names.remove(&normalize_name(&rename.from)) {
+            names.insert(normalize_name(&rename.to));
+            update.renamed += 1;
+        }
+    }
+    for removed in &doc.removed {
+        if names.remove(&normalize_name(removed)) {
+            update.removed += 1;
+        }
+    }
+    for modified in &doc.modified {
+        if names.contains(&normalize_name(&modified.name)) {
+            update.modified += 1;
+        }
+    }
+    for added in &doc.added {
+        if names.insert(normalize_name(&added.name)) {
+            update.added += 1;
+        }
+    }
+    update
+}
+
 /// Archive `name`: first freeze its active directory under a hidden sibling,
 /// then validate and prepare every canonical-spec mutation from those frozen
 /// bytes. After verifying that the frozen tree has not changed, apply specs,
@@ -1593,6 +1708,108 @@ mod tests {
 
     fn git_repo_cfg(tmp: &TempDir) -> Config {
         git_repo_cfg_with_identity(tmp, "Ada Lovelace", "ada@example.com")
+    }
+
+    /// 建一個 change，`deltas` 為 (capability, delta 內容)，並寫入 canonical auth spec。
+    fn preview_fixture(tmp: &TempDir, tasks: &str, deltas: &[(&str, &str)]) -> Config {
+        let c = cfg(tmp);
+        write(
+            &c.specs_dir().join("auth/spec.md"),
+            "# auth Specification\n\n## Purpose\n\nAuth.\n\n## Requirements\n\n\
+             ### Requirement: Login\nThe system SHALL log in.\n\n#### Scenario: ok\n- **WHEN** a\n- **THEN** b\n\n\
+             ### Requirement: Logout\nThe system SHALL log out.\n\n#### Scenario: ok\n- **WHEN** a\n- **THEN** b\n\n\
+             ### Requirement: Session\nThe system SHALL keep sessions.\n\n#### Scenario: ok\n- **WHEN** a\n- **THEN** b\n",
+        );
+        let dir = c.changes_dir().join("demo");
+        write(&dir.join(".openspec.yaml"), "schema: spec-driven\n");
+        write(&dir.join("tasks.md"), tasks);
+        for (capability, delta) in deltas {
+            write(&dir.join("specs").join(capability).join("spec.md"), delta);
+        }
+        c
+    }
+
+    const SCENARIO: &str = "\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n";
+
+    #[test]
+    fn preview_counts_only_operations_that_would_apply_like_the_oracle() {
+        let tmp = TempDir::new();
+        let auth = format!(
+            "## REMOVED Requirements\n\n### Requirement: Logout\n**Reason**: x\n\n### Requirement: Ghost\n**Reason**: y\n\n\
+             ## MODIFIED Requirements\n\n### Requirement: Login\nThe system SHALL v2.{SCENARIO}\n\
+             ### Requirement: Missing\nThe system SHALL m.{SCENARIO}\n\
+             ## ADDED Requirements\n\n### Requirement: Session\nThe system SHALL dup.{SCENARIO}\n\
+             ### Requirement: Fresh\nThe system SHALL f.{SCENARIO}"
+        );
+        let billing = format!(
+            "## ADDED Requirements\n\n### Requirement: Invoice\nThe system SHALL i.{SCENARIO}"
+        );
+        let c = preview_fixture(
+            &tmp,
+            "- [ ] 1.1 open\n- [x] 1.2 done\n- [~] 1.3 partial\n",
+            &[("billing", &billing), ("auth", &auth)],
+        );
+        let before = fs::read_to_string(c.specs_dir().join("auth/spec.md")).unwrap();
+
+        let p = preview(&c, "demo").unwrap();
+
+        assert_eq!(p.change_id, "demo");
+        assert_eq!(p.incomplete_tasks, 2, "[ ] and [~] are both pending");
+        assert!(p.has_delta_specs);
+        assert!(p.warnings.is_empty());
+        let shape: Vec<_> = p
+            .spec_updates
+            .iter()
+            .map(|u| {
+                (
+                    u.capability.as_str(),
+                    u.exists,
+                    u.added,
+                    u.modified,
+                    u.removed,
+                    u.renamed,
+                )
+            })
+            .collect();
+        // 名稱排序（oracle 用 readdir 順序，刻意分歧）。
+        assert_eq!(
+            shape,
+            vec![("auth", true, 1, 1, 1, 0), ("billing", false, 1, 0, 0, 0)]
+        );
+        assert_eq!(
+            fs::read_to_string(c.specs_dir().join("auth/spec.md")).unwrap(),
+            before,
+            "preview must not modify files"
+        );
+        assert!(c.changes_dir().join("demo").is_dir());
+        assert_eq!(
+            serde_json::to_string(&p.spec_updates[1]).unwrap(),
+            r#"{"capability":"billing","exists":false,"added":1,"modified":0,"removed":0,"renamed":0,"conflict_source":null}"#
+        );
+    }
+
+    #[test]
+    fn preview_honors_skip_specs_metadata_and_rejects_empty_deltas() {
+        let tmp = TempDir::new();
+        let c = preview_fixture(&tmp, "", &[]);
+        write(
+            &c.changes_dir().join("demo/.openspec.yaml"),
+            "schema: spec-driven\nskip_specs: true\n",
+        );
+        let p = preview(&c, "demo").unwrap();
+        assert!(p.spec_updates.is_empty());
+        assert!(!p.has_delta_specs);
+
+        let tmp = TempDir::new();
+        let c = preview_fixture(&tmp, "", &[("auth", "just prose\n")]);
+        assert_eq!(
+            preview(&c, "demo").unwrap_err().to_string(),
+            "Failed to parse delta spec: Invalid format: Delta spec must contain at least one operation (ADDED, MODIFIED, REMOVED, or RENAMED)"
+        );
+        assert_eq!(
+            preview(&c, "nope").unwrap_err().to_string(),
+            "Change 'nope' does not exist"
+        );
     }
 
     fn git_repo_cfg_with_identity(tmp: &TempDir, name: &str, email: &str) -> Config {

@@ -100,8 +100,6 @@ output	status --change <change> --json	value .artifacts[].status
 output	validate --changes --json	exit 0->1
 output	validate <change>	exit 0->1
 output	validate <change>	text-differs
-surface	archive	missing-flag --json
-surface	archive	missing-flag --preview
 surface	decisions	missing-command
 surface	demo	missing-command
 surface	feedback	missing-command
