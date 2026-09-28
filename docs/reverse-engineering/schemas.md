@@ -301,13 +301,35 @@ it passes `schema validate`, `instructions apply --json` reports
 line (no blank line, no `Instruction:` block). OpenSpectra used to reject such a
 schema with a parse error on every command.
 
-Known custom-schema gaps found by the same probes and not yet ported (queued
-in `docs/migration-plan.md`): with a schema whose apply has no `tracks` and no
-tasks file, the oracle reports `state: "ready"` where OpenSpectra reports
-`blocked`; `instructions apply --json` `contextFiles` lists the oracle's
-done custom artifacts by id (`{"a": ".../a.md"}`) where OpenSpectra only knows
-`proposal`/`design`/`specs`/`tasks`; and `schema validate` prints `✓ Schema
-'<name>' is valid (<N> artifacts)` where OpenSpectra prints `✓ <name>`.
+**`apply.tracks` (oracle 3.0.0, W7f, probes p36–p39).** Apply mode reads its
+tasks from the `apply.tracks` file (relative to the change dir); both built-ins
+track `tasks.md` (the oracle's `schema fork` writes `tracks: tasks.md` for
+each). The state is:
+
+| condition | `state` |
+|---|---|
+| an `apply.requires` artifact is missing | `blocked` (with `missingArtifacts`) |
+| no `tracks` | `ready`, with no tasks — even when a `tasks.md` exists |
+| `tracks` file has no tasks (or is missing) | `blocked` |
+| every tracked task done | `all_done` |
+| otherwise | `ready` |
+
+Only apply reads `tracks`: `list`'s counts, `archive --preview`'s
+`incomplete_tasks` and `task done` keep using `tasks.md` in both binaries (p39).
+`contextFiles` maps **every done artifact's id** to its absolute output path —
+custom ids included (`{"plan": ".../plan.md", "todo": ".../todo.md"}`);
+OpenSpectra used to know only `proposal`/`design`/`specs`/`tasks`. Its key
+order stays the schema's declaration order (the oracle's varies per run).
+
+Still open (queued as W7g in `docs/migration-plan.md`): `schema validate`
+prints `✓ Schema '<name>' is valid (<N> artifacts)` and `--json`
+`{"artifactCount", "name", "valid"}`, validates the configured (or default)
+schema when no name is given, and reports a missing schema as `Schema '<n>' is
+invalid: <error>` + `Error: Schema validation failed: <error>`; OpenSpectra
+prints `✓ <name>` / an array of `{name, valid, path, issues}` and validates
+every project schema. `schema fork` also writes the artifacts in a different
+order from the oracle (its `name:` rewrite is a separate, deliberate
+divergence recorded in the CHANGELOG).
 
 One edge case is deliberately not reproduced: a change whose `schema:` key is
 present but null. `ChangeMetadata`'s `Option<String>` cannot distinguish that

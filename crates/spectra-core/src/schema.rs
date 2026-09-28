@@ -626,7 +626,14 @@ pub struct ResolvedSchema {
     pub apply_requires: Vec<String>,
     /// `apply.instruction`；schema.yaml 可省略（oracle 3.0.0 接受並輸出 `null`，探測 p33）。
     pub apply_instruction: Option<String>,
+    /// `apply.tracks`：apply 模式讀 task 的檔案（相對 change 目錄）。沒有時 apply 不計 task、
+    /// 只要 required artifact 齊全就是 `ready`（oracle 3.0.0，探測 p37／p38）。
+    pub apply_tracks: Option<String>,
 }
+
+/// 兩個內建 schema 的 `apply.tracks`（oracle 3.0.0 的 `schema fork` 寫出 `tracks: tasks.md`；
+/// `no-spec` 的 0／部分／全部完成 task 對應 blocked／ready／all_done，探測 p38b）。
+const BUILTIN_APPLY_TRACKS: &str = "tasks.md";
 
 impl ResolvedSchema {
     /// Wrap the compiled-in `spec-driven` workflow as a [`ResolvedSchema`].
@@ -656,6 +663,7 @@ impl ResolvedSchema {
                 .collect(),
             apply_requires: APPLY_REQUIRES.iter().map(|s| s.to_string()).collect(),
             apply_instruction: Some(crate::instructions::APPLY_INSTRUCTION.to_string()),
+            apply_tracks: Some(BUILTIN_APPLY_TRACKS.to_string()),
         }
     }
 }
@@ -710,6 +718,7 @@ impl CapturedSchema {
             artifact_order: self.artifact_order,
             apply_requires: self.apply_requires,
             apply_instruction: Some(self.apply_instruction),
+            apply_tracks: Some(BUILTIN_APPLY_TRACKS.to_string()),
         }
     }
 }
@@ -891,6 +900,7 @@ impl ResolvedSchema {
             artifact_order,
             apply_requires: raw.apply.requires,
             apply_instruction: raw.apply.instruction,
+            apply_tracks: raw.apply.tracks,
         })
     }
 }
@@ -923,8 +933,7 @@ struct SchemaYamlArtifact {
 #[derive(serde::Deserialize, serde::Serialize)]
 struct SchemaYamlApply {
     requires: Vec<String>,
-    #[serde(default)]
-    #[allow(dead_code)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     tracks: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     instruction: Option<String>,
@@ -1361,7 +1370,7 @@ fn prepare_fork_stage(
                 .collect(),
             apply: SchemaYamlApply {
                 requires: schema.apply_requires.clone(),
-                tracks: None,
+                tracks: schema.apply_tracks.clone(),
                 instruction: schema.apply_instruction.clone(),
             },
         };
@@ -2573,6 +2582,7 @@ mod tests {
             ],
             apply_requires: vec!["tasks".to_string()],
             apply_instruction: Some(String::new()),
+            apply_tracks: Some("tasks.md".to_string()),
         };
 
         let report = derive_status("demo", &change_dir, &schema).unwrap();
