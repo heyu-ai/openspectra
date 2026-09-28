@@ -249,19 +249,16 @@ pub struct Staleness {
     pub is_stale: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContextFiles {
-    // The oracle uses a hash map and its key order varies. Struct fields make
-    // openspectra deterministic in schema order while omitting unfinished files.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub proposal: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub design: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub specs: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tasks: Option<String>,
+/// apply 的 `contextFiles`：每個已完成 artifact 的 id → 絕對輸出路徑，自訂 schema 的 id
+/// 也列（oracle 3.0.0，探測 p37）。oracle 用 hash map、key 順序每次不同；這裡固定為
+/// schema 宣告順序，序列化成 JSON 物件。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContextFiles(pub Vec<(String, String)>);
+
+impl Serialize for ContextFiles {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().map(|(k, v)| (k, v)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -565,8 +562,20 @@ fn derive_unlocks(
         .collect()
 }
 
-fn derive_apply_state(total: usize, remaining: usize) -> ApplyState {
-    if total == 0 {
+/// oracle 3.0.0（探測 p36–p38）：缺 required artifact → blocked；schema 沒有 `apply.tracks`
+/// → ready（不計 task）；否則依 tracks 檔的 task：0 個 → blocked、全部完成 → all_done、
+/// 其餘 → ready。
+fn derive_apply_state(
+    missing_artifacts: bool,
+    tracked: bool,
+    total: usize,
+    remaining: usize,
+) -> ApplyState {
+    if missing_artifacts {
+        ApplyState::Blocked
+    } else if !tracked {
+        ApplyState::Ready
+    } else if total == 0 {
         ApplyState::Blocked
     } else if remaining == 0 {
         ApplyState::AllDone
@@ -690,28 +699,22 @@ fn context_files(
     change_dir: &Path,
     done_ids: &HashSet<String>,
 ) -> ContextFiles {
-    let path = |artifact_id: &str| {
-        if !done_ids.contains(artifact_id) {
-            return None;
-        }
-        let artifact = schema
+    ContextFiles(
+        schema
             .artifacts
             .iter()
-            .find(|artifact| artifact.id == artifact_id)
-            .expect("context file references a known artifact");
-        Some(
-            change_dir
-                .join(&artifact.output_path)
-                .to_string_lossy()
-                .into_owned(),
-        )
-    };
-    ContextFiles {
-        proposal: path("proposal"),
-        design: path("design"),
-        specs: path("specs"),
-        tasks: path("tasks"),
-    }
+            .filter(|artifact| done_ids.contains(&artifact.id))
+            .map(|artifact| {
+                (
+                    artifact.id.clone(),
+                    change_dir
+                        .join(&artifact.output_path)
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn valid_date(raw: &str) -> Option<NaiveDate> {
@@ -802,22 +805,34 @@ pub fn apply_instructions(
     let change_dir = absolute_change_dir(cfg, change);
     let proposal_text = read_optional(&change_dir.join("proposal.md"))?;
     let design_text = read_optional(&change_dir.join("design.md"))?;
+    // preflight 掃描的仍是 tasks.md；apply 的 task 清單來自 schema 的 `apply.tracks`
+    // （內建 schema 就是 tasks.md，沒有 tracks 時不計 task）。
     let tasks_text = read_optional(&change_dir.join("tasks.md"))?;
-    let tasks = tasks_text
+    let tracked_text = match &schema.apply_tracks {
+        Some(tracks) if tracks == "tasks.md" => tasks_text.clone(),
+        Some(tracks) => read_optional(&change_dir.join(tracks))?,
+        None => None,
+    };
+    let tasks = tracked_text
         .as_deref()
         .map(parse_apply_tasks)
         .unwrap_or_default();
     let total = tasks.len();
     let complete = tasks.iter().filter(|task| task.done).count();
     let remaining = total - complete;
-    let state = derive_apply_state(total, remaining);
     let done_ids = done_ids(schema, &change_dir)?;
-    let missing_artifacts = schema
+    let missing_artifacts: Vec<String> = schema
         .apply_requires
         .iter()
         .filter(|artifact_id| !done_ids.contains(*artifact_id))
         .cloned()
         .collect();
+    let state = derive_apply_state(
+        !missing_artifacts.is_empty(),
+        schema.apply_tracks.is_some(),
+        total,
+        remaining,
+    );
     let preflight = (state == ApplyState::Ready).then(|| {
         preflight(
             cfg,
@@ -1412,9 +1427,18 @@ mod tests {
 
     #[test]
     fn apply_state_is_blocked_for_zero_tasks_then_all_done_or_ready() {
-        assert_eq!(derive_apply_state(0, 0), ApplyState::Blocked);
-        assert_eq!(derive_apply_state(2, 0), ApplyState::AllDone);
-        assert_eq!(derive_apply_state(2, 1), ApplyState::Ready);
+        assert_eq!(derive_apply_state(false, true, 0, 0), ApplyState::Blocked);
+        assert_eq!(derive_apply_state(false, true, 2, 0), ApplyState::AllDone);
+        assert_eq!(derive_apply_state(false, true, 2, 1), ApplyState::Ready);
+    }
+
+    /// oracle 3.0.0（探測 p37／p38）：缺 required artifact 一律 blocked；schema 沒有
+    /// `apply.tracks` 時不看 task，直接 ready。
+    #[test]
+    fn apply_state_follows_missing_artifacts_and_tracks() {
+        assert_eq!(derive_apply_state(true, true, 2, 1), ApplyState::Blocked);
+        assert_eq!(derive_apply_state(true, false, 0, 0), ApplyState::Blocked);
+        assert_eq!(derive_apply_state(false, false, 0, 0), ApplyState::Ready);
     }
 
     #[test]

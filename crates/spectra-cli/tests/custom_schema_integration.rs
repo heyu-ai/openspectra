@@ -369,3 +369,84 @@ fn apply_instruction_is_optional() {
     assert!(text.ends_with(" complete\n"), "{text:?}");
     assert!(!text.contains("Instruction:"), "{text:?}");
 }
+
+/// 自訂 schema `tr`：`plan` → `todo`，apply 需要 `todo`；`apply_block` 決定有沒有 tracks。
+fn init_project_with_tracks_schema(root: &Path, apply_block: &str) {
+    git(root, &["init", "-q"]);
+    let init = spectra().arg("init").current_dir(root).output().unwrap();
+    assert!(init.status.success(), "init failed: {init:?}");
+    let schema_dir = root.join("openspec").join("schemas").join("tr");
+    std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+    for id in ["plan", "todo"] {
+        std::fs::write(
+            schema_dir.join("templates").join(format!("{id}.md")),
+            "# t\n",
+        )
+        .unwrap();
+    }
+    std::fs::write(
+        schema_dir.join("schema.yaml"),
+        format!(
+            "name: tr\nversion: 1\ndescription: x\nartifacts:\n- id: plan\n  generates: plan.md\n  description: plan\n  template: plan.md\n  instruction: Plan.\n  requires: []\n- id: todo\n  generates: todo.md\n  description: todo\n  template: todo.md\n  instruction: Todo.\n  requires: [plan]\n{apply_block}"
+        ),
+    )
+    .unwrap();
+    let change = root.join("openspec").join("changes").join("c");
+    std::fs::create_dir_all(&change).unwrap();
+    std::fs::write(
+        change.join(".openspec.yaml"),
+        "schema: tr\ncreated: 2026-09-01\n",
+    )
+    .unwrap();
+    std::fs::write(change.join("plan.md"), "# p\n").unwrap();
+    std::fs::write(change.join("todo.md"), "- [ ] 1.1 a\n- [x] 1.2 b\n").unwrap();
+    // tasks.md 不是 tracks 時不影響 apply。
+    std::fs::write(change.join("tasks.md"), "- [ ] 9.1 not tracked\n").unwrap();
+}
+
+fn apply_json(root: &Path) -> serde_json::Value {
+    let out = spectra()
+        .args(["instructions", "apply", "--change", "c", "--json"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+/// oracle 3.0.0（探測 p37）：apply 的 task 來自 `apply.tracks`；`contextFiles` 以 id 列出
+/// 所有已完成的 artifact。
+#[test]
+fn apply_reads_tasks_from_the_tracks_file() {
+    let dir = TempDir::new("custom-schema-tracks");
+    init_project_with_tracks_schema(&dir, "apply:\n  requires: [todo]\n  tracks: todo.md\n");
+    let v = apply_json(&dir);
+    assert_eq!(v["state"], "ready");
+    assert_eq!(
+        v["progress"],
+        serde_json::json!({"total": 2, "complete": 1, "remaining": 1})
+    );
+    let change = dir.join("openspec/changes/c");
+    assert_eq!(
+        v["contextFiles"],
+        serde_json::json!({
+            "plan": change.join("plan.md").to_string_lossy(),
+            "todo": change.join("todo.md").to_string_lossy(),
+        })
+    );
+}
+
+/// oracle 3.0.0（探測 p37／p38）：沒有 `apply.tracks` 時不計 task，required artifact 齊全就
+/// 是 ready——即使 change 裡有 tasks.md。
+#[test]
+fn apply_without_tracks_is_ready_with_no_tasks() {
+    let dir = TempDir::new("custom-schema-no-tracks");
+    init_project_with_tracks_schema(&dir, "apply:\n  requires: [todo]\n");
+    let v = apply_json(&dir);
+    assert_eq!(v["state"], "ready");
+    assert_eq!(
+        v["progress"],
+        serde_json::json!({"total": 0, "complete": 0, "remaining": 0})
+    );
+    assert_eq!(v["tasks"], serde_json::json!([]));
+}

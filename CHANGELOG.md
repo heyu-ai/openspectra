@@ -68,6 +68,11 @@ changes.
 
 ### Changed
 
+- `instructions apply` follows the schema's `apply.tracks` like v3.0.0: tasks
+  come from the tracked file, a schema without `tracks` is `ready` once its
+  required artifacts exist (no task count), and `contextFiles` lists every
+  done artifact by id, custom ids included. `schema fork` keeps `tracks` in the
+  written schema.
 - `status` lists artifacts in the v3.0.0 order — Kahn rounds of the dependency
   graph, each round sorted by id — instead of the schema's declaration order.
   Built-in schemas are unaffected; custom schemas such as one declaring
