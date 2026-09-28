@@ -218,9 +218,10 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | — | PR #198（stacked on #197；`status` 順序實測本來就一致；新增 `capture-schemas.py`；parity 119 → 110） |
 | W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | PR #201（stacked on #199；golden replay 擴大到 14 情境、360 欄位全部逐位元組相同；#98 移除；parity 108 → 106） |
 | W5 | `archive --preview`／`--json` | A1、A2 | — | PR #199（stacked on #198；preview 10 情境逐位元組相同；`snapshot_created: false` 為刻意分歧，對應 #111；parity 110 → 108） |
-| W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | **待裁決| W7a | `list`（`summary`、排序、名稱過濾）、`list --specs`、`show`、`schema which` 對齊 3.0.0 | A3 | — | PR #202（stacked on #201；29 項 oracle 比對全部相同；parity 106 → 97） |
+| W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦（D8 已裁決：維持 git CLI，7 種 libgit2 邊角差異記為刻意分歧） |
+| W7a | `list`（`summary`、排序、名稱過濾）、`list --specs`、`show`、`schema which` 對齊 3.0.0 | A3 | — | PR #202（stacked on #201；29 項 oracle 比對全部相同；parity 106 → 97） |
 | W7b | `drift`／`instructions apply` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`（`[after: …]`）／`unresolved_prerequisites`／`cycle_member`／`mixed_format`／`parallel` 規則 | A3 | — | 待辦（RE 規格已完成） |
-| W7c | 內建 spec-driven schema 的 instruction／template 文字對齊 3.0.0（`capture-schemas.py` 加入 spec-driven） | A3 | — | 待辦 |cenario subject rule 兩段） | A3 | 新 issue | 待辦 |
+| W7c | 內建 spec-driven schema 的 instruction／template 文字對齊 3.0.0（`capture-schemas.py` 加入 spec-driven） | A3 | — | 待辦 |
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | 待辦 |
 | W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | 待辦 |
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
@@ -461,8 +462,9 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | D5 | 沒有消費端的 3.0.0 指令要不要移植 | **以後再做**：排在執行佇列最後 | M5 |
 | D6 | 實作切換放在哪裡 | **做成 OpenSpectra 內建** | Phase 1 |
 | D7 | touched／baseline 模型（W4、W6） | **(a) 以 v3 per-task baseline 取代 #98 per-change baseline** | W4、W6 |
+| D8 | git 存取方式（`scope`） | **(b) 維持 git CLI**，libgit2 特有的 7 種 patch 差異記為刻意分歧 | W6 |
 
-**D8（待裁決，2026-09-28 提出）：`scope` 的 git 存取方式。** oracle 內含 libgit2，`scope`
+**D8（2026-09-28 howie 裁決：(b) 維持 git CLI）：`scope` 的 git 存取方式。** 下列 7 種邊角情況記為刻意分歧。原始說明： oracle 內含 libgit2，`scope`
 輸出的 patch 是 libgit2 的格式。RE 實測（`scope` 規格）與 `git diff` 相比有 7 種位元組差異：
 空的新檔仍有 `---`／`+++` 行、含空白的路徑不加尾端 tab、intent-to-add 檔拆成 staged 與
 unstaged 兩段、worktree 內的 rename 會被偵測、50% 相似就算 rename、abbrev 固定 7 碼、巢狀
