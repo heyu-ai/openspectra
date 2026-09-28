@@ -97,7 +97,7 @@ fn adopt_list_drift_and_archive_a_vendored_openspec_project() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|item| item["name"] == "session-management"));
+        .any(|item| item["id"] == "session-management"));
 
     let drift = spectra()
         .args(["drift", "tighten-session-security", "--json"])

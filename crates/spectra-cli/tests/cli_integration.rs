@@ -121,9 +121,10 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
 
 #[test]
 fn list_sorts_changes_by_name_modified_and_created() {
+    // oracle 3.0.0：modified 以 change 內最新檔案的 mtime（整秒）遞減，created 以
+    // `.openspec.yaml` 的原始字串遞減。直接設定 mtime 與 created，不靠 sleep。
     let tmp = TempDir::new("list-sort");
     init_project_with_change(&tmp, "middle");
-    std::thread::sleep(std::time::Duration::from_millis(20));
     for name in ["z-last", "a-first"] {
         let out = spectra()
             .args(["new", "change", name])
@@ -131,7 +132,21 @@ fn list_sorts_changes_by_name_modified_and_created() {
             .output()
             .unwrap();
         assert!(out.status.success(), "new change failed: {out:?}");
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let changes = tmp.join("openspec/changes");
+    for (name, created, secs) in [
+        ("middle", "2026-01-03", 3_000u64),
+        ("z-last", "2026-01-01", 2_000),
+        ("a-first", "2026-01-02", 1_000),
+    ] {
+        let meta = changes.join(name).join(".openspec.yaml");
+        std::fs::write(&meta, format!("schema: spec-driven\ncreated: {created}\n")).unwrap();
+        std::fs::File::options()
+            .append(true)
+            .open(&meta)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
     }
 
     let listed_names = |sort: &str| {
@@ -151,8 +166,63 @@ fn list_sorts_changes_by_name_modified_and_created() {
     };
 
     assert_eq!(listed_names("name"), ["a-first", "middle", "z-last"]);
-    assert_eq!(listed_names("modified"), ["a-first", "z-last", "middle"]);
-    assert_eq!(listed_names("created"), ["a-first", "z-last", "middle"]);
+    assert_eq!(listed_names("modified"), ["middle", "z-last", "a-first"]);
+    assert_eq!(listed_names("created"), ["middle", "a-first", "z-last"]);
+}
+
+#[test]
+fn list_human_and_json_follow_the_oracle_3_0_0_shapes() {
+    let tmp = TempDir::new("list-summary");
+    init_project_with_change(&tmp, "add-thing");
+    let changes = tmp.join("openspec/changes");
+    std::fs::write(
+        changes.join("add-thing/proposal.md"),
+        "## Why\n\nWe need a thing because users keep asking for it.\n",
+    )
+    .unwrap();
+    std::fs::write(changes.join("add-thing/tasks.md"), "").unwrap();
+    // 大寫名稱也是 change（oracle 3.0.0 只排除 `archive`）。
+    std::fs::create_dir_all(changes.join("Upper-Case")).unwrap();
+    std::fs::write(
+        changes.join("Upper-Case/proposal.md"),
+        "## Problem\n\n<!-- skipped -->\nShort.\n",
+    )
+    .unwrap();
+
+    let human = spectra()
+        .args(["list", "--sort", "name"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "Changes:\n  • Upper-Case — Short.\n  • add-thing [0/0] — We need a thing because users …\n"
+    );
+
+    let json = spectra()
+        .args(["list", "--sort", "name", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(value["changes"][0]["summary"], "Short.");
+    assert_eq!(
+        value["changes"][1]["summary"],
+        "We need a thing because users …"
+    );
+
+    // schema which 不需要已初始化的專案。
+    let outside = TempDir::new("which-outside");
+    let which = spectra()
+        .args(["schema", "which", "--json"])
+        .current_dir(&*outside)
+        .output()
+        .unwrap();
+    assert!(which.status.success(), "{which:?}");
+    let which: serde_json::Value = serde_json::from_slice(&which.stdout).unwrap();
+    assert_eq!(which["name"], "spec-driven");
+    assert_eq!(which["resolved"], "built-in");
+    assert_eq!(which["sources"][0]["path"], "(embedded in binary)");
 }
 
 #[test]
@@ -1337,7 +1407,7 @@ fn list_and_show_support_nested_canonical_spec_ids() {
         .unwrap();
     assert!(listed.status.success(), "{listed:?}");
     let list_json: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
-    assert_eq!(list_json["specs"][0]["name"], "identity/auth");
+    assert_eq!(list_json["specs"][0]["id"], "identity/auth");
 
     let shown = spectra()
         .args(["show", "identity/auth", "--json"])
@@ -1346,7 +1416,12 @@ fn list_and_show_support_nested_canonical_spec_ids() {
         .unwrap();
     assert!(shown.status.success(), "{shown:?}");
     let show_json: serde_json::Value = serde_json::from_slice(&shown.stdout).unwrap();
-    assert_eq!(show_json["spec"], "# Auth\n\nNested authentication.\n");
+    assert_eq!(show_json["name"], "identity/auth");
+    assert_eq!(show_json["files"][0]["name"], "spec.md");
+    assert_eq!(
+        show_json["files"][0]["content"],
+        "# Auth\n\nNested authentication.\n"
+    );
 }
 
 #[test]

@@ -900,9 +900,70 @@ pub fn user_schemas_dir() -> Option<std::path::PathBuf> {
             return Some(path.join("openspec/schemas"));
         }
     }
+    // macOS 與 oracle 3.0.0（及 OpenSpec 的 env-paths）相同，放在 Application Support；
+    // 其他平台用 XDG 的預設資料目錄。
+    let data_dir = if cfg!(target_os = "macos") {
+        "Library/Application Support"
+    } else {
+        ".local/share"
+    };
     std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
-        .map(|home| home.join(".local/share/openspec/schemas"))
+        .map(|home| home.join(data_dir).join("openspec/schemas"))
+}
+
+/// `schema which` 的結果（oracle 3.0.0）：依優先序列出這個 schema 存在的所有位置，
+/// `resolved` 是第一個來源，沒有任何來源時為 `None`。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaWhich {
+    pub name: String,
+    pub resolved: Option<String>,
+    pub sources: Vec<SchemaWhichSource>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SchemaWhichSource {
+    pub path: String,
+    pub source: String,
+}
+
+/// 專案 → 使用者 → 內建，只要 `schema.yaml` 存在就算（不驗證內容）。內建來源只有
+/// `spec-driven` 會出現：oracle 對 `no-spec` 回 `resolved: null`（已 probe 的怪癖）。
+pub fn which_sources(cfg: Option<&crate::Config>, name: &str) -> SchemaWhich {
+    let mut sources = Vec::new();
+    if let Some(cfg) = cfg {
+        let path = cfg
+            .root
+            .join(&cfg.spec_dir)
+            .join("schemas")
+            .join(name)
+            .join("schema.yaml");
+        if path.is_file() {
+            sources.push(SchemaWhichSource {
+                path: path.display().to_string(),
+                source: "project".to_string(),
+            });
+        }
+    }
+    if let Some(path) = user_schemas_dir().map(|dir| dir.join(name).join("schema.yaml")) {
+        if path.is_file() {
+            sources.push(SchemaWhichSource {
+                path: path.display().to_string(),
+                source: "user".to_string(),
+            });
+        }
+    }
+    if name == SCHEMA_NAME {
+        sources.push(SchemaWhichSource {
+            path: "(embedded in binary)".to_string(),
+            source: "built-in".to_string(),
+        });
+    }
+    SchemaWhich {
+        name: name.to_string(),
+        resolved: sources.first().map(|s| s.source.clone()),
+        sources,
+    }
 }
 
 pub fn resolve_schema(

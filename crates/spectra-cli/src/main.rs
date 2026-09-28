@@ -921,14 +921,36 @@ fn list_change_items(
         } else {
             "in-progress"
         };
-        items.push(json!({
+        let mut item = json!({
             "name": name,
             "status": status,
             "completedTasks": done,
             "totalTasks": total,
-        }));
+        });
+        // 取不到 summary 時省略這個 key（oracle 3.0.0 不輸出 null）。
+        if let Some(summary) = change::summary(&ch) {
+            item["summary"] = json!(summary);
+        }
+        items.push(item);
     }
     Ok(items)
+}
+
+/// `list` 的人類輸出行（oracle 3.0.0）：`  • name`，tasks.md 存在時加
+/// ` [完成/總數]`（空檔也印 `[0/0]`），有 summary 時加 ` — summary`。
+fn list_line(item: &serde_json::Value, has_tasks_md: bool) -> String {
+    let mut line = format!("  • {}", item["name"].as_str().unwrap_or(""));
+    if has_tasks_md {
+        line.push_str(&format!(
+            " [{}/{}]",
+            item["completedTasks"].as_u64().unwrap_or(0),
+            item["totalTasks"].as_u64().unwrap_or(0)
+        ));
+    }
+    if let Some(summary) = item["summary"].as_str() {
+        line.push_str(&format!(" — {summary}"));
+    }
+    line
 }
 
 fn cmd_list(
@@ -960,20 +982,25 @@ fn cmd_list(
     } else {
         println!("{}", if want_parked { "Parked:" } else { "Changes:" });
         for it in &items {
-            println!("  • {}", it["name"].as_str().unwrap_or(""));
+            let name = it["name"].as_str().unwrap_or("");
+            let has_tasks_md = change::load(cfg, name)
+                .map(|ch| cfg.root.join(ch.tasks_md()).is_file())
+                .unwrap_or(false);
+            println!("{}", list_line(it, has_tasks_md));
         }
     }
     Ok(0)
 }
 
+/// `list --specs` 的條目（oracle 3.0.0）：`id` 是 capability 名稱，`path` 是 spec
+/// 目錄正規化後的絕對路徑；只列含 `spec.md` 的目錄，依名稱排序。
 fn list_specs_items(cfg: &Config) -> Result<Vec<serde_json::Value>> {
     let names = spec::list(cfg)?;
     let mut items = Vec::new();
     for name in &names {
-        // `spec::list` already confirmed `spec.md` exists for each name; skip
-        // the redundant re-stat that `spec::load` would perform.
-        let summary = first_line(&cfg.specs_dir().join(name).join("spec.md"));
-        items.push(json!({ "name": name, "summary": summary }));
+        let dir = cfg.specs_dir().join(name);
+        let path = dir.canonicalize().unwrap_or(dir);
+        items.push(json!({ "id": name, "path": path.to_string_lossy() }));
     }
     Ok(items)
 }
@@ -988,56 +1015,12 @@ fn cmd_list_specs(cfg: &Config, as_json: bool) -> Result<i32> {
     } else if items.is_empty() {
         println!("No specs.");
     } else {
+        println!("Specs:");
         for it in &items {
-            println!(
-                "{:<45} {}",
-                it["name"].as_str().unwrap_or(""),
-                it["summary"].as_str().unwrap_or("")
-            );
+            println!("  • {}", it["id"].as_str().unwrap_or(""));
         }
     }
     Ok(0)
-}
-
-#[derive(Debug)]
-enum ShowContent {
-    Proposal(String),
-    Spec(String),
-}
-
-/// Resolve `item` to a change's proposal or a spec's content. A change name
-/// takes priority (existing, regression-safe behavior); `change::try_load`/
-/// `spec::try_load` distinguish "genuinely doesn't exist" from a real I/O
-/// error while checking, so neither is misread as "not found."
-fn resolve_show_content(cfg: &Config, item: &str) -> Result<ShowContent> {
-    if let Some(ch) = change::try_load(cfg, item)? {
-        return Ok(ShowContent::Proposal(read_show_content(&ch.proposal_md())?));
-    }
-    if let Some(sp) = spec::try_load(cfg, item)? {
-        return Ok(ShowContent::Spec(read_show_content(&sp.spec_md())?));
-    }
-    anyhow::bail!("'{item}' is not a known change or spec")
-}
-
-/// Read `path`'s content for `show`. Unlike `first_line` (used for `list`'s
-/// secondary summary column, where a warn-and-degrade is defensible because
-/// other fields still carry useful data), the content read here *is* the
-/// entire requested output — so besides the benign `NotFound` case (a
-/// genuinely bodyless change/spec), any other I/O failure propagates instead
-/// of silently printing empty content with a success exit code.
-fn read_show_content(path: &Path) -> Result<String> {
-    match std::fs::read_to_string(path) {
-        Ok(s) => Ok(s),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
-    }
-}
-
-fn show_json(item: &str, content: &ShowContent) -> serde_json::Value {
-    match content {
-        ShowContent::Proposal(text) => json!({ "name": item, "proposal": text }),
-        ShowContent::Spec(text) => json!({ "name": item, "spec": text }),
-    }
 }
 
 fn cmd_show(cfg: &Config, item: &str, as_json: bool, with_diff: bool) -> Result<i32> {
@@ -1068,15 +1051,15 @@ fn cmd_show(cfg: &Config, item: &str, as_json: bool, with_diff: bool) -> Result<
         return Ok(0);
     }
 
-    let content = resolve_show_content(cfg, item)?;
+    let view = spectra_core::show::resolve(cfg, item)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&show_json(item, &content))?
-        );
+        let json = match &view {
+            spectra_core::show::View::Change(change) => serde_json::to_string_pretty(change)?,
+            spectra_core::show::View::Spec(spec) => serde_json::to_string_pretty(spec)?,
+        };
+        println!("{json}");
     } else {
-        let (ShowContent::Proposal(text) | ShowContent::Spec(text)) = &content;
-        print!("{text}");
+        print!("{}", spectra_core::show::render_human(&view));
     }
     Ok(0)
 }
@@ -1889,21 +1872,6 @@ fn task_counts(tasks_md: &Path) -> (usize, usize) {
     (tasks.iter().filter(|t| t.done).count(), tasks.len())
 }
 
-fn first_line(path: &Path) -> String {
-    match std::fs::read_to_string(path) {
-        Ok(s) => s
-            .lines()
-            .find(|l| !l.trim().is_empty())
-            .map(str::to_string)
-            .unwrap_or_default(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => {
-            eprintln!("warning: reading {}: {e}", path.display());
-            String::new()
-        }
-    }
-}
-
 fn completion_shell(shell: Option<clap_complete::Shell>) -> Result<clap_complete::Shell> {
     shell
         .or_else(clap_complete::Shell::from_env)
@@ -2280,30 +2248,24 @@ fn run() -> Result<i32> {
                 }
                 Ok(i32::from(checks.iter().any(|check| !check.valid)))
             }
-            SchemaCommand::Which { name, all, json } => {
-                let cfg = require_initialized(&root)?;
-                let names = if *all {
-                    schema::schemas(Some(&cfg))
-                        .into_iter()
-                        .map(|schema| schema.name)
-                        .collect::<Vec<_>>()
-                } else {
-                    vec![name.clone().ok_or_else(|| {
-                        anyhow::anyhow!("schema name is required unless --all is used")
-                    })?]
-                };
-                let mut resolutions = Vec::new();
-                for name in names {
-                    resolutions.push(schema::which(&cfg, &name)?);
-                }
+            // oracle 3.0.0：不需要已初始化的專案；沒給名稱時固定查 `spec-driven`（不看
+            // config.yaml）；`--all` 在所有 probe 過的情境都沒有作用；找不到也 exit 0。
+            SchemaCommand::Which { name, all: _, json } => {
+                let cfg = Config::is_initialized(&root)
+                    .then(|| Config::load(&root))
+                    .transpose()?;
+                let name = name.as_deref().unwrap_or(schema::SCHEMA_NAME);
+                let which = schema::which_sources(cfg.as_ref(), name);
                 if *json {
-                    println!("{}", serde_json::to_string_pretty(&resolutions)?);
+                    println!("{}", serde_json::to_string_pretty(&which)?);
                 } else {
-                    for resolution in resolutions {
-                        println!(
-                            "{} resolves from {}: {}",
-                            resolution.name, resolution.source, resolution.path
-                        );
+                    println!("Schema: {}", which.name);
+                    if which.sources.is_empty() {
+                        println!("Not found.");
+                    }
+                    for (i, source) in which.sources.iter().enumerate() {
+                        let marker = if i == 0 { "  → " } else { "    " };
+                        println!("{marker}{} ({})", source.path, source.source);
                     }
                 }
                 Ok(0)
@@ -2588,13 +2550,21 @@ mod tests {
 
         let items = list_specs_items(&cfg).unwrap();
         assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["name"].as_str(), Some("auth"));
-        assert_eq!(items[0]["summary"].as_str(), Some("# Auth"));
+        // oracle 3.0.0：只有 `id` 與正規化後的絕對 `path`（spec 目錄，不是 spec.md）。
+        assert_eq!(
+            items[0].as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["id", "path"]
+        );
+        assert_eq!(items[0]["id"].as_str(), Some("auth"));
+        assert_eq!(
+            items[0]["path"].as_str(),
+            Some(auth_dir.canonicalize().unwrap().to_string_lossy().as_ref())
+        );
 
         // The exact wrapper key ("specs") is the documented --json contract;
         // pin it here so a typo doesn't ship silently.
         let wrapped = json!({ "specs": items });
-        assert_eq!(wrapped["specs"][0]["name"], "auth");
+        assert_eq!(wrapped["specs"][0]["id"], "auth");
     }
 
     #[test]
@@ -2696,9 +2666,13 @@ mod tests {
         )
         .unwrap();
 
-        match resolve_show_content(&cfg, "auth").unwrap() {
-            ShowContent::Proposal(text) => assert_eq!(text, "# Auth change\n"),
-            ShowContent::Spec(_) => panic!("expected the change to take priority over the spec"),
+        match spectra_core::show::resolve(&cfg, "auth").unwrap() {
+            spectra_core::show::View::Change(change) => {
+                assert_eq!(change.proposal.as_deref(), Some("# Auth change\n"))
+            }
+            spectra_core::show::View::Spec(_) => {
+                panic!("expected the change to take priority over the spec")
+            }
         }
     }
 
@@ -2718,9 +2692,11 @@ mod tests {
         )
         .unwrap();
 
-        match resolve_show_content(&cfg, "billing").unwrap() {
-            ShowContent::Spec(text) => assert_eq!(text, "# Billing spec\n"),
-            ShowContent::Proposal(_) => panic!("expected a spec, not a change"),
+        match spectra_core::show::resolve(&cfg, "billing").unwrap() {
+            spectra_core::show::View::Spec(spec) => {
+                assert_eq!(spec.files[0].content, "# Billing spec\n")
+            }
+            spectra_core::show::View::Change(_) => panic!("expected a spec, not a change"),
         }
     }
 
@@ -2734,7 +2710,7 @@ mod tests {
             claude_slash_commands: false,
         };
 
-        assert!(resolve_show_content(&cfg, "ghost").is_err());
+        assert!(spectra_core::show::resolve(&cfg, "ghost").is_err());
     }
 
     #[test]
@@ -2760,24 +2736,11 @@ mod tests {
         )
         .unwrap();
 
-        let err = resolve_show_content(&cfg, "broken").unwrap_err();
-        assert!(!err.to_string().contains("is not a known change or spec"));
-    }
-
-    #[test]
-    fn show_json_uses_proposal_key_for_change_content() {
-        let value = show_json("my-change", &ShowContent::Proposal("hello".to_string()));
-        assert_eq!(value["name"], "my-change");
-        assert_eq!(value["proposal"], "hello");
-        assert!(value.get("spec").is_none());
-    }
-
-    #[test]
-    fn show_json_uses_spec_key_for_spec_content() {
-        let value = show_json("auth", &ShowContent::Spec("# Auth\n".to_string()));
-        assert_eq!(value["name"], "auth");
-        assert_eq!(value["spec"], "# Auth\n");
-        assert!(value.get("proposal").is_none());
+        let err = match spectra_core::show::resolve(&cfg, "broken") {
+            Err(err) => err,
+            Ok(_) => panic!("a real I/O error must not fall back to the spec"),
+        };
+        assert!(!err.to_string().contains("not found as a change or spec"));
     }
 
     fn sample_change(dir: PathBuf, started_sha: Option<&str>) -> change::Change {
