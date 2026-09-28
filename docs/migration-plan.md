@@ -216,7 +216,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W1 | 量測工具：模板 CLI 解析測試（`cargo test`，Linux／macOS 皆跑）＋ `scripts/parity-probe.py`（oracle 比對、允許清單） | A2、A3 的量尺 | — | PR #196（A2 缺口 41 條、A1 缺口 19 項、A3 已知分歧 124 條） |
 | W2 | `instructions` 補 `--omit-context`／`--compact`／`--summary`／`--agent`／`--type` | A1、A2 | — | PR #197（stacked on #196；另補 5 個漏抓的 skill、`contextRef`、spec_dir 代入；驗收矩陣 204/208 相同） |
 | W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | — | PR #198（stacked on #197；`status` 順序實測本來就一致；新增 `capture-schemas.py`；parity 119 → 110） |
-| W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | 待辦 |
+| W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | **待裁決**（D7：v3 per-task baseline 與 #98 per-change baseline 取捨；建議以 v3 取代 #98），先跳過 |
 | W5 | `archive --preview`／`--json` | A1、A2 | 新 issue | 待辦 |
 | W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦 |
 | W7 | JSON 形狀與內容對齊 3.0.0：`list`（`summary`、排序）、`list --specs`、`show`、`drift`／`instructions` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`／`unresolved_prerequisites`／`cycle_member`／`mixed_format`；內建 schema 的 instruction／template 文字（W2 實測 specs instruction 多了 Purpose section 與 Scenario subject rule 兩段） | A3 | 新 issue | 待辦 |
@@ -459,6 +459,16 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | D4 | `yibi-mvp-fix-*` | **清掉**；已於 2026-09-28 以 `git worktree remove` 移除（檢查結果見下），分支保留待 `/clean-wt` | Phase 4 |
 | D5 | 沒有消費端的 3.0.0 指令要不要移植 | **以後再做**：排在執行佇列最後 | M5 |
 | D6 | 實作切換放在哪裡 | **做成 OpenSpectra 內建** | Phase 1 |
+
+**D7（待裁決，2026-09-28 提出）：W4 的 baseline 模型。** oracle 3.0.0 的 `task start`
+寫 `.spectra/task-baselines/<change>/<id>.json`；`task done` 只在有 task baseline 或
+`--file` 時記錄 touched files，否則發警告並跳過，而且 `new change` 不再寫任何
+`.spectra/` 狀態（W3 實測）。OpenSpectra 的 #98 則由 `new change` 寫 per-change
+baseline，每次 `task done` 都記錄。選項：(a) 以 v3 取代 #98（與 oracle 完全一致，
+`archive` 的 `code` trace 改由 task baseline／`--file` 提供，沒跑 `task start`
+的專案會拿到空的 `code`）；(b) 兩者並存，沒有 task baseline 時退回 #98（`code`
+不會變空，但 `task done` 的警告與 touched 結果和 oracle 不同）；(c) 維持 #98 為
+刻意分歧，`task start` 只做介面相容。建議 (a)，理由是驗收條件 A3 要求輸出一致。
 
 **D4 執行前檢查（實測）**：四個目錄是 yibi-mvp 的 linked worktree，都沒有未 commit 的改動；
 fix-1826／1827／1828 本機的每個 commit 在各自遠端分支上都有等價 patch（`git cherry` 0 unmatched）；
