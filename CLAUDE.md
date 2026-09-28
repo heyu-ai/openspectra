@@ -68,8 +68,8 @@ cargo test --all
 `fmt` and `clippy` are hard gates in CI too (the `lint` job in `ci.yml`, no
 `continue-on-error`), so a local fmt/clippy failure will also fail the PR.
 `build` + `test` run on a `[ubuntu-latest, macos-latest]` matrix in the
-`build-and-test` job (macOS runs 2 fewer tests — the `#[cfg(target_os =
-"linux")]`-gated ones — which is expected, not a failure). If a clippy
+`build-and-test` job (macOS skips the `#[cfg(target_os = "linux")]`-gated
+tests, which is expected, not a failure). If a clippy
 finding is a false positive, suppress it narrowly with a comment explaining
 why; never add a blanket `#[allow]` just to make the check pass.
 
@@ -110,13 +110,10 @@ why; never add a blanket `#[allow]` just to make the check pass.
   and checking afterwards showed only the delete, so `--all` was misread as an
   inert flag — it is not; `reset` truncates and `--all` deletes).
 - A comment or doc that states an invariant is a claim to verify like code —
-  including while *fixing* another comment. The PR #100-#104 mob reviews'
-  most-hit real-defect class was stated-but-false invariants (4 findings: a
-  security-rationale constraint the code didn't hold, a lock instruction other
-  tests couldn't follow, a test's false no-lock justification, probe records
-  attributed to cases they didn't cover), and one was reintroduced *by the fix*
-  for another. When you touch a comment, check every claim it makes against
-  the implementation before committing.
+  including while *fixing* another comment, since a fix can introduce a new
+  false invariant (the most common real defect in the PR #100-#104 reviews).
+  When you touch a comment, check every claim it makes against the
+  implementation before committing.
 - Probe the oracle before acting on a review finding, in either direction. A
   reviewer's "this mutation survives, add a test that locks it" or "this is an
   unaccepted silent failure" is reasoned from the code, not from the oracle,
