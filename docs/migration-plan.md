@@ -216,7 +216,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W1 | 量測工具：模板 CLI 解析測試（`cargo test`，Linux／macOS 皆跑）＋ `scripts/parity-probe.py`（oracle 比對、允許清單） | A2、A3 的量尺 | — | PR #196（A2 缺口 41 條、A1 缺口 19 項、A3 已知分歧 124 條） |
 | W2 | `instructions` 補 `--omit-context`／`--compact`／`--summary`／`--agent`／`--type` | A1、A2 | — | PR #197（stacked on #196；另補 5 個漏抓的 skill、`contextRef`、spec_dir 代入；驗收矩陣 204/208 相同） |
 | W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | — | PR #198（stacked on #197；`status` 順序實測本來就一致；新增 `capture-schemas.py`；parity 119 → 110） |
-| W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | 進行中（D7 已裁決：以 v3 取代 #98） |
+| W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | PR #201（stacked on #199；golden replay 擴大到 14 情境、360 欄位全部逐位元組相同；#98 移除；parity 108 → 106） |
 | W5 | `archive --preview`／`--json` | A1、A2 | — | PR #199（stacked on #198；preview 10 情境逐位元組相同；`snapshot_created: false` 為刻意分歧，對應 #111；parity 110 → 108） |
 | W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦 |
 | W7 | JSON 形狀與內容對齊 3.0.0：`list`（`summary`、排序）、`list --specs`、`show`、`drift`／`instructions` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`／`unresolved_prerequisites`／`cycle_member`／`mixed_format`；內建 schema 的 instruction／template 文字（W2 實測 specs instruction 多了 Purpose section 與 Scenario subject rule 兩段） | A3 | 新 issue | 待辦 |
