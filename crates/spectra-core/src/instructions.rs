@@ -36,7 +36,17 @@ const PROPOSAL_REF_MARKERS: &[&str] = &[
     "受影響檔案",
 ];
 
-pub const LOCALE: &str = "English";
+/// `instructions` 輸出的 `locale`（oracle 3.0.0，W8 探測 p01／p02）：`.spectra.yaml` 的
+/// `locale` **完全等於** `tw`／`ja`／`en` 時換成顯示名稱，其他值（含 `zh-TW`、`TW`、前後空白）
+/// 原樣輸出，未設定時為 `English`。
+pub fn display_locale(locale: Option<&str>) -> String {
+    match locale {
+        None | Some("en") => "English".to_string(),
+        Some("tw") => "Traditional Chinese (繁體中文)".to_string(),
+        Some("ja") => "Japanese (日本語)".to_string(),
+        Some(other) => other.to_string(),
+    }
+}
 pub const APPLY_INSTRUCTION: &str = "Read context files, work through pending tasks, mark complete as you go.\nPause if you hit blockers or need clarification.\n";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -679,7 +689,7 @@ pub fn artifact_instructions(
         context,
         context_ref,
         rules,
-        locale: LOCALE.to_string(),
+        locale: display_locale(cfg.locale.as_deref()),
         template: render_spec_dir(&artifact.template, &cfg.spec_dir),
         dependencies,
         unlocks,
@@ -861,7 +871,7 @@ pub fn apply_instructions(
         tasks,
         state,
         missing_artifacts,
-        locale: LOCALE.to_string(),
+        locale: display_locale(cfg.locale.as_deref()),
         instruction: schema.apply_instruction.clone(),
         preflight,
     })
@@ -929,6 +939,27 @@ pub fn get(
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
+    /// oracle 3.0.0 的 locale 顯示名稱（W8 探測 p01／p02）：只有完全等於 `tw`／`ja`／`en`
+    /// 才換名稱，其他值原樣輸出，未設定為 English。
+    #[test]
+    fn display_locale_matches_the_oracle() {
+        let cases: &[(Option<&str>, &str)] = &[
+            (None, "English"),
+            (Some("en"), "English"),
+            (Some("tw"), "Traditional Chinese (繁體中文)"),
+            (Some("ja"), "Japanese (日本語)"),
+            (Some("zh-TW"), "zh-TW"),
+            (Some("TW"), "TW"),
+            (Some("EN"), "EN"),
+            (Some(" tw"), " tw"),
+            (Some(""), ""),
+            (Some("fr"), "fr"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(display_locale(*input), *expected, "{input:?}");
+        }
+    }
 
     fn project(label: &str) -> (TempDir, crate::Config, crate::Change) {
         let tmp = TempDir::new(label);

@@ -57,7 +57,6 @@ output	instructions apply --change <change> --json	oracle-only .preflight.drifte
 output	instructions apply --change <change> --json	oracle-only .preflight.driftedFiles[].path
 output	instructions apply --change <change> --json	oracle-only .preflight.missingFiles[].path
 output	instructions apply --change <change> --json	oracle-only .preflight.missingFiles[].referencedIn
-output	instructions apply --change <change> --json	value .locale
 output	instructions apply --change <change> --json	value .preflight.driftedFiles[]#len
 output	instructions apply --change <change> --json	value .preflight.driftedFiles[].path
 output	instructions apply --change <change> --json	value .preflight.missingFiles[]#len
