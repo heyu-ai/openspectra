@@ -66,9 +66,10 @@ won't have it).
 | `.spectra/` in `.gitignore` | n/a | `init` ensures the entry | ➕ spectra-only |
 
 The matrix's OpenSpectra column records the state before #26. Two later
-OpenSpectra-only additions (#98) do not fit that snapshot. First,
-`.spectra/changes/<name>.touched-baseline.json`, a per-task checkpoint. Second,
-trace data: OpenSpec has no trace concept, and OpenSpectra no longer writes the
+additions do not fit that snapshot. First, the Spectra 3.0.0 per-task
+touched tracking (`.spectra/task-baselines/<name>/<id>.json` and
+`.spectra/touched/<name>.lock`, #190; it replaced OpenSpectra's own #98
+per-change checkpoint). Second, trace data (#98): OpenSpec has no trace concept, and OpenSpectra no longer writes the
 oracle's inline `<!-- @trace -->` footer under each requirement. Instead it
 writes `specs/<cap>/spec.trace.yaml` plus a one-line pointer in `spec.md`. See
 `docs/reverse-engineering/archive.md` › "Trace data".

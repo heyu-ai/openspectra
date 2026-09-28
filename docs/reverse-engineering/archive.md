@@ -131,9 +131,11 @@ operation(s) but 0 applied; …` (tracked with the validate alignment, W9 in
    original or this transaction's exact expected output; concurrent edits are
    never overwritten.
 9. On success, clear the change's `.spectra/changes/<name>.{started,in-progress}`
-   markers, the OpenSpectra-only `.spectra/changes/<name>.touched-baseline.json`
-   checkpoint (see "Deliberate divergences (#98)" below), and
-   `.spectra/touched/<name>.json` best-effort.
+   markers, `.spectra/touched/<name>.json`, and
+   `.spectra/task-baselines/<name>/` best-effort. The 0-byte
+   `.spectra/touched/<name>.lock` stays, as in oracle 3.0.0 (see `task.md`).
+   A leftover `.spectra/changes/<name>.touched-baseline.json` from an older
+   OpenSpectra (#98) is removed too.
 
 The spec tree is recursive, so `specs/<Epic>/<Feature>/spec.md` maps to the
 same nested canonical capability. The collector rejects a root-level
@@ -374,33 +376,17 @@ delta changes. `trace migrate --check` catches them in between. Footers absorbed
 as-is, so the collection divergences below apply only to entries OpenSpectra
 writes itself.
 
-**Deliberate divergences in `code` collection (#98), both OpenSpectra-only
-(relative to v2.3.1):**
+**Where `code` comes from.** Since D7 (#190) the touched files are the
+oracle 3.0.0 per-task records described in `task.md`: paths changed since a
+task's `task start` baseline, or listed with `task done --file`. A task done
+without either records nothing, so a change whose tasks never ran
+`task start` archives with an empty `code:` list — the oracle behaves the same
+way. The OpenSpectra-only per-change checkpoint of #98
+(`.spectra/changes/<name>.touched-baseline.json`) that used to fill this gap
+was removed by that decision.
 
-- **Task-scoped collection.** `spectra new change` and every `task done` that
-  records successfully write a checkpoint,
-  `.spectra/changes/<name>.touched-baseline.json`, holding a content
-  fingerprint (length + FNV-1a 64; symlink target; `missing` for deleted) of
-  every dirty file at that moment. A path whose state cannot be determined (an
-  unreadable file or symlink, a directory or submodule, a stat error other than
-  not-found) is still checkpointed, with a `null` fingerprint, and always counts
-  as changed. Known limitation: a submodule (or an untracked nested git repo,
-  which `git status` also reports as a directory) that was already dirty before
-  the change started is therefore attributed to the first `task done` even if no
-  task touched it; fingerprinting it precisely would need an extra git call per
-  submodule. The
-  next `task done` records the files whose fingerprint differs from the
-  checkpoint, drawn from the current dirty set plus checkpointed paths that are
-  now clean (a pre-existing edit a task reverted to its committed content). A
-  file that was already dirty before the change started, and is never edited by
-  a task, is no longer attributed to the change. When recording into
-  `.spectra/touched/<name>.json` fails, the checkpoint is left as it was, so a
-  later `task done` still records those files. A change with no baseline
-  (created before this divergence) falls back to the old session-wide
-  behavior; an unreadable or corrupt baseline does the same, with a warning.
-  The baseline lives beside `.started` rather than under `.spectra/touched/`,
-  which keeps that directory to oracle-format tracking files. It is cleared
-  with the other sidecars on `new change` and `archive`.
+**Deliberate divergence in `code` collection (OpenSpectra-only):**
+
 - **Stale-path pruning.** At archive time, paths that no longer exist on disk
   (`symlink_metadata` reports not-found or not-a-directory; a dangling symlink
   still counts as present) are left out of `code:`. Any other stat error keeps

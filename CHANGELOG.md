@@ -21,6 +21,11 @@ changes.
   their order match the oracle.
 - Artifact JSON includes `contextRef` (`fnv1a64:<hex>:<bytes>` of the trimmed
   context) whenever `context` is present, as v3.0.0 does.
+- `task start <id>` and `task done --file <path>` (repeatable), the v3.0.0
+  per-task touched tracking: `task start` captures a git fingerprint baseline
+  in `.spectra/task-baselines/<change>/<id>.json` (and, on first use, a
+  `review_base` in the tracking file); `task done` records the paths changed
+  since that baseline, or the `--file` paths (#190).
 - The v3.0.0 built-in `no-spec` schema (proposal → design/tasks, design
   optional), captured by the new `scripts/capture-schemas.py`. `schemas`
   lists it after `spec-driven`, and every command resolves it.
@@ -38,6 +43,23 @@ changes.
 
 ### Changed
 
+- **BREAKING (D7, #190): touched-file tracking follows Spectra 3.0.0.**
+  `task done` no longer records every dirty file: without a `task start`
+  baseline or `--file` it records nothing and warns
+  `touched_tracking_skipped_no_baseline_or_explicit_files` (outside git:
+  `git_tracking_unavailable`). OpenSpectra's own per-change baseline (#98,
+  written by `new change`) is removed, so an archive whose tasks never ran
+  `task start` gets an empty trace `code` list, as with the oracle. `task
+  done --json` is one line with `provenance`, `touched_files`, and
+  `warnings`; the human line starts with `✓`; task IDs are matched as the
+  exact decimal index (`01`, `1.1`, `abc` report `Task <id> not found for
+  change '<name>'`); every `task done` that resolves a change creates the
+  0-byte `.spectra/touched/<change>.lock`; and several active changes report
+  `Use --change to specify one:`. A tracking file that cannot be parsed or
+  belongs to another change now fails the command instead of being moved
+  aside. Tracking files written by older versions are still read. The
+  replay of the oracle golden compares all 14 scenarios byte for byte, and
+  the divergence ledger is gone.
 - `archive` prints `✓ Archived: <change> → <archived id>` instead of
   `Archived '<change>' as '<archived id>'.`, as v3.0.0 does.
 - `new change` prints the v3.0.0 three-line output (`✓ Created change:`,
@@ -51,21 +73,6 @@ changes.
   instruction/template text instead of a hard-coded `openspec/specs/`.
   `new artifact` keeps writing the unrendered `{{SPEC_DIR}}` placeholder, as
   the oracle does.
-
-### Divergences from the v3.0.0 oracle (documented)
-
-- `task done` still implements the v2.3.1 behavior. An oracle 3.0.0 golden
-  (`docs/reverse-engineering/golden/task-done-3.0.0.json`) and a replay test
-  now pin exactly where it differs: v3.0.0's `--json` adds `provenance`,
-  `touched_files`, and `warnings`; every bad task ID reports
-  `Task <id> not found for change '<name>'` after the change is resolved;
-  `01` is rejected; and touched files are recorded only after
-  `task start <id>` or with `--file`, neither of which OpenSpectra
-  implements. The resulting `tasks.md` matches byte-for-byte on every
-  replayed step except `task done 01` (#110). One divergence is documented
-  but not compared by the replay: v3.0.0 creates
-  `.spectra/touched/<change>.lock` on every `task done` that resolves a
-  change, and OpenSpectra creates no lock.
 
 ## [0.13.0] - 2026-09-27
 
