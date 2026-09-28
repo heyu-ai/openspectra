@@ -34,14 +34,16 @@ this file is agent-facing operational context.
   registry, and pins the unknown-skill stderr/exit contract. The assets are the oracle captures and
   the TSV pins their provenance; both are generated artifacts. Any drift exits
   non-zero; `--write` regenerates both and re-verifies. Never hand-edit them.
-- `scripts/capture-trace-interop.py` — same constraints (macOS + reference
-  binary 3.0.0, plus a clean release build of OpenSpectra at
-  `target/release/spectra` or `--openspectra-bin`). It probes what the oracle
-  does to a sidecar-migrated spec (ADDED/MODIFIED with a clean and a dirty
-  tree, each RENAMED spelling, a RENAMED archive) and compares the observables
-  with `docs/reverse-engineering/golden/trace-interop-3.0.0.tsv`. Each probe
-  runs in its own jail; a mismatch exits non-zero and keeps the jails. `--write`
-  regenerates the TSV and re-verifies. Never hand-edit it.
+- `scripts/capture-task-done.py` — same constraints (macOS + reference binary,
+  version-pinned to 3.0.0, `--spectra-bin`/`SPECTRA_BIN` override). Runs the
+  `task done`/`task start` scenarios in scratch git repos and writes the
+  self-describing `docs/reverse-engineering/golden/task-done-3.0.0.json`,
+  which `task_done_golden_integration.rs` replays. Drift exits non-zero and
+  keeps the scratch repos; `--write` regenerates and re-verifies. The golden
+  is generated — never hand-edit it. Its sibling
+  `task-done-3.0.0.divergences.json` is the opposite: a hand-curated ledger
+  of OpenSpectra's pinned divergent values, edited deliberately when a
+  divergence is closed or accepted (the replay fails on stale entries).
 
 - `scripts/mutate-check.py` + `scripts/mutations.toml` — value-level mutation
   contract for previously fixed bugs. Each case reverts one fix to its original
@@ -66,8 +68,8 @@ cargo test --all
 `fmt` and `clippy` are hard gates in CI too (the `lint` job in `ci.yml`, no
 `continue-on-error`), so a local fmt/clippy failure will also fail the PR.
 `build` + `test` run on a `[ubuntu-latest, macos-latest]` matrix in the
-`build-and-test` job (macOS runs 2 fewer tests — the `#[cfg(target_os =
-"linux")]`-gated ones — which is expected, not a failure). If a clippy
+`build-and-test` job (macOS skips the `#[cfg(target_os = "linux")]`-gated
+tests, which is expected, not a failure). If a clippy
 finding is a false positive, suppress it narrowly with a comment explaining
 why; never add a blanket `#[allow]` just to make the check pass.
 
@@ -108,13 +110,10 @@ why; never add a blanket `#[allow]` just to make the check pass.
   and checking afterwards showed only the delete, so `--all` was misread as an
   inert flag — it is not; `reset` truncates and `--all` deletes).
 - A comment or doc that states an invariant is a claim to verify like code —
-  including while *fixing* another comment. The PR #100-#104 mob reviews'
-  most-hit real-defect class was stated-but-false invariants (4 findings: a
-  security-rationale constraint the code didn't hold, a lock instruction other
-  tests couldn't follow, a test's false no-lock justification, probe records
-  attributed to cases they didn't cover), and one was reintroduced *by the fix*
-  for another. When you touch a comment, check every claim it makes against
-  the implementation before committing.
+  including while *fixing* another comment, since a fix can introduce a new
+  false invariant (the most common real defect in the PR #100-#104 reviews).
+  When you touch a comment, check every claim it makes against the
+  implementation before committing.
 - Probe the oracle before acting on a review finding, in either direction. A
   reviewer's "this mutation survives, add a test that locks it" or "this is an
   unaccepted silent failure" is reasoned from the code, not from the oracle,
@@ -124,6 +123,19 @@ why; never add a blanket `#[allow]` just to make the check pass.
   blank-description checkboxes too, so locking the guard would have fossilized
   it; #178 removed it instead. The same review's "`task done` on `[~]` still
   records touched files" finding turned out to be oracle behavior as well).
+- PTY tests via `script(1)`: keep the child's stdin open until it exits. If the
+  test writes its answer and closes stdin immediately, `script` sends `^D` to
+  the PTY and the program may read EOF instead of the answer — so an
+  "answering `n` aborts" test passes whether or not `n` was ever read (PR #182:
+  the old `archive_prompts_and_aborts_on_a_terminal` survived a mutant that
+  accepted `n`). Use the shared `run_on_terminal` helper in `cli_integration.rs`.
+- A test that derives its expected value from the production helper it guards
+  (e.g. building the parked path via `parked_root()`) cannot detect that
+  helper being changed — the expectation moves with it. Assert the literal
+  oracle path/output instead. Reading a test and judging it "pinned" is not
+  evidence; revert the fix and watch it fail (PR #182: rows judged pinned by
+  reading — #118's parked-store location, #160-4's already-synced MODIFIED
+  count, `list --specs` wiring — turned out unguarded or cited the wrong test).
 
 ## Agent conduct
 
