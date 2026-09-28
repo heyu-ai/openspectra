@@ -68,6 +68,18 @@ changes.
 
 ### Changed
 
+- `status` lists artifacts in the v3.0.0 order — Kahn rounds of the dependency
+  graph, each round sorted by id — instead of the schema's declaration order.
+  Built-in schemas are unaffected; custom schemas such as one declaring
+  `proposal, specs, design, tasks` now print `proposal, design, specs, tasks`
+  like the oracle.
+- A custom schema may omit `apply.instruction` (v3.0.0 accepts it):
+  `instructions apply --json` reports `"instruction": null` and the human output
+  omits the Instruction block. Such a schema used to fail to parse.
+- `scripts/parity-probe.py` (A3) also compares the human form of every probed
+  read-only command byte-for-byte, and stderr in both forms; the new rows in
+  `parity-known.tsv` are the analyze, drift, list and validate differences it
+  exposed.
 - The built-in `spec-driven` schema's texts match v3.0.0: the `design`
   instruction and template gain the Design Source section (and the template a
   `**Supersedes**:` convention for decisions), and the `specs` instruction

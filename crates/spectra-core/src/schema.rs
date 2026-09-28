@@ -624,7 +624,8 @@ pub struct ResolvedSchema {
     pub artifacts: Vec<ResolvedArtifact>,
     pub artifact_order: Vec<String>,
     pub apply_requires: Vec<String>,
-    pub apply_instruction: String,
+    /// `apply.instruction`；schema.yaml 可省略（oracle 3.0.0 接受並輸出 `null`，探測 p33）。
+    pub apply_instruction: Option<String>,
 }
 
 impl ResolvedSchema {
@@ -654,7 +655,7 @@ impl ResolvedSchema {
                 .map(|s| s.to_string())
                 .collect(),
             apply_requires: APPLY_REQUIRES.iter().map(|s| s.to_string()).collect(),
-            apply_instruction: crate::instructions::APPLY_INSTRUCTION.to_string(),
+            apply_instruction: Some(crate::instructions::APPLY_INSTRUCTION.to_string()),
         }
     }
 }
@@ -708,7 +709,7 @@ impl CapturedSchema {
                 .collect(),
             artifact_order: self.artifact_order,
             apply_requires: self.apply_requires,
-            apply_instruction: self.apply_instruction,
+            apply_instruction: Some(self.apply_instruction),
         }
     }
 }
@@ -925,7 +926,8 @@ struct SchemaYamlApply {
     #[serde(default)]
     #[allow(dead_code)]
     tracks: Option<String>,
-    instruction: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instruction: Option<String>,
 }
 
 /// Resolve which schema a command should run under, loading a custom schema
@@ -1760,6 +1762,42 @@ fn planning_artifact_ids(schema: &ResolvedSchema) -> std::collections::HashSet<S
     closure
 }
 
+/// `status` 的 artifact 順序（oracle 3.0.0，探測 p33／p34）：依賴圖的 Kahn 逐輪拓撲排序，
+/// 每一輪內依 id 的字母順序；不在 schema 內的依賴不算。`schemas` 列表則維持宣告順序。
+/// 內建 `spec-driven`（proposal、design、specs、tasks）與 `no-spec` 的結果恰好等於宣告順序。
+/// 環上（排不進去）的 artifact 依宣告順序附在最後。
+fn status_order(schema: &ResolvedSchema) -> Vec<&ResolvedArtifact> {
+    let ids: std::collections::HashSet<&str> =
+        schema.artifacts.iter().map(|a| a.id.as_str()).collect();
+    let mut placed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut order: Vec<&ResolvedArtifact> = Vec::new();
+    loop {
+        let mut round: Vec<&ResolvedArtifact> = schema
+            .artifacts
+            .iter()
+            .filter(|a| !placed.contains(a.id.as_str()))
+            .filter(|a| {
+                a.deps
+                    .iter()
+                    .all(|d| !ids.contains(d.as_str()) || placed.contains(d.as_str()))
+            })
+            .collect();
+        if round.is_empty() {
+            break;
+        }
+        round.sort_by(|a, b| a.id.cmp(&b.id));
+        placed.extend(round.iter().map(|a| a.id.as_str()));
+        order.extend(round);
+    }
+    order.extend(
+        schema
+            .artifacts
+            .iter()
+            .filter(|a| !placed.contains(a.id.as_str())),
+    );
+    order
+}
+
 fn derive_status_with_skipped(
     change_name: &str,
     change_dir: &std::path::Path,
@@ -1773,9 +1811,8 @@ fn derive_status_with_skipped(
         }
     }
     let satisfied: std::collections::HashSet<_> = done_ids.union(skipped).cloned().collect();
-    let artifacts = schema
-        .artifacts
-        .iter()
+    let artifacts = status_order(schema)
+        .into_iter()
         .map(|artifact| {
             if skipped.contains(&artifact.id) {
                 ArtifactStatus {
@@ -2001,6 +2038,42 @@ mod tests {
         }
     }
 
+    /// oracle 3.0.0 探測 p34：宣告順序 x y a c b d（y←x、a←y、b←c、d←x,a）的 status 順序
+    /// 是 Kahn 逐輪＋同輪字母序 `c x b y a d`（不是宣告順序、不是優先佇列、不是最短深度 BFS）。
+    #[test]
+    fn status_order_is_kahn_rounds_sorted_by_id() {
+        let artifact = |id: &str, deps: &[&str]| ResolvedArtifact {
+            id: id.to_string(),
+            output_path: format!("{id}.md"),
+            description: String::new(),
+            deps: deps.iter().map(|d| d.to_string()).collect(),
+            instruction: String::new(),
+            template: String::new(),
+            template_name: format!("{id}.md"),
+        };
+        let mut schema = ResolvedSchema::builtin();
+        schema.artifacts = vec![
+            artifact("x", &[]),
+            artifact("y", &["x"]),
+            artifact("a", &["y"]),
+            artifact("c", &[]),
+            artifact("b", &["c"]),
+            artifact("d", &["x", "a"]),
+        ];
+        let order: Vec<&str> = status_order(&schema)
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(order, ["c", "x", "b", "y", "a", "d"]);
+
+        let builtin = ResolvedSchema::builtin();
+        let order: Vec<&str> = status_order(&builtin)
+            .iter()
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(order, ["proposal", "design", "specs", "tasks"]);
+    }
+
     #[test]
     fn configured_schema_name_reads_the_spec_dir_config() {
         let (_tmp, cfg) = project("schema-configured");
@@ -2148,7 +2221,8 @@ mod tests {
             "applyRequires"
         );
         assert_eq!(
-            ours.apply_instruction, captured.apply_instruction,
+            ours.apply_instruction,
+            Some(captured.apply_instruction),
             "applyInstruction"
         );
         let ids: Vec<&str> = ours.artifacts.iter().map(|a| a.id.as_str()).collect();
@@ -2367,8 +2441,8 @@ mod tests {
         );
         assert_eq!(schema.apply_requires, vec!["tasks"]);
         assert_eq!(
-            schema.apply_instruction,
-            crate::instructions::APPLY_INSTRUCTION,
+            schema.apply_instruction.as_deref(),
+            Some(crate::instructions::APPLY_INSTRUCTION),
             "probed: no-spec apply differs from spec-driven only in schemaName"
         );
         assert!(schema.artifacts[0].instruction.starts_with(
@@ -2498,7 +2572,7 @@ mod tests {
                 "tasks".to_string(),
             ],
             apply_requires: vec!["tasks".to_string()],
-            apply_instruction: String::new(),
+            apply_instruction: Some(String::new()),
         };
 
         let report = derive_status("demo", &change_dir, &schema).unwrap();
@@ -2780,7 +2854,7 @@ mod tests {
         // whatever trailing bytes the file itself has.
         assert_eq!(schema.artifacts[0].instruction, "Write it.");
         assert_eq!(schema.apply_requires, vec!["proposal"]);
-        assert_eq!(schema.apply_instruction, "Do the work.");
+        assert_eq!(schema.apply_instruction.as_deref(), Some("Do the work."));
     }
 
     #[test]

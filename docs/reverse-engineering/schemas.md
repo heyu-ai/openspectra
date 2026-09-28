@@ -147,6 +147,21 @@ as its own constant rather than derived from `ARTIFACTS`. A unit test asserts it
 stays a permutation of the `ARTIFACTS` id set, so adding a fifth artifact can't
 silently desync the schema listing.
 
+**`status` order (oracle 3.0.0, W7e).** `status` does not use the declaration
+order at all: it lists artifacts in **Kahn rounds of the dependency graph,
+each round sorted by id** (dependencies outside the schema are ignored). For
+`spec-driven` that happens to equal `ARTIFACTS` (proposal; design, specs;
+tasks), which is why the difference only showed on custom schemas — the
+yibi-mvp corpus's `spec-driven-yibi` declares `proposal, specs, design,
+tasks` and the oracle still prints `proposal, design, specs, tasks`. Probe p34
+separated the candidate rules with a synthetic schema declared `x y a c b d`
+(`y←x`, `a←y`, `b←c`, `d←x,a`): the oracle prints `c x b y a d` — not the
+declaration order, not a priority-queue Kahn (`c b x y a d`), not a
+shortest-depth BFS (`c x b d y a`). `schemas` keeps the declaration order
+(`x y a c b d`). Implemented by `schema::status_order`; artifacts left on a
+dependency cycle follow in declaration order (the oracle's handling of a
+cyclic schema was not probed).
+
 ## Output formats
 
 ### `--json` (golden: `golden/schemas-2.3.1.json`)
@@ -279,6 +294,20 @@ instructions, and templates. The resolution order is unchanged:
 - name resolves nowhere → the oracle's message, byte for byte.
 - `schemas/<name>/schema.yaml` exists → loaded and used (the `name:` field
   from the YAML becomes the schema name shown by `status`).
+
+`apply.instruction` is optional (oracle 3.0.0, probe p33): a schema without
+it passes `schema validate`, `instructions apply --json` reports
+`"instruction": null`, and the human output ends right after the `Progress:`
+line (no blank line, no `Instruction:` block). OpenSpectra used to reject such a
+schema with a parse error on every command.
+
+Known custom-schema gaps found by the same probes and not yet ported (queued
+in `docs/migration-plan.md`): with a schema whose apply has no `tracks` and no
+tasks file, the oracle reports `state: "ready"` where OpenSpectra reports
+`blocked`; `instructions apply --json` `contextFiles` lists the oracle's
+done custom artifacts by id (`{"a": ".../a.md"}`) where OpenSpectra only knows
+`proposal`/`design`/`specs`/`tasks`; and `schema validate` prints `✓ Schema
+'<name>' is valid (<N> artifacts)` where OpenSpectra prints `✓ <name>`.
 
 One edge case is deliberately not reproduced: a change whose `schema:` key is
 present but null. `ChangeMetadata`'s `Option<String>` cannot distinguish that

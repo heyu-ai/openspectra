@@ -7,8 +7,10 @@ acceptance criteria A1 and A3 of ``docs/migration-plan.md``:
 * **A1 (surface)** -- every subcommand and long flag the oracle's ``--help``
   lists must also be accepted by OpenSpectra.
 * **A3 (output)** -- on copies of real projects ("corpus"), the read-only
-  commands must agree on exit code and on JSON *semantics* (key order does not
-  matter; list order does).
+  commands must agree on exit code, on JSON *semantics* (key order does not
+  matter; list order does), and -- for the human (non-``--json``) form of the
+  same commands -- byte-for-byte on stdout. stderr is compared byte-for-byte in
+  both forms (warnings count). Colour is off (``NO_COLOR=1``).
 
 Known divergences live in ``docs/reverse-engineering/golden/parity-known.tsv``
 and work as a ratchet: a divergence that is not listed fails the run, and a
@@ -141,8 +143,8 @@ def compare_json(tag: str, a_text: str, b_text: str) -> set[tuple[str, str, str]
     return found
 
 
-def compare_text(tag: str, a: str, b: str) -> set[tuple[str, str, str]]:
-    return set() if a == b else {("output", tag, "text-differs")}
+def compare_text(tag: str, a: str, b: str, stream: str = "text") -> set[tuple[str, str, str]]:
+    return set() if a == b else {("output", tag, f"{stream}-differs")}
 
 
 def read_spec_dir(project: Path) -> str:
@@ -179,24 +181,36 @@ def output_divergences(oracle: str, oss: str, box: Path) -> set[tuple[str, str, 
     if rc != 0:
         fail(f"{box}: oracle list --json failed: {err.strip()}")
     changes = [c["name"] for c in json.loads(out).get("changes", [])]
-    commands: list[tuple[str, list[str], bool]] = [
-        ("list --json", ["list", "--json"], True),
-        ("list --specs --json", ["list", "--specs", "--json"], True),
-        ("list --parked --json", ["list", "--parked", "--json"], True),
-        ("schemas --json", ["schemas", "--json"], True),
-        ("templates --json", ["templates", "--json"], True),
-        ("validate --changes --json", ["validate", "--changes", "--json"], True),
+    # (tag, args) of the JSON form; each is also run without `--json` (the
+    # human form, tag without ` --json`), except where a command has no human
+    # form worth comparing.
+    project_wide: list[tuple[str, list[str]]] = [
+        ("list --json", ["list", "--json"]),
+        ("list --specs --json", ["list", "--specs", "--json"]),
+        ("list --parked --json", ["list", "--parked", "--json"]),
+        ("schemas --json", ["schemas", "--json"]),
+        ("templates --json", ["templates", "--json"]),
+        ("validate --changes --json", ["validate", "--changes", "--json"]),
     ]
+    per_change: list[tuple[str, list[str]]] = [
+        ("show <change> --json", ["show", "{c}", "--json"]),
+        ("status --change <change> --json", ["status", "--change", "{c}", "--json"]),
+        ("instructions apply --change <change> --json",
+         ["instructions", "apply", "--change", "{c}", "--json"]),
+        ("analyze <change> --json", ["analyze", "{c}", "--json"]),
+        ("drift <change> --json", ["drift", "{c}", "--json"]),
+    ]
+    commands: list[tuple[str, list[str], bool]] = []
+    for tag, args in project_wide:
+        commands.append((tag, args, True))
+        commands.append((tag.removesuffix(" --json"), [a for a in args if a != "--json"], False))
     for c in changes:
-        commands += [
-            ("show <change> --json", ["show", c, "--json"], True),
-            ("status --change <change> --json", ["status", "--change", c, "--json"], True),
-            ("instructions apply --change <change> --json",
-             ["instructions", "apply", "--change", c, "--json"], True),
-            ("analyze <change> --json", ["analyze", c, "--json"], True),
-            ("drift <change> --json", ["drift", c, "--json"], True),
-            ("validate <change>", ["validate", c], False),
-        ]
+        for tag, args in per_change:
+            concrete = [c if a == "{c}" else a for a in args]
+            commands.append((tag, concrete, True))
+            commands.append((tag.removesuffix(" --json"),
+                             [a for a in concrete if a != "--json"], False))
+        commands.append(("validate <change>", ["validate", c], False))
     found = set()
     for tag, args, is_json in commands:
         ra, oa, ea = run(oracle, args, cwd=box)
@@ -208,7 +222,9 @@ def output_divergences(oracle: str, oss: str, box: Path) -> set[tuple[str, str, 
         if is_json and ra == 0 and rb == 0:
             found |= compare_json(tag, oa, ob)
         elif not is_json and ra == rb:
-            found |= compare_text(tag, oa, ob)
+            found |= compare_text(tag, oa, ob, "stdout")
+        if ra == rb:
+            found |= compare_text(tag, ea, eb, "stderr")
     return found
 
 
