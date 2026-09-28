@@ -19,6 +19,7 @@ pub mod init;
 pub mod instructions;
 mod markdown;
 mod names;
+mod openspec_md;
 pub mod schema;
 pub mod scope;
 pub mod search;

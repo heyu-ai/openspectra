@@ -543,22 +543,6 @@ pub(crate) fn parse_all_requirements(content: &str) -> Vec<Requirement> {
         .collect()
 }
 
-pub(crate) fn parse_main_purpose(content: &str) -> Option<String> {
-    let normalized = normalize_markdown(content);
-    let lines: Vec<&str> = normalized.split('\n').collect();
-    let mask = fenced_line_mask(&lines);
-    let header = lines.iter().enumerate().find_map(|(index, line)| {
-        (!mask[index]
-            && heading_text(line, 2).is_some_and(|text| text.eq_ignore_ascii_case("Purpose")))
-        .then_some(index)
-    })?;
-    let end = ((header + 1)..lines.len())
-        .find(|index| !mask[*index] && heading_text(lines[*index], 2).is_some())
-        .unwrap_or(lines.len());
-    let purpose = lines[header + 1..end].join("\n").trim().to_string();
-    (!purpose.is_empty()).then_some(purpose)
-}
-
 fn main_section_end(content: &str, section_name: &str) -> Option<usize> {
     let normalized = normalize_markdown(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
@@ -587,14 +571,6 @@ pub(crate) fn main_requirements_insertion_point(content: &str) -> Option<usize> 
 
 pub(crate) fn main_purpose_insertion_point(content: &str) -> Option<usize> {
     main_section_end(content, "Purpose")
-}
-
-pub(crate) fn is_placeholder_purpose(purpose: &str) -> bool {
-    let trimmed = purpose.trim();
-    let first = trimmed.split_whitespace().next().unwrap_or_default();
-    matches!(first.trim_end_matches([':', '-']), "TBD" | "TODO")
-        || (trimmed.contains("TBD - created by archiving change")
-            && trimmed.contains("Update Purpose after archive."))
 }
 
 #[cfg(test)]

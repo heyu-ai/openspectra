@@ -899,19 +899,19 @@ fn prepare_spec_deltas(
         let retire = if emptied {
             let rebuilt = content.as_deref().expect("emptied content exists");
             if !can_retire_spec(rebuilt) {
-                anyhow::bail!(
+                return Err(openspectra_only(anyhow!(
                     "capability '{capability}' cannot be retired because its spec contains content outside Purpose and Requirements"
-                );
+                )));
             }
             if !retirement_allowed {
                 if retirement_declared {
-                    anyhow::bail!(
+                    return Err(openspectra_only(anyhow!(
                         "capability '{capability}' retirement is disabled by --no-validate"
-                    );
+                    )));
                 }
-                anyhow::bail!(
+                return Err(openspectra_only(anyhow!(
                     "capability '{capability}' would have no requirements; add retire_capabilities: true to the change metadata to retire it"
-                );
+                )));
             }
             content = None;
             true
@@ -933,13 +933,16 @@ fn prepare_spec_deltas(
                 })?;
                 crate::trace::TraceFile::parse(text, &sidecar_path)
             })
-            .transpose()?;
+            .transpose()
+            .map_err(openspectra_only)?;
         if existing_trace.is_none()
             && original
                 .as_deref()
                 .is_some_and(|bytes| crate::trace::has_pointer(&String::from_utf8_lossy(bytes)))
         {
-            return Err(crate::trace::missing_sidecar_error(&sidecar_path));
+            return Err(openspectra_only(crate::trace::missing_sidecar_error(
+                &sidecar_path,
+            )));
         }
         let sidecar = if retire {
             // capability retire 時 sidecar 一併移除。archive 目錄不保存 sidecar，
@@ -1416,11 +1419,36 @@ fn refuse_to_discard_unrecognized_footer(
     if !discarded {
         return Ok(());
     }
-    anyhow::bail!(
+    Err(openspectra_only(anyhow!(
         "capability '{capability}': cannot {operation} requirement '{}' -- it holds an unrecognized `<!-- @trace` footer that would be discarded; move it into {} or delete it by hand, then archive again",
         block.name,
         crate::trace::SIDECAR_FILE
-    )
+    )))
+}
+
+/// 標記一個 archive 拒絕理由屬於 OpenSpectra 獨有的檢查（trace footer、trace
+/// sidecar、capability retirement），OpenSpec 1.13.2 沒有對應規則。
+/// `spectra validate` 依決策 D1 只沿用 OpenSpec 的規則，唯獨這類拒絕仍報成
+/// ERROR（C20，待 owner 裁決），其餘 archive 衝突由 validate 自己依 OpenSpec
+/// 報成 INFO。包裝不改訊息：Display 是原錯誤的最外層訊息，`source()` 接回原本
+/// 的 cause 鏈，所以 `{:#}` 的輸出與包裝前相同。
+#[derive(Debug)]
+pub(crate) struct OpenSpectraOnlyRefusal(anyhow::Error);
+
+impl std::fmt::Display for OpenSpectraOnlyRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for OpenSpectraOnlyRefusal {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.chain().nth(1)
+    }
+}
+
+fn openspectra_only(error: anyhow::Error) -> anyhow::Error {
+    anyhow::Error::new(OpenSpectraOnlyRefusal(error))
 }
 
 fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {

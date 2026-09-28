@@ -7,6 +7,11 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
 
 - 驗證日期：2026-09-27，base `7131cb4`（v0.12.0 之後的 main）
 - 結果：`scripts/mutations.toml` 共 119 個 case，**119/119 KILLED**
+- W9b（2026-09-28，validate 規則改依 OpenSpec 1.13.2）：新增 16 個 `w9b-*` case，
+  並把 `80-first-block-only`、`80-scenario-text-counts`、`35-rename-chain-single-step`
+  改指向新的實作（`openspec_md.rs`、`validate.rs`）。這 19 個加上
+  `35-archive-scenario-loss`、`43-no-metadata-fallback`、`44-validate-typo-as-change`
+  共 22 個 case 實測 22/22 KILLED；其餘 case 未在這一輪重跑
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -82,6 +87,9 @@ harness 本身的負向對照（2026-09-27 實測）：選錯測試得到 SURVIV
 
 ## 需要人裁決的事項
 
+- （已處理，W9b）決策 D1 讓 validate 依 OpenSpec 1.13.2：同一個 delta 檔已有 ERROR
+  時不再以 archive 的措辭重報（OpenSpec `alreadyReported`），scenario 遺失只報一則，
+  由 `w9b-c3-rereport-reported-delta` 守住。以下保留原始紀錄。
 - **`validate` 對 scenario 遺失回報兩次**（row 35）。`validate.rs` 自己的檢查與
   `archive::validate_archive_compatibility` 會對同一個缺陷各報一則 ERROR：前者帶
   `specs/<cap>/spec.md` 路徑與行號，後者只有 `changes/<name>`。實測拿掉前者後，兩個
@@ -214,6 +222,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 41 | #160-7 | `schema fork` 後的 schema 仍以來源名稱（`spec-driven`）自稱 | `41-fork-keeps-source-name`<br>`41-fork-rewrites-nested-name` |
 | 42 | v0.12.0 Fixed | 重建後的 spec 結尾換行數不一致 | `42-final-newline-not-canonicalized` |
 | 43 | #80 / PR #82 | SHALL/MUST 掃描整個 body，Goal-first 的 requirement 因此通過（OSS 1.5.0 會拒絕） | `80-first-block-only`<br>`80-scenario-text-counts`<br>`43-no-metadata-fallback` |
+| 43b | W9b（D1） | validate 規則與 OpenSpec 1.13.2 不同：archive 衝突報 ERROR、stray `###` 吃掉 scenario、空 scenario 算數、重複 section 被拒、`specs/spec.md` 中止整批、main spec 只認 `### Requirement:`、Purpose 只找 `##`、沒有結構檢查與 Purpose 長度檢查、長度用 UTF-8 位元組、SHALL 用 Unicode 字界、task 編號不看 schema 來源 | `w9b-c1-archive-refusal-as-error`<br>`w9b-c3-rereport-reported-delta`<br>`w9b-c20-keeps-every-archive-error`<br>`w9b-c20-drops-openspectra-only`<br>`w9b-c4-stray-h3-ends-block`<br>`w9b-c5-empty-scenario-counts`<br>`w9b-c7-first-section-only`<br>`w9b-c9-no-missing-header-error`<br>`w9b-c11-root-spec-ignored`<br>`w9b-c18-gate-ignores-source`<br>`w9b-s1-only-requirement-children`<br>`w9b-s2-no-structure-check`<br>`w9b-s7-purpose-level-two-only`<br>`w9b-s9-no-brevity-warning`<br>`w9b-utf8-byte-length`<br>`w9b-unicode-word-boundary` |
 | 44 | mob review | `validate <打錯的名稱>` 回報令人誤解的「no delta」，而不是 `Change 'x' not found.` | `44-validate-typo-as-change` |
 | 45 | #134 / PR #138 | 沒有 active change 時，`status`/`instructions`/`drift`/`analyze` exit 1（oracle exit 0） | `45a-no-active-read-cmd-exits-1`<br>`45b-resolve-optional-empty-is-error` |
 | 46 | #118 / PR #125 | park 寫一個 `.parked` 標記，而不是把目錄移進 `<git common dir>/spectra-app/changes/`；與 oracle 互相看不到 | `46b-parked-store-location-literal-path` |
