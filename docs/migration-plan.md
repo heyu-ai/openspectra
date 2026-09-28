@@ -220,8 +220,10 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W5 | `archive --preview`／`--json` | A1、A2 | — | PR #199（stacked on #198；preview 10 情境逐位元組相同；`snapshot_created: false` 為刻意分歧，對應 #111；parity 110 → 108） |
 | W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | PR #203（stacked on #202；oracle 差分 244 次呼叫 228 次逐位元組相同，其餘 16 次全為 scope.md §10 刻意分歧；差分抓到 snapshot 須收 touched clean 路徑、兩處唯讀破口等 5 項並修正；parity 97 → 96） |
 | W7a | `list`（`summary`、排序、名稱過濾）、`list --specs`、`show`、`schema which` 對齊 3.0.0 | A3 | — | PR #202（stacked on #201；29 項 oracle 比對全部相同；parity 106 → 97） |
-| W7b | `drift`／`instructions apply` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`（`[after: …]`）／`unresolved_prerequisites`／`cycle_member`／`mixed_format`／`parallel` 規則 | A3 | — | 待辦（RE 規格已完成） |
+| W7b | `drift`／`instructions apply` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`（`[after: …]`）／`unresolved_prerequisites`／`cycle_member`／`mixed_format`／`parallel` 規則 | A3 | — | PR #204（stacked on #203；另含 `task done` 描述正規化與 human `drift` 表格格式；W7 jail 差分 763 次相同；parity 96 → 80） |
 | W7c | 內建 spec-driven schema 的 instruction／template 文字對齊 3.0.0（`capture-schemas.py` 加入 spec-driven） | A3 | — | 待辦 |
+| W7d | `drift` 的 `tasks_blocked_external`／`tasks_maybe_resolved` 偵測（oracle 3.0.0 在 corpus 上有正樣本，含 `commit_sha`／`commit_date`／`commit_subject`；連帶 Tasks 分數、`severity`、`recommended_action`），以及 apply `preflight` 的 `missingFiles`／`driftedFiles` | A3 | W7b 發現 | 待辦 |
+| W7e | human 輸出納入量尺：`parity-probe.py` 目前只比 `--json`，human 版面的差異（W7b 的 `drift` 整片不同即因此漏掉）不會被抓到；擴充為同時比對各指令的 human stdout／stderr，逐項修正或列為已知分歧 | A3 | W7b 發現 | 待辦 |
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | 待辦 |
 | W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | 待辦 |
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
