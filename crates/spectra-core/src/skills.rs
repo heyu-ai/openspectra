@@ -22,6 +22,11 @@ const SKILLS: &[(&str, &str)] = &[
     ("clarify", include_str!("../assets/skills/clarify.md")),
 ];
 
+/// 所有內嵌 skill（registry 順序），供驗證 skill 內容的測試使用。
+pub fn all_skills() -> &'static [(&'static str, &'static str)] {
+    SKILLS
+}
+
 pub fn skill_body(name: &str) -> Option<&'static str> {
     SKILLS
         .iter()

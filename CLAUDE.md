@@ -54,6 +54,19 @@ this file is agent-facing operational context.
   you fix a bug, add its case in the same PR. See
   `docs/testing/regression-catalog.md`.
 
+- `scripts/parity-probe.py` — same constraints (macOS + reference binary,
+  version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
+  subcommand/flag is accepted) and A3 (read-only commands agree on exit code
+  and JSON semantics on sandboxed copies of real projects passed via
+  `--corpus`). Known divergences in
+  `docs/reverse-engineering/golden/parity-known.tsv` are a ratchet: an
+  unlisted divergence fails, and a listed one that no longer occurs fails too,
+  so remove its row in the PR that fixes it. `--write-known` regenerates the
+  file; review the diff. The CI-side counterpart for A2 is
+  `crates/spectra-cli/src/template_cli_check.rs` (every `spectra ...` call in
+  the embedded templates/skills must parse; its `KNOWN_GAPS` ratchets the
+  same way). See `docs/migration-plan.md`.
+
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 
 Run before claiming a change is done or pushing:
