@@ -213,7 +213,7 @@ fn fork_reports_missing_source_and_requires_initialized_project() {
     assert_eq!(uninitialized.status.code(), Some(1));
     assert_eq!(
         String::from_utf8(uninitialized.stderr).unwrap(),
-        "Error: Not initialized. Run 'spectra init' first.\n"
+        "Error: Not initialized. Run 'spectra init' to initialize.\n"
     );
 
     init_project(&root);

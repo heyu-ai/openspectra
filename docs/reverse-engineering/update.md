@@ -91,7 +91,7 @@ Probed non-triggers: `.codex`, `.junie`, `.zed`, `.goose`, `.aider`,
 |---|---|---|---|
 | ≥1 tool detected | stdout | `✓ Updated instruction files for: <ids, comma-joined, registry order>` | 0 |
 | no tools detected | stdout | `! No AI tool configurations found. Use 'spectra init --tools' to set up.` | 0 |
-| not initialized | stderr | `Error: Not initialized. Run 'spectra init' first.` | 1 |
+| not initialized | stderr | `Error: Not initialized. Run 'spectra init' to initialize.` (oracle 3.0.0; 2.3.1 printed `... first.`) | 1 |
 | unwritable target (e.g. read-only parent dir) | stderr | `Error: Permission denied (os error 13)` — **bare**, no path | 1 |
 
 stderr is empty on every successful run. The unwritable-target row is why the

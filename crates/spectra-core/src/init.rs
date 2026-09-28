@@ -137,7 +137,10 @@ pub fn init_with_options(
     force: bool,
     spec_dir: Option<&str>,
 ) -> Result<InitOutcome> {
-    if !force && Config::is_initialized(root) {
+    // 只看 `.spectra.yaml`（不看 `openspec/` 標記）：init 先建目錄、最後才寫 `.spectra.yaml`，
+    // 中途失敗後才能直接重試。oracle 3.0.0 在只有 `openspec/` 的專案會拒絕 init（W14 探測
+    // p03）；OpenSpectra 在那裡以非破壞方式完成，這個分歧待裁決（docs/reverse-engineering/init.md）。
+    if !force && Config::has_config_file(root) {
         anyhow::bail!("Already initialized. Use --force to reinitialize.");
     }
 
@@ -160,6 +163,17 @@ fn init_resolved_spec_dir(root: &Path, spec_dir: String, adopted: bool) -> Resul
         .with_context(|| format!("creating {spec_dir}/changes/archive"))?;
     std::fs::create_dir_all(root.join(&spec_dir).join("specs"))
         .with_context(|| format!("creating {spec_dir}/specs"))?;
+    // oracle 3.0.0（W14 探測 p01、p03）：`changes/archive` 與 `specs` 各放一個空的 `.gitkeep`，
+    // 讓空目錄進得了 git；目錄已有內容也照放，既有的 `.gitkeep` 不動。
+    for dir in ["changes/archive", "specs"] {
+        let keep = root.join(&spec_dir).join(dir).join(".gitkeep");
+        if !keep
+            .try_exists()
+            .with_context(|| format!("checking {}", keep.display()))?
+        {
+            std::fs::write(&keep, "").with_context(|| format!("writing {}", keep.display()))?;
+        }
+    }
 
     let spec_config_path = root.join(&spec_dir).join("config.yaml");
     if !spec_config_path
@@ -412,8 +426,11 @@ mod tests {
             ["changes", "config.yaml", "specs"]
         );
         assert_eq!(entry_names(&tmp.join("openspec/changes")), ["archive"]);
-        assert!(entry_names(&tmp.join("openspec/changes/archive")).is_empty());
-        assert!(entry_names(&tmp.join("openspec/specs")).is_empty());
+        assert_eq!(
+            entry_names(&tmp.join("openspec/changes/archive")),
+            [".gitkeep"]
+        );
+        assert_eq!(entry_names(&tmp.join("openspec/specs")), [".gitkeep"]);
 
         let cfg = Config::load(&tmp).unwrap();
         assert_eq!(cfg.spec_dir, "openspec");
@@ -427,7 +444,17 @@ mod tests {
 
         let archive = tmp.join("openspec/changes/archive");
         assert!(archive.is_dir());
-        assert_eq!(std::fs::read_dir(archive).unwrap().count(), 0);
+        // oracle 3.0.0：只有一個空的 `.gitkeep`（specs/ 亦同）。
+        let entries: Vec<String> = std::fs::read_dir(&archive)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, [".gitkeep"]);
+        assert_eq!(std::fs::read(archive.join(".gitkeep")).unwrap(), b"");
+        assert_eq!(
+            std::fs::read(tmp.join("openspec/specs/.gitkeep")).unwrap(),
+            b""
+        );
     }
 
     #[test]

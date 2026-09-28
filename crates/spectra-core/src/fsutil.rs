@@ -167,8 +167,9 @@ fn symlink_target_is_dir(path: &Path) -> Result<bool> {
 /// (`SIGKILL`) or hitting a disk-full error after the syscall returns, so
 /// `path` is never observed as a partial write that satisfies `path.exists()`
 /// while failing to parse. This matters most for `.spectra.yaml`, since
-/// [`crate::config::Config::is_initialized`] treats its mere existence as a
-/// reliable "scaffolding is complete" signal.
+/// [`crate::config::Config::has_config_file`] (and through it `init`'s
+/// already-initialized check) treats its mere existence as a reliable
+/// "scaffolding is complete" signal.
 ///
 /// This does *not* guarantee durability across true power loss (that needs
 /// `fsync`-ing the temp file and the parent directory, which this skips as

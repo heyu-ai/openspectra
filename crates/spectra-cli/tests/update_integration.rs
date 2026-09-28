@@ -60,7 +60,7 @@ fn uninitialized_path_errors_like_every_other_command() {
     assert!(stdout(&out).is_empty());
     assert_eq!(
         String::from_utf8(out.stderr).unwrap(),
-        "Error: Not initialized. Run 'spectra init' first.\n"
+        "Error: Not initialized. Run 'spectra init' to initialize.\n"
     );
 }
 
@@ -91,7 +91,7 @@ fn explicit_path_does_not_walk_up_but_cwd_does() {
     assert_eq!(explicit_sub.status.code(), Some(1));
     assert_eq!(
         String::from_utf8(explicit_sub.stderr).unwrap(),
-        "Error: Not initialized. Run 'spectra init' first.\n"
+        "Error: Not initialized. Run 'spectra init' to initialize.\n"
     );
 }
 
