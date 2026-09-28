@@ -1380,9 +1380,18 @@ fn apply_instructions_human(report: &instructions::ApplyInstructions) -> String 
     }
     // The oracle's zero-checkbox human layout was not probed. Keep both
     // optional sections absent when neither parsed tasks nor artifacts exist.
-    output.push_str("Instruction:\n");
-    output.push_str(&report.instruction);
-    output.push('\n');
+    match &report.instruction {
+        Some(instruction) => {
+            output.push_str("Instruction:\n");
+            output.push_str(instruction);
+            output.push('\n');
+        }
+        // oracle 3.0.0（探測 p33）：schema 沒有 apply instruction 時連同前面的空行一起省略，
+        // 以單一換行結尾。
+        None => {
+            output.pop();
+        }
+    }
     output
 }
 

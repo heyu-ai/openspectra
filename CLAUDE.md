@@ -62,9 +62,9 @@ this file is agent-facing operational context.
   re-verifies. Never hand-edit the assets.
 - `scripts/parity-probe.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
-  subcommand/flag is accepted) and A3 (read-only commands agree on exit code
-  and JSON semantics on sandboxed copies of real projects passed via
-  `--corpus`). Known divergences in
+  subcommand/flag is accepted) and A3 (read-only commands agree on exit code,
+  JSON semantics, human stdout byte-for-byte, and stderr, on sandboxed copies
+  of real projects passed via `--corpus`). Known divergences in
   `docs/reverse-engineering/golden/parity-known.tsv` are a ratchet: an
   unlisted divergence fails, and a listed one that no longer occurs fails too,
   so remove its row in the PR that fixes it. `--write-known` regenerates the

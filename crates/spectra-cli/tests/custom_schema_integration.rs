@@ -265,3 +265,107 @@ fn explicit_schema_flag_overrides_config_yaml() {
     assert_eq!(json["schemaName"], "spec-driven");
     assert_eq!(json["artifacts"].as_array().unwrap().len(), 4);
 }
+
+/// 自訂 schema `ord`（探測 p33／p34）：artifact 宣告順序 x y a c b d，依賴 y←x、a←y、b←c、
+/// d←x,a；`apply` 沒有 instruction。
+fn init_project_with_order_schema(root: &Path) {
+    git(root, &["init", "-q"]);
+    let init = spectra().arg("init").current_dir(root).output().unwrap();
+    assert!(init.status.success(), "init failed: {init:?}");
+    let schema_dir = root.join("openspec").join("schemas").join("ord");
+    std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
+    let mut yaml = String::from("name: ord\nversion: 1\ndescription: order probe\nartifacts:\n");
+    for (id, deps) in [
+        ("x", &[][..]),
+        ("y", &["x"][..]),
+        ("a", &["y"][..]),
+        ("c", &[][..]),
+        ("b", &["c"][..]),
+        ("d", &["x", "a"][..]),
+    ] {
+        std::fs::write(
+            schema_dir.join("templates").join(format!("{id}.md")),
+            "# t\n",
+        )
+        .unwrap();
+        yaml.push_str(&format!(
+            "- id: {id}\n  generates: {id}.md\n  description: {id} artifact\n  template: {id}.md\n  instruction: Write {id}.\n  requires: [{}]\n",
+            deps.join(", ")
+        ));
+    }
+    yaml.push_str("apply:\n  requires: [a]\n");
+    std::fs::write(schema_dir.join("schema.yaml"), yaml).unwrap();
+    let change = root.join("openspec").join("changes").join("c");
+    std::fs::create_dir_all(&change).unwrap();
+    std::fs::write(
+        change.join(".openspec.yaml"),
+        "schema: ord\ncreated: 2026-09-01\n",
+    )
+    .unwrap();
+}
+
+/// oracle 3.0.0：`status` 的 artifact 順序是 Kahn 逐輪＋同輪字母序（`c x b y a d`），
+/// `schemas` 列表維持宣告順序（探測 p34）。
+#[test]
+fn status_orders_custom_artifacts_like_the_oracle() {
+    let dir = TempDir::new("custom-schema-order");
+    init_project_with_order_schema(&dir);
+    let out = spectra()
+        .args(["status", "--change", "c", "--json"])
+        .current_dir(&*dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let ids: Vec<&str> = v["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["c", "x", "b", "y", "a", "d"]);
+
+    let listing = spectra()
+        .args(["schemas", "--json"])
+        .current_dir(&*dir)
+        .output()
+        .unwrap();
+    let schemas: serde_json::Value = serde_json::from_slice(&listing.stdout).unwrap();
+    let ord = schemas
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["name"] == "ord")
+        .unwrap();
+    assert_eq!(
+        ord["artifacts"],
+        serde_json::json!(["x", "y", "a", "c", "b", "d"])
+    );
+}
+
+/// oracle 3.0.0：`apply.instruction` 可省略——JSON 的 `instruction` 為 null，human 輸出在
+/// `Progress` 行後結束（探測 p33）。
+#[test]
+fn apply_instruction_is_optional() {
+    let dir = TempDir::new("custom-schema-no-apply-instruction");
+    init_project_with_order_schema(&dir);
+    std::fs::write(dir.join("openspec/changes/c/a.md"), "# a\n").unwrap();
+    let json = spectra()
+        .args(["instructions", "apply", "--change", "c", "--json"])
+        .current_dir(&*dir)
+        .output()
+        .unwrap();
+    assert!(json.status.success(), "{json:?}");
+    let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(v["instruction"], serde_json::Value::Null);
+
+    let human = spectra()
+        .args(["instructions", "apply", "--change", "c"])
+        .current_dir(&*dir)
+        .output()
+        .unwrap();
+    assert!(human.status.success(), "{human:?}");
+    let text = String::from_utf8(human.stdout).unwrap();
+    assert!(text.ends_with(" complete\n"), "{text:?}");
+    assert!(!text.contains("Instruction:"), "{text:?}");
+}
