@@ -347,12 +347,28 @@ pub struct Resolver<'a> {
     pub baseline_sha: Option<&'a str>,
 }
 
+/// broken anchors 的類別順序（oracle 3.0.0）。
+fn category_rank(category: &str) -> u8 {
+    match category {
+        "FilePath" => 0,
+        "Symbol" => 1,
+        "Function" => 2,
+        _ => 3,
+    }
+}
+
 impl Resolver<'_> {
     /// Classify non-resolving anchors as broken or unresolved.
     ///
-    /// Both result lists are sorted by anchor string. A missing FilePath is
-    /// broken only when it existed at the change baseline; without a usable
-    /// baseline, it retains the previous broken classification.
+    /// `broken` is sorted by category (FilePath, Symbol, Function, CliFlag),
+    /// then by anchor string; `unresolved` (FilePaths only) by anchor string
+    /// (oracle 3.0.0, W7h probe p02). A FilePath is present only when it is in
+    /// the git index (`git ls-files`, with its default quoting of non-ASCII
+    /// names): an untracked file, or any file when there is no repository, is
+    /// missing, while a tracked file deleted only from the working tree still
+    /// counts (W7h probe p01). A missing FilePath is broken only when it
+    /// existed at the change baseline; without a usable baseline, it retains
+    /// the previous broken classification.
     pub fn resolve(&self, anchors: &[Anchor]) -> Resolution {
         let needles: Vec<&str> = anchors
             .iter()
@@ -370,9 +386,7 @@ impl Resolver<'_> {
             match anchor.kind {
                 AnchorKind::FilePath => {
                     let candidates = path_candidates(&anchor.text);
-                    let present = candidates
-                        .iter()
-                        .any(|p| self.tracked.contains(*p) || self.root.join(p).exists());
+                    let present = candidates.iter().any(|p| self.tracked.contains(*p));
                     if present {
                         continue;
                     }
@@ -426,7 +440,11 @@ impl Resolver<'_> {
                 }),
             }
         }
-        broken.sort_by(|a, b| a.anchor.cmp(&b.anchor));
+        broken.sort_by(|a, b| {
+            category_rank(&a.category)
+                .cmp(&category_rank(&b.category))
+                .then_with(|| a.anchor.cmp(&b.anchor))
+        });
         unresolved.sort_by(|a, b| a.anchor.cmp(&b.anchor));
         Resolution { broken, unresolved }
     }
@@ -692,16 +710,70 @@ mod tests {
     /// the oracle's truncated form is tried as well, so the reported text
     /// changes but the resolved/broken verdict does not.
     /// Probe: oracle `0/1`, OpenSpectra without this fallback `1/1`.
+    /// oracle 3.0.0（W7h 探測 p01）：存在與否只看 git index——未追蹤的檔案即使在磁碟上
+    /// 也是 broken，已追蹤但只從工作目錄刪掉的仍算存在。
+    #[test]
+    fn file_paths_resolve_against_the_git_index_only() {
+        let dir = TempDir::new("index-only");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/untracked.rs"), "x\n").unwrap();
+        let tracked: HashSet<String> = ["src/deleted.rs".to_string()].into();
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+        let resolution = resolver.resolve(&extract("`src/untracked.rs` `src/deleted.rs`"));
+        let broken: Vec<&str> = resolution
+            .broken
+            .iter()
+            .map(|b| b.anchor.as_str())
+            .collect();
+        assert_eq!(broken, ["src/untracked.rs"]);
+    }
+
+    /// oracle 3.0.0（W7h 探測 p02）：broken 依類別 FilePath、Symbol、Function、CliFlag，
+    /// 同類別再依字串排序。
+    #[test]
+    fn broken_anchors_are_sorted_by_category_then_text() {
+        let dir = TempDir::new("sort-order");
+        // 需要真的 repo：`git grep` 失敗時 Symbol／Function 不會被判為 broken。
+        init_repo_with_file(&dir, "README.md", "readme\n");
+        let tracked = HashSet::new();
+        let resolver = Resolver {
+            root: &dir,
+            tracked: &tracked,
+            baseline_sha: None,
+        };
+        let resolution = resolver.resolve(&extract(
+            "Calls `zeta_fn()` and `alpha_fn()`, types `ZetaWidget` and `AlphaWidget`, flags `--zeta` and `--alpha`, files `src/z.rs` and `docs/a.md`.",
+        ));
+        let broken: Vec<(&str, &str)> = resolution
+            .broken
+            .iter()
+            .map(|b| (b.anchor.as_str(), b.category.as_str()))
+            .collect();
+        assert_eq!(
+            broken,
+            [
+                ("docs/a.md", "FilePath"),
+                ("src/z.rs", "FilePath"),
+                ("AlphaWidget", "Symbol"),
+                ("Calls", "Symbol"),
+                ("ZetaWidget", "Symbol"),
+                ("alpha_fn", "Function"),
+                ("zeta_fn", "Function"),
+                ("--alpha", "CliFlag"),
+                ("--zeta", "CliFlag"),
+            ]
+        );
+    }
+
     #[test]
     fn monorepo_path_resolves_against_the_oracle_truncation() {
         let dir = TempDir::new("nested-root");
-        std::fs::create_dir_all(dir.join("src/services")).unwrap();
-        std::fs::write(
-            dir.join("src/services/apiClient.ts"),
-            "export const x = 1;\n",
-        )
-        .unwrap();
-        let tracked = HashSet::new();
+        // 存在與否以 git index 為準（W7h）：只有截斷後的形式被追蹤。
+        let tracked: HashSet<String> = ["src/services/apiClient.ts".to_string()].into();
         let resolver = Resolver {
             root: &dir,
             tracked: &tracked,
@@ -724,13 +796,8 @@ mod tests {
     #[test]
     fn monorepo_path_resolves_when_only_the_written_form_exists() {
         let dir = TempDir::new("written-form-only");
-        std::fs::create_dir_all(dir.join("frontend/src/services")).unwrap();
-        std::fs::write(
-            dir.join("frontend/src/services/apiClient.ts"),
-            "export const x = 1;\n",
-        )
-        .unwrap();
-        let tracked = HashSet::new();
+        // 只有原寫法的路徑被追蹤。
+        let tracked: HashSet<String> = ["frontend/src/services/apiClient.ts".to_string()].into();
         let resolver = Resolver {
             root: &dir,
             tracked: &tracked,
@@ -741,7 +808,7 @@ mod tests {
 
         assert!(
             resolution.broken.is_empty(),
-            "written form exists on disk, must resolve; got {:?}",
+            "written form is tracked, must resolve; got {:?}",
             resolution.broken
         );
     }

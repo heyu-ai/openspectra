@@ -77,6 +77,11 @@ changes.
 
 ### Changed
 
+- `drift` Structure: a FilePath anchor resolves only when the file is in the git
+  index (untracked files, and every path outside a repository, are broken; a
+  tracked file deleted only on disk still resolves), and broken anchors are
+  ordered by category (FilePath, Symbol, Function, CliFlag) and then by text,
+  as v3.0.0 does.
 - `drift` detects task collisions like v3.0.0 (detection used to be off):
   `tasks_blocked_external` when a commit since `created` touched a path the task
   names, `tasks_maybe_resolved` when a commit subject contains the task's verb

@@ -86,17 +86,18 @@ fn drift_separates_broken_and_unresolved_anchors() {
             )
         })
         .collect();
+    // oracle 3.0.0：依類別 FilePath、Symbol、Function、CliFlag，再依字串排序（W7h）。
     assert_eq!(
         broken,
         vec![
-            ("--directory", "CliFlag", "not in --help"),
+            ("src/deleted.rs", "FilePath", "file does not exist"),
             ("MissingWidget", "Symbol", "symbol not found in repo"),
             (
                 "jsonb_array_length",
                 "Function",
                 "function not found in repo"
             ),
-            ("src/deleted.rs", "FilePath", "file does not exist")
+            ("--directory", "CliFlag", "not in --help"),
         ]
     );
     let unresolved: Vec<_> = report

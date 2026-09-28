@@ -135,8 +135,14 @@ categories under the sample size are kept whole.
 > every large design report a denominator of exactly 50 and silently dropped
 > anchors past index 50 from the broken set — the miss reported in #119.
 
-Broken anchors are sorted alphabetically. Resolution uses `git ls-files` (file
-existence) and `git grep` (symbol/function existence).
+Broken anchors are sorted by category — FilePath, Symbol, Function, CliFlag —
+and then by anchor text (bytewise), not alphabetically overall (oracle 3.0.0,
+W7h probe p02). Resolution uses `git ls-files` (file existence) and `git grep`
+(symbol/function existence). A FilePath exists only when it is in the git
+index: an untracked file on disk is broken, every FilePath is broken outside a
+repository, a tracked file deleted only from the working tree still resolves,
+and a non-ASCII path never matches under git's default `core.quotePath`
+quoting (W7h probe p01; W7d jails p19_i, p19_k, p36_04).
 
 **The FilePath stack is Rust/TS-specific.** In Python/Go projects almost no file
 paths match, so FilePath anchors are rare and CliFlag dominates the broken set.
@@ -660,11 +666,11 @@ Two resolution behaviours are carried as-is pending a positive oracle decision
    template prose, re-opening #51 in a worse form (~20 broken anchors on an
    untouched scaffold). Any future attempt must land together with a Symbol
    filter that survives that case.
-2. **FilePath resolves while still in the git index.** A path is considered
-   present if it is tracked *or* on disk, so a working-tree `rm` without `git rm`
-   still reads as resolved until staged. `drift` describes "current codebase
-   state", so this can hide a just-deleted file; kept for now as the
-   lower-risk, likely-oracle-faithful behaviour.
+2. **FilePath resolves while still in the git index.** A path is present only
+   if it is tracked, so a working-tree `rm` without `git rm` still reads as
+   resolved until staged, and a new untracked file reads as missing until
+   added. Both match oracle 3.0.0 (W7h probe p01); OpenSpectra used to accept
+   untracked files on disk as well.
 
 ## Reproducing the oracle (calibration harness)
 
