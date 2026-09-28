@@ -77,6 +77,11 @@ changes.
 
 ### Changed
 
+- `status --change <name> --json` keeps two fields the v3.0.0 oracle does not
+  emit, `isPlanningComplete` and `artifacts[].requires`; this additive
+  extension (`docs/reverse-engineering/artifact-workflow.md`) is now recorded
+  as a deliberate divergence (owner ruling, 2026-09-28). No existing field
+  differs, and `parity-known.tsv` already lists both as `oss-only`.
 - `drift` Structure: a FilePath anchor resolves only when the file is in the git
   index (untracked files, and every path outside a repository, are broken; a
   tracked file deleted only on disk still resolves), and broken anchors are

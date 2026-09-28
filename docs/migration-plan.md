@@ -254,7 +254,7 @@ yibi-stack）exit 0：31 條分歧全部已知。逐條歸屬是在 parity-probe
 |---|---|---|
 | A1 指令完整 | surface 差集只剩 `feedback`（W12-1 明文例外） | #216 merge 後即達成 |
 | A2 skill 能用 | `every_template_invocation_parses` 通過，`KNOWN_GAPS` 為空 | 無 |
-| A3 輸出正確 | 已知分歧 31 條：`analyze` 12（W10 的名稱排序刻意分歧，2 個 change）、`list` 6（yibi-mvp 同秒 mtime 以名稱斷尾，`list-show.md` 已登錄）、`drift` 1（`unresolved_anchors`，#83）、`status` 3（OpenSpectra 多輸出 `artifacts[].requires`、`isPlanningComplete`，`artifact-workflow.md` 記為相容性擴充）、`validate` 8（A3 明文排除，歸 A4）、surface 1（A1 例外） | ① `status` 的兩個額外欄位已在允許清單，但**未寫進 CHANGELOG**，A3 要求兩者都要；② parity-probe 只比唯讀指令，會寫檔的指令（`new`、`task`、`archive`、`update`、`park`）目前由各自的 golden 重播覆蓋（task-done、archive preview、update templates），不是 parity-probe 量的 |
+| A3 輸出正確 | 已知分歧 31 條：`analyze` 12（W10 的名稱排序刻意分歧，2 個 change）、`list` 6（yibi-mvp 同秒 mtime 以名稱斷尾，`list-show.md` 已登錄）、`drift` 1（`unresolved_anchors`，#83）、`status` 3（OpenSpectra 多輸出 `artifacts[].requires`、`isPlanningComplete`，`artifact-workflow.md` 記為相容性擴充）、`validate` 8（A3 明文排除，歸 A4）、surface 1（A1 例外） | ① `status` 的兩個額外欄位已在允許清單，但**未寫進 CHANGELOG**，A3 要求兩者都要（已依 W13-A3 裁決補上，本 PR）；② parity-probe 只比唯讀指令，會寫檔的指令（`new`、`task`、`archive`、`update`、`park`）目前由各自的 golden 重播覆蓋（task-done、archive preview、update templates），不是 parity-probe 量的 |
 | A4 OpenSpec 相容 | 判定規則由 `validate_openspec_integration` 對 OpenSpec 1.13.2 golden 逐欄重播 | `--format openspec`／`oracle` 尚不存在（W9a，依 D12 實作） |
 | A5 Linux | #215、#216、#218、#220 的 ubuntu job 全綠；v0.13.0 有 x86_64 與 aarch64 musl 產物 | 無 |
 
@@ -495,6 +495,8 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | D10 | 只有 `openspec/` 的專案跑 `init` | **維持非破壞完成**（保住中途失敗可重試），oracle 的拒絕記為刻意分歧 | W14 |
 | D11 | `schema validate`／`fork` 的 6 項取捨 | 1 路徑含 `..`／絕對路徑：**維持拒絕**；2 template 缺檔／空檔：**跟 oracle 視為合法，但輸出 warning**；3 fork 目標名稱：**維持檢查**；4 fork 寫入：**維持原子替換**；5 fork 專案 schema：**必填欄位跟 oracle 放寬，複製維持原樣（保留註解）**；6 不帶名稱：**跟 oracle 驗 `spec-driven`** | W7g |
 | D12 | `validate` oracle 格式如何呈現 OpenSpec 規則 | 1 INFO：**只把「Archive would refuse」放進 warnings**；2 措辭：**OpenSpec 措辭，delta 檔加 `specs/<cap>/spec.md: ` 前綴**；3 `--all`／`--changes --specs`：**照 OpenSpec 語意**；4 `validate <item>`：**接受 spec 名稱**；5 不帶參數：**跟 oracle 驗全部 changes**；6 trace footer 檢查：**維持 ERROR** | W9a |
+| D11-7 | schema 的 `generates:` 含絕對路徑或 `..`（W7g 實作時發現；oracle 判為合法並原樣帶到 `status`／`instructions` 的 outputPath） | **維持拒絕**，與 D11-1 同一安全理由，記為刻意分歧 | W7g |
+| W13-A3 | `status --json` 的 OpenSpectra 專屬欄位 `isPlanningComplete`、`artifacts[].requires` | **保留**，補進 CHANGELOG 記為刻意分歧 | A3 |
 | W10-1 | `CLICOLOR_FORCE` | **不支援**，維持 CLI 全域規則（TTY、`--no-color`、`NO_COLOR`），記為刻意分歧 | W10（#215） |
 | W10-2 | 同一對區段內多個衝突 requirement 的順序（oracle 為 HashSet 序、每次不同） | **前一個區段的文件順序** | W10（#215） |
 | W10-3 | `capture-analyze.py` 的 CLAUDE.md 條目 | **補上** | W10（#215） |
