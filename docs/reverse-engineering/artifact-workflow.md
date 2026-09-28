@@ -394,6 +394,28 @@ everywhere.
   reproduce it. OpenSpectra uses the default spec dir in every
   non-initialized directory.
 
+### Locale (oracle 3.0.0)
+
+The `locale` field of artifact and apply `instructions --json` comes from
+`.spectra.yaml`'s `locale` (W8, probes p01–p03, 2026-09-28):
+
+| `.spectra.yaml` | `locale` |
+|---|---|
+| absent, `null`, `~`, or a list / map | `English` |
+| exactly `en` | `English` |
+| exactly `tw` | `Traditional Chinese (繁體中文)` |
+| exactly `ja` | `Japanese (日本語)` |
+| any other scalar | verbatim — `zh-TW`, `TW`, `EN`, `" tw"`, `fr`, `""`; `1` → `"1"`, `true` → `"true"` |
+
+Only the `locale` value changes: the instruction and template text, the human
+output, and every other key are identical across locales (checked for `design`
+and `apply` with ten values). The binary holds no other display-name literals
+(`strings` finds only `Traditional Chinese (` and `Japanese (`), so the table is
+complete as far as the 3.0.0 binary goes. OpenSpectra used to print `English`
+for every project, and a non-string `locale` (`1`, `[tw]`) made the whole
+`.spectra.yaml` fail to parse, failing every command. `display_locale` in
+`instructions.rs` and `locale_string` in `config.rs` implement the table.
+
 ### Apply tasks and dependencies (oracle 3.0.0)
 
 `instructions apply --json` starts with the `dormancy` object shared with

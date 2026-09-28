@@ -11,8 +11,20 @@ pub const DEFAULT_SPEC_DIR: &str = "openspec";
 #[derive(Debug, Clone, Deserialize, Default)]
 struct RawConfig {
     spec_dir: Option<String>,
-    locale: Option<String>,
+    /// 任意 YAML 值：oracle 3.0.0 把數字等 scalar 當字串（`locale: 1` → `"1"`），
+    /// null 或 list／map 視為未設定，不會讓整個設定檔讀取失敗（W8 探測 p02）。
+    locale: Option<serde_yaml::Value>,
     claude_slash_commands: Option<bool>,
+}
+
+/// `.spectra.yaml` 的 `locale` 值轉成字串；非 scalar 或 null 為 `None`。
+fn locale_string(value: serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => Some(s),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        serde_yaml::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -49,7 +61,7 @@ impl Config {
         Ok(Config {
             root: root.to_path_buf(),
             spec_dir: raw.spec_dir.unwrap_or_else(|| DEFAULT_SPEC_DIR.to_string()),
-            locale: raw.locale,
+            locale: raw.locale.and_then(locale_string),
             claude_slash_commands: raw.claude_slash_commands.unwrap_or(false),
         })
     }
@@ -74,6 +86,33 @@ impl Config {
 mod tests {
     use super::*;
     use crate::test_support::TempDir;
+
+    /// oracle 3.0.0（W8 探測 p02）：scalar 的 locale 一律當字串，null 與 list／map 視為未設定，
+    /// 設定檔的其他欄位照常讀取。
+    #[test]
+    fn locale_accepts_any_yaml_value() {
+        let cases: &[(&str, Option<&str>)] = &[
+            ("locale: tw", Some("tw")),
+            ("locale: 1", Some("1")),
+            ("locale: true", Some("true")),
+            ("locale: \" tw\"", Some(" tw")),
+            ("locale: null", None),
+            ("locale: [tw]", None),
+            ("locale: {a: b}", None),
+            ("", None),
+        ];
+        for (line, expected) in cases {
+            let tmp = TempDir::new("config-locale");
+            std::fs::write(
+                tmp.join(".spectra.yaml"),
+                format!("spec_dir: docs/specs\n{line}\n"),
+            )
+            .unwrap();
+            let cfg = Config::load(&tmp).unwrap();
+            assert_eq!(cfg.locale.as_deref(), *expected, "{line:?}");
+            assert_eq!(cfg.spec_dir, "docs/specs", "{line:?}");
+        }
+    }
 
     #[test]
     fn claude_slash_commands_defaults_false_and_only_true_enables_it() {

@@ -68,6 +68,11 @@ changes.
 
 ### Changed
 
+- `instructions --json` reports the project's `locale` like v3.0.0: `tw` →
+  `Traditional Chinese (繁體中文)`, `ja` → `Japanese (日本語)`, `en` or unset →
+  `English`, any other value verbatim (it was always `English`). A non-string
+  `locale` in `.spectra.yaml` (a number, a list) no longer fails every command:
+  scalars become strings and anything else counts as unset.
 - `instructions apply` follows the schema's `apply.tracks` like v3.0.0: tasks
   come from the tracked file, a schema without `tracks` is `ready` once its
   required artifacts exist (no task count), and `contextFiles` lists every
