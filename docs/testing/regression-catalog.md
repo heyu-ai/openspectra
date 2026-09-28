@@ -25,6 +25,9 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   它與 W9b 那一輪的其他 21 個 case 在 W9a 分支上重跑，22/22 KILLED。
   另有 6 個 case 的 anchor 在 origin/main 上就已找不到（`155-created-sort-*`、
   `52a`／`52b`、`53a`／`53b`），不是 W9a 造成的，尚未處理
+- W14（2026-09-28，owner 裁決 D9／D10）：新增 `w14-d9-new-project-default`（新專案預設
+  改回 `openspec`）與 `w14-d10-openspec-only-keeps-openspec`（只有 `openspec/` 的專案改用
+  新專案預設），實測 2/2 KILLED；其餘 case 未在這一輪重跑
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 

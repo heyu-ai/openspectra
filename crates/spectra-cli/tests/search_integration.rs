@@ -5,7 +5,11 @@ use common::{spectra, TempDir};
 #[test]
 fn search_json_has_consumer_contract_and_honors_limit() {
     let root = TempDir::new("search-json");
-    let init = spectra().arg("init").current_dir(&*root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
     assert!(init.status.success());
     let spec = root.join("openspec/specs/session/spec.md");
     std::fs::create_dir_all(spec.parent().unwrap()).unwrap();

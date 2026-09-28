@@ -2540,3 +2540,27 @@ replace = '''        #[arg(long, conflicts_with_all = ["item", "archived"])]
 package = "spectra-cli"
 target = ["--test", "validate_format_integration"]
 test = "an_item_with_all_validates_only_the_item"
+
+# D9（owner 裁決 2026-09-28）：新專案 init 預設 docs/openspec，改回 openspec 必須被抓到
+
+[[case]]
+id = "w14-d9-new-project-default"
+issue = "D9 / W14"
+file = "crates/spectra-core/src/init.rs"
+find = '''pub const NEW_PROJECT_SPEC_DIR: &str = "docs/openspec";'''
+replace = '''pub const NEW_PROJECT_SPEC_DIR: &str = "openspec";'''
+package = "spectra-core"
+test = "init_creates_config_and_scaffold_dirs"
+
+# D10：只有 openspec/ 的專案 init 沿用 openspec，不另建 docs/openspec
+
+[[case]]
+id = "w14-d10-openspec-only-keeps-openspec"
+issue = "D10 / W14"
+file = "crates/spectra-core/src/init.rs"
+find = '''新專案預設只給真正的新專案。
+        DEFAULT_SPEC_DIR.to_string()'''
+replace = '''新專案預設只給真正的新專案。
+        NEW_PROJECT_SPEC_DIR.to_string()'''
+package = "spectra-core"
+test = "init_in_an_openspec_only_root_keeps_openspec"

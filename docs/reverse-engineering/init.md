@@ -30,9 +30,10 @@ The `--tools` matrix and probes P29-P36 additionally cover:
   writes the 10 command files on top of the default set)
 
 The reference CLI's `--dir` probes showed that `config.yaml` follows the
-resolved spec directory. They also showed that a non-default directory replaces
-line 6 of `.spectra.yaml` in place, while default `openspec` leaves the example
-commented. OpenSpectra exposes this renderer through `--dir`.
+resolved spec directory. In 2.3.1 a non-default directory replaced line 6 of
+`.spectra.yaml` in place while default `openspec` left the example commented;
+3.0.0 changed the template and always writes `spec_dir` (see "`.spectra.yaml`"
+below). OpenSpectra exposes this renderer through `--dir`.
 
 The following remain **unverified** against the oracle:
 
@@ -82,24 +83,99 @@ pure OpenSpec project works without `.spectra.yaml` (spec_dir `openspec`, and
 (probe p03: `Error: Already initialized. Use --force to reinitialize.`, rc 1,
 nothing written) and with `--force` initializes it in place (spec_dir
 `openspec`, existing content kept). OpenSpectra initializes such a project
-without `--force`, non-destructively — because `init` creates the directories
-first and writes `.spectra.yaml` last, so that a failed run (for example an
-unwritable `.gitignore`) can simply be retried; counting `openspec/` as
-"initialized" there would turn every such failure into a refusal. **Pending a
-human ruling** (tracked in `docs/migration-plan.md`).
+without `--force`, non-destructively, with spec_dir `openspec` — because
+`init` creates the directories first and writes `.spectra.yaml` last, so that a
+failed run (for example an unwritable `.gitignore`) can simply be retried;
+counting `openspec/` as "initialized" there would turn every such failure into
+a refusal. **Owner ruling D10 (howie, 2026-09-28): keep this.** It is a
+deliberate divergence. The `openspec` entry also wins over the new-project
+default below, so such a project never gets a second `docs/openspec/`.
 
-Also pending (conflict between the oracle and OpenSpec, so not decided here):
-the oracle's `init` now defaults to `spec_dir: docs/spectra` for a fresh
-project (its `.spectra.yaml` template says "New projects initialize at
-docs/spectra; configurations without this field resolve to openspec", and its
-`--help` still claims `default: openspec`), while OpenSpec's convention — and
-OpenSpectra's default — is `openspec/`. The `.spectra.yaml` template text
-follows whichever default is chosen.
+## New-project default spec_dir: `docs/openspec` (owner ruling D9)
 
-For a plain default init, the verified human-readable output is one line:
+**Owner ruling D9 (howie, 2026-09-28):** a fresh `spectra init` (no `--dir`,
+no `--adopt`, no `openspec` entry in the target directory) uses
+`spec_dir: docs/openspec`. Neither candidate on the table was adopted:
+
+- oracle 3.0.0 defaults to `docs/spectra` (probe d9-p1 below);
+- OpenSpec's convention — and OpenSpectra's default before D9 — is `openspec/`.
+
+The owner was told the cost and accepted it: OpenSpec 1.13.2 hard-codes its
+directory as `<project root>/openspec`, so running the OpenSpec CLI at the repo
+root of a `docs/openspec` project finds no specs. This is recorded as a
+deliberate divergence.
+
+Only the *new-project* default changed. When `.spectra.yaml` omits `spec_dir`
+(or there is no `.spectra.yaml`), every command still resolves `openspec`
+(`config::DEFAULT_SPEC_DIR`), exactly like the oracle; changing that would
+disconnect existing projects. `--adopt` also stays on `openspec`. The constant
+is `init::NEW_PROJECT_SPEC_DIR`; `init --help` documents it (`--dir <DIR>
+Custom openspec directory path (default: docs/openspec)` — the oracle's help
+text says `default: openspec`, which is stale even for 3.0.0).
+
+### d9 probe records (oracle 3.0.0, 2026-09-28)
+
+`/Applications/Spectra.app/Contents/MacOS/spectra` 3.0.0, `--no-color`, each
+row a fresh `mktemp -d /tmp/w14d9-*` jail (no `.git`; `/tmp`, `/private` and
+`/` hold no `openspec` or `.spectra.yaml`), one operation, then read-only
+inspection. All exited 0 with empty stderr.
+
+| Probe | Command | Observed |
+|---|---|---|
+| d9-p1 | `init <jail>` | stdout `✓ Initialized at <jail>/docs/spectra`; tree `.gitignore`, `.spectra.yaml`, `docs/spectra/{config.yaml,changes/archive/.gitkeep,specs/.gitkeep}`; `.spectra.yaml` is the 19-line, 490-byte template below with `spec_dir: docs/spectra`; `config.yaml` unchanged from 2.3.1 |
+| d9-p2 | `init --dir openspec <jail>` | `.spectra.yaml` identical to d9-p1 except line 7 `spec_dir: openspec` — explicit, not commented |
+| d9-p3 | `init --dir docs/openspec <jail>` | only line 7 differs (`spec_dir: docs/openspec`); tree under `docs/openspec/` |
+| d9-p4 | `init --dir docs/spectra <jail>` | byte-identical to d9-p1 |
+| d9-p5 | `init --force <jail>` with a pre-seeded `.spectra.yaml` = `spec_dir: docs/specs\n` and `docs/specs/changes/` | stdout `✓ Initialized at <jail>/docs/specs`; `.spectra.yaml` left byte-identical; scaffold created under `docs/specs/` |
+
+OpenSpectra after D9, same jail discipline: plain `init` versus the oracle's
+d9-p3 tree, `diff -r` shows exactly one line — the `.spectra.yaml` comment
+`# New projects initialize at docs/openspec; …` (oracle: `docs/spectra`).
+
+**Unresolved, pre-existing (not caused by D9):** d9-p5 shows the oracle's
+`init --force` keeps an existing `.spectra.yaml` and its `spec_dir`.
+OpenSpectra's `--force` ignores the existing value and rewrites `.spectra.yaml`
+with the new-project default (`docs/openspec`; before D9 it was `openspec`),
+disconnecting a project whose specs live elsewhere. Reported for an owner
+decision; not changed here.
+
+### Edge case: running from `docs/` in a `docs/openspec` project
+
+The project-root marker is "the nearest directory holding `.spectra.yaml` or an
+entry named `openspec`". In a D9 project, `docs/` holds an entry named
+`openspec`, so a command run with cwd `docs/` (or anything below it that is not
+inside another marker) resolves **`docs/` as the project root**, not the repo
+root, and reads no `.spectra.yaml` (spec_dir falls back to `openspec`).
+Measured 2026-09-28:
+
+- OpenSpectra: `init` at the jail root, `new change foo` at the root, then
+  `in-progress add foo` with cwd `docs/` wrote
+  `docs/.spectra/changes/foo.in-progress` — sidecar state split away from the
+  root's `.spectra/`. A separate `new change foo` from `docs/` landed in
+  `docs/openspec/changes/foo`, i.e. the same physical directory, but only
+  because `docs/` + fallback `openspec` happens to equal root +
+  `docs/openspec`.
+- Oracle 3.0.0 behaves the same way on the same layout (`init --dir
+  docs/openspec` at the root, then `new change foo` from `docs/`): the change
+  landed in `docs/openspec/changes/foo`, and the oracle ran `git init` in
+  **`docs/`** (a `docs/.git` appeared), confirming it also took `docs/` as the
+  root. With the oracle's own default `docs/spectra` the case does not arise.
+
+Consequences from `docs/`: `.spectra.yaml` settings (`locale`, `tools`, …) are
+ignored, `.spectra/` sidecar state (in-progress, parked, baselines, touched
+files) is written under `docs/.spectra/`, and root-relative paths (drift's
+file anchors, `update`'s tool files) resolve against `docs/`. The `.spectra/`
+entry `init` adds to `.gitignore` has no leading slash, so `docs/.spectra/` is
+still ignored by git. Fixing this means changing the root-discovery rule that
+W14 aligned to the oracle (probe p02), which is an architecture decision —
+**reported to the owner, not changed here**.
+
+For a plain default init the human-readable output is one line (oracle
+3.0.0 prints its own default, `…/docs/spectra`; OpenSpectra prints the D9
+default):
 
 ```text
-✓ Initialized at <absolute-project-root>/openspec
+✓ Initialized at <absolute-project-root>/docs/openspec
 ```
 
 The process exits 0 and writes nothing to stderr. `--adopt` retains its
@@ -171,20 +247,21 @@ and `<spec_dir>/specs/`, even when `specs/` already has content (`init
 overwrites an existing `.gitkeep`. Commands that read the archive
 (`validate --archived`) skip non-directories.
 
-Plain `spectra init` creates:
+Plain `spectra init` creates (`<spec_dir>` is `docs/openspec` for a new
+project, see D9 above):
 
 | Path | Byte content or state |
 |---|---|
-| `openspec/changes/archive/` | directory holding only an empty `.gitkeep` (oracle 3.0.0; 2.3.1 left it empty) |
-| `openspec/specs/` | directory holding only an empty `.gitkeep` (oracle 3.0.0; 2.3.1 left it empty) |
-| `openspec/config.yaml` | template below, ending in `\n` |
+| `<spec_dir>/changes/archive/` | directory holding only an empty `.gitkeep` (oracle 3.0.0; 2.3.1 left it empty) |
+| `<spec_dir>/specs/` | directory holding only an empty `.gitkeep` (oracle 3.0.0; 2.3.1 left it empty) |
+| `<spec_dir>/config.yaml` | template below, ending in `\n` |
 | `.gitignore` | `# Spectra app data\n.spectra/\n` |
 | `.spectra.yaml` | template below, ending in `\n` |
 
-`openspec/changes/` is the parent of `archive/`; no other file is created
+`<spec_dir>/changes/` is the parent of `archive/`; no other file is created
 inside it.
 
-### `openspec/config.yaml`
+### `<spec_dir>/config.yaml`
 
 ```yaml
 schema: spec-driven
@@ -211,13 +288,18 @@ schema: spec-driven
 
 ### `.spectra.yaml`
 
+Oracle 3.0.0's template (probe d9-p1: 19 newline-terminated lines, 490 bytes
+with `docs/spectra`). OpenSpectra writes it byte for byte except the line-6
+comment, which names the D9 default:
+
 ```yaml
 # Spectra application config
-# See: https://github.com/spectra-app/spectra
+# See: https://github.com/kaochenlong/spectra-app
 
-# OpenSpec directory path (relative to project root)
+# Spec directory path (relative to project root)
 # Changing this requires rebuilding the vector search index.
-# spec_dir: docs/specs
+# New projects initialize at docs/openspec; configurations without this field resolve to openspec.
+spec_dir: docs/openspec
 
 # Language for AI-generated artifacts
 # locale: tw
@@ -225,20 +307,6 @@ schema: spec-driven
 # Workflow toggles
 # tdd: true
 # audit: true
-# parallel_tasks: true
-
-# Claude slash commands (set true to also generate /spectra:X commands)
-# claude_slash_commands: true
-
-# Enable git worktree support for isolated change branches
-# worktree: true
-
-# Custom git worktrees directory
-# worktrees_dir: .spectra/worktrees
-
-# Claude Code skill effort levels (low/medium/high/xhigh/max)
-# claude_effort:
-#   apply: high
 
 # AI tools to generate instruction files for
 # tools:
@@ -246,17 +314,17 @@ schema: spec-driven
 #   - cursor
 ```
 
-When the resolved directory is the default `openspec`, line 6 remains
-`# spec_dir: docs/specs`. Explicitly selecting `openspec` in the reference CLI
-is byte-identical to omitting `--dir`. For a non-default value such as
-`docs/myspecs`, only line 6 changes:
+(Oracle line 6: `# New projects initialize at docs/spectra; …`.) Line 7 is always
+`spec_dir: <resolved dir>` — for `--dir openspec` too (d9-p2) — and no other
+line depends on the directory; `config.yaml` is written to
+`<resolved dir>/config.yaml`.
 
-```yaml
-spec_dir: docs/myspecs
-```
-
-The line is replaced, not appended, and `config.yaml` is written to
-`docs/myspecs/config.yaml`.
+2.3.1's template was 32 lines (761 bytes): `# See:
+https://github.com/spectra-app/spectra`, `# OpenSpec directory path …`, line 6
+`# spec_dir: docs/specs` left commented for the default `openspec` and replaced
+in place for any other directory, plus the `parallel_tasks`,
+`claude_slash_commands`, `worktree`, `worktrees_dir` and `claude_effort`
+example blocks that 3.0.0 dropped. OpenSpectra followed it until W14.
 
 ## `.gitignore`
 
@@ -296,7 +364,8 @@ OpenSpec projects, documented in `docs/openspec-compat.md`; it is not an
 oracle-parity claim.
 
 Adopt mode keeps the already-initialized refusal. Its current resolver always
-uses the default `openspec` directory and does not inspect other directories;
+uses `openspec` (not the D9 new-project default) and does not inspect other
+directories;
 configurable discovery is future work. If `openspec` exists as a file rather
 than a directory, adoption fails with `cannot adopt: … exists but is not a
 directory`.
@@ -314,7 +383,7 @@ The JSON shape remains:
 ```json
 {
   "root": "<absolute path>",
-  "spec_dir": "openspec",
+  "spec_dir": "docs/openspec",
   "adopted": false,
   "gitignore_updated": true
 }
@@ -332,35 +401,34 @@ reference binary:
 
 ```sh
 # one probe = one fresh jail, one operation, then inspect
+# (oracle 3.0.0; pass --dir docs/openspec so the tree is comparable with
+# OpenSpectra's D9 default)
 JAIL=$(mktemp -d /tmp/probe-oracle-init.XXXXXX)
-git -C "$JAIL" init -q
-/Applications/Spectra.app/Contents/MacOS/spectra init "$JAIL"
+/Applications/Spectra.app/Contents/MacOS/spectra init --no-color --dir docs/openspec "$JAIL"
 
-# inspect: tree, byte counts, trailing bytes
-find "$JAIL" -not -path "$JAIL/.git" -not -path "$JAIL/.git/*" | sort
-# expect exactly 8 lines: the jail root, .gitignore, .spectra.yaml, openspec,
-# openspec/changes, openspec/changes/archive, openspec/config.yaml,
-# openspec/specs
-wc -c "$JAIL/.spectra.yaml"        # 761 bytes
-wc -l "$JAIL/.spectra.yaml"        # 32 newline-terminated lines
-tail -c 24 "$JAIL/.spectra.yaml" | xxd   # ends "#   - cursor\n", no blank line
+# inspect: tree, byte counts
+find "$JAIL" | sort
+# expect 11 lines: the jail root, .gitignore, .spectra.yaml, docs,
+# docs/openspec, docs/openspec/changes, docs/openspec/changes/archive,
+# docs/openspec/changes/archive/.gitkeep, docs/openspec/config.yaml,
+# docs/openspec/specs, docs/openspec/specs/.gitkeep
+wc -l "$JAIL/.spectra.yaml"        # 19 newline-terminated lines
 
-# byte-parity check against a clean openspectra build (separate jail;
-# openspectra has no [PATH] arg -- run from inside the jail)
+# comparison with a clean openspectra build (separate jail)
 JAIL2=$(mktemp -d /tmp/probe-openspectra-init.XXXXXX)
-git -C "$JAIL2" init -q
-(cd "$JAIL2" && /path/to/openspectra/target/release/spectra init)
-diff -r --exclude=.git "$JAIL" "$JAIL2"   # empty output = byte parity
+OPENSPECTRA_IMPL=oss /path/to/openspectra/target/release/spectra init "$JAIL2"
+diff -r "$JAIL" "$JAIL2"   # exactly one line: the D9 comment on line 6
 ```
 
 Seeded `.gitignore` variants (P9-P11) pre-write the file into the jail before
 the single init operation. Two counting pitfalls recorded from the PR #101
 review: `find -not -path '*/.git*'` also filters `.gitignore` (glob prefix
-collision) — exclude the `.git` directory explicitly as above; and the template
-is 32 `\n`-terminated lines — an editor's 33rd empty display line after the
-final `\n` is not a file line (`wc -l` is authoritative).
+collision) — if the jail is a git repo, exclude the `.git` directory
+explicitly with `-not -path "$JAIL/.git" -not -path "$JAIL/.git/*"`; and an
+editor shows one more empty display line after the final `\n` than the file
+has lines (3.0.0: 19; 2.3.1: 32) — `wc -l` is authoritative.
 
 Re-verified 2026-07-27 against Spectra 2.3.1 (Apple Silicon): full-tree
-`diff -r` between the oracle jail and an openspectra jail is empty —
-byte-identical, including `.gitignore`, `.spectra.yaml`, and
-`openspec/config.yaml`.
+`diff -r` between the oracle jail and an openspectra jail was empty.
+Re-verified 2026-09-28 against Spectra 3.0.0 with the recipe above: the only
+difference is the D9 comment line in `.spectra.yaml`.

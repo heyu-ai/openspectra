@@ -61,7 +61,11 @@ fn list_changes_flag_output_is_byte_identical_to_the_default() {
     git(&tmp, &["config", "user.email", "t@t.co"]);
     git(&tmp, &["config", "user.name", "t"]);
 
-    let init = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     let new_change = spectra()
         .args(["new", "change", "add-search-filter"])
@@ -269,7 +273,7 @@ fn init_text_output_matches_the_oracle() {
         stdout,
         format!(
             "✓ Initialized at {}\n",
-            canonical_root.join("openspec").display()
+            canonical_root.join("docs/openspec").display()
         )
     );
     assert!(out.stderr.is_empty());
@@ -289,7 +293,7 @@ fn init_json_output_matches_the_documented_shape() {
     let stdout = String::from_utf8(out.stdout).unwrap();
 
     let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(value["spec_dir"], "openspec");
+    assert_eq!(value["spec_dir"], "docs/openspec");
     assert_eq!(value["adopted"], false);
     assert_eq!(value["gitignore_updated"], true);
     // Compare canonicalized paths: on macOS `std::env::temp_dir()` returns a
@@ -317,7 +321,7 @@ fn init_creates_and_uses_a_missing_explicit_path() {
 
     assert!(out.status.success(), "init PATH failed: {out:?}");
     assert!(target.join(".spectra.yaml").is_file());
-    assert!(target.join("openspec/changes/archive").is_dir());
+    assert!(target.join("docs/openspec/changes/archive").is_dir());
 }
 
 #[test]
@@ -351,7 +355,7 @@ fn init_force_reinitializes_an_existing_project() {
         .unwrap();
 
     assert!(out.status.success(), "init --force failed: {out:?}");
-    assert!(tmp.join("openspec/config.yaml").is_file());
+    assert!(tmp.join("docs/openspec/config.yaml").is_file());
 }
 
 #[test]
@@ -368,7 +372,7 @@ fn init_dir_uses_the_custom_spec_directory() {
     assert!(tmp.join("custom-dir/changes/archive").is_dir());
     assert!(tmp.join("custom-dir/specs").is_dir());
     let config = std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap();
-    assert_eq!(config.lines().nth(5), Some("spec_dir: custom-dir"));
+    assert_eq!(config.lines().nth(6), Some("spec_dir: custom-dir"));
 }
 
 #[test]
@@ -398,7 +402,11 @@ fn drift_exits_zero_even_when_severity_is_medium_or_higher() {
     git(&tmp, &["config", "user.email", "t@t.co"]);
     git(&tmp, &["config", "user.name", "t"]);
 
-    let init = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     let new_change = spectra()
         .args(["new", "change", "aged-out"])
@@ -446,7 +454,11 @@ fn init_project_with_change(tmp: &Path, name: &str) {
     git(tmp, &["init", "-q"]);
     git(tmp, &["config", "user.email", "t@t.co"]);
     git(tmp, &["config", "user.name", "t"]);
-    let init = spectra().arg("init").current_dir(tmp).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(tmp)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     let nc = spectra()
         .args(["new", "change", name])
@@ -462,7 +474,11 @@ fn new_change_text_output_and_flags_match_the_oracle() {
     git(&tmp, &["init", "-q"]);
     git(&tmp, &["config", "user.email", "t@t.co"]);
     git(&tmp, &["config", "user.name", "t"]);
-    let init = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
 
     let out = spectra()

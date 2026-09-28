@@ -44,6 +44,7 @@ enum Command {
         path: Option<PathBuf>,
         #[arg(long)]
         force: bool,
+        /// Custom openspec directory path (default: docs/openspec)
         #[arg(long, value_name = "DIR")]
         dir: Option<String>,
         #[arg(long)]

@@ -17,7 +17,11 @@ const ORACLE_SPEC: &str = "# cap Specification\n\n## Purpose\n\nP.\n\n## Require
 fn project() -> (TempDir, std::path::PathBuf) {
     let root = TempDir::new("trace-migrate");
     git(&root, &["init", "-q"]);
-    let output = spectra().arg("init").current_dir(&*root).output().unwrap();
+    let output = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
     assert!(output.status.success(), "init 失敗：{output:?}");
     let spec = root.join("openspec/specs/cap/spec.md");
     std::fs::create_dir_all(spec.parent().unwrap()).unwrap();

@@ -13,7 +13,11 @@ fn init_empty_project(root: &Path) {
     git(root, &["config", "user.email", "howie@example.com"]);
     git(root, &["commit", "--allow-empty", "-q", "-m", "init"]);
 
-    let output = spectra().arg("init").current_dir(root).output().unwrap();
+    let output = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(output.status.success(), "專案初始化失敗：{output:?}");
 }
 

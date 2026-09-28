@@ -52,7 +52,11 @@ fn init_project(root: &Path) {
     git(root, &["init", "-q"]);
     git(root, &["config", "user.name", "Howie"]);
     git(root, &["config", "user.email", "howie@example.com"]);
-    let output = spectra().arg("init").current_dir(root).output().unwrap();
+    let output = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(output.status.success(), "init failed: {output:?}");
 }
 

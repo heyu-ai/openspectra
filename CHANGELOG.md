@@ -266,6 +266,17 @@ changes.
   Run 'spectra init' to initialize.` like v3.0.0.
 - `init` writes an empty `.gitkeep` into `changes/archive/` and `specs/`, as
   v3.0.0 does.
+- **A fresh `spectra init` now defaults to `spec_dir: docs/openspec`**
+  (was `openspec`; owner ruling D9). This is a deliberate divergence: v3.0.0
+  defaults to `docs/spectra`, and OpenSpec's convention is `openspec/`.
+  Trade-off: OpenSpec 1.13.2's CLI hard-codes `<project root>/openspec`, so
+  running it at the repo root of such a project finds no specs. A project
+  that already has an `openspec` entry keeps `openspec` (ruling D10), and
+  `.spectra.yaml` without `spec_dir` still resolves to `openspec`, so existing
+  projects are unaffected. `.spectra.yaml` now follows the v3.0.0 template
+  (19 lines, `spec_dir` always written explicitly, even for `--dir openspec`);
+  only its "New projects initialize at …" comment differs, naming
+  `docs/openspec`. `init --help` documents the new default for `--dir`.
 - `instructions --json` reports the project's `locale` like v3.0.0: `tw` →
   `Traditional Chinese (繁體中文)`, `ja` → `Japanese (日本語)`, `en` or unset →
   `English`, any other value verbatim (it was always `English`). A non-string
