@@ -60,9 +60,41 @@ reinitializing an existing project. `--adopt` and `--json` are OpenSpectra
 extensions.
 
 `init` is the only command that does **not** require
-`Config::is_initialized` to already be true. Every other subcommand calls
-`require_initialized` first and fails with `Not initialized. Run 'spectra
-init' first.` if `.spectra.yaml` is missing.
+`Config::is_initialized` to already be true. Every other project subcommand
+calls `require_initialized` first and fails with `Not initialized. Run
+'spectra init' to initialize.` (oracle 3.0.0, probed 2026-09-28 across every
+project command; 2.3.1 printed `... first.`).
+
+## Project root marker (oracle 3.0.0, W14)
+
+A project root is the nearest directory, walking up from the current one, that
+contains **`.spectra.yaml` or any entry named `openspec`** — an empty
+`openspec/` directory and even a plain file named `openspec` both count, so a
+pure OpenSpec project works without `.spectra.yaml` (spec_dir `openspec`, and
+`new change` writes there). When both markers sit in the same directory,
+`.spectra.yaml` and its `spec_dir` decide; otherwise the nearest marker wins
+(probe p02, seven layouts, all identical between the two binaries after W14).
+`Config::is_project_root` holds the rule; the CLI's `find_root`,
+`Config::is_initialized` and the `.spectra/impl` lookup all use it.
+
+`init`'s own "Already initialized" check deliberately looks at
+`.spectra.yaml` only. The oracle refuses `init` in an `openspec/`-only project
+(probe p03: `Error: Already initialized. Use --force to reinitialize.`, rc 1,
+nothing written) and with `--force` initializes it in place (spec_dir
+`openspec`, existing content kept). OpenSpectra initializes such a project
+without `--force`, non-destructively — because `init` creates the directories
+first and writes `.spectra.yaml` last, so that a failed run (for example an
+unwritable `.gitignore`) can simply be retried; counting `openspec/` as
+"initialized" there would turn every such failure into a refusal. **Pending a
+human ruling** (tracked in `docs/migration-plan.md`).
+
+Also pending (conflict between the oracle and OpenSpec, so not decided here):
+the oracle's `init` now defaults to `spec_dir: docs/spectra` for a fresh
+project (its `.spectra.yaml` template says "New projects initialize at
+docs/spectra; configurations without this field resolve to openspec", and its
+`--help` still claims `default: openspec`), while OpenSpec's convention — and
+OpenSpectra's default — is `openspec/`. The `.spectra.yaml` template text
+follows whichever default is chosen.
 
 For a plain default init, the verified human-readable output is one line:
 
@@ -133,12 +165,18 @@ inspection. All five commands exited 0 with empty stderr.
 
 ## Verified default artifacts
 
+Oracle 3.0.0 also writes an empty `.gitkeep` into `<spec_dir>/changes/archive/`
+and `<spec_dir>/specs/`, even when `specs/` already has content (`init
+--force`, probe p03); OpenSpectra does the same since W14 and never
+overwrites an existing `.gitkeep`. Commands that read the archive
+(`validate --archived`) skip non-directories.
+
 Plain `spectra init` creates:
 
 | Path | Byte content or state |
 |---|---|
-| `openspec/changes/archive/` | empty directory; no `.gitkeep` |
-| `openspec/specs/` | empty directory |
+| `openspec/changes/archive/` | directory holding only an empty `.gitkeep` (oracle 3.0.0; 2.3.1 left it empty) |
+| `openspec/specs/` | directory holding only an empty `.gitkeep` (oracle 3.0.0; 2.3.1 left it empty) |
 | `openspec/config.yaml` | template below, ending in `\n` |
 | `.gitignore` | `# Spectra app data\n.spectra/\n` |
 | `.spectra.yaml` | template below, ending in `\n` |

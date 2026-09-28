@@ -66,9 +66,23 @@ impl Config {
         })
     }
 
-    /// A project is initialized once `.spectra.yaml` exists.
-    pub fn is_initialized(root: &Path) -> bool {
+    /// 專案根的標記（oracle 3.0.0，W14 探測 p02）：`.spectra.yaml`，或任何名為 `openspec` 的
+    /// 項目（空目錄、甚至檔案都算）——純 OpenSpec 專案不需要 `.spectra.yaml` 就能用，
+    /// spec_dir 為預設的 `openspec`。專案根探索（CLI 的 `find_root`、`.spectra/impl`）與
+    /// [`Config::is_initialized`] 共用這個判斷。
+    pub fn is_project_root(dir: &Path) -> bool {
+        Self::has_config_file(dir) || dir.join(DEFAULT_SPEC_DIR).exists()
+    }
+
+    /// `.spectra.yaml` 本身存在。
+    pub fn has_config_file(root: &Path) -> bool {
         root.join(".spectra.yaml").exists()
+    }
+
+    /// A project is initialized once `.spectra.yaml` or an `openspec` entry
+    /// exists (see [`Config::is_project_root`]).
+    pub fn is_initialized(root: &Path) -> bool {
+        Self::is_project_root(root)
     }
 
     /// Absolute path to `<spec_dir>/changes`.

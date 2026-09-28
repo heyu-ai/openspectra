@@ -561,12 +561,13 @@ enum InProgressTarget {
     Add { name: String },
 }
 
-/// Walk up from `start` to find the project root (dir containing `.spectra.yaml`),
+/// Walk up from `start` to find the project root (the nearest dir containing
+/// `.spectra.yaml` or an `openspec` entry, see [`Config::is_project_root`]),
 /// falling back to `start` itself.
 fn find_root(start: &Path) -> PathBuf {
     let mut cur = Some(start);
     while let Some(dir) = cur {
-        if dir.join(".spectra.yaml").exists() {
+        if Config::is_project_root(dir) {
             return dir.to_path_buf();
         }
         cur = dir.parent();
@@ -576,7 +577,8 @@ fn find_root(start: &Path) -> PathBuf {
 
 fn require_initialized(root: &Path) -> Result<Config> {
     if !Config::is_initialized(root) {
-        anyhow::bail!("Not initialized. Run 'spectra init' first.");
+        // oracle 3.0.0 的措辭（所有專案指令皆然；2.3.1 是 `... first.`）。
+        anyhow::bail!("Not initialized. Run 'spectra init' to initialize.");
     }
     Config::load(root)
 }

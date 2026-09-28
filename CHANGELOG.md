@@ -77,6 +77,13 @@ changes.
 
 ### Changed
 
+- A directory holding an `openspec` entry is a project root even without
+  `.spectra.yaml` (v3.0.0), so pure OpenSpec projects work directly with
+  spec_dir `openspec`; the nearest marker wins and `.spectra.yaml` decides when
+  both sit together. The not-initialized error now reads `Not initialized.
+  Run 'spectra init' to initialize.` like v3.0.0.
+- `init` writes an empty `.gitkeep` into `changes/archive/` and `specs/`, as
+  v3.0.0 does.
 - `instructions --json` reports the project's `locale` like v3.0.0: `tw` →
   `Traditional Chinese (繁體中文)`, `ja` → `Japanese (日本語)`, `en` or unset →
   `English`, any other value verbatim (it was always `English`). A non-string

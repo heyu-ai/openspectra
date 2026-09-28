@@ -83,10 +83,17 @@ fn assert_tool_files_match_golden(root: &Path, spec_dir: &str, tools: &[&str]) {
         assert_eq!(sha256_hex(&bytes), *sha, "{relpath} bytes drifted");
     }
 
-    let config_yaml = format!("{spec_dir}/config.yaml");
+    // init 的 scaffold（含 oracle 3.0.0 的兩個 `.gitkeep`）不屬於工具檔。
+    let scaffold = [
+        ".gitignore".to_string(),
+        ".spectra.yaml".to_string(),
+        format!("{spec_dir}/config.yaml"),
+        format!("{spec_dir}/changes/archive/.gitkeep"),
+        format!("{spec_dir}/specs/.gitkeep"),
+    ];
     let mut actual = Vec::new();
     collect_files(root, root, &mut actual);
-    actual.retain(|path| path != ".gitignore" && path != ".spectra.yaml" && *path != config_yaml);
+    actual.retain(|path| !scaffold.contains(path));
     let expected_paths: Vec<_> = expected.into_iter().map(|(path, _)| path).collect();
     assert_eq!(actual, expected_paths);
 }

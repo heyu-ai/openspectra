@@ -1353,9 +1353,11 @@ fn archive_mark_tasks_complete_flips_every_bullet_style_but_not_other_markers() 
     assert!(archived.status.success(), "{archived:?}");
 
     let archive_root = tmp.join("openspec/changes/archive");
+    // `init` 放的 `.gitkeep` 之外，只有被封存的 change 目錄。
     let entries: Vec<_> = std::fs::read_dir(&archive_root)
         .unwrap()
         .map(|e| e.unwrap().path())
+        .filter(|p| p.is_dir())
         .collect();
     assert_eq!(entries.len(), 1, "{entries:?}");
     assert_eq!(

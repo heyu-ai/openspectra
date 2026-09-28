@@ -124,7 +124,7 @@ pub fn resolve(
 /// 從 `cwd` 往上找專案根（有 `.spectra.yaml` 的目錄）底下的 `.spectra/impl`。
 pub fn project_impl_file(cwd: &Path) -> Option<PathBuf> {
     cwd.ancestors()
-        .find(|dir| dir.join(".spectra.yaml").is_file())
+        .find(|dir| crate::config::Config::is_project_root(dir))
         .map(|root| root.join(".spectra").join("impl"))
         .filter(|p| p.is_file())
 }
