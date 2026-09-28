@@ -1619,3 +1619,52 @@ replace = '''    Lazy::new(|| Regex::new(r"\b(SHALL|MUST)\b").unwrap());'''
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_specs_matches_the_openspec_golden"
+
+# ==================== #183：scenario loss 只回報一則 ====================
+
+# 停用 validate 自己的 scenario-loss 檢查（#183 當初存活的 mutant）；
+# 此時只剩 archive 相容性檢查的 INFO，level／措辭斷言要抓到
+
+[[case]]
+id = "183-validate-scenario-loss-off"
+issue = "#183"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        if diff.missing.is_empty() {
+            continue;
+        }'''
+replace = '''        if true || diff.missing.is_empty() {
+            continue;
+        }'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "validate_rejects_a_modified_requirement_that_drops_a_current_scenario"
+
+[[case]]
+id = "183-validate-scenario-loss-off-rename-chain"
+issue = "#183"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        if diff.missing.is_empty() {
+            continue;
+        }'''
+replace = '''        if true || diff.missing.is_empty() {
+            continue;
+        }'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "validate_follows_a_transitive_rename_chain_when_checking_scenario_loss"
+
+# archive 相容性檢查對已回報的 delta 檔再報一次（#183 的重複回報）
+
+[[case]]
+id = "183-archive-rereport"
+issue = "#183"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        if already_reported.contains(entry_path) {
+            continue;
+        }'''
+replace = '''        if false && already_reported.contains(entry_path) {
+            continue;
+        }'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "validate_rejects_a_modified_requirement_that_drops_a_current_scenario"

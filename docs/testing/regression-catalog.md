@@ -12,6 +12,8 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   改指向新的實作（`openspec_md.rs`、`validate.rs`）。這 19 個加上
   `35-archive-scenario-loss`、`43-no-metadata-fallback`、`44-validate-typo-as-change`
   共 22 個 case 實測 22/22 KILLED；其餘 case 未在這一輪重跑
+- #183（2026-09-28，scenario loss 只回報一則）：新增 3 個 `183-*` case，只重跑這 3 個，
+  **3/3 KILLED**
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -89,7 +91,14 @@ harness 本身的負向對照（2026-09-27 實測）：選錯測試得到 SURVIV
 
 - （已處理，W9b）決策 D1 讓 validate 依 OpenSpec 1.13.2：同一個 delta 檔已有 ERROR
   時不再以 archive 的措辭重報（OpenSpec `alreadyReported`），scenario 遺失只報一則，
-  由 `w9b-c3-rereport-reported-delta` 守住。以下保留原始紀錄。
+  由 `w9b-c3-rereport-reported-delta` 守住。#183 的其餘驗收條件（2026-09-28）：
+  `validate_rejects_a_modified_requirement_that_drops_a_current_scenario` 與
+  `validate_follows_a_transitive_rename_chain_when_checking_scenario_loss` 改為斷言
+  scenario loss **恰好一則**、`ERROR`、path `auth/spec.md`、validate 自己的措辭，且沒有
+  `Archive would refuse` 重報；新增 `183-validate-scenario-loss-off`（兩個測試各一）與
+  `183-archive-rereport`，3/3 KILLED。對照：舊版測試下 `183-archive-rereport` **存活**，
+  證明新斷言才是守住去重的關鍵。D1 之後不再帶行號（OpenSpec 的 delta finding 多數沒有
+  `line`），所以「保留帶行號的那則」不適用。以下保留原始紀錄。
 - **`validate` 對 scenario 遺失回報兩次**（row 35）。`validate.rs` 自己的檢查與
   `archive::validate_archive_compatibility` 會對同一個缺陷各報一則 ERROR：前者帶
   `specs/<cap>/spec.md` 路徑與行號，後者只有 `changes/<name>`。實測拿掉前者後，兩個
@@ -213,7 +222,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 32 | PR #32（Gemini P1） | RENAME 的目標名和既有 requirement 衝突，讓後續 MODIFY/REMOVE 作用在錯的 requirement | `32-rename-onto-existing-target`<br>`32-rename-from-unnormalized`<br>`32-duplicate-unnormalized` |
 | 33 | review | MODIFIED 黏行：`trim_end` 過的替換內容把下一個 `### Requirement:` 黏到前一行尾，該 requirement 被靜默丟掉 | `33-modified-glue` |
 | 34 | review | canonical spec 沒有 `## Requirements` 標題時，退回盲目附加到檔尾 | `34-blind-eof-append` |
-| 35 | #160-1 / PR #161 | MODIFIED 只要還有一個 scenario 就通過，archive 會把其他 scenario 刪掉 | `35-archive-scenario-loss`<br>`35-rename-chain-single-step` |
+| 35 | #160-1 / PR #161 | MODIFIED 只要還有一個 scenario 就通過，archive 會把其他 scenario 刪掉 | `35-archive-scenario-loss`<br>`35-rename-chain-single-step`<br>`183-validate-scenario-loss-off`<br>`183-validate-scenario-loss-off-rename-chain`<br>`183-archive-rereport` |
 | 36 | #160-2 | fenced code block 內的 `### Requirement:` 被當成真的 requirement | `36-requirement-header-unmasked`<br>`36-section-end-unmasked`<br>`36-fence-indent-unbounded` |
 | 37 | #160-3 | archive 先移動 change 再寫 spec；寫入失敗時留下一半已 archive 的狀態 | `37-no-change-restore`<br>`37-no-spec-rollback`<br>`37-rollback-clobbers-concurrent-spec`<br>`37-metadata-rollback-clobbers-concurrent` |
 | 38 | #160-4 | 先 sync 再 archive 會失敗（已同步的 operation 被拒絕） | `160-4-identical-modified-counted`<br>`38-added-already-synced-rejected`<br>`38-rename-already-synced-rejected`<br>`38-missing-remove-over-tolerated` |
