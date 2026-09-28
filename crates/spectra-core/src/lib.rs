@@ -14,6 +14,7 @@ pub mod fingerprint;
 mod fsutil;
 pub mod git;
 pub mod global_config;
+pub mod impl_switch;
 pub mod init;
 pub mod instructions;
 mod markdown;

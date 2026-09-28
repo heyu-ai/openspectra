@@ -9,7 +9,10 @@ use std::path::Path;
 use std::process::Command;
 
 pub fn spectra() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spectra"))
+    // 開發者環境的 OPENSPECTRA_IMPL／~/.config/openspectra/impl 不能把測試轉交給 oracle。
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spectra"));
+    command.env("OPENSPECTRA_IMPL", "oss");
+    command
 }
 
 pub fn git(dir: &Path, args: &[&str]) {

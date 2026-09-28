@@ -7,7 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn spectra() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_spectra"))
+    // 開發者環境的 OPENSPECTRA_IMPL／~/.config/openspectra/impl 不能把測試轉交給 oracle。
+    let mut command = Command::new(env!("CARGO_BIN_EXE_spectra"));
+    command.env("OPENSPECTRA_IMPL", "oss");
+    command
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -2065,6 +2068,8 @@ fn show_diff_and_validation_propagate_unreadable_canonical_spec_errors() {
 /// 回傳 (process output, stdout+stderr 合併的文字)。
 fn run_on_terminal(tmp: &TempDir, args: &[&str], stdin: &[u8]) -> (std::process::Output, String) {
     let mut command = Command::new("script");
+    // 開發者環境的實作切換不能把測試轉交給 oracle（環境變數會傳給 script 的子行程）。
+    command.env("OPENSPECTRA_IMPL", "oss");
     #[cfg(target_os = "macos")]
     {
         command.args(["-q", "/dev/null", env!("CARGO_BIN_EXE_spectra")]);

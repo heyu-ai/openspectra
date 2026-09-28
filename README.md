@@ -145,6 +145,30 @@ the release tarballs). The image bundles `git` and the `spectra` binary, with
 docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/heyu-ai/openspectra:latest drift --json
 ```
 
+### Switching between the reference `spectra` and OpenSpectra
+
+When OpenSpectra is installed as `spectra` on a Mac that also has the closed
+reference app, it can hand calls to that app instead of running itself — for a
+gradual migration and a one-step rollback:
+
+| `OPENSPECTRA_IMPL` | behaviour |
+|---|---|
+| `oss` (default) | OpenSpectra runs the command; non-zero exits and panics are appended to `errors.jsonl` |
+| `oracle` | the reference binary runs it (argv, stdin, stdout, stderr and exit code passed through unchanged) |
+| `shadow` | the reference binary's result is what you get; for read-only commands (`list`, `show`, `status`, `validate`, `analyze`, `drift`, `instructions`, `schemas`, `templates`, `scope`) OpenSpectra also runs and any difference is appended to `shadow.jsonl`. Writing commands only run on the reference binary |
+
+The mode comes from the `OPENSPECTRA_IMPL` environment variable, else the
+project's `.spectra/impl` file, else `$XDG_CONFIG_HOME/openspectra/impl`
+(`~/.config/openspectra/impl`), else `oss`; it is deliberately not a
+`.spectra.yaml` key, because the reference binary reads that file too. The
+reference binary is `/Applications/Spectra.app/Contents/MacOS/spectra` unless
+`OPENSPECTRA_ORACLE_BIN` says otherwise; `oracle`/`shadow` fail loudly when it
+is missing rather than falling back. Logs go to `$XDG_STATE_HOME/openspectra`
+(`~/.local/state/openspectra`); `spectra impl [--json]` shows the active mode,
+where it came from, and the paths, and `scripts/shadow-report.py` summarizes
+the logs. In `shadow` mode the read-only output is captured, so it is not
+coloured.
+
 ### CI gate example
 
 ```yaml
