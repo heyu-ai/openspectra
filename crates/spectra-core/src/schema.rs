@@ -87,7 +87,8 @@ When to include design.md (create only if any apply):
 
 Sections:
 - **Context**: Background, current state, constraints, stakeholders
-- **Goals / Non-Goals**: What this design achieves and explicitly excludes
+- **Design Source**: Include ONLY when the change originates from a visual design source (a Claude Design handoff, `.dc.html`, bundle, or design screenshot). Record the source (which `.dc.html` and when obtained), the local cache path under `.spectra/design-cache/` holding the original `.dc.html`, and a table of key visual values (exact px / hex / radius / spacing / icon names) read from it so apply can reproduce pixel-by-pixel. Omit entirely for changes with no visual design source.
+- **Goals / Non-Goals**: What this design achieves and explicitly excludes. When the change is driven by a visual design, a Non-Goal MUST NOT be used to keep an element absent from the design; an element the design does not contain is to be removed, and any dependency this triggers is handled in this change or explicitly deferred to a documented follow-up change — never preserved by listing it as a Non-Goal.
 - **Decisions**: Key technical choices with rationale (why X over Y?). Include alternatives considered for each decision.
 - **Implementation Contract**: For any change that creates or modifies behavior beyond a trivial artifact-only edit, this section is REQUIRED. The contract describes the durable handoff to apply: name the observable behavior, interface or data shape, command output, error or failure mode, acceptance criteria, and explicit scope boundaries (what is in scope, what is out). The contract MUST NOT rely on source line numbers, and MUST NOT use file-path-only references as the sole way to identify required work — file paths are supporting context for behavior, never a substitute for it. Skip this section only when the change is purely artifact / documentation cleanup with no runtime, build, or tooling effect.
 - **Risks / Trade-offs**: Known limitations, things that could go wrong. Format: [Risk] → Mitigation
@@ -107,6 +108,22 @@ pub const DESIGN_TEMPLATE: &str = r#"## Context
 
 <!-- Background and current state -->
 
+## Design Source
+
+<!--
+Include this section ONLY when the change originates from a visual design source
+(a Claude Design handoff, .dc.html, bundle, or design screenshot). Omit it
+entirely for changes with no visual design source — same conditional rule as the
+Implementation Contract section below.
+
+Record:
+- Source: which .dc.html / handoff, and when it was obtained
+- Cache: the local path under .spectra/design-cache/<change-name>/ that holds
+  the original .dc.html (gitignored, never committed)
+- Key values: a table of the exact px / hex / radius / spacing / icon names read
+  from the .dc.html, so apply can reproduce the design pixel-by-pixel
+-->
+
 ## Goals / Non-Goals
 
 **Goals:**
@@ -119,7 +136,19 @@ pub const DESIGN_TEMPLATE: &str = r#"## Context
 
 ## Decisions
 
-<!-- Key design decisions and rationale -->
+<!-- Key design decisions and rationale.
+
+Each decision is a `###` heading; `spectra decisions` lists them across changes,
+so the heading text is what a reader sees when scanning for a past decision.
+
+When a decision replaces an earlier one, declare it directly under the heading:
+
+    **Supersedes**: <change-name> / <decision heading>
+
+Use the change name without its archive date prefix. The field is optional, and
+supersession is never inferred — two decisions on the same subject stay
+unrelated unless one of them says otherwise.
+-->
 
 ## Implementation Contract
 
@@ -162,6 +191,13 @@ Delta operations (use ## headers):
 - **REMOVED Requirements**: Deprecated features - MUST include **Reason** and **Migration**
 - **RENAMED Requirements**: Name changes only - use FROM:/TO: format
 
+Purpose section (new capabilities only):
+- A NEW capability's delta spec MUST begin with a top-level `## Purpose` section:
+  1-3 English sentences describing what the capability is and why it exists.
+  The text must not contain placeholder words such as TBD or TODO. Archive
+  copies it into the newly created spec.
+- Delta specs targeting EXISTING capabilities do not include a Purpose section.
+
 Format requirements:
 - Each requirement: `### Requirement: <name>` followed by description
 - Use SHALL/MUST for normative requirements. Forbidden words (analyzer flags these): should, may, might, consider, possibly, TBD, TODO, ???, TKTK — replace with SHALL/SHALL NOT/MUST/MUST NOT.
@@ -197,6 +233,14 @@ The system SHALL allow users to export their data in CSV format.
 ```
 
 Specs should be testable - each scenario is a potential test case.
+
+Scenario subject rule:
+A scenario describes an observable behavior contract. It does not describe a
+visual property confined to the single surface being specified — corner radius,
+padding, centering, dimensions, and spacing that affect only that surface belong
+in the implementation rather than in a scenario.
+The rendered class contract of a component reused across the application remains
+a valid scenario subject, because that contract crosses its use sites.
 
 Concrete examples (SBE — Specification by Example):
 
@@ -1920,6 +1964,9 @@ pub fn status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// oracle 3.0.0 的 `spec-driven` 擷取（`scripts/capture-schemas.py` 產生，不要手改）。
+    const SPEC_DRIVEN_CAPTURE: &str = include_str!("../assets/schemas/spec-driven-3.0.0.json");
     use crate::test_support::TempDir;
 
     fn project(label: &str) -> (TempDir, crate::Config) {
@@ -2083,6 +2130,32 @@ mod tests {
         assert!(require_supported(&cfg, Some(SCHEMA_NAME), Some(&custom_change)).is_ok());
     }
 
+    /// 內建 `spec-driven` 的 schema 層級欄位（描述、`schemas` 的 artifact 順序、`status` 的
+    /// artifact 順序、applyRequires、apply 指示）等於 oracle 3.0.0 的擷取結果（W7c）；
+    /// 各 artifact 的文字由 `embedded_instruction_text_matches_oracle_goldens_byte_for_byte` 比對。
+    #[test]
+    fn builtin_spec_driven_matches_the_oracle_capture() {
+        let captured: CapturedSchema = serde_json::from_str(SPEC_DRIVEN_CAPTURE).unwrap();
+        let ours = ResolvedSchema::builtin();
+        assert_eq!(ours.name, captured.name);
+        assert_eq!(ours.description, captured.description, "description");
+        assert_eq!(
+            ours.artifact_order, captured.artifact_order,
+            "artifactOrder"
+        );
+        assert_eq!(
+            ours.apply_requires, captured.apply_requires,
+            "applyRequires"
+        );
+        assert_eq!(
+            ours.apply_instruction, captured.apply_instruction,
+            "applyInstruction"
+        );
+        let ids: Vec<&str> = ours.artifacts.iter().map(|a| a.id.as_str()).collect();
+        let captured_ids: Vec<&str> = captured.artifacts.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(ids, captured_ids, "artifact ids in status order");
+    }
+
     #[test]
     fn spec_driven_artifacts_have_canonical_order_paths_and_dependencies() {
         let artifacts = artifacts();
@@ -2102,41 +2175,24 @@ mod tests {
         );
     }
 
+    /// `ARTIFACTS` 的每段文字與結構欄位逐位元組等於 oracle 3.0.0 的擷取結果
+    /// （`scripts/capture-schemas.py` 產生的 `spec-driven-3.0.0.json`；W7c 取代原本的
+    /// 2.3.1 golden）。asset 以 `{{SPEC_DIR}}` 表示 spec 目錄，與內建文字相同，直接比對。
     #[test]
     fn embedded_instruction_text_matches_oracle_goldens_byte_for_byte() {
-        let golden_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/reverse-engineering/golden");
-
+        let captured: CapturedSchema = serde_json::from_str(SPEC_DRIVEN_CAPTURE).unwrap();
+        assert_eq!(artifacts().len(), captured.artifacts.len());
         for artifact in artifacts() {
-            let path = golden_dir.join(format!("instructions-{}-2.3.1.json", artifact.id));
-            let text = std::fs::read_to_string(&path).unwrap();
-            let golden: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-            assert_eq!(
-                artifact.description,
-                golden["description"].as_str().unwrap()
-            );
-            // 內建文字以 `{{SPEC_DIR}}` 表示 spec 目錄；golden 是在 spec_dir 為
-            // `openspec` 的專案擷取的（見其 changeDir），所以比對代入後的結果。
-            assert_eq!(
-                crate::instructions::render_spec_dir(artifact.instruction, "openspec"),
-                golden["instruction"].as_str().unwrap()
-            );
-            assert_eq!(
-                crate::instructions::render_spec_dir(artifact.template, "openspec"),
-                golden["template"].as_str().unwrap()
-            );
-            // Structural fields, previously pinned only by an inline
-            // re-declaration (self-referential): compare against the oracle
-            // capture directly.
-            assert_eq!(artifact.output_path, golden["outputPath"].as_str().unwrap());
-            let golden_deps: Vec<&str> = golden["dependencies"]
-                .as_array()
-                .unwrap()
+            let golden = captured
+                .artifacts
                 .iter()
-                .map(|dep| dep["id"].as_str().unwrap())
-                .collect();
-            assert_eq!(artifact.deps, golden_deps.as_slice());
+                .find(|c| c.id == artifact.id)
+                .unwrap_or_else(|| panic!("{} missing from the capture", artifact.id));
+            assert_eq!(artifact.description, golden.description, "{}", artifact.id);
+            assert_eq!(artifact.instruction, golden.instruction, "{}", artifact.id);
+            assert_eq!(artifact.template, golden.template, "{}", artifact.id);
+            assert_eq!(artifact.output_path, golden.output_path, "{}", artifact.id);
+            assert_eq!(artifact.deps, golden.deps.as_slice(), "{}", artifact.id);
         }
     }
 

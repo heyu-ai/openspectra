@@ -480,4 +480,7 @@ line (probe p26). Other task consumers (`drift` collision descriptions,
   `anchors::tests::design_template_symbols_match_the_oracle_stoplist`; the
   byte-pinned template is untouched. (The stop-list had further gaps on tokens
   the template does not use — 20 more entries recovered by the 2026-08-06
-  sweep; see `drift.md`'s "Symbol stop-list sweep (#133)".)
+  sweep; see `drift.md`'s "Symbol stop-list sweep (#133)".) With the 3.0.0
+  template (W7c) the scaffold has **31** anchors; probe p31 put both binaries
+  in one jail again and they agree exactly (`31/31` untracked, `0/31`
+  tracked, the same 31 Symbol anchors).

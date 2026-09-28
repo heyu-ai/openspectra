@@ -55,7 +55,7 @@ this file is agent-facing operational context.
 
 - `scripts/capture-schemas.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Captures each built-in workflow schema listed in
-  its `SCHEMAS` (currently `no-spec`) through `schemas`/`status`/
+  its `SCHEMAS` (currently `no-spec` and `spec-driven`) through `schemas`/`status`/
   `instructions` into `crates/spectra-core/assets/schemas/<name>-3.0.0.json`,
   using a sentinel `spec_dir` to recover the `{{SPEC_DIR}}` placeholder. Any
   drift exits non-zero keeping the sandbox; `--write` regenerates and

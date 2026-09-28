@@ -581,8 +581,11 @@ mod tests {
             !symbols.iter().any(|s| s == "JSON"),
             "JSON must be stop-listed; extracted symbols: {symbols:?}"
         );
-        // Oracle-probed on the byte-identical scaffold: 20 anchors total.
-        assert_eq!(extract(crate::schema::DESIGN_TEMPLATE).len(), 20);
+        // Oracle-probed on the byte-identical scaffold: 31 anchors total with
+        // the 3.0.0 template (20 with 2.3.1's). Probe p31 (2026-09-28), both
+        // binaries in one jail: `31/31` broken untracked, `0/31` tracked, the
+        // same 31 Symbol anchors.
+        assert_eq!(extract(crate::schema::DESIGN_TEMPLATE).len(), 31);
     }
 
     #[test]

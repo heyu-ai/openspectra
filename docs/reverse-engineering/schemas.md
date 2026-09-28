@@ -24,6 +24,19 @@ but no PTY integration test exercises terminal detection end to end.
 >    into `crates/spectra-core/assets/schemas/no-spec-3.0.0.json` by
 >    `scripts/capture-schemas.py`, which reads them through `instructions`
 >    with a sentinel `spec_dir` so `{{SPEC_DIR}}` can be recovered.
+> 3. The `spec-driven` texts changed too (W7c, 2026-09-28): the `design`
+>    instruction gains a **Design Source** section and a Non-Goals rule for
+>    visual-design-driven changes, the `design` template gains a `## Design
+>    Source` block and a `**Supersedes**:` convention for decisions (read by
+>    `spectra decisions`), and the `specs` instruction gains the `## Purpose`
+>    rule for new capabilities (archive copies it into the new spec — probe p32
+>    confirmed OpenSpectra already does) and a scenario-subject rule. The
+>    capture script now also covers `spec-driven`
+>    (`assets/schemas/spec-driven-3.0.0.json`); the built-in constants in
+>    `schema.rs` stay the source the code uses, and
+>    `embedded_instruction_text_matches_oracle_goldens_byte_for_byte` /
+>    `builtin_spec_driven_matches_the_oracle_capture` pin them to that asset
+>    (they replaced the 2.3.1 `instructions-*-2.3.1.json` comparison).
 >
 > Built-ins come first in the order `spec-driven`, `no-spec`, then project and
 > user schemas. `schema which no-spec` is an oracle quirk: it prints
