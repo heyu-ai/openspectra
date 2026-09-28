@@ -104,7 +104,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 依 ROI 排序：
 
 1. **#9 Tasks 碰撞 positive 樣本**
-   - 依 issue 描述合成強迫碰撞情境（pending task 引用檔案 → baseline 後外部 commit 改該檔）取得 positive golden；釘出 firing predicate 後實作 `tasks::analyze`、翻 `TASKS_DETECTION_CALIBRATED = true`
+   - 已由 W7d 完成：oracle 3.0.0 在 corpus 上有正樣本，碰撞規則與分數見 `docs/reverse-engineering/drift.md` 的「3. Tasks」，`tasks::analyze` 已實作（2026-09-28）
    - 若 oracle 掃遍情境仍全零：結論記入 drift.md（「偵測極可能是 dead feature」），gate 保持關閉，issue 關閉
 2. ~~**#10 Time 邊界**~~ **已解**
    - `scripts/calibrate-time.py --mode boundaries` 已掃出 7、22、61 天三個精確轉換點，並確認 `abandoned` 分數為 4、未來日期歸零

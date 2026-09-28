@@ -39,29 +39,7 @@ output	analyze <change> --json	value .findings[].summary_msg.params.cap
 output	analyze <change> --json	value .findings[].summary_msg.params.keyword
 output	analyze <change> --json	value .findings[].summary_msg.params.req
 output	analyze <change> --json	value .findings[].summary_msg.params.scenario
-output	drift <change>	stdout-differs
-output	drift <change> --json	oracle-only .tasks_blocked_external[].commit_date
-output	drift <change> --json	oracle-only .tasks_blocked_external[].commit_sha
-output	drift <change> --json	oracle-only .tasks_blocked_external[].commit_subject
-output	drift <change> --json	oracle-only .tasks_blocked_external[].task_description
 output	drift <change> --json	oss-only .unresolved_anchors[]#len
-output	drift <change> --json	value .dimensions[].score
-output	drift <change> --json	value .dimensions[].status
-output	drift <change> --json	value .primary_recommendation
-output	drift <change> --json	value .recommended_action.action_kind
-output	drift <change> --json	value .severity
-output	drift <change> --json	value .tasks_blocked_external[]#len
-output	drift <change> --json	value .total_score
-output	instructions apply --change <change> --json	oracle-only .preflight.driftedFiles[].changeCreated
-output	instructions apply --change <change> --json	oracle-only .preflight.driftedFiles[].lastCommit
-output	instructions apply --change <change> --json	oracle-only .preflight.driftedFiles[].path
-output	instructions apply --change <change> --json	oracle-only .preflight.missingFiles[].path
-output	instructions apply --change <change> --json	oracle-only .preflight.missingFiles[].referencedIn
-output	instructions apply --change <change> --json	value .preflight.driftedFiles[]#len
-output	instructions apply --change <change> --json	value .preflight.driftedFiles[].path
-output	instructions apply --change <change> --json	value .preflight.missingFiles[]#len
-output	instructions apply --change <change> --json	value .preflight.missingFiles[].path
-output	instructions apply --change <change> --json	value .preflight.status
 output	list	stdout-differs
 output	list --json	value .changes[].completedTasks
 output	list --json	value .changes[].name

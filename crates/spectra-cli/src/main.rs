@@ -922,6 +922,33 @@ fn drift_human(r: &drift::DriftReport, use_color: bool) -> String {
                 .map(|a| (a.anchor.as_str(), a.category.as_str(), a.reason.as_str())),
         ));
     }
+    // oracle 3.0.0（W7d 探測 p01、p40）：anchors 之後依序 blocked、maybe，空清單不印；
+    // 標題粗體、SHA 青色、日期淡色，subject 裡的引號不跳脫。
+    let collision_section = |title: &str, list: &[spectra_core::tasks::TaskCollision]| {
+        let mut section = format!("\n{}\n", bold(title));
+        for c in list {
+            section.push_str(&format!(
+                "  - {} → {} \"{}\" ({})\n",
+                c.task_description,
+                colorize(&c.commit_sha, "36", use_color),
+                c.commit_subject,
+                colorize(&c.commit_date, "2", use_color)
+            ));
+        }
+        section
+    };
+    if !r.tasks_blocked_external.is_empty() {
+        out.push_str(&collision_section(
+            "Tasks blocked by external changes",
+            &r.tasks_blocked_external,
+        ));
+    }
+    if !r.tasks_maybe_resolved.is_empty() {
+        out.push_str(&collision_section(
+            "Tasks possibly resolved elsewhere",
+            &r.tasks_maybe_resolved,
+        ));
+    }
     out.push_str(&format!(
         "\n{}: {} drift\n> {}\n",
         bold("Severity"),

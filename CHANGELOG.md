@@ -77,6 +77,19 @@ changes.
 
 ### Changed
 
+- `drift` detects task collisions like v3.0.0 (detection used to be off):
+  `tasks_blocked_external` when a commit since `created` touched a path the task
+  names, `tasks_maybe_resolved` when a commit subject contains the task's verb
+  and a keyword; every entry carries `task_description`, `commit_sha` (7
+  characters), `commit_subject` and `commit_date` (author, UTC). The Tasks score
+  is `min(blocked, 4) + min(maybe, 3)`, its status is `git unavailable` when
+  there is no git history, and human output lists both blocks.
+- `instructions apply` preflight follows v3.0.0: the "Affected code" section
+  understands `New:`/`Removed:` and `新增`/`刪除` labels, `（修改）`-style
+  annotations and comma-separated items (only Modified items can be missing);
+  drift candidates are filtered to known top-level folders; `lastCommit` is the
+  newest first-parent content change (merges included, chmod-only ignored); and
+  drift compares the dates as strings.
 - A directory holding an `openspec` entry is a project root even without
   `.spectra.yaml` (v3.0.0), so pure OpenSpec projects work directly with
   spec_dir `openspec`; the nearest marker wins and `.spectra.yaml` decides when

@@ -9,24 +9,45 @@ use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-static BACKTICK_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"`([^`]*?/[^`]*?\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))`"#)
-        .unwrap()
-});
+/// preflight 認得的副檔名（oracle 3.0.0）。
+const PATH_EXT: &str = "(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js)";
+static BACKTICK_PATH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(&format!(r"`([^`]*?/[^`]*?\.{PATH_EXT})`")).unwrap());
+/// 一個反引號區段的內容整段是路徑。
+static SPAN_PATH_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(&format!(r"^[^`]*?/[^`]*?\.{PATH_EXT}$")).unwrap());
+static ENDS_WITH_EXT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(&format!(r"\.{PATH_EXT}$")).unwrap());
+/// 反引號與裸路徑兩段掃描的頂層目錄白名單。
+const CANDIDATE_PREFIXES: &[&str] = &[
+    "src",
+    "src-tauri",
+    "crates",
+    "lib",
+    "tests",
+    "app",
+    "public",
+    "templates",
+    "examples",
+    "packages",
+    "test",
+    "docs",
+];
 static BARE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"^(?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js)$",
-    )
+    Regex::new(&format!(
+        r"\b((?:{})/[\w\-/]+\.{PATH_EXT})\b",
+        CANDIDATE_PREFIXES.join("|")
+    ))
     .unwrap()
 });
-static LOOSE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"([A-Za-z0-9_\-./]+/[A-Za-z0-9_\-./]+\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))",
-    )
-    .unwrap()
-});
-static BULLET_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*[-*+]\s+").unwrap());
-static ASCII_ANNOTATION_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s*\([^)]*\)\s*$").unwrap());
+/// 0–2 個空白（tab 算一個）後的 bullet 才是頂層 bullet。
+static TOP_BULLET_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s{0,2}[-*+]\s+").unwrap());
+static ANY_BULLET_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*[-*+]\s+").unwrap());
+static ZH_LABEL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(新增|新建|刪除|移除)[:：]").unwrap());
+static PAREN_CUT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s\(").unwrap());
+const MODIFIED_ANNOTATIONS: &[&str] = &["（修改）", "（變更）", "(修改)", "(變更)"];
+const NEW_ANNOTATIONS: &[&str] = &["（新建）", "（新增）", "(新建)", "(新增)"];
+const REMOVED_ANNOTATIONS: &[&str] = &["（刪除）", "（移除）", "(刪除)", "(移除)"];
 
 const PROPOSAL_REF_MARKERS: &[&str] = &[
     "affected code:",
@@ -494,64 +515,164 @@ fn cycle_members(parsed: &[(bool, crate::tasks::TaskText)]) -> Vec<bool> {
     t.member
 }
 
-fn push_unique(paths: &mut Vec<String>, seen: &mut HashSet<String>, path: &str) {
-    if seen.insert(path.to_string()) {
-        paths.push(path.to_string());
+/// "Affected code" 區段裡一個項目的種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AffectedKind {
+    Modified,
+    New,
+    Removed,
+}
+
+/// 一行的文字切成項目（ASCII `,`），每項取出路徑（oracle 3.0.0，W7d SPEC §B2.4–5）。
+fn affected_items(text: &str, kind: AffectedKind, out: &mut Vec<(String, AffectedKind)>) {
+    for item in text.split(',') {
+        let item = item.trim();
+        if item.matches('`').count() >= 2 {
+            // 只看第一個反引號區段。
+            let span = item.split('`').nth(1).unwrap_or_default();
+            if SPAN_PATH_RE.is_match(span) {
+                out.push((span.to_string(), kind));
+            }
+        } else {
+            let cut = PAREN_CUT_RE
+                .splitn(item, 2)
+                .next()
+                .unwrap_or_default()
+                .trim();
+            if cut.contains('/') && ENDS_WITH_EXT_RE.is_match(cut) {
+                out.push((cut.to_string(), kind));
+            }
+        }
     }
 }
 
-fn backtick_references(markdown: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    let mut seen = HashSet::new();
-    for captures in BACKTICK_PATH_RE.captures_iter(markdown) {
-        push_unique(&mut paths, &mut seen, &captures[1]);
-    }
-    paths
-}
-
-fn proposal_references(markdown: &str) -> Vec<String> {
-    let lowercase = markdown.to_ascii_lowercase();
-    let Some((marker_start, marker)) = PROPOSAL_REF_MARKERS
+/// proposal 的 "Affected code" 區段的項目與種類（oracle 3.0.0，W7d SPEC §B1–B2）。
+fn affected_code_items(proposal: &str) -> Vec<(String, AffectedKind)> {
+    let lowercase = proposal.to_ascii_lowercase();
+    let Some((start, marker)) = PROPOSAL_REF_MARKERS
         .iter()
-        .filter_map(|marker| lowercase.find(marker).map(|start| (start, *marker)))
-        .min_by_key(|(start, _)| *start)
+        .filter_map(|marker| lowercase.find(marker).map(|at| (at, *marker)))
+        .min_by_key(|(at, _)| *at)
     else {
         return Vec::new();
     };
-
-    let mut paths = Vec::new();
-    let mut seen = HashSet::new();
-    let after_marker = marker_start + marker.len();
-    let line_end = markdown[after_marker..]
-        .find('\n')
-        .map_or(markdown.len(), |offset| after_marker + offset);
-    let marker_line_remainder = markdown[after_marker..line_end].replace('`', "");
-    for captures in LOOSE_PATH_RE.captures_iter(&marker_line_remainder) {
-        push_unique(&mut paths, &mut seen, &captures[1]);
-    }
-
-    if line_end == markdown.len() {
-        return paths;
-    }
-    for line in markdown[line_end + 1..].lines() {
-        if line.trim().starts_with('#') {
+    let after = start + marker.len();
+    let (first, rest) = match proposal[after..].find('\n') {
+        Some(offset) => (
+            &proposal[after..after + offset],
+            Some(&proposal[after + offset + 1..]),
+        ),
+        None => (&proposal[after..], None),
+    };
+    let mut out = Vec::new();
+    let annotated = |line: &str, kind: AffectedKind| {
+        if MODIFIED_ANNOTATIONS.iter().any(|a| line.contains(a)) {
+            AffectedKind::Modified
+        } else if NEW_ANNOTATIONS.iter().any(|a| line.contains(a)) {
+            AffectedKind::New
+        } else if REMOVED_ANNOTATIONS.iter().any(|a| line.contains(a)) {
+            AffectedKind::Removed
+        } else {
+            kind
+        }
+    };
+    // 標記那一行的其餘部分是一行 Modified 項目（那裡不認得標籤）。
+    affected_items(first, annotated(first, AffectedKind::Modified), &mut out);
+    let mut kind = AffectedKind::Modified;
+    let mut fence = false;
+    for line in rest.map(|r| r.split('\n')).into_iter().flatten() {
+        if line.starts_with("## ") {
             break;
         }
-        if line.contains('`') {
-            for path in backtick_references(line) {
-                push_unique(&mut paths, &mut seen, &path);
-            }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fence = !fence;
             continue;
         }
+        if fence {
+            continue;
+        }
+        let text = if let Some(bullet) = TOP_BULLET_RE.find(line) {
+            // 頂層 bullet 把種類重設為 Modified，再看有沒有標籤。
+            kind = AffectedKind::Modified;
+            let mut text = line[bullet.end()..].trim().to_string();
+            let labels = [
+                ("New:", AffectedKind::New),
+                ("Removed:", AffectedKind::Removed),
+                ("Modified:", AffectedKind::Modified),
+            ];
+            if let Some((label, label_kind)) = labels.iter().find(|(l, _)| text.starts_with(l)) {
+                kind = *label_kind;
+                text = text[label.len()..].trim().to_string();
+            } else if let Some(zh) = ZH_LABEL_RE.captures(&text) {
+                kind = if matches!(&zh[1], "新增" | "新建") {
+                    AffectedKind::New
+                } else {
+                    AffectedKind::Removed
+                };
+                text = text[zh.get(0).unwrap().end()..].trim().to_string();
+            }
+            text
+        } else {
+            ANY_BULLET_RE.replace(line, "").trim().to_string()
+        };
+        affected_items(&text, annotated(line, kind), &mut out);
+    }
+    out
+}
 
-        let without_bullet = BULLET_RE.replace(line, "");
-        let without_annotation = ASCII_ANNOTATION_RE.replace(&without_bullet, "");
-        let candidate = without_annotation.trim();
-        if BARE_PATH_RE.is_match(candidate) {
-            push_unique(&mut paths, &mut seen, candidate);
+/// 每個路徑最後一次被改動的 commit：HEAD 可達的 commit 中，與第一個 parent 相比 blob 不同
+/// （新增、刪除、內容變更；只改權限不算）且 committer 時間最新者，日期用該 commit 自己的
+/// 時區（oracle 以 libgit2 讀歷史，W7d SPEC §B4；git CLI 的等價寫法需要 git ≥ 2.31）。
+fn last_commit_map(root: &Path) -> std::collections::HashMap<String, (i64, String)> {
+    let mut map = std::collections::HashMap::new();
+    let Some(output) = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "-c",
+            "core.quotepath=false",
+            "log",
+            "--diff-merges=first-parent",
+            "--raw",
+            "--no-renames",
+            "--no-abbrev",
+            "--format=C%x09%ct%x09%cd",
+            "--date=format:%Y-%m-%d",
+            "HEAD",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+    else {
+        return map;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut current: Option<(i64, String)> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("C\t") {
+            let mut parts = rest.splitn(2, '\t');
+            current = match (parts.next().and_then(|t| t.parse().ok()), parts.next()) {
+                (Some(ts), Some(date)) => Some((ts, date.to_string())),
+                _ => None,
+            };
+        } else if let (Some(meta), Some((ts, date))) = (line.strip_prefix(':'), &current) {
+            let Some((fields, path)) = meta.split_once('\t') else {
+                continue;
+            };
+            let fields: Vec<&str> = fields.split_whitespace().collect();
+            if fields.len() >= 4 && fields[2] == fields[3] {
+                continue; // 只改權限
+            }
+            let newer = map
+                .get(path)
+                .is_none_or(|(seen, _): &(i64, String)| ts > seen);
+            if newer {
+                map.insert(path.to_string(), (*ts, date.clone()));
+            }
         }
     }
-    paths
+    map
 }
 
 fn derive_unlocks(
@@ -731,10 +852,10 @@ fn valid_date(raw: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(raw, "%Y-%m-%d").ok()
 }
 
-fn is_drifted(last_commit: &str, change_created: NaiveDate) -> bool {
-    valid_date(last_commit).is_some_and(|last_commit| last_commit > change_created)
-}
-
+/// preflight（oracle 3.0.0，W7d SPEC §B）：`missingFiles` 是 "Affected code" 裡 Modified
+/// 種類且不存在的路徑；drift 候選依序為 Affected code 項目（任何種類）、proposal／design／tasks
+/// 的反引號路徑（頂層目錄白名單或 `.` 開頭、不含空白）、反引號以外的裸路徑，去重；
+/// `lastCommit > created`（原始字串比較）者為 drifted。
 fn preflight(
     cfg: &crate::Config,
     change: &crate::Change,
@@ -742,47 +863,74 @@ fn preflight(
     design_text: Option<&str>,
     tasks_text: Option<&str>,
 ) -> Preflight {
-    let proposal_refs = proposal_text.map(proposal_references).unwrap_or_default();
-    let missing_files = proposal_refs
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut affected = Vec::new();
+    for (path, kind) in proposal_text.map(affected_code_items).unwrap_or_default() {
+        // 同一路徑以第一次出現為準（含種類）。
+        if seen.insert(path.clone()) {
+            affected.push((path, kind));
+        }
+    }
+    let missing_files = affected
         .iter()
-        .filter(|path| !cfg.root.join(path).exists())
-        .map(|path| MissingFile {
+        .filter(|(path, kind)| *kind == AffectedKind::Modified && !cfg.root.join(path).exists())
+        .map(|(path, _)| MissingFile {
             path: path.clone(),
             referenced_in: "proposal",
         })
         .collect::<Vec<_>>();
 
-    let mut all_refs = proposal_refs;
-    let mut seen: HashSet<String> = all_refs.iter().cloned().collect();
-    for text in [design_text, tasks_text].into_iter().flatten() {
-        for path in backtick_references(text) {
-            push_unique(&mut all_refs, &mut seen, &path);
+    let mut candidates: Vec<String> = affected.into_iter().map(|(path, _)| path).collect();
+    let texts: Vec<&str> = [proposal_text, design_text, tasks_text]
+        .into_iter()
+        .flatten()
+        .collect();
+    for text in &texts {
+        for captures in BACKTICK_PATH_RE.captures_iter(text) {
+            let path = &captures[1];
+            if path.chars().any(char::is_whitespace) {
+                continue;
+            }
+            let first = path.split('/').next().unwrap_or_default();
+            if (path.starts_with('.') || CANDIDATE_PREFIXES.contains(&first))
+                && seen.insert(path.to_string())
+            {
+                candidates.push(path.to_string());
+            }
+        }
+    }
+    for text in &texts {
+        // 反引號以外的文字：以 ` 切開後的偶數段。
+        for outside in text.split('`').step_by(2) {
+            for captures in BARE_PATH_RE.captures_iter(outside) {
+                if seen.insert(captures[1].to_string()) {
+                    candidates.push(captures[1].to_string());
+                }
+            }
         }
     }
 
-    let parsed_created = change
+    let staleness = change
         .metadata
         .created
         .as_deref()
         .and_then(valid_date)
-        .map(|date| (date, change.metadata.created.as_deref().unwrap()));
-    let staleness =
-        parsed_created.map(|(created, _)| derive_staleness(Local::now().date_naive(), created));
+        .map(|created| derive_staleness(Local::now().date_naive(), created));
     let mut drifted_files = Vec::new();
-    if let Some((created, created_raw)) = parsed_created.filter(|_| crate::git::is_repo(&cfg.root))
-    {
-        for path in all_refs {
+    if let Some(created) = crate::show::schema_and_created(&change.dir).1 {
+        let last_commits = last_commit_map(&cfg.root);
+        for path in candidates {
             if !cfg.root.join(&path).exists() {
                 continue;
             }
-            let Some(last_commit) = crate::git::last_commit_date(&cfg.root, &path) else {
+            let Some((_, last_commit)) = last_commits.get(&path) else {
                 continue;
             };
-            if is_drifted(&last_commit, created) {
+            if last_commit.as_str() > created.as_str() {
                 drifted_files.push(DriftedFile {
                     path,
-                    last_commit,
-                    change_created: created_raw.to_string(),
+                    last_commit: last_commit.clone(),
+                    change_created: created.clone(),
                 });
             }
         }
@@ -938,6 +1086,50 @@ pub fn get(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ac(proposal: &str) -> Vec<(String, AffectedKind)> {
+        affected_code_items(proposal)
+    }
+
+    /// oracle 3.0.0 的 "Affected code" 解析（W7d SPEC §B1–B2，探測 p12–p18、p37–p39）。
+    #[test]
+    fn affected_code_items_follow_the_oracle_grammar() {
+        use AffectedKind::*;
+        let text = "## Impact\n\nAffected code: `src/a.rs`\n\
+- `src/b.rs`, `src/c.rs`\n\
+- New: `src/new.rs`\n\
+  src/under-new.rs\n\
+- Removed: `src/gone.rs`\n\
+- `src/mod.rs` (修改)\n\
+- 新增：plugins/x/SKILL.md\n\
+- `lib/dir/` `docs/second.md`\n\
+- see plugins/m1.md (note)\n\
+```\n\
+- `src/fenced.rs`\n\
+```\n\
+### still inside\n\
+- `src/after.rs`\n\
+## Next\n\
+- `src/outside.rs`\n";
+        assert_eq!(
+            ac(text),
+            [
+                ("src/a.rs".to_string(), Modified),
+                ("src/b.rs".to_string(), Modified),
+                ("src/c.rs".to_string(), Modified),
+                ("src/new.rs".to_string(), New),
+                ("src/under-new.rs".to_string(), New),
+                ("src/gone.rs".to_string(), Removed),
+                ("src/mod.rs".to_string(), Modified),
+                ("plugins/x/SKILL.md".to_string(), New),
+                ("see plugins/m1.md".to_string(), Modified),
+                ("src/after.rs".to_string(), Modified),
+            ]
+        );
+        // 全形冒號、帶括號的標記都不是起點。
+        assert!(ac("Affected code：`src/a.rs`\n").is_empty());
+        assert!(ac("Affected code (x): `src/a.rs`\n").is_empty());
+    }
     use crate::test_support::TempDir;
 
     /// oracle 3.0.0 的 locale 顯示名稱（W8 探測 p01／p02）：只有完全等於 `tw`／`ja`／`en`
@@ -1377,43 +1569,15 @@ mod tests {
     }
 
     #[test]
-    fn proposal_reference_extraction_matches_marker_and_line_rules() {
-        let markdown = concat!(
-            "# Intro\n",
-            "Affected code: `a/d.json`, plain2/mod.rs, foo.rs, src/no.py\n",
-            "\n",
-            "- `plain3/mod.rs`\n",
-            "- lib/l1.js\n",
-            "* app/a1.css (annotation)\n",
-            "+ src/s1.tsx\n",
-            "- public/page.html（annotation）\n",
-            "- tests/t1.rs trailing words\n",
-            "- plain2/mod.rs\n",
-            "- src/no.py\n",
-            "## Stop\n",
-            "- src/after.rs\n",
-        );
-
-        assert_eq!(
-            proposal_references(markdown),
-            vec![
-                "a/d.json",
-                "plain2/mod.rs",
-                "plain3/mod.rs",
-                "lib/l1.js",
-                "app/a1.css",
-                "src/s1.tsx",
-            ]
-        );
-    }
-
-    #[test]
-    fn proposal_reference_extraction_recognizes_every_oracle_marker() {
+    fn affected_code_recognizes_every_oracle_marker() {
         for marker in PROPOSAL_REF_MARKERS {
             let markdown = format!("before\n{marker} src/marker.rs\n");
-            assert_eq!(proposal_references(&markdown), vec!["src/marker.rs"]);
+            assert_eq!(
+                affected_code_items(&markdown),
+                [("src/marker.rs".to_string(), AffectedKind::Modified)]
+            );
         }
-        assert!(proposal_references("# Impact\n- src/no-marker.rs\n").is_empty());
+        assert!(affected_code_items("# Impact\n- src/no-marker.rs\n").is_empty());
     }
 
     #[test]
@@ -1429,8 +1593,12 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
 
+        let found: Vec<String> = BACKTICK_PATH_RE
+            .captures_iter(&markdown)
+            .map(|c| c[1].to_string())
+            .collect();
         assert_eq!(
-            backtick_references(&markdown),
+            found,
             allowed
                 .iter()
                 .map(|extension| format!("src/file.{extension}"))
@@ -1490,15 +1658,5 @@ mod tests {
             derive_staleness(today, chrono::NaiveDate::from_ymd_opt(2026, 8, 1).unwrap()).days_old,
             -14
         );
-    }
-
-    #[test]
-    fn drift_requires_a_strictly_later_valid_commit_date() {
-        let created = chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
-
-        assert!(!is_drifted("2026-07-09", created));
-        assert!(!is_drifted("2026-07-10", created));
-        assert!(is_drifted("2026-07-11", created));
-        assert!(!is_drifted("not-a-date", created));
     }
 }

@@ -463,22 +463,52 @@ drop `[P] ` and the `[after: …]` block, while `tasks.md` itself keeps the raw
 line (probe p26). Other task consumers (`drift` collision descriptions,
 `archive`) keep the raw text; the oracle's behaviour there was not observable.
 
-### Preflight (recovered by disassembly + behaviour matrix)
+### Preflight (oracle 3.0.0, W7d)
 
-- `missingFiles` (`status: critical`): file refs from the proposal's
-  "Affected code:" section only (marker also matches the Chinese variants
-  `主要檔案`/`影響檔案`/`變更檔案`/`受影響檔案`; scan stops at the next
-  heading). Backticked refs match
-  `` `([^`]*?/[^`]*?\.(?:rs|ts|tsx|jsx|svelte|md|json|yaml|toml|css|html|js))` ``;
-  bare lines must fully match the prefix-whitelisted
-  `\b((?:specs|src|src-tauri|crates|lib|tests|app|public)/[\w\-/]+\.(?:…same extensions…))\b`.
-- `driftedFiles` (`status: warnings`): backtick refs across
-  proposal+design+tasks that exist on disk and whose
-  `git log -1 --format=%cs -- <path>` date is strictly later than the
-  change's `created` date.
-- `staleness`: `daysOld` = today − `created` (negative values are not
-  clamped); `isStale` = `daysOld > 7`; the whole key vanishes when
-  `created` is missing/unparseable.
+`status` is `critical` if `missingFiles` is non-empty, else `warnings` if
+`driftedFiles` is non-empty or `staleness.isStale`, else `clean`; `staleness`
+(`daysOld = today − created`, not clamped; `isStale = daysOld > 7`; absent when
+`created` is missing or unparseable) is unchanged. Rules below were recovered by
+the W7d probes and a model replayed against the oracle (730/730 preflight
+checks); `preflight` in `instructions.rs` implements them.
+
+- **"Affected code" section** of `proposal.md`: starts at the first
+  case-insensitive `affected code:` or `主要檔案`/`影響檔案`/`變更檔案`/`受影響檔案`
+  (`Affected code：` with a full-width colon or `Affected code (x):` do not
+  count); the rest of the marker line is one line of Modified items; it ends at
+  the first line starting with `## `; lines inside ```` ``` ````/`~~~` fences
+  are skipped.
+- **Item kinds**: a top-level bullet (0–2 leading spaces) resets the kind to
+  Modified and may carry a label `New:`/`Removed:`/`Modified:` (case-sensitive,
+  ASCII colon) or `新增`/`新建`/`刪除`/`移除` followed by `:` or `：`; a label
+  alone is a header whose kind persists for the lines below. Any other line
+  keeps the current kind. An annotation anywhere on the line —
+  `（修改）（變更）(修改)(變更)` → Modified, else `（新建）（新增）(新建)(新增)` →
+  New, else `（刪除）（移除）(刪除)(移除)` → Removed — applies to that line only.
+- **Items**: the text is split on ASCII `,`. An item with two or more backticks
+  contributes only its first span, kept if it is a whole path with one of the
+  extensions `rs ts tsx jsx svelte md json yaml toml css html js`; otherwise the
+  item is cut at the first whitespace followed by `(` and kept verbatim if it
+  contains `/` and ends in such an extension (no directory whitelist:
+  `see plugins/m1.md` is reported as is). First occurrence of a path wins,
+  including its kind.
+- **`missingFiles`**: Modified items that do not exist, in section order;
+  New/Removed items are never missing. `referencedIn` is always `proposal`.
+- **Drift candidates**, deduplicated, in this order: all section items (any
+  kind); backtick paths of proposal, design, tasks whose capture has no
+  whitespace and starts with `.` or with one of `src src-tauri crates lib tests
+  app public templates examples packages test docs`; then bare paths matching
+  `\b((?:src|src-tauri|crates|lib|tests|app|public|templates|examples|packages|
+  test|docs)/[\w\-/]+\.(ext))\b` in the text outside backtick pairs.
+- **`lastCommit`**: the oracle reads history in-process (libgit2): among commits
+  reachable from HEAD, the one with the greatest committer time whose blob of
+  the path differs from its first parent's (added, deleted or content change;
+  mode-only changes do not count; merges can be the reported commit), dated in
+  its committer's time zone. OpenSpectra reproduces this with
+  `git log --diff-merges=first-parent --raw --no-renames` (git ≥ 2.31).
+- **Drifted**: the path exists, has such a commit, and `lastCommit > created` as
+  a **string** comparison with the raw `created` (so `created: 2026-2-1` never
+  drifts a `2026-02-10` commit); equal days are not drifted.
 
 ### Deliberate divergences (documented, not bugs)
 
