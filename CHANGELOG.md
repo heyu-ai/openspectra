@@ -30,7 +30,10 @@ changes.
   `01` is rejected; and touched files are recorded only after
   `task start <id>` or with `--file`, neither of which OpenSpectra
   implements. The resulting `tasks.md` matches byte-for-byte on every
-  replayed step except `task done 01` (#110).
+  replayed step except `task done 01` (#110). One divergence is documented
+  but not compared by the replay: v3.0.0 creates
+  `.spectra/touched/<change>.lock` on every `task done` that resolves a
+  change, and OpenSpectra creates no lock.
 
 ### Changed
 
