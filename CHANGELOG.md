@@ -277,6 +277,12 @@ changes.
   (19 lines, `spec_dir` always written explicitly, even for `--dir openspec`);
   only its "New projects initialize at …" comment differs, naming
   `docs/openspec`. `init --help` documents the new default for `--dir`.
+  **Known limitation: run commands from the project root.** In a
+  `docs/openspec` project, `docs/` itself contains an entry named `openspec`,
+  so a command run from `docs/` (or below) takes `docs/` as the project root:
+  `.spectra.yaml` is not read, and `.spectra/` state (in-progress, parked,
+  baselines) goes to `docs/.spectra/` (measured). v3.0.0 resolves the root
+  the same way on this layout. A fix to root discovery is tracked separately.
 - `instructions --json` reports the project's `locale` like v3.0.0: `tw` →
   `Traditional Chinese (繁體中文)`, `ja` → `Japanese (日本語)`, `en` or unset →
   `English`, any other value verbatim (it was always `English`). A non-string
@@ -360,6 +366,12 @@ changes.
 - `schema fork <source> ""` no longer leaves a `schemas/..stage-*` directory
   behind (which `schemas` then listed), and `schema fork --force` onto a
   regular file no longer leaks `schemas/.<target>.backup-*`.
+- `init --force` in a project that already has `.spectra.yaml` keeps that file
+  byte for byte and scaffolds its configured `spec_dir` (`--dir` still wins;
+  `openspec` when the field is absent), like v3.0.0. It used to rewrite
+  `.spectra.yaml` with the default `spec_dir`, disconnecting projects whose
+  specs live elsewhere. Unlike v3.0.0, an unparseable `.spectra.yaml` is an
+  error (nothing written) instead of a silent fallback to `openspec`.
 - `instructions` renders the configured `spec_dir` in the proposal and specs
   instruction/template text instead of a hard-coded `openspec/specs/`.
   `new artifact` keeps writing the unrendered `{{SPEC_DIR}}` placeholder, as

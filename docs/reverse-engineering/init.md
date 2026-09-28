@@ -132,14 +132,39 @@ OpenSpectra after D9, same jail discipline: plain `init` versus the oracle's
 d9-p3 tree, `diff -r` shows exactly one line — the `.spectra.yaml` comment
 `# New projects initialize at docs/openspec; …` (oracle: `docs/spectra`).
 
-**Unresolved, pre-existing (not caused by D9):** d9-p5 shows the oracle's
-`init --force` keeps an existing `.spectra.yaml` and its `spec_dir`.
-OpenSpectra's `--force` ignores the existing value and rewrites `.spectra.yaml`
-with the new-project default (`docs/openspec`; before D9 it was `openspec`),
-disconnecting a project whose specs live elsewhere. Reported for an owner
-decision; not changed here.
+### `init --force` keeps an existing `.spectra.yaml` (owner ruling W14-b)
 
-### Edge case: running from `docs/` in a `docs/openspec` project
+Before W14-b, OpenSpectra's `--force` ignored the existing `spec_dir` and
+rewrote `.spectra.yaml` with the new-project default (`openspec` before D9,
+`docs/openspec` after), which cut off a project whose specs live elsewhere.
+**Owner ruling (howie, 2026-09-28): follow the oracle.** Measured on oracle
+3.0.0 (same jail discipline as above; each jail pre-seeded, then one `init
+--force <jail>`):
+
+| Probe | Pre-seeded | Observed |
+|---|---|---|
+| d9-p5 | `.spectra.yaml` = `spec_dir: docs/specs\n`, `docs/specs/changes/` | stdout `✓ Initialized at <jail>/docs/specs`; scaffold under `docs/specs/`; `.spectra.yaml` byte-identical |
+| w14b-p6 | `.spectra.yaml` = `locale: tw\n` | scaffold under `openspec/` (the read default, not `docs/spectra`); `.spectra.yaml` byte-identical |
+| w14b-p7 | `.spectra.yaml` = `spec_dir: docs/specs\n`; command adds `--dir custom` | scaffold under `custom/`; `.spectra.yaml` still says `docs/specs`, byte-identical |
+| w14b-p8 | `.spectra.yaml` = `spec_dir: docs/specs\n`, empty `openspec/` | scaffold under `docs/specs/`; `openspec/` left empty; `.spectra.yaml` byte-identical |
+| w14b-p9 | `.spectra.yaml` = `spec_dir: [\n` (invalid YAML) | rc 0, scaffold under `openspec/`, file byte-identical — the parse error is swallowed |
+
+OpenSpectra now matches p5-p8: with an existing `.spectra.yaml`, `--force`
+never rewrites it, and the spec_dir is `--dir` if given, else the configured
+value (`openspec` when the field is absent); the configured value outranks an
+`openspec` entry and the D9 default. **Deliberate divergence for p9:**
+OpenSpectra fails with the same `parsing .spectra.yaml …` error every other
+command gives and writes nothing, rather than guessing a spec_dir from a file
+it cannot read. Tests: `force_*` in `crates/spectra-core/src/init.rs` and
+`init_force_keeps_the_configured_spec_dir_and_spectra_yaml`; mutation cases
+`w14b-force-rewrites-spectra-yaml`, `w14b-force-ignores-configured-spec-dir`.
+
+### Known limitation: run commands from the project root (W14-a)
+
+**Run OpenSpectra commands from the project root** (the directory holding
+`.spectra.yaml`), not from `docs/` or below it. Owner ruling (howie,
+2026-09-28): recorded as a known limitation, not fixed here; the root-discovery
+fix is tracked in a separate issue. What happens otherwise:
 
 The project-root marker is "the nearest directory holding `.spectra.yaml` or an
 entry named `openspec`". In a D9 project, `docs/` holds an entry named
@@ -167,8 +192,7 @@ files) is written under `docs/.spectra/`, and root-relative paths (drift's
 file anchors, `update`'s tool files) resolve against `docs/`. The `.spectra/`
 entry `init` adds to `.gitignore` has no leading slash, so `docs/.spectra/` is
 still ignored by git. Fixing this means changing the root-discovery rule that
-W14 aligned to the oracle (probe p02), which is an architecture decision —
-**reported to the owner, not changed here**.
+W14 aligned to the oracle (probe p02), which is why it is tracked separately.
 
 For a plain default init the human-readable output is one line (oracle
 3.0.0 prints its own default, `…/docs/spectra`; OpenSpectra prints the D9

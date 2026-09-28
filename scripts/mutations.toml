@@ -2564,3 +2564,24 @@ replace = '''新專案預設只給真正的新專案。
         NEW_PROJECT_SPEC_DIR.to_string()'''
 package = "spectra-core"
 test = "init_in_an_openspec_only_root_keeps_openspec"
+
+# W14-b（owner 裁決 2026-09-28，跟 oracle）：init --force 保留既有 .spectra.yaml 與其 spec_dir
+
+[[case]]
+id = "w14b-force-rewrites-spectra-yaml"
+issue = "W14-b"
+file = "crates/spectra-core/src/init.rs"
+find = '''    if !keep_config {'''
+replace = '''    if true {'''
+package = "spectra-core"
+test = "force_keeps_an_existing_spectra_yaml_and_its_spec_dir"
+
+[[case]]
+id = "w14b-force-ignores-configured-spec-dir"
+issue = "W14-b"
+file = "crates/spectra-core/src/init.rs"
+find = '''        Some(Config::load(root)?.spec_dir)'''
+replace = '''        None'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "init_force_keeps_the_configured_spec_dir_and_spectra_yaml"

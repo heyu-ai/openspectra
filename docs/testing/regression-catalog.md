@@ -28,6 +28,8 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
 - W14（2026-09-28，owner 裁決 D9／D10）：新增 `w14-d9-new-project-default`（新專案預設
   改回 `openspec`）與 `w14-d10-openspec-only-keeps-openspec`（只有 `openspec/` 的專案改用
   新專案預設），實測 2/2 KILLED；其餘 case 未在這一輪重跑
+- W14-b（2026-09-28，`init --force` 保留既有 `.spectra.yaml`）：新增
+  `w14b-force-rewrites-spectra-yaml` 與 `w14b-force-ignores-configured-spec-dir`，實測 2/2 KILLED
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 

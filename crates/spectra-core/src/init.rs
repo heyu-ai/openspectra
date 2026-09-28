@@ -128,7 +128,8 @@ pub fn init_with_tools(
 /// `.spectra/` is ignored, and writes `.spectra.yaml` last. It deliberately
 /// does not overwrite `project.md`, `AGENTS.md`, `config.yaml`, or any existing
 /// change/spec content under the spec directory.
-/// `force` 只略過已初始化檢查，其餘檔案仍沿用相同的非破壞性處理。
+/// `force` 略過已初始化檢查；既有的 `.spectra.yaml` 保留不改寫，spec_dir 沿用其中的值
+/// （`--dir` 優先），其餘檔案仍沿用相同的非破壞性處理。
 pub fn init_with_options(
     root: &Path,
     adopt: bool,
@@ -139,12 +140,23 @@ pub fn init_with_options(
     // 中途失敗後才能直接重試。oracle 3.0.0 在只有 `openspec/` 的專案會拒絕 init（W14 探測
     // p03）；OpenSpectra 在那裡以非破壞方式完成——owner 裁決 D10 維持此刻意分歧
     // （docs/reverse-engineering/init.md）。
-    if !force && Config::has_config_file(root) {
+    let has_config = Config::has_config_file(root);
+    if !force && has_config {
         anyhow::bail!("Already initialized. Use --force to reinitialize.");
     }
+    // W14-b（owner 裁決 2026-09-28，跟 oracle 3.0.0，探測 d9-p5、w14b-p6..p8）：`--force` 遇到
+    // 既有 `.spectra.yaml` 時沿用其中的 spec_dir（沒寫則為讀取預設 `openspec`），且不改寫該檔。
+    // 讀不懂的檔案直接報錯、什麼都不寫——oracle 會靜默改用 `openspec`（w14b-p9），這裡刻意不猜。
+    let configured = if has_config {
+        Some(Config::load(root)?.spec_dir)
+    } else {
+        None
+    };
 
     let spec_dir = if let Some(spec_dir) = spec_dir {
         spec_dir.to_string()
+    } else if let Some(configured) = configured {
+        configured
     } else if adopt {
         detect_adopt_spec_dir(root)?
     } else if root
@@ -158,10 +170,16 @@ pub fn init_with_options(
     } else {
         NEW_PROJECT_SPEC_DIR.to_string()
     };
-    init_resolved_spec_dir(root, spec_dir, adopt)
+    init_resolved_spec_dir(root, spec_dir, adopt, has_config)
 }
 
-fn init_resolved_spec_dir(root: &Path, spec_dir: String, adopted: bool) -> Result<InitOutcome> {
+/// `keep_config`：`.spectra.yaml` 已存在（只會發生在 `--force`），保留原檔不改寫。
+fn init_resolved_spec_dir(
+    root: &Path,
+    spec_dir: String,
+    adopted: bool,
+    keep_config: bool,
+) -> Result<InitOutcome> {
     // One call: `create_dir_all` creates `changes/` as a parent. A failure at
     // either level is reported with the archive path -- slightly less precise
     // than two calls, but both levels fail for the same reasons (unwritable
@@ -194,9 +212,11 @@ fn init_resolved_spec_dir(root: &Path, spec_dir: String, adopted: bool) -> Resul
 
     let gitignore_updated = ensure_gitignore_entry(root)?;
 
-    write_atomically(&root.join(".spectra.yaml"), &spectra_config(&spec_dir))
-        .map_err(anyhow::Error::from)
-        .context("writing .spectra.yaml")?;
+    if !keep_config {
+        write_atomically(&root.join(".spectra.yaml"), &spectra_config(&spec_dir))
+            .map_err(anyhow::Error::from)
+            .context("writing .spectra.yaml")?;
+    }
 
     Ok(InitOutcome {
         root: root.to_path_buf(),
@@ -544,7 +564,8 @@ mod tests {
     fn resolved_non_default_spec_dir_places_artifacts_and_writes_line_seven() {
         let tmp = TempDir::new();
 
-        let outcome = init_resolved_spec_dir(&tmp, "docs/myspecs".to_string(), true).unwrap();
+        let outcome =
+            init_resolved_spec_dir(&tmp, "docs/myspecs".to_string(), true, false).unwrap();
 
         assert_eq!(outcome.spec_dir, "docs/myspecs");
         assert!(outcome.adopted);
@@ -590,6 +611,93 @@ mod tests {
                 "#   - claude\n",
                 "#   - cursor\n",
             )
+        );
+    }
+
+    /// W14-b（owner 裁決 2026-09-28，跟 oracle）：`--force` 遇到既有 `.spectra.yaml` 時沿用其中的
+    /// spec_dir，且不改寫 `.spectra.yaml`（oracle 3.0.0 探測 d9-p5）。
+    #[test]
+    fn force_keeps_an_existing_spectra_yaml_and_its_spec_dir() {
+        let tmp = TempDir::new();
+        std::fs::create_dir_all(tmp.join("docs/specs/changes")).unwrap();
+        std::fs::write(tmp.join(".spectra.yaml"), "spec_dir: docs/specs\n").unwrap();
+
+        let outcome = init_with_options(&tmp, false, true, None).unwrap();
+
+        assert_eq!(outcome.spec_dir, "docs/specs");
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+            "spec_dir: docs/specs\n"
+        );
+        assert!(tmp.join("docs/specs/changes/archive/.gitkeep").is_file());
+        assert!(tmp.join("docs/specs/specs/.gitkeep").is_file());
+        assert!(tmp.join("docs/specs/config.yaml").is_file());
+        assert_eq!(entry_names(&tmp.join("docs")), ["specs"]);
+    }
+
+    /// oracle 探測 w14b-p6：`.spectra.yaml` 沒寫 spec_dir 時照讀取預設 `openspec`，不是新專案預設。
+    #[test]
+    fn force_with_a_spectra_yaml_without_spec_dir_uses_openspec() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".spectra.yaml"), "locale: tw\n").unwrap();
+
+        let outcome = init_with_options(&tmp, false, true, None).unwrap();
+
+        assert_eq!(outcome.spec_dir, "openspec");
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+            "locale: tw\n"
+        );
+        assert_eq!(
+            entry_names(&tmp),
+            [".gitignore", ".spectra.yaml", "openspec"]
+        );
+    }
+
+    /// oracle 探測 w14b-p7：明給 `--dir` 時鷹架建在那裡，但 `.spectra.yaml` 照樣不動。
+    #[test]
+    fn force_with_dir_scaffolds_there_and_still_keeps_spectra_yaml() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".spectra.yaml"), "spec_dir: docs/specs\n").unwrap();
+
+        let outcome = init_with_options(&tmp, false, true, Some("custom")).unwrap();
+
+        assert_eq!(outcome.spec_dir, "custom");
+        assert!(tmp.join("custom/changes/archive/.gitkeep").is_file());
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+            "spec_dir: docs/specs\n"
+        );
+    }
+
+    /// oracle 探測 w14b-p8：同一層同時有 `.spectra.yaml` 與 `openspec/` 時，`.spectra.yaml` 決定。
+    #[test]
+    fn force_prefers_the_configured_spec_dir_over_an_openspec_entry() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".spectra.yaml"), "spec_dir: docs/specs\n").unwrap();
+        std::fs::create_dir(tmp.join("openspec")).unwrap();
+
+        let outcome = init_with_options(&tmp, false, true, None).unwrap();
+
+        assert_eq!(outcome.spec_dir, "docs/specs");
+        assert!(tmp.join("docs/specs/config.yaml").is_file());
+        assert_eq!(entry_names(&tmp.join("openspec")), Vec::<String>::new());
+    }
+
+    /// 刻意分歧（oracle 探測 w14b-p9 會靜默改用 `openspec`）：讀不懂的 `.spectra.yaml`
+    /// 直接報錯、什麼都不寫，不猜 spec_dir。
+    #[test]
+    fn force_with_a_malformed_spectra_yaml_fails_without_writing() {
+        let tmp = TempDir::new();
+        std::fs::write(tmp.join(".spectra.yaml"), "spec_dir: [\n").unwrap();
+
+        let err = init_with_options(&tmp, false, true, None).unwrap_err();
+
+        assert!(format!("{err:#}").contains("parsing"), "got: {err:#}");
+        assert_eq!(entry_names(&tmp), [".spectra.yaml"]);
+        assert_eq!(
+            std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+            "spec_dir: [\n"
         );
     }
 

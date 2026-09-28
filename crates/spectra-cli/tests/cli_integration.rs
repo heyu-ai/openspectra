@@ -358,6 +358,36 @@ fn init_force_reinitializes_an_existing_project() {
     assert!(tmp.join("docs/openspec/config.yaml").is_file());
 }
 
+/// W14-b（跟 oracle 3.0.0，探測 d9-p5）：spec_dir 在非預設位置的專案跑 `init --force`，
+/// 沿用既有 spec_dir、`.spectra.yaml` 位元組不變。
+#[test]
+fn init_force_keeps_the_configured_spec_dir_and_spectra_yaml() {
+    let tmp = TempDir::new("init-force-keep");
+    std::fs::create_dir_all(tmp.join("docs/specs/changes")).unwrap();
+    std::fs::write(tmp.join(".spectra.yaml"), "spec_dir: docs/specs\n").unwrap();
+
+    let out = spectra()
+        .args(["init", "--force"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "init --force failed: {out:?}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!(
+            "✓ Initialized at {}\n",
+            tmp.canonicalize().unwrap().join("docs/specs").display()
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.join(".spectra.yaml")).unwrap(),
+        "spec_dir: docs/specs\n"
+    );
+    assert!(tmp.join("docs/specs/specs/.gitkeep").is_file());
+    assert!(!tmp.join("docs/openspec").exists());
+}
+
 #[test]
 fn init_dir_uses_the_custom_spec_directory() {
     let tmp = TempDir::new("init-dir");
