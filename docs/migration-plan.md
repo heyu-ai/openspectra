@@ -214,17 +214,18 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | # | 工作項 | 對應驗收 | 追蹤 | 狀態 |
 |---|---|---|---|---|
 | W1 | 量測工具：模板 CLI 解析測試（`cargo test`，Linux／macOS 皆跑）＋ `scripts/parity-probe.py`（oracle 比對、允許清單） | A2、A3 的量尺 | — | PR #196（A2 缺口 41 條、A1 缺口 19 項、A3 已知分歧 124 條） |
-| W2 | `instructions` 補 `--omit-context`／`--compact`／`--summary`／`--agent`／`--type` | A1、A2 | 新 issue | 待辦 |
+| W2 | `instructions` 補 `--omit-context`／`--compact`／`--summary`／`--agent`／`--type` | A1、A2 | — | PR #197（stacked on #196；另補 5 個漏抓的 skill、`contextRef`、spec_dir 代入；驗收矩陣 204/208 相同） |
 | W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | 新 issue | 待辦 |
 | W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | 待辦 |
 | W5 | `archive --preview`／`--json` | A1、A2 | 新 issue | 待辦 |
 | W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦 |
-| W7 | JSON 形狀對齊 3.0.0：`list`（`summary`、排序）、`list --specs`、`show`、`drift`／`instructions` 的 `dormancy`、`recommended_action`、`tasks[]` 欄位 | A3 | 新 issue | 待辦 |
+| W7 | JSON 形狀與內容對齊 3.0.0：`list`（`summary`、排序）、`list --specs`、`show`、`drift`／`instructions` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`／`unresolved_prerequisites`／`cycle_member`／`mixed_format`；內建 schema 的 instruction／template 文字（W2 實測 specs instruction 多了 Purpose section 與 Scenario subject rule 兩段） | A3 | 新 issue | 待辦 |
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | 待辦 |
 | W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | 待辦 |
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
 | W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | 待辦 |
 | W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | 待辦（最後做） |
+| W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.` | A3 | W2 發現 | 待辦（W13 之前做） |
 | W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
 
 **每一項的標準流程**：
