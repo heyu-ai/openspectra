@@ -496,6 +496,8 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | D11 | `schema validate`／`fork` 的 6 項取捨 | 1 路徑含 `..`／絕對路徑：**維持拒絕**；2 template 缺檔／空檔：**跟 oracle 視為合法，但輸出 warning**；3 fork 目標名稱：**維持檢查**；4 fork 寫入：**維持原子替換**；5 fork 專案 schema：**必填欄位跟 oracle 放寬，複製維持原樣（保留註解）**；6 不帶名稱：**跟 oracle 驗 `spec-driven`** | W7g |
 | D12 | `validate` oracle 格式如何呈現 OpenSpec 規則 | 1 INFO：**只把「Archive would refuse」放進 warnings**；2 措辭：**OpenSpec 措辭，delta 檔加 `specs/<cap>/spec.md: ` 前綴**；3 `--all`／`--changes --specs`：**照 OpenSpec 語意**；4 `validate <item>`：**接受 spec 名稱**；5 不帶參數：**跟 oracle 驗全部 changes**；6 trace footer 檢查：**維持 ERROR** | W9a |
 | D11-7 | schema 的 `generates:` 含絕對路徑或 `..`（W7g 實作時發現；oracle 判為合法並原樣帶到 `status`／`instructions` 的 outputPath） | **維持拒絕**，與 D11-1 同一安全理由，記為刻意分歧 | W7g |
+| W14-a | 新專案（D9 `docs/openspec`）在 `docs/` 底下執行時，`docs/` 被誤認為專案根（W14 實作時發現；oracle 對同樣佈局行為相同） | **記為已知限制**，文件寫明在專案根執行，修法另開 #221 設計（屆時需再裁決） | W14、#221 |
+| W14-b | `init --force` 遇到既有 `.spectra.yaml`（既有分歧：oracle 保留其 spec_dir，OpenSpectra 覆寫成新預設） | **跟 oracle 保留既有 spec_dir**，併入 W14 的 PR | W14 |
 | W13-A3 | `status --json` 的 OpenSpectra 專屬欄位 `isPlanningComplete`、`artifacts[].requires` | **保留**，補進 CHANGELOG 記為刻意分歧 | A3 |
 | W10-1 | `CLICOLOR_FORCE` | **不支援**，維持 CLI 全域規則（TTY、`--no-color`、`NO_COLOR`），記為刻意分歧 | W10（#215） |
 | W10-2 | 同一對區段內多個衝突 requirement 的順序（oracle 為 HashSet 序、每次不同） | **前一個區段的文件順序** | W10（#215） |
