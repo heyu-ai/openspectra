@@ -65,6 +65,12 @@ argument order → tracking → write `tasks.md`.
   exit 1: `Failed to parse touched tracking <abs path>: <serde error>` /
   `Touched tracking belongs to "<other>", expected "<change>"`. A corrupt
   baseline also fails.
+* `<desc>` (human line, JSON `task_desc`, and the touched entry's
+  `task_desc`) is the normalized description: the legacy `[P] ` prefix and an
+  `[after: …]` block right after the task number are removed (`[P] 1.3
+  [after: 1.1] third` → `1.3 third`), while `tasks.md` keeps the raw line
+  (oracle 3.0.0, probe p26; rules in `artifact-workflow.md`, "Apply tasks and
+  dependencies").
 * Output: human `✓ Task <id> marked as done: <desc>` on stdout and each
   warning as `! <warning>` on stderr; `--json` is one compact line with
   alphabetical keys

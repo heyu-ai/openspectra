@@ -31,10 +31,21 @@ kebab-case (`^[a-z0-9]+(-+[a-z0-9]+)*$`).
 ## JSON schema (`spectra drift <change> --json`)
 
 ```
-change_id, created, last_commit, dimensions[], broken_anchors[],
+dormancy, change_id, created, last_commit, dimensions[], broken_anchors[],
 unresolved_anchors[], tasks_maybe_resolved[], tasks_blocked_external[],
-commits_since_created, total_score, severity, primary_recommendation
+commits_since_created, total_score, severity, recommended_action,
+primary_recommendation
 ```
+
+`dormancy` and `recommended_action` are new in oracle 3.0.0 (see
+[Dormancy](#dormancy-oracle-300) and [Severity &
+recommendation](#severity--recommendation)).
+
+* `created` comes from `<change>/.openspec.yaml` read as a struct that requires
+  **both** `schema` and `created`: a file with only `created` (or only
+  `schema`), a missing file, or an unparseable one all give `created: null`,
+  exactly as `show` does (oracle 3.0.0, probe p10 `y-createdonly`). The value
+  is passed through verbatim otherwise (`20260210`, `notadate`).
 
 * `dimensions[]` = `{ kind, status, score, contributes_to_total }`,
   `kind ∈ Time | Structure | Tasks | Environment`.
@@ -63,7 +74,15 @@ against the oracle:
 | 7–21 | `aging (Nd)` | 1 |
 | 22–60 | `stale (Nd)` | 2 |
 | ≥61 | `abandoned (Nd)` | 4 |
-| — | `no created date` / `invalid created date` | 0 |
+| — | `no created date` / `invalid created date "<raw>"` | 0 |
+
+Oracle 3.0.0 quotes the invalid raw value with Rust Debug quoting
+(`invalid created date "notadate"`, `invalid created date
+"2026-02-10T10:00:00Z"`), and appends **`, git unavailable`** to the Time
+status whenever HEAD cannot be resolved — no repository, a broken `.git`, or a
+repository without commits — whatever the date state (`stale (27d), git
+unavailable`, `no created date, git unavailable`, `invalid created date
+"notadate", git unavailable`; probe p28, ten cases). The score is unaffected.
 
 All three boundaries and the `abandoned` score are now **pinned exactly** (not
 interpolated) by sweeping synthetic changes with controlled `created` dates
@@ -167,7 +186,11 @@ paths each task names. For pending tasks:
 * `tasks_maybe_resolved` — pending tasks whose verb+target keywords match a
   commit subject since `created` ("maybe done elsewhere").
 
-**Every captured oracle sample reported `0 blocked, 0 maybe-done`** — including
+When the change has **no `tasks.md`**, oracle 3.0.0 reports the status
+`no tasks.md` (score 0); an empty `tasks.md` still reports the counts
+(`0 blocked, 0 maybe-done`).
+
+**Every captured v2.3.1 oracle sample reported `0 blocked, 0 maybe-done`** — including
 in-progress changes with many pending tasks and 100+ intervening commits that
 *did* touch the referenced files. With no positive sample, the exact predicates
 cannot be verified, and each heuristic tried (file-touched-since-baseline,
@@ -176,6 +199,15 @@ emits. OpenSpectra therefore keeps Tasks detection **off** behind
 `calibration::TASKS_DETECTION_CALIBRATED = false`, matching 100% of observed
 behaviour. The parser and data model are complete and tested; flip the flag once
 a positive sample is captured.
+
+> **3.0.0 update (2026-09-28):** the A3 parity probe
+> (`scripts/parity-probe.py`) now records oracle 3.0.0 emitting
+> `tasks_blocked_external` entries (with `commit_sha`, `commit_date`,
+> `commit_subject`) on the real corpus projects, so positive samples exist and
+> the detector can be calibrated. Queued as W7d in `docs/migration-plan.md`; the
+> resulting Tasks score also explains the corpus's `severity` /
+> `recommended_action` value divergences listed in
+> `golden/parity-known.tsv`.
 
 ### 4. Environment — display only
 `commits_since_created = git rev-list --count --since=<created> HEAD`. Shown as
@@ -190,6 +222,98 @@ a positive sample is captured.
 | heavy | >8 **or** decay >30% | `spectra archive <change> --skip-specs` |
 
 (light/medium recommend a slash-command; heavy recommends the real CLI.)
+
+Oracle 3.0.0 adds `recommended_action` = `{action_kind, change_name, flags}`
+(struct order), a pure function of `severity` mirroring
+`primary_recommendation` (probe p15):
+
+| severity | action_kind | flags |
+|---|---|---|
+| light | `apply` | `[]` |
+| medium | `ingest` | `[]` |
+| heavy | `archive` | `["--skip-specs"]` |
+
+All-tasks-done still yields `apply`.
+
+## Dormancy (oracle 3.0.0)
+
+`dormancy` = `{status, reason, age_days, idle_days}` (struct order; the two day
+counts are integers or `null`). The same object appears first in
+`instructions apply --json` (and its `--compact` projection). Implemented in
+`crates/spectra-core/src/dormancy.rs`; probes p12–p14 and p28.
+
+Inputs:
+
+* `created`: the same both-keys-required `created` as above, parsed as
+  `%Y-%m-%d` (lenient: `2026-9-1` parses; an RFC 3339 timestamp does not).
+* `age_days` = today's **local** calendar date − `created` (TZ-sensitive, may
+  be negative).
+* `idle_days` = floor((now − author time) / 86400 s) of the newest commit
+  touching the change directory (`git log -1 --format=%at -- <dir>`). The
+  **author** time counts, the committer time is ignored (author 09-10 /
+  committer 09-27 → 17 idle days); unrelated later commits and uncommitted
+  edits are ignored; the project may be a subdirectory of the repository.
+
+Decision table, evaluated in order:
+
+| condition | status | reason | age_days | idle_days |
+|---|---|---|---|---|
+| `created` missing or invalid | `unknown` | `created date missing or invalid` | null | null |
+| `created` after today | `unknown` | `created date is in the future` | negative | null |
+| no repository (including a broken `.git`) | `unknown` | `Git unavailable` | age | null |
+| repository present but `git` cannot run | `unknown` | `Git history unavailable` | age | null |
+| change dir resolves outside the work tree | `unknown` | `change directory outside Git work directory` | age | null |
+| last commit time after now | `unknown` | `commit timestamp invalid or in the future` | age | null |
+| no commit touches the dir (incl. a repo without commits), age > 5 | `triggered` | `older than five days; no directory commits` | age | null |
+| no commit touches the dir, age ≤ 5 | `fresh` | `age or idle threshold not reached` | age | null |
+| age > 5 **and** idle ≥ 3 | `triggered` | `older than five days; no directory commit in three days` | age | idle |
+| otherwise | `fresh` | `age or idle threshold not reached` | age | idle |
+
+Boundaries probed: age 5 / idle 10 → fresh; age 6 / idle 3 → triggered; age 6
+/ 1.96 days → fresh (idle 1). The oracle opens the repository with libgit2 and
+reads history with the `git` binary; OpenSpectra uses `git` for both, so "no
+repository" is decided by `git rev-parse --show-toplevel`, and when `git`
+itself cannot run a `.git` above the project root means `Git history
+unavailable`. The strings `Git work directory unavailable`, `change directory
+unavailable` and `invalid Git history encoding` exist in the binary but were not
+reproduced; `invalid Git timestamp` is used for an unparseable `%at`.
+
+## Human output (oracle 3.0.0)
+
+Pinned byte-for-byte (probe p29; `drift_human` in
+`crates/spectra-cli/src/main.rs`):
+
+```
+Drift Report: c
+  Created: 2026-09-01
+
+  Dimension   Status                               Score
+  Time        stale (27d)                             +2
+  Structure   12/13 anchors broken                    +4
+  Tasks       0 blocked, 0 maybe-done                 +0
+  Environment 0 commits                                —
+  Total                                                6
+
+Broken anchors
+  - src/missing1.rs (FilePath) — file does not exist
+
+Severity: HEAVY drift
+> spectra archive c --skip-specs
+```
+
+* `Created:` only when `created` is non-null (printed raw, even when invalid).
+* Each row is `"  " + {dimension:<11} + " " + {status:<35} + " " +
+  {score:>6}`; an overlong status pushes the score right rather than being
+  cut. Contributing dimensions show `+N`, Environment shows `—`, Total the
+  plain number.
+* `Broken anchors` only when non-empty, in `broken_anchors` order.
+* On a TTY (probe p30) the title, header cells, `Total` label and value and
+  `Severity` are bold; anchors cyan (`36`), reasons dim (`2`); the severity word
+  bold green / yellow / red (`1;32` / `1;33` / `1;31`); the recommendation bold
+  cyan (`1;36`). `--no-color` and `NO_COLOR` turn colour off.
+* OpenSpectra-only: `unresolved_anchors` (#83) is listed in an `Unresolved
+  anchors` section, only when non-empty. Before 3.0.0 alignment OpenSpectra
+  printed its own Markdown layout (conclusion sentence, table, recommendation).
 
 ## Exit codes
 
@@ -206,6 +330,14 @@ same plain-text sentinel on stdout. See the complete matrix in
 [`artifact-workflow.md`](artifact-workflow.md#no-active-change-command-matrix).
 
 ## Deliberate divergences
+
+### Unparseable `.openspec.yaml` warning
+
+OpenSpectra prints `warning: ignoring unparseable <path> (<error>)` on stderr
+when a change's `.openspec.yaml` cannot be parsed; oracle 3.0.0 is silent. The
+warning is emitted by `change::load` on purpose (a malformed file must not
+silently read as "no metadata"), so it appears for every command that loads a
+change through it; stdout is identical to the oracle (probe p10 `y-broken`).
 
 ### Forward-reference FilePaths are not broken (#83, narrowed by #119)
 

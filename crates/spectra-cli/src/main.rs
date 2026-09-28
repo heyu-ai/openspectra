@@ -838,79 +838,97 @@ fn colorize(text: &str, sgr_code: &str, enabled: bool) -> String {
     }
 }
 
-/// SGR color code for a drift severity: green for light, yellow for medium,
-/// red for heavy (and any other/unknown value, treated as the worst case).
+/// SGR code for the severity word in human `drift` output (bold + color,
+/// oracle 3.0.0): green for light, yellow for medium, red for heavy (and any
+/// other value, treated as the worst case).
 fn severity_sgr_code(severity: &str) -> &'static str {
     match severity {
-        "light" => "32",
-        "medium" => "33",
-        _ => "31",
+        "light" => "1;32",
+        "medium" => "1;33",
+        _ => "1;31",
     }
 }
 
-/// The severity-colored conclusion sentence, composed here (rather than
-/// inline in `print_human`) so the `colorize`/`severity_sgr_code` wiring
-/// itself — not just each function in isolation — is unit-testable.
-fn conclusion_line(severity: &str, use_color: bool) -> String {
-    let conclusion = match severity {
-        "light" => "Drift is minor — you can start work directly.",
-        "medium" => "The change has drifted moderately; refresh the plan before implementing.",
-        _ => "The change has drifted heavily; the old plan likely no longer fits — archive or restart.",
-    };
-    colorize(conclusion, severity_sgr_code(severity), use_color)
-}
-
-/// Conclusion-first human report (mirrors the reference layout: plain-language
-/// next step, then a scorecard, then non-empty technical detail).
-fn print_human(r: &drift::DriftReport, use_color: bool) {
-    println!("## Drift Report: {}\n", r.change_id);
-    println!("{}\n", conclusion_line(&r.severity, use_color));
-
-    let dim = |k: &str| r.dimensions.iter().find(|d| format!("{:?}", d.kind) == k);
-    let time = dim("Time").map(|d| d.status.as_str()).unwrap_or("-");
-    let design = if r.broken_anchors.is_empty() && r.unresolved_anchors.is_empty() {
-        "No broken references".to_string()
-    } else {
-        format!(
-            "{} broken, {} unresolved",
-            r.broken_anchors.len(),
-            r.unresolved_anchors.len()
-        )
-    };
-    let tasks = if r.tasks_blocked_external.is_empty() && r.tasks_maybe_resolved.is_empty() {
-        "No task collisions".to_string()
-    } else {
-        format!(
-            "{} blocked, {} maybe-done",
-            r.tasks_blocked_external.len(),
-            r.tasks_maybe_resolved.len()
-        )
-    };
-
-    println!("| Dimension         | Status                                |");
-    println!("|-------------------|---------------------------------------|");
-    println!("| Time              | {time:<37} |");
-    println!("| Design references | {design:<37} |");
-    println!("| Pending tasks     | {tasks:<37} |");
-    println!(
-        "| Overall           | {:<37} |",
-        format!("{}, total score {}", r.severity, r.total_score)
-    );
-
-    println!("\n### Recommendation\nRun `{}`.", r.primary_recommendation);
-
-    if !r.broken_anchors.is_empty() {
-        println!("\n### Broken design references");
-        for a in &r.broken_anchors {
-            println!("- `{}` ({}) — {}", a.anchor, a.category, a.reason);
+/// Human `drift` report, byte-for-byte oracle 3.0.0 (probes p29/p30 in
+/// `docs/reverse-engineering/drift.md`): a four-dimension table, the broken
+/// anchors, then severity and the recommended next step. Each table row is
+/// `"  " + {dimension:<11} + " " + {status:<35} + " " + {score:>6}`, so an
+/// overlong status pushes the score right instead of truncating. On a TTY the
+/// oracle bolds the title, the header cells, the Total row and "Severity",
+/// colors anchors cyan and reasons dim. `unresolved_anchors` (OpenSpectra's
+/// #83 addition) gets its own section only when non-empty.
+fn drift_human(r: &drift::DriftReport, use_color: bool) -> String {
+    let bold = |text: &str| colorize(text, "1", use_color);
+    let mut out = format!("{}: {}\n", bold("Drift Report"), r.change_id);
+    if let Some(created) = &r.created {
+        out.push_str(&format!("  Created: {created}\n"));
+    }
+    out.push('\n');
+    out.push_str(&format!(
+        "  {} {} {}\n",
+        bold("Dimension  "),
+        bold(&format!("{:<35}", "Status")),
+        bold(&format!("{:>6}", "Score"))
+    ));
+    for d in &r.dimensions {
+        let name = format!("{:?}", d.kind);
+        let score = if d.contributes_to_total {
+            format!("+{}", d.score)
+        } else {
+            "—".to_string()
+        };
+        out.push_str(&format!("  {name:<11} {:<35} {score:>6}\n", d.status));
+    }
+    out.push_str(&format!(
+        "  {} {:<35} {}\n",
+        bold("Total      "),
+        "",
+        bold(&format!("{:>6}", r.total_score))
+    ));
+    let anchor_section = |title: &str, anchors: &mut dyn Iterator<Item = (&str, &str, &str)>| {
+        let mut section = format!("\n{}\n", bold(title));
+        for (anchor, category, reason) in anchors {
+            section.push_str(&format!(
+                "  - {} ({category}) — {}\n",
+                colorize(anchor, "36", use_color),
+                colorize(reason, "2", use_color)
+            ));
         }
+        section
+    };
+    if !r.broken_anchors.is_empty() {
+        out.push_str(&anchor_section(
+            "Broken anchors",
+            &mut r
+                .broken_anchors
+                .iter()
+                .map(|a| (a.anchor.as_str(), a.category.as_str(), a.reason.as_str())),
+        ));
     }
     if !r.unresolved_anchors.is_empty() {
-        println!("\n### Unresolved design references");
-        for a in &r.unresolved_anchors {
-            println!("- `{}` ({}) — {}", a.anchor, a.category, a.reason);
-        }
+        out.push_str(&anchor_section(
+            "Unresolved anchors",
+            &mut r
+                .unresolved_anchors
+                .iter()
+                .map(|a| (a.anchor.as_str(), a.category.as_str(), a.reason.as_str())),
+        ));
     }
+    out.push_str(&format!(
+        "\n{}: {} drift\n> {}\n",
+        bold("Severity"),
+        colorize(
+            &r.severity.to_uppercase(),
+            severity_sgr_code(&r.severity),
+            use_color
+        ),
+        colorize(&r.primary_recommendation, "1;36", use_color)
+    ));
+    out
+}
+
+fn print_human(r: &drift::DriftReport, use_color: bool) {
+    print!("{}", drift_human(r, use_color));
 }
 
 fn list_change_items(
@@ -2404,20 +2422,85 @@ mod tests {
 
     #[test]
     fn severity_sgr_code_maps_known_and_unknown_severities() {
-        assert_eq!(severity_sgr_code("light"), "32");
-        assert_eq!(severity_sgr_code("medium"), "33");
-        assert_eq!(severity_sgr_code("heavy"), "31");
-        assert_eq!(severity_sgr_code("anything-else"), "31");
+        assert_eq!(severity_sgr_code("light"), "1;32");
+        assert_eq!(severity_sgr_code("medium"), "1;33");
+        assert_eq!(severity_sgr_code("heavy"), "1;31");
+        assert_eq!(severity_sgr_code("anything-else"), "1;31");
     }
 
+    fn sample_drift(status: &str, broken: usize) -> drift::DriftReport {
+        let dim = |kind, status: &str, score, contributes| drift::Dimension {
+            kind,
+            status: status.to_string(),
+            score,
+            contributes_to_total: contributes,
+        };
+        drift::DriftReport {
+            dormancy: spectra_core::dormancy::decide(
+                None,
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 28).unwrap(),
+                0,
+                spectra_core::dormancy::History::NoRepo,
+            ),
+            change_id: "c".to_string(),
+            created: Some("2026-09-01".to_string()),
+            last_commit: None,
+            dimensions: vec![
+                dim(drift::DimensionKind::Time, status, 2, true),
+                dim(
+                    drift::DimensionKind::Structure,
+                    "12/13 anchors broken",
+                    4,
+                    true,
+                ),
+                dim(
+                    drift::DimensionKind::Tasks,
+                    "0 blocked, 0 maybe-done",
+                    0,
+                    true,
+                ),
+                dim(drift::DimensionKind::Environment, "0 commits", 0, false),
+            ],
+            broken_anchors: (1..=broken)
+                .map(|i| spectra_core::anchors::BrokenAnchor {
+                    anchor: format!("src/missing{i}.rs"),
+                    category: "FilePath".to_string(),
+                    reason: "file does not exist".to_string(),
+                })
+                .collect(),
+            unresolved_anchors: vec![],
+            tasks_maybe_resolved: vec![],
+            tasks_blocked_external: vec![],
+            commits_since_created: 0,
+            total_score: 6,
+            severity: "heavy".to_string(),
+            recommended_action: drift::RecommendedAction::for_severity("heavy", "c"),
+            primary_recommendation: "spectra archive c --skip-specs".to_string(),
+        }
+    }
+
+    /// oracle 3.0.0 的 human drift（p29 act-heavy 的純文字、p29 p28-none-invalid 的超長狀態、
+    /// p30 的 TTY 上色版本），逐位元組。
     #[test]
-    fn conclusion_line_colors_by_severity_when_enabled() {
+    fn drift_human_matches_oracle_bytes() {
         assert_eq!(
-            conclusion_line("light", true),
-            "\x1b[32mDrift is minor — you can start work directly.\x1b[0m"
+            drift_human(&sample_drift("stale (27d)", 2), false),
+            "Drift Report: c\n  Created: 2026-09-01\n\n  Dimension   Status                               Score\n  Time        stale (27d)                             +2\n  Structure   12/13 anchors broken                    +4\n  Tasks       0 blocked, 0 maybe-done                 +0\n  Environment 0 commits                                —\n  Total                                                6\n\nBroken anchors\n  - src/missing1.rs (FilePath) — file does not exist\n  - src/missing2.rs (FilePath) — file does not exist\n\nSeverity: HEAVY drift\n> spectra archive c --skip-specs\n"
         );
-        assert!(conclusion_line("light", false).starts_with("Drift is minor"));
-        assert!(!conclusion_line("light", false).contains('\x1b'));
+        let long = drift_human(
+            &sample_drift("invalid created date \"notadate\", git unavailable", 0),
+            false,
+        );
+        assert!(
+            long.contains(
+                "\n  Time        invalid created date \"notadate\", git unavailable     +2\n"
+            ),
+            "{long}"
+        );
+        assert_eq!(
+            drift_human(&sample_drift("stale (27d)", 1), true),
+            "\x1b[1mDrift Report\x1b[0m: c\n  Created: 2026-09-01\n\n  \x1b[1mDimension  \x1b[0m \x1b[1mStatus                             \x1b[0m \x1b[1m Score\x1b[0m\n  Time        stale (27d)                             +2\n  Structure   12/13 anchors broken                    +4\n  Tasks       0 blocked, 0 maybe-done                 +0\n  Environment 0 commits                                —\n  \x1b[1mTotal      \x1b[0m                                     \x1b[1m     6\x1b[0m\n\n\x1b[1mBroken anchors\x1b[0m\n  - \x1b[36msrc/missing1.rs\x1b[0m (FilePath) — \x1b[2mfile does not exist\x1b[0m\n\n\x1b[1mSeverity\x1b[0m: \x1b[1;31mHEAVY\x1b[0m drift\n> \x1b[1;36mspectra archive c --skip-specs\x1b[0m\n"
+        );
     }
 
     #[test]

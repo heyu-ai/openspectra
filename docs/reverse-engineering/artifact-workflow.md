@@ -394,6 +394,53 @@ everywhere.
   reproduce it. OpenSpectra uses the default spec dir in every
   non-initialized directory.
 
+### Apply tasks and dependencies (oracle 3.0.0)
+
+`instructions apply --json` starts with the `dormancy` object shared with
+`drift --json` (see `drift.md`, "Dormancy"); `--compact` keeps it (keys are
+alphabetical there), `--summary` does not. Each `tasks[]` element is, in this
+order, `id, number, prerequisites, unresolved_prerequisites, cycle_member,
+mixed_format, description, done, parallel` (the new keys are snake_case).
+Probes t01–t11, g01–g18, h01–h09, u01–u08 (2026-09-28). Line recognition and
+the 1-based sequential `id` are unchanged.
+
+The text after the checkbox (trimmed) is parsed by `tasks::parse_task_text`:
+
+1. **Legacy `[P]`** only as the exact prefix `"[P] "` (case-sensitive, one
+   space), which is removed: `[P]1.1 a` stays literal, `[P]  1.2 b` becomes
+   `" 1.2 b"` (the second space survives, so there is no number); a trailing
+   `[P]` or `[p]` is text.
+2. **`number`**: a leading `\d+\.\d+` not followed by `.` or a digit (`3.1:` →
+   `3.1`, `1.2[after…` → `1.2`); `null` for `1.`, `2`, `1.2.3`, `T1`,
+   `**1.4**`.
+3. **`[after: …]`** is recognized only right after the number and at least one
+   space or tab, case-sensitive, the space after the colon optional; only the
+   first block is consumed. Its content is split on `,`, each item trimmed,
+   empty items dropped (`[after: ]` → `[]`); `1.1 1.2` is one item; duplicates
+   and non-numeric items are kept. `1.2 second [after: 1.1]` (not right after
+   the number) is plain text.
+4. **`description`**: with a recognized block, `"{number} {rest}"` (just the
+   number when nothing follows); otherwise the text after step 1 verbatim.
+
+Derived fields:
+
+- `unresolved_prerequisites`: prerequisites matching no task `number`.
+- `cycle_member`: the task lies on a dependency cycle (strongly connected
+  component larger than one, or a self reference), done or not; downstream
+  tasks are not members.
+- `mixed_format`: legacy `[P] ` **and** a non-empty `prerequisites`.
+- `parallel`, **graph mode** when any task has a non-empty `prerequisites`
+  (resolved or not): a task is ready when it is not done, not a cycle member,
+  and every prerequisite resolves to numbers whose tasks are all done;
+  `parallel = ready && ready_count >= 2` (legacy `[P]` ignored). **Legacy
+  mode** otherwise: `parallel` = the `[P] ` prefix, done or not.
+
+The same description normalization reaches `task done`: its JSON `task_desc`,
+the human `✓ Task N marked as done: <desc>` line and the touched record all
+drop `[P] ` and the `[after: …]` block, while `tasks.md` itself keeps the raw
+line (probe p26). Other task consumers (`drift` collision descriptions,
+`archive`) keep the raw text; the oracle's behaviour there was not observable.
+
 ### Preflight (recovered by disassembly + behaviour matrix)
 
 - `missingFiles` (`status: critical`): file refs from the proposal's
