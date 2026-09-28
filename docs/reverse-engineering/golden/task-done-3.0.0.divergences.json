@@ -1,9 +1,9 @@
 {
-  "about": "Hand-curated ledger of known OpenSpectra-vs-oracle-3.0.0 divergences for `task done`, consumed by crates/spectra-cli/tests/task_done_golden_integration.rs. Each entry pins OpenSpectra's current value for one field of one spectra step (step = 1-based ordinal among the scenario's spectra steps). The test fails on any divergence not listed here AND on any entry whose value now matches the oracle, so closing a divergence forces removing its entry. See docs/reverse-engineering/task.md > 'Oracle 3.0.0 golden and known divergences'.",
+  "about": "Hand-curated ledger of known OpenSpectra-vs-oracle-3.0.0 divergences for `task done`, consumed by crates/spectra-cli/tests/task_done_golden_integration.rs. Each entry pins OpenSpectra's current value for one field of one spectra step (step = 1-based ordinal among the scenario's spectra steps). The test fails on any divergence not listed here, on any entry whose `args` differ from the step's, on any entry whose value equals the oracle's raw or transformed value, and on any entry matching no step, so closing a divergence forces removing its entry. See docs/reverse-engineering/task.md > 'Oracle 3.0.0 golden and known divergences'.",
   "classes": {
     "error-message": "OpenSpectra keeps v2.3.1's distinct messages (Invalid task ID / must be >= 1 / not found (total: N)); v3.0.0 reports every bad ID as \"Task <id> not found for change '<name>'\".",
-    "evaluation-order": "OpenSpectra parses TASK_ID before resolving the change; v3.0.0 resolves the change and loads tasks.md first, so a missing change/tasks.md wins over a bad ID.",
-    "leading-zero-id": "OpenSpectra parses TASK_ID as an integer, so '01' marks task 1; v3.0.0 matches the ID textually and rejects '01'.",
+    "evaluation-order": "OpenSpectra rejects a non-numeric TASK_ID before resolving the change (its '>= 1' and range checks already run after resolution); v3.0.0 resolves the change and loads tasks.md first, so a missing change/tasks.md wins over a non-numeric ID.",
+    "leading-zero-id": "OpenSpectra parses TASK_ID as an integer, so '01' marks task 1; v3.0.0 rejects '01' (observed; that it matches the ID textually is inferred, not probed).",
     "change-flag-hint": "OpenSpectra's shared multiple-change error says 'Use a change name'; v3.0.0's task done says 'Use --change'.",
     "session-wide-touched": "Without a baseline OpenSpectra records every dirty file (v2.3.1 behavior, first-task-wins); v3.0.0 records nothing without `task start` or `--file` and warns instead."
   },

@@ -2,12 +2,15 @@
 """Verify or recapture the `spectra task done` golden from the 3.0.0 oracle.
 
 This is a verification contract, not a printer. Every scenario below is run
-in a fresh scratch git repo against the closed-source reference binary; each
+in a fresh scratch repo against the closed-source reference binary (a git
+repo, except `not-a-git-repo`, which deliberately runs outside git); each
 `spectra` step records exit code, stdout, stderr, the resulting `tasks.md`
-bytes, and the resulting `.spectra/touched/<change>.json` bytes (or absence).
-By default the capture is compared against the committed golden and any drift
-exits non-zero, keeping the scratch repos for inspection. ``--write``
-regenerates the golden and then re-verifies it.
+bytes, the resulting `.spectra/touched/<change>.json` bytes (or absence), and
+`spectra_state_files`, the sorted list of files under `.spectra/`. By default
+the capture is compared against the committed golden and any drift exits
+non-zero, keeping the scratch repos for inspection. ``--write`` captures a
+candidate, recaptures it in a second scratch dir, and replaces the golden only
+when both captures agree byte-for-byte.
 
 The golden is self-describing: it carries the base tree and every setup step,
 so `crates/spectra-cli/tests/task_done_golden_integration.rs` replays the
@@ -246,7 +249,8 @@ SCENARIOS = [
     {
         "name": "explicit-file-attribution",
         "description": "v3.0.0: --file attributes named paths (existing or not, "
-        "repeatable, duplicates, change-dir paths) without a baseline.",
+        "repeatable, duplicates deduplicated) without a baseline; a path inside "
+        "the spec directory (the change's own tasks.md) is rejected.",
         "steps": [
             w("src/a.rs", "fn a() { 1 }\n"),
             done("1", "--file", "src/a.rs", "--file", "src/missing.rs", "--json"),
@@ -257,8 +261,10 @@ SCENARIOS = [
     },
     {
         "name": "first-task-wins-attribution",
-        "description": "A file recorded under task 1 is not re-attributed when still "
-        "dirty (or edited again) at task 2; a no-new-files task adds no entry.",
+        "description": "Probes v2.3.1/OpenSpectra first-task-wins: a file recorded "
+        "under task 1 is not re-attributed when still dirty (or edited again) at "
+        "task 2; a no-new-files task adds no entry. v3.0.0 records nothing here "
+        "(no baseline, no --file).",
         "steps": [
             w("src/a.rs", "fn a() { 1 }\n"),
             done("1"),
@@ -328,8 +334,15 @@ def fail(message: str) -> NoReturn:
     sys.exit(1)
 
 
+# Inherited repo-location overrides would point git (and the oracle's own git
+# calls) at some other repository instead of the scratch repo.
+GIT_ENV_REMOVE = ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")
+
+
 def env() -> dict:
     e = dict(os.environ)
+    for key in GIT_ENV_REMOVE:
+        e.pop(key, None)
     e.update(GIT_ENV)
     e["NO_COLOR"] = "1"
     return e
@@ -448,9 +461,20 @@ def oracle_version(binary: Path, work: Path) -> str:
 
 
 def capture(binary: Path, work: Path) -> bytes:
+    try:
+        return capture_unchecked(binary, work)
+    except Exception as error:  # e.g. non-UTF-8 output, a missing unlink target
+        fail(f"捕獲時發生未預期的例外：{error!r}；scratch repo 保留於 {work}")
+
+
+def capture_unchecked(binary: Path, work: Path) -> bytes:
     version = oracle_version(binary, work)
     if version != EXPECTED_VERSION:
         fail(f"參考執行檔版本為 {version}，本腳本固定 {EXPECTED_VERSION}。")
+    names = [sc["name"] for sc in SCENARIOS]
+    duplicates = sorted({n for n in names if names.count(n) > 1})
+    if duplicates:
+        fail(f"情境名稱重複：{duplicates}")
     golden = {
         "oracle_version": version,
         "change": CHANGE,
@@ -478,11 +502,23 @@ def main() -> None:
     work = Path(tempfile.mkdtemp(prefix="capture-task-done-"))
     actual = capture(binary, work)
     if args.write:
+        # Keep the first capture as a candidate, recapture in a second scratch
+        # dir, and replace the golden only when both agree; otherwise the
+        # committed golden is left untouched.
+        candidate = work / "candidate.json"
+        candidate.write_bytes(actual)
+        recheck_work = Path(tempfile.mkdtemp(prefix="capture-task-done-"))
+        recheck = capture(binary, recheck_work)
+        if recheck != actual:
+            recheck_path = recheck_work / "actual.json"
+            recheck_path.write_bytes(recheck)
+            fail(
+                f"兩次捕獲不一致，未覆寫 {GOLDEN_REL}。candidate：{candidate}；"
+                f"重新捕獲：{recheck_path}"
+            )
         golden_path.write_bytes(actual)
         print(f"[OK] 已寫入 {GOLDEN_REL}")
-        shutil.rmtree(work)
-        work = Path(tempfile.mkdtemp(prefix="capture-task-done-"))
-        actual = capture(binary, work)
+        shutil.rmtree(recheck_work)
 
     if not golden_path.exists():
         fail(f"{GOLDEN_REL} 不存在；以 --write 產生。scratch repo 保留於 {work}")
