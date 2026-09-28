@@ -1787,5 +1787,294 @@
         }
       ]
     }
-  }
+  },
+  "all_order": {
+    "order": [
+      "spec/base",
+      "spec/broken-main",
+      "change/d01-good",
+      "change/d02-nospecs",
+      "change/d03-noops",
+      "change/d04-rootspec",
+      "change/d05-dupadded",
+      "change/d06-addrem",
+      "change/d07-noscenario",
+      "change/d08-notext",
+      "change/d09-noshall",
+      "change/d10-modmissing",
+      "change/d11-modnomain",
+      "change/d12-modloss",
+      "change/d13-strayh3",
+      "change/d14-noname",
+      "change/d15-fromonly",
+      "change/d16-twoadded",
+      "change/d17-emptyadded",
+      "change/d18-capmd",
+      "change/d19-skipspecs",
+      "change/d20-addexisting",
+      "change/d21-remmissing",
+      "change/d22-modbrokenmain",
+      "change/d23-mixed",
+      "change/d24-noproposal",
+      "change/d25-emptyscenario",
+      "change/d26-h5scenario",
+      "change/d27-orphan",
+      "change/d28-shallheader",
+      "change/d29-dupscenario",
+      "change/d30-tasks",
+      "change/d31-conflicts",
+      "change/d32-rename-ok",
+      "change/d33-rename-missing",
+      "change/d34-added-nearmiss",
+      "change/d35-tasks-nocheckbox",
+      "change/d36-orphan-above",
+      "change/d37-to-only",
+      "change/d38-removed-bullet",
+      "change/d39-rename-then-modify",
+      "change/d40-removed-nearmiss",
+      "change/d41-rename-sync",
+      "change/d42-fenced",
+      "change/d43-addscenarios",
+      "change/d44-mixed-case-sections",
+      "change/d45-metadata-only",
+      "change/d46-second-copy-checked",
+      "spec/pair",
+      "spec/s01-good",
+      "spec/s02-nopurpose",
+      "spec/s03-emptypurpose",
+      "spec/s04-tbdpurpose",
+      "spec/s05-noreqsection",
+      "spec/s06-emptyreqs",
+      "spec/s07-plainh3",
+      "spec/s08-noscenario",
+      "spec/s09-notext",
+      "spec/s10-noshall",
+      "spec/s11-deltaheader",
+      "spec/s12-dupreq",
+      "spec/s13-outside",
+      "spec/s14-noname",
+      "spec/s15-shortpurpose",
+      "spec/s16-longtext",
+      "spec/s17-h5scenario",
+      "spec/s18-emptyscenario",
+      "spec/s19-todopurpose",
+      "spec/s20-h3purpose",
+      "spec/s21-fenced",
+      "spec/s22-cjk-short",
+      "spec/s23-cjk-shall",
+      "spec/s24-todo-lower",
+      "spec/s25-todo-spanish",
+      "spec/s26-nested-purpose",
+      "spec/s27-requirements-h3",
+      "spec/s28-header-shall",
+      "spec/s29-closed-heading-dup",
+      "spec/s30-generated-placeholder"
+    ],
+    "summary": {
+      "totals": {
+        "items": 79,
+        "passed": 43,
+        "failed": 36
+      },
+      "byType": {
+        "change": {
+          "items": 46,
+          "passed": 23,
+          "failed": 23
+        },
+        "spec": {
+          "items": 33,
+          "passed": 20,
+          "failed": 13
+        }
+      }
+    }
+  },
+  "envelopes": [
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--all"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--changes"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 4,\n      \"passed\": 3,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--specs"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 7,\n      \"passed\": 7,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--changes",
+        "--specs"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--all",
+        "--report",
+        "findings"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 3,\n    \"totalItems\": 11\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--changes",
+        "--specs",
+        "--report",
+        "findings"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 3,\n    \"totalItems\": 11\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--changes",
+        "--report",
+        "findings"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"changes\",\n    \"returnedItems\": 2,\n    \"totalItems\": 4\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 4,\n      \"passed\": 3,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "--specs",
+        "--report",
+        "full"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 7,\n      \"passed\": 7,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "zeta"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 1,\n      \"passed\": 1,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "alpha"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 1,\n      \"passed\": 0,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 0,\n        \"failed\": 1\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "a/b"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 1,\n      \"passed\": 1,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "only"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"ambiguous_item\",\n      \"message\": \"Ambiguous item 'only' matches both a change and a spec.\",\n      \"fix\": \"Pass --type change|spec.\"\n    }\n  ]\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "only",
+        "--type",
+        "spec"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 1,\n      \"passed\": 1,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_envelope",
+      "args": [
+        "nope"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"unknown_item\",\n      \"message\": \"Unknown item 'nope'. Did you mean: alpha, only, zeta, a-b, a.b?\"\n    }\n  ]\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec",
+      "args": [
+        "d13-strayh3"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"d13-strayh3\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"x/spec.md\",\n          \"line\": 7,\n          \"message\": \"Header \\\"### Notes\\\" in ADDED Requirements is not a \\\"### Requirement:\\\" header and is ignored by validation. Use \\\"### Requirement: Notes\\\" if it should be validated as a requirement.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 1,\n      \"passed\": 1,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_empty",
+      "args": [
+        "--all"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_empty",
+      "args": [
+        "--changes"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_empty",
+      "args": [
+        "--specs"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"items\": [],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_empty",
+      "args": [
+        "--all",
+        "--report",
+        "findings"
+      ],
+      "rc": 0,
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 0,\n    \"totalItems\": 0\n  },\n  \"itemFindings\": [],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    }
+  ]
 }

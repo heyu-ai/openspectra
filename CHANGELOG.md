@@ -203,9 +203,43 @@ changes.
     `overview` paths; most delta findings no longer carry a `line`.
   - Task-numbering WARNINGs apply only to changes on the built-in
     `spec-driven` schema.
-  - Still OpenSpectra-only (pending an owner decision, C20): an unrecognized
+  - Still OpenSpectra-only (owner ruling D12-6 keeps them): an unrecognized
     `<!-- @trace` footer, a corrupt or missing trace sidecar, or a blocked
     capability retirement is an ERROR at `changes/<name>`.
+- **`validate` output follows the reference binary by default; `--json
+  --format openspec` gives OpenSpec 1.13.2's report** (owner rulings D3, D12;
+  W9a). Breaking for scripts that read the previous v2 JSON or the
+  `<name> OK` / `FAIL (n issues)` lines:
+  - Human output is the oracle 3.0.0 shape: `✓ <name> — valid` /
+    `✗ <name> — invalid`, then every `  error: <message>`, then every
+    `  warn: <message>`, with no summary line; on a terminal the glyph and the
+    label are colored. When any item is invalid, stderr gets
+    `Error: Validation failed.` (exit code 1, unchanged).
+  - `--json` (and `--json --format oracle`) prints the oracle array
+    `[{"change"|"spec": <name>, "errors": [...], "valid": …, "warnings": [...]}]`.
+    ERRORs go to `errors`, WARNINGs to `warnings`; of the INFO findings only
+    `Archive would refuse this delta: …` is shown, as a warning (the oracle
+    also warns there); the rest (stray headers, `skip_specs` accepted, long
+    requirement text) are not shown. Messages keep OpenSpec's wording; a
+    finding in a delta file is prefixed `specs/<cap>/spec.md: `.
+  - `--json --format openspec` prints OpenSpec 1.13.2's report field for
+    field: `version: "1.0"`, `summary.totals`/`byType` as
+    `{items, passed, failed}` with one `byType` entry per requested type,
+    `root: {path, source: "nearest"}`, issue keys `level, path, line,
+    message`, items sorted like OpenSpec's `localeCompare`, the
+    `{"status": [...]}` envelope for an unknown (with "Did you mean") or
+    ambiguous item, and the `--report findings` report. `--format` requires
+    `--json`. It replaces the OpenSpectra v2 JSON (`version: "2.0"`,
+    `totals.total`, `root.spec_dir`); `summary.totals.failed` is still there.
+  - Scopes: `--all`, and `--changes --specs` together, validate changes and
+    specs (OpenSpec's meaning; the oracle validates only changes for `--all`
+    and only specs for both flags — a deliberate divergence). `validate` with
+    no argument validates every active change, as the oracle does (it used to
+    pick the single active change and error when there were several). In the
+    oracle shape changes come in `list --json` order, then specs by id.
+  - `validate <item>` still accepts a spec name (the oracle only takes
+    changes) and still reports a name shared by a change and a spec as
+    ambiguous (the oracle silently takes the change).
 - `drift` detects task collisions like v3.0.0 (detection used to be off):
   `tasks_blocked_external` when a commit since `created` touched a path the task
   names, `tasks_maybe_resolved` when a commit subject contains the task's verb

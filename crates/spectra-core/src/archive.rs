@@ -1429,7 +1429,7 @@ fn refuse_to_discard_unrecognized_footer(
 /// 標記一個 archive 拒絕理由屬於 OpenSpectra 獨有的檢查（trace footer、trace
 /// sidecar、capability retirement），OpenSpec 1.13.2 沒有對應規則。
 /// `spectra validate` 依決策 D1 只沿用 OpenSpec 的規則，唯獨這類拒絕仍報成
-/// ERROR（C20，待 owner 裁決），其餘 archive 衝突由 validate 自己依 OpenSpec
+/// ERROR（C20，owner 裁決 D12-6），其餘 archive 衝突由 validate 自己依 OpenSpec
 /// 報成 INFO。包裝不改訊息：Display 是原錯誤的最外層訊息，`source()` 接回原本
 /// 的 cause 鏈，所以 `{:#}` 的輸出與包裝前相同。
 #[derive(Debug)]

@@ -24,11 +24,8 @@ output	status --change <change> --json	oss-only .artifacts[].requires[]
 output	status --change <change> --json	oss-only .artifacts[].requires[]#len
 output	status --change <change> --json	oss-only .isPlanningComplete
 output	validate --changes	exit 0->1
-output	validate --changes	stderr-differs
 output	validate --changes	stdout-differs
 output	validate --changes --json	exit 0->1
-output	validate --changes --json	stderr-differs
 output	validate <change>	exit 0->1
-output	validate <change>	stderr-differs
 output	validate <change>	stdout-differs
 surface	feedback	missing-command

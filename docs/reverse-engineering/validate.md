@@ -1,28 +1,42 @@
 # OpenSpec-compatible `spectra validate`
 
-OpenSpectra's validator is not reverse-engineered from the closed Spectra
-binary. Its rule authority is `@fission-ai/openspec` 1.13.2 (owner ruling D1,
-below); the JSON report keeps the additive fields consumed by the original
-OpenSpectra 1.5-compatible CI gate (the `--format oracle|openspec` output
-decision, D3, is separate work).
+OpenSpectra's validator rules are not reverse-engineered from the closed
+Spectra binary: their authority is `@fission-ai/openspec` 1.13.2 (owner ruling
+D1, below). Its **output** has two shapes (ruling D3, W9a): the oracle 3.0.0
+shape, the default, and OpenSpec 1.13.2's own `--json` report under
+`--format openspec`. How OpenSpec's findings are shown in the oracle shape is
+owner ruling D12 (see "Output formats").
 
 ## CLI
 
 ```text
-spectra validate [ITEM] [--type change|spec] [--strict] [--json]
-spectra validate --changes [--strict] [--report full|findings] [--json]
-spectra validate --specs [--strict] [--report full|findings] [--json]
-spectra validate --all [--strict] [--report full|findings] [--json]
-spectra validate --archived [--report full|findings] [--json]
+spectra validate [ITEM] [--type change|spec] [--strict] [--json [--format oracle|openspec]]
+spectra validate [--changes] [--specs] [--all] [--strict] [--report full|findings] [--json [--format …]]
+spectra validate --archived [--report full|findings] [--json [--format …]]
 ```
 
 `ITEM` auto-detects a change or canonical spec. `--type` resolves ambiguous
-names. Bulk scopes are mutually exclusive. `--archived` checks task completion
-only; archived deltas have already been applied.
+names. `--archived` checks task completion only; archived deltas have already
+been applied. `--format` requires `--json`.
 
-With no item or scope and no active changes, the probed Spectra 2.3.1 empty
-state remains: human mode emits nothing, `--json` emits `[]`, and the command
-exits 0.
+Scopes (rulings D12-3, D12-5):
+
+| invocation | validates | oracle 3.0.0 |
+|---|---|---|
+| `validate` | every active change | same |
+| `validate --changes` | every active change | same |
+| `validate --specs` | every main spec | same |
+| `validate --all` | every change **and** every spec | changes only (deliberate divergence) |
+| `validate --changes --specs` | every change and every spec | specs only (deliberate divergence) |
+| `validate ITEM` | ITEM as a change or a spec | change only (`Error: Change 'x' not found.` for a spec) |
+| `validate ITEM` naming both a change and a spec | error `Ambiguous item …; pass --type change\|spec` | validates the change |
+| `validate ITEM --all` | clap error (rc 2) | ITEM only |
+
+The oracle's `--all`/`--changes --specs` behavior reads as a bug and no
+consumer relies on it (the embedded skills only call `spectra validate
+"<name>"`), so OpenSpec's meaning was ruled in (D12-3). A bare `validate`
+follows the oracle rather than OpenSpec (which prints a hint and exits 1 when
+not interactive; D12-5).
 
 ## Rule authority (owner ruling D1)
 
@@ -102,7 +116,7 @@ Findings, in OpenSpec's order:
 
 Every `WARNING` fails under `--strict`; `INFO` never fails.
 
-### OpenSpectra-only finding (C20, pending owner decision)
+### OpenSpectra-only finding (C20, kept as ERROR by owner ruling D12-6)
 
 `validate` still runs archive's own dry run (`archive::validate_archive_compatibility`)
 and reports, as an `ERROR` at `changes/<name>`, only the refusals OpenSpec has no
@@ -176,43 +190,118 @@ oracle-verified. OpenSpec 1.13.1 (#1761) likewise counts unrecognized
 markers as incomplete, but also counts ordered-list checkboxes
 (`1. [ ]`), which the shared rule does not.
 
-## JSON contract
+## Output formats (rulings D3, D12; W9a)
 
-The v2 report is additive-compatible with the original gate:
+Both shapes are built from the same findings (the rules above); only the
+presentation differs. The oracle shape is the default for human output and
+for `--json`; `--json --format openspec` switches the JSON to OpenSpec's.
+Human output is always the oracle shape.
+
+### Oracle shape (default)
+
+Measured on oracle 3.0.0 (W9 RE spec A2–A4, probes p06/p08/p09):
+
+```text
+✓ <name> — valid
+✗ <name> — invalid
+  error: <message>
+  warn: <message>
+```
+
+- `✓` U+2713, `✗` U+2717, `—` U+2014; no header, no blank lines, no summary.
+  Every `error:` line comes before every `warn:` line. A valid item can carry
+  `warn:` lines.
+- On a terminal only the glyph (green `32` / red `31`) and the label
+  (`error:` red, `warn:` yellow `33`) are colored; `--no-color`, `NO_COLOR`,
+  and a non-terminal stdout disable color.
+- When any item is invalid, stderr gets `Error: Validation failed.` after
+  stdout, and the exit code is 1. An empty scope prints nothing (exit 0).
+- An unknown item: stdout empty, stderr `Error: Change '<item>' not found.`,
+  exit 1 (also with `--json`).
+- `--json`: a pretty-printed array, keys alphabetical, the same items as the
+  human output: `{"change": <name>, "errors": [...], "valid": …, "warnings":
+  [...]}` or `{"errors": [...], "spec": <name>, "valid": …, "warnings": [...]}`.
+  Errors and warnings are plain strings. An empty scope is `[]`.
+- Order: changes in `list --json` order (latest file mtime, newest first),
+  then specs by id in byte order. Only `--all`/`--changes --specs` put both in
+  one array (changes first).
+
+How OpenSpec's findings fill it (ruling D12):
+
+| OpenSpec finding | oracle shape |
+|---|---|
+| ERROR | `errors` |
+| WARNING | `warnings` |
+| INFO `Archive would refuse this delta: …` (C1/C13) | `warnings` (D12-1; the oracle also warns in this case) |
+| any other INFO (stray `###` header, nameless requirement, `skip_specs` accepted, long requirement text) | not shown (D12-1) |
+| OpenSpectra-only archive refusal (C20) | `errors` (D12-6) |
+
+Messages are OpenSpec's wording (D12-2), not the oracle's (the oracle has its
+own, e.g. `Parse error: Invalid format: …`; only its format is copied). A
+finding in a delta file — any finding whose OpenSpec path is relative to the
+change's `specs/`: `<cap>/spec.md`, the root `spec.md` (C11), a non-`spec.md`
+delta file (C12) — is prefixed `specs/<path>: `, as the oracle prefixes its
+delta findings. Change-level findings (path `file`), task-file findings, the
+C20 errors and every main-spec finding are not prefixed. `line` is dropped.
+The verdict is the item's own, so under `--strict` an item with only
+warnings is `✗ … — invalid` (the oracle has no `--strict`).
+
+`--report findings` in the oracle shape keeps the items that print at least
+one `error:`/`warn:` line; the exit code still reflects the whole run.
+
+### OpenSpec shape (`--json --format openspec`)
+
+Field for field OpenSpec 1.13.2 (`commands/validate.js`), pinned by the
+`envelopes` and `all_order` sections of `golden/validate-openspec-1.13.2.json`
+(fixtures `validate_openspec_envelope`, `validate_openspec_empty`, and the rule
+fixture) and replayed by `validate_openspec_integration.rs`:
 
 ```json
 {
   "items": [
-    {
-      "id": "add-auth",
-      "type": "change",
-      "valid": true,
-      "issues": [
-        {
-          "level": "WARNING",
-          "path": "auth/spec.md",
-          "message": "...",
-          "line": 3
-        }
-      ],
-      "durationMs": 0
-    }
+    { "id": "zeta", "type": "change", "valid": true, "issues": [], "durationMs": 0 }
   ],
   "summary": {
-    "totals": { "passed": 1, "failed": 0, "total": 1, "items": 1 },
-    "byType": {
-      "change": { "passed": 1, "failed": 0, "total": 1, "items": 1 }
-    }
+    "totals": { "items": 1, "passed": 1, "failed": 0 },
+    "byType": { "change": { "items": 1, "passed": 1, "failed": 0 } }
   },
-  "version": "2.0",
-  "root": { "path": "/project", "spec_dir": "openspec" }
+  "version": "1.0",
+  "root": { "path": "/project", "source": "nearest" }
 }
 ```
 
-Existing consumers may continue gating on `summary.totals.failed`.
-`--report findings` returns only items carrying ERROR/WARNING/INFO findings but
-preserves full-run totals and exit status under `itemFindings`, with explicit
-report kind, version, and scope metadata.
+- Issue keys `level, path, line, message` (`line` only when grounded).
+- `byType` has one entry per requested type, even with no items (`--all` on
+  an empty project lists `change` and `spec` at zero).
+- Items are sorted like OpenSpec's `a.id.localeCompare(b.id)` under Node's ICU
+  (CLDR root, punctuation non-ignorable): punctuation, digits, then letters
+  case-insensitively, case breaking ties lowercase first — `a-b, a.b, a/b, aa,
+  alpha, B-upper, only, parentless/child, Upper_Case, zeta`. Exact for
+  printable ASCII; other characters sort after `z` by code point (an
+  approximation: no corpus has non-ASCII ids). A change and a spec with the
+  same id keep change-first; OpenSpec orders that tie by async completion,
+  so the golden normalizes it the same way.
+- `root.source` is always `nearest` (OpenSpectra has no store roots).
+- `--report findings` gives OpenSpec's `{report: {kind, version, scope,
+  returnedItems, totalItems}, itemFindings, summary, root}`, items with any
+  finding (INFO included); `--changes --specs` has scope `all`.
+- An unknown item prints `{"status": [{"severity": "error", "code":
+  "unknown_item", "message": "Unknown item 'x'. Did you mean: …?"}]}` to
+  stdout (exit 1); the suggestions are the five nearest ids by Levenshtein
+  distance over UTF-16 units, active changes (by name) then specs, ties in
+  that order. An ambiguous item prints the `ambiguous_item` status with
+  `"fix": "Pass --type change|spec."`.
+- Not reproduced: `durationMs` is OpenSpectra's own timing; `--type change`
+  on a name that is not a change is still `Error: Change 'x' not found.` on
+  stderr (OpenSpec validates the missing directory and reports "no deltas");
+  a bare `validate` validates every change instead of printing OpenSpec's
+  hint (D12-5); the `--archived` message wording is OpenSpectra's
+  (`N incomplete archived task(s)`, OpenSpec says `N incomplete tasks (c/t
+  completed)`).
+
+The previous OpenSpectra v2 JSON (`version: "2.0"`, `totals.total`,
+`root.spec_dir`) is gone; `summary.totals.failed` and the item fields a gate
+reads are in the OpenSpec shape too.
 
 ## Exit status
 
