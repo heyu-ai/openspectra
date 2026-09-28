@@ -1,25 +1,22 @@
 //! `tasks.md` parsing and task/commit collision detection.
 //!
 //! Tasks are checkboxes on a `-`, `*`, or `+` bullet; only `[x]`/`[X]` is
-//! done, any other single-character marker (`[ ]`, `[~]`, …) is pending. Inline
-//! backtick spans hold the file paths a task touches. Drift flags pending tasks
-//! that collide with work that happened outside the change:
-//!   * `tasks_blocked_external`: a referenced file was modified by a commit
-//!     after the change's `.started` baseline SHA.
-//!   * `tasks_maybe_resolved`: the task appears to have been done elsewhere — a
-//!     commit subject since `created` names this change or a file it touches.
+//! done, any other single-character marker (`[ ]`, `[~]`, …) is pending.
+//! Drift flags pending tasks that collide with commits since the change's
+//! `created` date (oracle 3.0.0; `docs/reverse-engineering/drift.md`, "3. Tasks"):
+//!   * `tasks_blocked_external`: a commit touched a path the task names (drift's
+//!     FilePath anchor regex).
+//!   * `tasks_maybe_resolved`: a commit subject contains the task's leading verb
+//!     and one of its keywords.
 //!
-//! CALIBRATION NOTE: every captured oracle sample (including in-progress changes
-//! with pending tasks and many intervening commits) reported `0 blocked,
-//! 0 maybe-done`. With no positive oracle sample, the exact firing predicates
-//! cannot be verified, so both detectors are deliberately STRICT here to match
-//! the observed all-zero field behavior rather than emit false positives. See
-//! `docs/reverse-engineering/drift.md` for the open question.
+//! Neither the `.started` baseline, the change directory, nor commit subjects
+//! naming the change matter; the commit list is `git log --since=<created>`.
 
 use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::Path;
 
 /// The oracle's (v3.0.0) task-line regex. Shared with
@@ -62,13 +59,15 @@ pub struct Task {
     pub files: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// 一筆碰撞（oracle 3.0.0：兩個清單都一律這四個 key、這個順序）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TaskCollision {
     pub task_description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commit_sha: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commit_subject: Option<String>,
+    /// 完整 SHA 的前 7 碼（不是 git 的 `%h`）。
+    pub commit_sha: String,
+    pub commit_subject: String,
+    /// author 時間的 UTC 日期 `YYYY-MM-DD`。
+    pub commit_date: String,
 }
 
 /// oracle 3.0.0 對 checkbox 後文字（已 trim）的解析：legacy `[P] ` 前綴、`N.M` 編號、
@@ -279,40 +278,215 @@ pub struct TaskAnalysis {
     pub maybe_resolved: Vec<TaskCollision>,
 }
 
-/// Analyze pending tasks for external collisions.
-/// * `change_name` scopes "external" commits (those whose subject names the change are its own work).
-/// * `started_sha` is the `.started` baseline (blocked detection is skipped when absent).
-/// * `created` is the `YYYY-MM-DD` date used as the lower bound for commit subjects.
-pub fn analyze(
-    root: &Path,
-    change_name: &str,
-    tasks: &[Task],
-    started_sha: Option<&str>,
-    created: Option<&str>,
-) -> TaskAnalysis {
-    let analysis = TaskAnalysis::default();
-    let pending: Vec<&Task> = tasks.iter().filter(|t| !t.done).collect();
+/// 路徑偵測沿用 drift 的 FilePath anchor regex（未錨定、不需要反引號）。
+static TASK_PATH_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
+});
+/// maybe-resolved 認得的動詞（小寫、完全相等）。
+const TASK_VERBS: &[&str] = &[
+    "add",
+    "implement",
+    "fix",
+    "update",
+    "refactor",
+    "remove",
+    "delete",
+    "create",
+    "rename",
+    "modify",
+];
+/// 關鍵字的停用字（探測約 120 個 3 字母以上的常見字）。
+const TASK_STOPWORDS: &[&str] = &[
+    "the", "and", "for", "with", "from", "into", "this", "that", "are", "was", "were",
+];
 
-    // Every captured oracle sample reported `0 blocked, 0 maybe-done`, including
-    // in-progress changes with many pending tasks and 100+ intervening commits.
-    // With no positive sample the real firing predicates cannot be verified, and
-    // every heuristic tried (file-touched-since-baseline, file-missing, commit
-    // subject naming the change) produced false positives the oracle never emits.
-    // Detection therefore stays OFF until a positive oracle sample is captured to
-    // calibrate against; flip `TASKS_DETECTION_CALIBRATED` once it is. The parser
-    // and data model above are exercised regardless (used by `list` task counts).
-    if !crate::calibration::TASKS_DETECTION_CALIBRATED || pending.is_empty() {
+/// `git log --since` 的一個 commit。
+struct Commit {
+    sha7: String,
+    subject: String,
+    date: String,
+    files: HashSet<String>,
+}
+
+/// oracle 的 commit 清單：`git log --since=<created 原字串> --name-only`（git 的 approxidate
+/// 會補上現在的時刻，所以 created 當天的 commit 算不算取決於執行時間，與 oracle 相同）。
+/// 走訪在第一個早於 cutoff 的 commit 停止；merge commit 沒有檔名、不會 block，但 subject
+/// 仍參與 maybe。
+fn commits_since(root: &Path, created: &str) -> Vec<Commit> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "log",
+            &format!("--since={created}"),
+            "--pretty=format:COMMIT|%H|%at|%s",
+            "--name-only",
+        ])
+        .output();
+    let Some(output) = output.ok().filter(|o| o.status.success()) else {
+        return Vec::new();
+    };
+    let mut commits: Vec<Commit> = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(rest) = line.strip_prefix("COMMIT|") {
+            let mut parts = rest.splitn(3, '|');
+            let (Some(sha), Some(at), Some(subject)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
+            let date = at
+                .parse::<i64>()
+                .ok()
+                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+                .map(|t| t.format("%Y-%m-%d").to_string())
+                .unwrap_or_default();
+            commits.push(Commit {
+                sha7: sha.chars().take(7).collect(),
+                subject: subject.to_string(),
+                date,
+                files: HashSet::new(),
+            });
+        } else if !line.is_empty() {
+            if let Some(commit) = commits.last_mut() {
+                commit.files.insert(line.to_string());
+            }
+        }
+    }
+    commits
+}
+
+/// 未完成的 task 的描述（去掉 `[P] ` 與 `[after: …]`），依檔案順序；重複的行各算一次。
+fn pending_descriptions(md: &str) -> Vec<String> {
+    md.lines()
+        .filter_map(|line| {
+            let c = CHECKBOX_RE.captures(line)?;
+            let raw = c[2].trim();
+            (!raw.is_empty() && !is_done_marker(&c[1])).then(|| parse_task_text(raw).description)
+        })
+        .collect()
+}
+
+/// 去掉頭尾非 ASCII 英數字元。
+fn trim_ascii_alnum(word: &str) -> &str {
+    word.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+}
+
+/// maybe-resolved 的動詞與關鍵字：跳過開頭全是數字與 `.` 的 token，下一個 token（小寫、
+/// 不去標點）必須是動詞；之後的 token 去頭尾非英數、小寫，長度 ≥ 3、全為 ASCII 字母且
+/// 不是停用字者為關鍵字。
+fn verb_keywords(description: &str) -> Option<(String, Vec<String>)> {
+    let mut tokens = description
+        .split_whitespace()
+        .skip_while(|t| t.chars().all(|c| c.is_ascii_digit() || c == '.'));
+    let verb = tokens.next()?.to_lowercase();
+    if !TASK_VERBS.contains(&verb.as_str()) {
+        return None;
+    }
+    let keywords: Vec<String> = tokens
+        .map(|t| trim_ascii_alnum(t).to_lowercase())
+        .filter(|w| {
+            w.len() >= 3
+                && w.chars().all(|c| c.is_ascii_alphabetic())
+                && !TASK_STOPWORDS.contains(&w.as_str())
+        })
+        .collect();
+    (!keywords.is_empty()).then_some((verb, keywords))
+}
+
+fn collision(description: &str, commit: &Commit) -> TaskCollision {
+    TaskCollision {
+        task_description: description.to_string(),
+        commit_sha: commit.sha7.clone(),
+        commit_subject: commit.subject.clone(),
+        commit_date: commit.date.clone(),
+    }
+}
+
+/// 未完成 task 與 `created` 之後的 commit 的碰撞（oracle 3.0.0）。沒有 `created` 時不跑
+/// `git log`、兩個清單都是空的。每個 task 各自回報 log 順序中**第一個**符合的 commit；
+/// 同一個 task 可以同時出現在兩個清單。
+pub fn analyze(root: &Path, tasks_md: &str, created: Option<&str>) -> TaskAnalysis {
+    let mut analysis = TaskAnalysis::default();
+    let Some(created) = created else {
+        return analysis;
+    };
+    let pending = pending_descriptions(tasks_md);
+    if pending.is_empty() {
         return analysis;
     }
-
-    // --- uncalibrated heuristics (disabled by the gate above) ---------------
-    let _ = (root, change_name, started_sha, created);
+    let commits = commits_since(root, created);
+    for description in pending {
+        let paths: HashSet<&str> = TASK_PATH_RE
+            .find_iter(&description)
+            .map(|m| m.as_str())
+            .collect();
+        if !paths.is_empty() {
+            if let Some(commit) = commits
+                .iter()
+                .find(|c| paths.iter().any(|p| c.files.contains(*p)))
+            {
+                analysis
+                    .blocked_external
+                    .push(collision(&description, commit));
+            }
+        }
+        if let Some((verb, keywords)) = verb_keywords(&description) {
+            if let Some(commit) = commits.iter().find(|c| {
+                let subject = c.subject.to_lowercase();
+                subject.contains(&verb) && keywords.iter().any(|k| subject.contains(k.as_str()))
+            }) {
+                analysis
+                    .maybe_resolved
+                    .push(collision(&description, commit));
+            }
+        }
+    }
     analysis
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn vk(desc: &str) -> Option<(String, Vec<String>)> {
+        verb_keywords(desc)
+    }
+
+    /// oracle 3.0.0 maybe-resolved 的動詞與關鍵字（W7d SPEC §A6，探測 p24–p28）。
+    #[test]
+    fn verb_keywords_follow_the_oracle_rules() {
+        let words = |list: &[&str]| list.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            vk("1.2 Add login flow for the user"),
+            Some(("add".into(), words(&["login", "flow", "user"])))
+        );
+        // 開頭只由數字與 `.` 組成的 token 都略過；`1)`、`T1` 不算。
+        assert_eq!(
+            vk("1 2 . Fix parser"),
+            Some(("fix".into(), words(&["parser"])))
+        );
+        assert_eq!(vk("1) Fix parser"), None);
+        // 動詞不去標點、不認屈折形與同義字。
+        assert_eq!(vk("1.1 Add: login"), None);
+        assert_eq!(vk("1.1 Adds login"), None);
+        assert_eq!(vk("1.1 Move login"), None);
+        // 關鍵字：去頭尾非英數、≥3、全 ASCII 字母、非停用字；沒有關鍵字就不算。
+        assert_eq!(
+            vk("1.1 Update **login** (auth) login-endpoint 3rd café"),
+            Some(("update".into(), words(&["login", "auth", "caf"])))
+        );
+        assert_eq!(vk("1.1 Add UI"), None);
+        assert_eq!(vk("1.1 新增 登入"), None);
+    }
+
+    #[test]
+    fn task_paths_use_the_drift_anchor_regex() {
+        let found: Vec<&str> = TASK_PATH_RE
+            .find_iter("see `docs/a.md`, ./src/b.rs, lib/c.ts, src/g.tsx, xdocs/d.md tests/e.rs")
+            .map(|m| m.as_str())
+            .collect();
+        assert_eq!(found, ["docs/a.md", "src/b.rs", "src/g.ts", "docs/d.md"]);
+    }
 
     /// (原文, number, prerequisites, legacy `[P]`, description)
     type TextCase<'a> = (&'a str, Option<&'a str>, &'a [&'a str], bool, &'a str);
@@ -563,19 +737,16 @@ mod tests {
         assert_eq!(tasks[0].files, vec!["src/foo/bar.rs", "a/b/c.py"]);
     }
 
+    /// 讀不到 git 歷史或沒有 `created` 時兩個清單都是空的（drift 另外把前者標成
+    /// `git unavailable`）。
     #[test]
-    fn analyze_is_conservative_zero_until_calibrated() {
-        let md = "- [ ] 1.1 do `missing/file.rs`";
-        let tasks = parse(md);
-        let a = analyze(
-            std::path::Path::new("/nonexistent"),
-            "chg",
-            &tasks,
-            None,
-            Some("2026-01-01"),
-        );
-        assert!(a.blocked_external.is_empty());
-        assert!(a.maybe_resolved.is_empty());
+    fn analyze_is_empty_without_history_or_created() {
+        let md = "- [ ] 1.1 Fix `docs/a.md` parser";
+        let nowhere = std::path::Path::new("/nonexistent");
+        let a = analyze(nowhere, md, Some("2026-01-01"));
+        assert!(a.blocked_external.is_empty() && a.maybe_resolved.is_empty());
+        let a = analyze(nowhere, md, None);
+        assert!(a.blocked_external.is_empty() && a.maybe_resolved.is_empty());
     }
 
     #[test]

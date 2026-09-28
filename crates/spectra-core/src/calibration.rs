@@ -77,13 +77,6 @@ pub const ANCHOR_CAP: usize = 50;
 /// categories at 40–137 candidates, and exits non-zero on divergence.
 pub const ANCHOR_SAMPLE_PER_CATEGORY: usize = 12;
 
-/// Whether the Tasks-dimension collision detectors (blocked / maybe-resolved)
-/// are calibrated. Held `false`: every captured oracle sample was `0 blocked,
-/// 0 maybe-done`, giving no positive case to fit the firing predicates against.
-/// Keeping detection off matches 100% of observed oracle behavior and avoids
-/// shipping false positives. See `tasks::analyze` and the RE doc.
-pub const TASKS_DETECTION_CALIBRATED: bool = false;
-
 /// Structure dimension score.
 ///
 /// `broken` is the total broken-anchor count, `broken_cliflags` how many of
@@ -137,18 +130,11 @@ pub fn time_bucket(days: i64) -> (&'static str, i64) {
     }
 }
 
-/// Tasks dimension score from the count of (blocked + maybe-resolved) tasks.
-/// CALIBRATE: every field sample was 0/0 -> 0, so only the zero case is
-/// verified against the oracle. The non-zero mapping mirrors `structure_score`'s
-/// odd-number ladder as a placeholder until a positive sample is captured.
+/// Tasks dimension score: `min(blocked, 4) + min(maybe_resolved, 3)` (oracle
+/// 3.0.0; a 29-point (blocked, maybe) grid plus the yibi-mvp corpus, W7d probe
+/// p27).
 pub fn tasks_score(blocked: usize, maybe_resolved: usize) -> i64 {
-    match blocked + maybe_resolved {
-        0 => 0,
-        1 => 1,
-        2 => 3,
-        3 => 5,
-        _ => 7,
-    }
+    (blocked.min(4) + maybe_resolved.min(3)) as i64
 }
 
 /// Severity band. `heavy` when total > 8 OR anchor decay exceeds the threshold.
@@ -174,6 +160,31 @@ pub fn primary_recommendation(severity: &str, change: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// oracle 3.0.0 的 tasks 分數格點（W7d 探測 p27）。
+    #[test]
+    fn tasks_score_caps_blocked_at_four_and_maybe_at_three() {
+        let grid = [
+            ((0, 0), 0),
+            ((1, 0), 1),
+            ((3, 0), 3),
+            ((4, 0), 4),
+            ((10, 0), 4),
+            ((0, 1), 1),
+            ((0, 3), 3),
+            ((0, 12), 3),
+            ((1, 1), 2),
+            ((2, 2), 4),
+            ((3, 3), 6),
+            ((4, 4), 7),
+            ((2, 5), 5),
+            ((5, 2), 6),
+            ((1, 4), 4),
+        ];
+        for ((b, m), expected) in grid {
+            assert_eq!(tasks_score(b, m), expected, "({b},{m})");
+        }
+    }
 
     #[test]
     fn structure_score_reproduces_the_oracle_goldens() {

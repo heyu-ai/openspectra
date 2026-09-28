@@ -14,8 +14,9 @@ built with:
   * a controlled `created: <today - N days>` in `.openspec.yaml`,
   * an all-lowercase-prose `design.md` (no FilePath/CliFlag/Function/Symbol
     anchors, so Structure = 0), and
-  * a single pending task (Tasks = 0; collision detection never fires — see
-    `calibration::TASKS_DETECTION_CALIBRATED`).
+  * a single pending task `t` (Tasks = 0: it names no FilePath and does not
+    start with a collision verb, so neither detector can fire — see
+    `docs/reverse-engineering/drift.md`, "3. Tasks").
 
 Sweeping `N` and reading the oracle's Time dimension pins every transition.
 

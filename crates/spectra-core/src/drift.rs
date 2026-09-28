@@ -116,7 +116,8 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
     let created = created.as_deref();
 
     // --- Time ---------------------------------------------------------------
-    let time = time_dimension(created, git::head_sha(&cfg.root).is_some());
+    let git_available = git::head_sha(&cfg.root).is_some();
+    let time = time_dimension(created, git_available);
 
     // --- Structure (broken anchors) -----------------------------------------
     let design_path = change.design_md();
@@ -168,29 +169,26 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
     };
 
     // --- Tasks --------------------------------------------------------------
+    // oracle 3.0.0 的狀態優先序：沒有 tasks.md → `no tasks.md`；HEAD 解析不到（沒有 repo、
+    // 沒有 commit、沒有 git）→ `git unavailable`；否則計數（空的 tasks.md 也是計數）。
     let tasks_path = change.tasks_md();
-    let tasks_exists = tasks_path.exists();
-    let task_list = if tasks_exists {
-        tasks::parse(&std::fs::read_to_string(&tasks_path)?)
+    let tasks_text = if tasks_path.exists() {
+        Some(std::fs::read_to_string(&tasks_path)?)
     } else {
-        Vec::new()
+        None
     };
-    let analysis = tasks::analyze(
-        &cfg.root,
-        &change.name,
-        &task_list,
-        change.started_sha.as_deref(),
-        created,
-    );
+    let analysis = match &tasks_text {
+        Some(text) if git_available => tasks::analyze(&cfg.root, text, created),
+        _ => tasks::TaskAnalysis::default(),
+    };
     let blocked = analysis.blocked_external.len();
     let maybe = analysis.maybe_resolved.len();
     let tasks_dim = Dimension {
         kind: DimensionKind::Tasks,
-        // oracle 3.0.0：沒有 tasks.md 時是 `no tasks.md`（空的 tasks.md 仍是計數）。
-        status: if tasks_exists {
-            format!("{blocked} blocked, {maybe} maybe-done")
-        } else {
-            "no tasks.md".to_string()
+        status: match (&tasks_text, git_available) {
+            (None, _) => "no tasks.md".to_string(),
+            (Some(_), false) => "git unavailable".to_string(),
+            (Some(_), true) => format!("{blocked} blocked, {maybe} maybe-done"),
         },
         score: calibration::tasks_score(blocked, maybe),
         contributes_to_total: true,

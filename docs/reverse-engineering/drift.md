@@ -177,37 +177,59 @@ numerator, `total_score`, or severity short-circuit.
 > <path> --mode iso` (count isolation) and `--mode verify-model` (cross-check).
 > `>30%` decay also forces `heavy` severity — `calibration::structure_score`.
 
-### 3. Tasks — collisions with external work
-Parses `tasks.md` checkboxes (`-`/`*`/`+` bullets, only `[x]`/`[X]` done —
-the shared rule in `task.md`) and the inline backtick file
-paths each task names. For pending tasks:
-* `tasks_blocked_external` — a referenced file was changed by external commits
-  since the `.started` baseline.
-* `tasks_maybe_resolved` — pending tasks whose verb+target keywords match a
-  commit subject since `created` ("maybe done elsewhere").
+### 3. Tasks — collisions with work since `created`
 
-When the change has **no `tasks.md`**, oracle 3.0.0 reports the status
-`no tasks.md` (score 0); an empty `tasks.md` still reports the counts
-(`0 blocked, 0 maybe-done`).
+Oracle 3.0.0 rules, recovered by the W7d probes (p00–p41, an executable model
+replayed against the oracle on every corpus change and synthetic jail: 733/733
+task-collision checks) and ported in `tasks::analyze`. Earlier OpenSpectra kept
+detection off because every 2.3.1 sample was `0 blocked, 0 maybe-done`; 3.0.0
+reports positives on the real corpus.
 
-**Every captured v2.3.1 oracle sample reported `0 blocked, 0 maybe-done`** — including
-in-progress changes with many pending tasks and 100+ intervening commits that
-*did* touch the referenced files. With no positive sample, the exact predicates
-cannot be verified, and each heuristic tried (file-touched-since-baseline,
-file-missing, commit-names-change) produced false positives the oracle never
-emits. OpenSpectra therefore keeps Tasks detection **off** behind
-`calibration::TASKS_DETECTION_CALIBRATED = false`, matching 100% of observed
-behaviour. The parser and data model are complete and tested; flip the flag once
-a positive sample is captured.
+**Status and score.** No `tasks.md` → `no tasks.md`; otherwise HEAD not
+resolvable (no repo, no commits, no `git`) → `git unavailable`; otherwise
+`{b} blocked, {m} maybe-done` (an empty `tasks.md` too). Score =
+`min(blocked, 4) + min(maybe, 3)` (29-point grid); it feeds `total_score` and
+severity as before.
 
-> **3.0.0 update (2026-09-28):** the A3 parity probe
-> (`scripts/parity-probe.py`) now records oracle 3.0.0 emitting
-> `tasks_blocked_external` entries (with `commit_sha`, `commit_date`,
-> `commit_subject`) on the real corpus projects, so positive samples exist and
-> the detector can be calibrated. Queued as W7d in `docs/migration-plan.md`; the
-> resulting Tasks score also explains the corpus's `severity` /
-> `recommended_action` value divergences listed in
-> `golden/parity-known.tsv`.
+**Commit list.** `git log --since=<created raw string>
+--pretty=format:COMMIT|%H|%at|%s --name-only` in the project root. The
+`created` value (same both-keys rule as `created` above) is passed untouched;
+without it no log runs and both lists are empty. git's approxidate fills a bare
+date with the *current time of day*, so a commit made on the created date counts
+or not depending on when `drift` runs — reproduced as is. The walk stops at the
+first commit older than the cutoff; merge commits have no file names (never
+block) but their subjects take part in *maybe*. The `.started` baseline, commits
+touching the change directory and subjects naming the change are all
+irrelevant. File names are git's (repo-relative, subject to the user's
+`core.quotePath`), so a project in a repo subdirectory never gets blocked.
+
+**Pending tasks.** The shared checkbox rule (only `[x]`/`[X]` is done), each
+line on its own (duplicates give duplicate entries), description after
+`parse_task_text` (legacy `[P] ` and `[after: …]` removed). A task can be in
+both lists; entries keep task order.
+
+**Blocked.** Paths = every match of the FilePath anchor regex
+`(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)` in the
+description (no backticks needed; `lib/…`, `.json` never match; `src/g.tsx`
+yields `src/g.ts`). The **first** commit in log order whose file list contains
+any of them is reported (deletions and chmod-only commits count).
+
+**Maybe resolved.** Split the description on whitespace, skip leading tokens
+made only of ASCII digits and `.`, and the next token, lowercased and without
+trimming punctuation, must be one of `add implement fix update refactor remove
+delete create rename modify`. Keywords are the later tokens trimmed of
+non-ASCII-alphanumeric edges, lowercased, at least 3 characters, all ASCII
+letters, and not one of `the and for with from into this that are was were`.
+No keywords → never. The first commit whose lowercased subject contains the
+verb and any keyword (plain substrings) is reported.
+
+**Entries** (both lists, always these four keys in this order):
+`task_description`, `commit_sha` (first 7 characters of the full SHA),
+`commit_subject` (verbatim), `commit_date` (author time, UTC `YYYY-MM-DD`).
+Human output adds, after the broken anchors, `Tasks blocked by external
+changes` and `Tasks possibly resolved elsewhere` blocks of
+`  - {description} → {sha} "{subject}" ({date})` (empty blocks omitted; on a TTY
+the heading is bold, the SHA cyan, the date dim).
 
 ### 4. Environment — display only
 `commits_since_created = git rev-list --count --since=<created> HEAD`. Shown as
