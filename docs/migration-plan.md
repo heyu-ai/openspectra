@@ -226,7 +226,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W7e | human 輸出納入量尺：`parity-probe.py` 目前只比 `--json`，human 版面的差異（W7b 的 `drift` 整片不同即因此漏掉）不會被抓到；擴充為同時比對各指令的 human stdout／stderr，逐項修正或列為已知分歧 | A3 | W7b 發現 | PR #206（stacked on #205；量尺擴充後另修 status 的 artifact 順序（Kahn 逐輪＋字母序）與選填 apply instruction；parity 80 → 85，新增列皆已歸屬 W7d／W9／W10／W7a） |
 | W7f | 自訂 schema 的 apply 與 validate：apply 沒有 `tracks`／tasks 檔時 oracle 為 `ready`（OpenSpectra `blocked`）；`contextFiles` 以 id 列出已完成的自訂 artifact；`schema validate` human 訊息 `✓ Schema '<name>' is valid (<N> artifacts)` | A3 | W7e 發現 | PR #207（stacked on #206；apply 依 `apply.tracks` 讀 task、state 規則 10 個情境與 oracle 一致、contextFiles 以 id 列出；`schema validate` 移到 W7g） |
 | W7g | `schema validate`（human `✓ Schema '<name>' is valid (<N> artifacts)`、JSON `{artifactCount, name, valid}`、不帶名稱時驗證設定的 schema、找不到時的錯誤格式、無效 schema 的訊息）與 `schema fork` 寫出的 artifact 順序 | A3 | W7f 發現 | RE 完成（規格在 job tmp `w7gre/SPEC.md`），**等 D11 裁決**再實作 |
-| W7h | `drift` Structure 維度的 anchor 邊角差異（W7d 差分的 7 個 jail：例如 design 裡的 `src/n.md` oracle 判為 broken、broken anchor 的排序） | A3 | W7d 發現 | 待辦 |
+| W7h | `drift` Structure 維度的 anchor 邊角差異（W7d 差分的 7 個 jail：例如 design 裡的 `src/n.md` oracle 判為 broken、broken anchor 的排序） | A3 | W7d 發現 | PR #213（base #212，與 W9b 平行；FilePath 只看 git index、broken 依類別排序；差分 759／761，剩 2 個為 #123 刻意分歧） |
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | PR #208（stacked on #207；tw／ja／en 對應顯示名稱、其他原樣；locale 容錯解析修掉非字串值讓所有指令報錯的問題；28 次比對相同；parity 85 → 84） |
 | W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | RE 完成（`w9re/SPEC.md`）；判定規則（D1 已裁決）先做，oracle 格式的呈現**等 D12 裁決** |
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
