@@ -356,7 +356,14 @@ fn schema_init_validate_and_which_form_a_complete_management_flow() {
         .unwrap();
     assert!(resolved.status.success(), "{resolved:?}");
     let resolution: serde_json::Value = serde_json::from_slice(&resolved.stdout).unwrap();
-    assert_eq!(resolution[0]["source"], "project");
+    // oracle 3.0.0 的形狀：{name, resolved, sources: [{path, source}]}。
+    assert_eq!(resolution["name"], "team-flow");
+    assert_eq!(resolution["resolved"], "project");
+    assert_eq!(resolution["sources"][0]["source"], "project");
+    assert!(resolution["sources"][0]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("openspec/schemas/team-flow/schema.yaml"));
 
     let config = std::fs::read_to_string(root.join("openspec/config.yaml")).unwrap();
     assert!(config.contains("schema: team-flow"));

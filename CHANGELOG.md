@@ -60,6 +60,21 @@ changes.
   aside. Tracking files written by older versions are still read. The
   replay of the oracle golden compares all 14 scenarios byte for byte, and
   the divergence ledger is gone.
+- **BREAKING (W7a): `list`, `list --specs`, `show`, and `schema which` use
+  the Spectra 3.0.0 shapes.** `list` entries gain `summary` (from
+  `proposal.md`'s Why/Problem/Summary section, 30 characters), human lines
+  show `[done/total]` and the summary, `--sort modified|created` follows the
+  oracle (newest file mtime in whole seconds; the raw `created` string), and
+  change directories with upper-case or underscore names are no longer
+  dropped. `list --specs --json` entries are `{id, path}`. `show <change>
+  --json` has `created, deltaSpecs, design, name, proposal, schema, tasks`
+  and `show <spec> --json` is `{files, name}`, with the matching human
+  output; any directory under `specs/` now resolves. `schema which` prints
+  `{name, resolved, sources}`, works outside a project, and defaults to
+  `spec-driven`. On macOS, user schemas live in
+  `~/Library/Application Support/openspec/schemas`, as in the oracle and
+  OpenSpec. Where the oracle breaks sort ties by filesystem order,
+  OpenSpectra uses the name.
 - `archive` prints `✓ Archived: <change> → <archived id>` instead of
   `Archived '<change>' as '<archived id>'.`, as v3.0.0 does.
 - `new change` prints the v3.0.0 three-line output (`✓ Created change:`,

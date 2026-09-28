@@ -71,16 +71,16 @@ spectra list  [--json]            # lists active changes
 spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
 spectra list  --specs [--json]    # lists capability specs instead of changes
 spectra list  --parked [--json]   # lists parked changes instead of active ones
-spectra show  <CHANGE|SPEC> [--diff] [--json]  # prints content; --diff isolates requirement-level change lines
+spectra show  <CHANGE|SPEC> [--diff] [--json]  # change: proposal + delta spec list (JSON: all artifacts); spec: every .md file; --diff isolates requirement-level change lines
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
 spectra new change <NAME> [--schema S] [--agent A] [--description D] [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)
 spectra new artifact <TYPE> [CAPABILITY] [--change <NAME>] [--stdin] [--force] [--json]  # creates one artifact (proposal|design|tasks|spec) from stdin or its built-in template, with per-type validation
-spectra schemas [--json]          # lists the built-in workflow schema registry (only spec-driven)
+spectra schemas [--json]          # lists built-in (spec-driven, no-spec), project, and user workflow schemas
 spectra schema init <NAME> [--description TEXT] [--artifacts IDS] [--default] [--force] [--json]  # creates a project-local workflow schema
 spectra schema fork <SOURCE> [NAME] [--force] [--json]  # copies a schema with target identity preserved
 spectra schema validate [NAME] [--verbose] [--json]     # validates schema structure, templates, and dependency graph
-spectra schema which [NAME] [--all] [--json]            # reports project → user → package resolution
+spectra schema which [NAME] [--all] [--json]            # lists every source holding the schema (project → user → built-in); defaults to spec-driven, needs no project
 spectra status [--change <NAME>|--all] [--schema <NAME>] [--json]   # shows one or every artifact DAG with dependencies and skip state
 spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifact's authoring instruction + template; with all artifacts done, switches to apply mode (tasks progress + preflight)
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0

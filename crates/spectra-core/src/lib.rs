@@ -19,6 +19,7 @@ mod markdown;
 mod names;
 pub mod schema;
 pub mod search;
+pub mod show;
 pub mod skills;
 pub mod spec;
 pub mod spec_diff;

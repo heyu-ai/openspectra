@@ -521,15 +521,51 @@ fn walk_names_in(dir: &Path) -> Vec<String> {
             continue;
         }
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == "archive"
-            || ARCHIVED_PREFIX_RE.is_match(&name)
-            || !CHANGE_NAME_RE.is_match(&name)
-        {
+        // oracle 3.0.0 列出 `archive` 以外的每個目錄，包括含大寫或底線的名稱
+        // （W7 probe）；隱藏目錄（archive 交易用的 `.spectra-archive-*.staged`）不算。
+        if name == "archive" || name.starts_with('.') || ARCHIVED_PREFIX_RE.is_match(&name) {
             continue;
         }
         names.push(name);
     }
     names
+}
+
+/// `list` 的 `summary`（oracle 3.0.0，見 `docs/reverse-engineering/list-show.md`）：
+/// 只看 `proposal.md`。原始行（不 trim）以 `## Why`、`## Problem` 或 `## Summary`
+/// 開頭（大小寫敏感的前綴比對，不理會 code fence）即開始一個區段，區段到下一個
+/// `## ` 開頭的行為止；取區段內第一個 trim 後非空、且不以 `<!--` 開頭的行。
+/// 該區段取不到就找下一個符合的標題。超過 30 個字元時截成前 30 個字元加 `…`。
+pub fn summary(ch: &Change) -> Option<String> {
+    let text = std::fs::read_to_string(ch.proposal_md()).ok()?;
+    let mut in_section = false;
+    for line in text.lines() {
+        if ["## Why", "## Problem", "## Summary"]
+            .iter()
+            .any(|h| line.starts_with(h))
+        {
+            in_section = true;
+            continue;
+        }
+        if line.starts_with("## ") {
+            in_section = false;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("<!--") {
+            continue;
+        }
+        let chars: Vec<char> = trimmed.chars().collect();
+        return Some(if chars.len() > 30 {
+            format!("{}…", chars[..30].iter().collect::<String>())
+        } else {
+            trimmed.to_string()
+        });
+    }
+    None
 }
 
 /// 變更清單的排序欄位。
@@ -540,39 +576,77 @@ pub enum SortKey {
     Created,
 }
 
-/// 選出排序用的時間戳。部分 Unix 檔案系統不提供 birth time；`Created` 仍先
-/// 讀取 created，無法取得時以 modified 維持穩定且有用的排序（#155-1）。
-/// 拆成接收 `io::Result` 的純函式，是因為 APFS 與 ext4 都有 birth time，
-/// 整合測試永遠走不到 fallback 分支。
-fn sort_timestamp(
-    sort_key: SortKey,
-    created: std::io::Result<std::time::SystemTime>,
-    modified: std::io::Result<std::time::SystemTime>,
-) -> Option<std::time::SystemTime> {
-    if sort_key == SortKey::Modified {
-        modified.ok()
-    } else {
-        created.or(modified).ok()
+/// change 目錄內所有一般檔案（遞迴）的最新 mtime，以整秒計；目錄本身的 mtime
+/// 不算（oracle 3.0.0 的 `modified` 排序）。沒有檔案時為 `None`（排最後）。
+fn latest_file_mtime(dir: &Path) -> Option<u64> {
+    let mut latest: Option<u64> = None;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(current) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&current) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if let Some(secs) = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+            {
+                latest = Some(latest.map_or(secs, |l| l.max(secs)));
+            }
+        }
+    }
+    latest
+}
+
+/// `.openspec.yaml` 的原始 `created` 字串（`created` 排序以字串比較，不解析日期）。
+/// 與 `show` 相同，metadata 必須同時有 `schema` 與 `created` 才算解析成功；只有其中
+/// 一個時視為沒有 metadata（排最後）。
+fn raw_created(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join(".openspec.yaml")).ok()?;
+    let value: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    value.get("schema")?;
+    match value.get("created")? {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Number(n) => Some(n.to_string()),
+        _ => None,
     }
 }
 
+/// oracle 3.0.0 的排序：`modified` 依最新檔案 mtime（整秒）遞減；`created` 依原始
+/// `created` 字串遞減、沒有的排最後，同值再依 modified；`name` 依位元組遞增。
+/// oracle 的同值順序是檔案系統的 readdir 順序（不可攜），OpenSpectra 改以名稱排序
+/// （刻意分歧，同 `instructions` 的 `contextFiles`）。
 fn sort_names_by_metadata(names: &mut [String], root: &Path, sort_key: SortKey) {
-    if sort_key == SortKey::Name {
-        names.sort();
-        return;
+    match sort_key {
+        SortKey::Name => names.sort(),
+        SortKey::Modified => {
+            names.sort_by_cached_key(|name| {
+                (
+                    std::cmp::Reverse(latest_file_mtime(&root.join(name))),
+                    name.clone(),
+                )
+            });
+        }
+        SortKey::Created => {
+            names.sort_by_cached_key(|name| {
+                let dir = root.join(name);
+                let created = raw_created(&dir);
+                (
+                    created.is_none(),
+                    std::cmp::Reverse(created),
+                    std::cmp::Reverse(latest_file_mtime(&dir)),
+                    name.clone(),
+                )
+            });
+        }
     }
-
-    names.sort_by(|a, b| {
-        let timestamp = |name: &str| {
-            std::fs::metadata(root.join(name))
-                .ok()
-                .and_then(|metadata| {
-                    sort_timestamp(sort_key, metadata.created(), metadata.modified())
-                })
-        };
-
-        timestamp(b).cmp(&timestamp(a)).then_with(|| a.cmp(b))
-    });
 }
 
 /// List active (non-archived) change names, sorted. Parked changes are not
@@ -1141,27 +1215,60 @@ mod tests {
     }
 
     #[test]
-    fn created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable() {
-        use std::time::{Duration, SystemTime};
-        let born = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
-        let touched = SystemTime::UNIX_EPOCH + Duration::from_secs(200);
-        let unsupported = || Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+    fn list_sorting_follows_the_oracle_rules() {
+        // oracle 3.0.0：modified 取最新「檔案」mtime（整秒、目錄 mtime 不算）遞減；
+        // created 依原始字串遞減、沒有 metadata 的排最後；同值依名稱（刻意分歧）。
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        };
+        let set_mtime = |path: &std::path::Path, secs: u64| {
+            let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+            std::fs::File::options()
+                .append(true)
+                .open(path)
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        };
+        let dir = cfg.changes_dir();
+        write(
+            &dir.join("old/.openspec.yaml"),
+            "schema: spec-driven\ncreated: 2026-09-01\n",
+        );
+        write(
+            &dir.join("new/.openspec.yaml"),
+            "schema: spec-driven\ncreated: 2026-02-11\n",
+        );
+        write(&dir.join("new/deep/er/f.bin"), "x");
+        write(&dir.join("bare/notes.txt"), "x");
+        write(
+            &dir.join("Upper-Case/.openspec.yaml"),
+            "created: notadate\n",
+        );
+        set_mtime(&dir.join("old/.openspec.yaml"), 1_000);
+        set_mtime(&dir.join("new/.openspec.yaml"), 1_000);
+        set_mtime(&dir.join("new/deep/er/f.bin"), 3_000);
+        set_mtime(&dir.join("bare/notes.txt"), 2_000);
+        set_mtime(&dir.join("Upper-Case/.openspec.yaml"), 1_000);
 
         assert_eq!(
-            sort_timestamp(SortKey::Created, Ok(born), Ok(touched)),
-            Some(born)
+            list_active_sorted(&cfg, SortKey::Modified),
+            vec!["new", "bare", "Upper-Case", "old"],
+            "latest nested file wins; equal seconds fall back to name"
         );
         assert_eq!(
-            sort_timestamp(SortKey::Created, unsupported(), Ok(touched)),
-            Some(touched)
+            list_active_sorted(&cfg, SortKey::Created),
+            vec!["old", "new", "bare", "Upper-Case"],
+            "raw created strings descending; metadata without `schema` counts as none \
+             and sorts last, where ties fall back to modified"
         );
         assert_eq!(
-            sort_timestamp(SortKey::Modified, Ok(born), Ok(touched)),
-            Some(touched)
-        );
-        assert_eq!(
-            sort_timestamp(SortKey::Created, unsupported(), unsupported()),
-            None
+            list_active_sorted(&cfg, SortKey::Name),
+            vec!["Upper-Case", "bare", "new", "old"]
         );
     }
 

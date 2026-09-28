@@ -77,20 +77,11 @@ output	instructions apply --change <change> --json	value .preflight.driftedFiles
 output	instructions apply --change <change> --json	value .preflight.missingFiles[]#len
 output	instructions apply --change <change> --json	value .preflight.missingFiles[].path
 output	instructions apply --change <change> --json	value .preflight.status
-output	list --json	oracle-only .changes[].summary
 output	list --json	value .changes[].completedTasks
 output	list --json	value .changes[].name
+output	list --json	value .changes[].status
+output	list --json	value .changes[].summary
 output	list --json	value .changes[].totalTasks
-output	list --specs --json	oracle-only .specs[].id
-output	list --specs --json	oracle-only .specs[].path
-output	list --specs --json	oss-only .specs[].name
-output	list --specs --json	oss-only .specs[].summary
-output	show <change> --json	oracle-only .created
-output	show <change> --json	oracle-only .deltaSpecs[]
-output	show <change> --json	oracle-only .deltaSpecs[]#len
-output	show <change> --json	oracle-only .design
-output	show <change> --json	oracle-only .schema
-output	show <change> --json	oracle-only .tasks
 output	status --change <change> --json	oss-only .artifacts[].requires[]
 output	status --change <change> --json	oss-only .artifacts[].requires[]#len
 output	status --change <change> --json	oss-only .isPlanningComplete
