@@ -1185,7 +1185,7 @@
     },
     {
       "name": "explicit-file-attribution",
-      "description": "v3.0.0: --file attributes named paths (existing or not, repeatable, duplicates, change-dir paths) without a baseline.",
+      "description": "v3.0.0: --file attributes named paths (existing or not, repeatable, duplicates deduplicated) without a baseline; a path inside the spec directory (the change's own tasks.md) is rejected.",
       "git": true,
       "base": {
         ".spectra.yaml": "spec_dir: docs/spectra\n",
@@ -1305,7 +1305,7 @@
     },
     {
       "name": "first-task-wins-attribution",
-      "description": "A file recorded under task 1 is not re-attributed when still dirty (or edited again) at task 2; a no-new-files task adds no entry.",
+      "description": "Probes v2.3.1/OpenSpectra first-task-wins: a file recorded under task 1 is not re-attributed when still dirty (or edited again) at task 2; a no-new-files task adds no entry. v3.0.0 records nothing here (no baseline, no --file).",
       "git": true,
       "base": {
         ".spectra.yaml": "spec_dir: docs/spectra\n",
