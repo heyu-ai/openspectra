@@ -71,6 +71,19 @@ this file is agent-facing operational context.
   non-zero keeping the sandbox; `--write` regenerates and re-verifies. When a
   validate rule changes, add a fixture case and recapture — never hand-edit
   the golden.
+- `scripts/capture-analyze.py` — same constraints (macOS + reference binary,
+  version-pinned to 3.0.0, `--spectra-bin`/`SPECTRA_BIN` override). Builds each
+  `analyze` scenario (plus the `conNumericClaimMismatch` cases in
+  `scripts/capture-analyze-numeric-cases.json`) as a scratch project, records
+  exit code, stdout and stderr (`tty` runs on a pseudo-terminal for colours),
+  and compares with the self-describing
+  `docs/reverse-engineering/golden/analyze-3.0.0.json`, which
+  `analyze_golden_integration.rs` replays byte for byte. Two oracle
+  nondeterminisms are normalised as documented divergences: `params` keys are
+  sorted, and a fixture whose directory order is observable must list in
+  byte-sorted order. Drift exits non-zero keeping the scratch projects;
+  `--write` captures twice and writes only when both agree. Never hand-edit
+  the golden.
 - `scripts/parity-probe.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
   subcommand/flag is accepted) and A3 (read-only commands agree on exit code,
