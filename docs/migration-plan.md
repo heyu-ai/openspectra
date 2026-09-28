@@ -215,7 +215,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 |---|---|---|---|---|
 | W1 | 量測工具：模板 CLI 解析測試（`cargo test`，Linux／macOS 皆跑）＋ `scripts/parity-probe.py`（oracle 比對、允許清單） | A2、A3 的量尺 | — | PR #196（A2 缺口 41 條、A1 缺口 19 項、A3 已知分歧 124 條） |
 | W2 | `instructions` 補 `--omit-context`／`--compact`／`--summary`／`--agent`／`--type` | A1、A2 | — | PR #197（stacked on #196；另補 5 個漏抓的 skill、`contextRef`、spec_dir 代入；驗收矩陣 204/208 相同） |
-| W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | 新 issue | 待辦 |
+| W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | — | PR #198（stacked on #197；`status` 順序實測本來就一致；新增 `capture-schemas.py`；parity 119 → 110） |
 | W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | 待辦 |
 | W5 | `archive --preview`／`--json` | A1、A2 | 新 issue | 待辦 |
 | W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦 |
