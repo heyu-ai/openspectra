@@ -218,7 +218,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | — | PR #198（stacked on #197；`status` 順序實測本來就一致；新增 `capture-schemas.py`；parity 119 → 110） |
 | W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | PR #201（stacked on #199；golden replay 擴大到 14 情境、360 欄位全部逐位元組相同；#98 移除；parity 108 → 106） |
 | W5 | `archive --preview`／`--json` | A1、A2 | — | PR #199（stacked on #198；preview 10 情境逐位元組相同；`snapshot_created: false` 為刻意分歧，對應 #111；parity 110 → 108） |
-| W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦（D8 已裁決：維持 git CLI，7 種 libgit2 邊角差異記為刻意分歧） |
+| W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | PR #203（stacked on #202；oracle 差分 244 次呼叫 228 次逐位元組相同，其餘 16 次全為 scope.md §10 刻意分歧；差分抓到 snapshot 須收 touched clean 路徑、兩處唯讀破口等 5 項並修正；parity 97 → 96） |
 | W7a | `list`（`summary`、排序、名稱過濾）、`list --specs`、`show`、`schema which` 對齊 3.0.0 | A3 | — | PR #202（stacked on #201；29 項 oracle 比對全部相同；parity 106 → 97） |
 | W7b | `drift`／`instructions apply` 的 `dormancy`、`recommended_action`、apply `tasks[]` 的 `number`／`prerequisites`（`[after: …]`）／`unresolved_prerequisites`／`cycle_member`／`mixed_format`／`parallel` 規則 | A3 | — | 待辦（RE 規格已完成） |
 | W7c | 內建 spec-driven schema 的 instruction／template 文字對齊 3.0.0（`capture-schemas.py` 加入 spec-driven） | A3 | — | 待辦 |
@@ -227,7 +227,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
 | W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | 待辦 |
 | W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | 待辦（最後做） |
-| W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.` | A3 | W2 發現 | 待辦（W13 之前做） |
+| W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.`（W6 實測：3.0.0 所有專案指令皆然）；只有 `openspec/` 目錄、沒有 `.spectra.yaml` 的專案 oracle 視為已初始化（`spec_dir: openspec`，root 探索也認這個標記），OpenSpectra 回 Not initialized——純 OpenSpec 專案相容性缺口（W6 發現） | A3 | W2 發現 | 待辦（W13 之前做） |
 | W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
 
 **每一項的標準流程**：
