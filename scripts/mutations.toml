@@ -421,41 +421,6 @@ replace = ''''''
 package = "spectra-core"
 test = "mark_done_on_a_non_checkbox_marker_reports_done_without_rewriting"
 
-# 列 18：`task done` 沒排除 `.spectra/` 自己的狀態檔。
-
-[[case]]
-id = "18-touched-excludes-state-dir"
-issue = "PR #19 / PR #23"
-file = "crates/spectra-core/src/change.rs"
-find = '''                !under_change_dir && !under_spectra_state_dir'''
-replace = '''                !under_change_dir'''
-package = "spectra-core"
-test = "mark_task_done_never_records_its_own_state_directory"
-
-# 列 19：不比對 baseline 指紋 = 回到 session-wide 收集（change 開始前就 dirty 的檔案也被記）。
-
-[[case]]
-id = "19-touched-baseline-fingerprint"
-issue = "#98 D / PR #173"
-file = "crates/spectra-core/src/touched.rs"
-find = '''            (Some(Some(before)), Some(now)) => before != now,
-'''
-replace = ''''''
-package = "spectra-core"
-test = "mark_task_done_skips_files_already_dirty_before_the_change_and_left_unchanged"
-
-# 列 19（review 追加）：檢查點時 dirty、現在變乾淨的檔案也是候選。
-
-[[case]]
-id = "19-touched-now-clean-candidates"
-issue = "#98 D / PR #173 review"
-file = "crates/spectra-core/src/touched.rs"
-find = '''        .chain(now_clean)
-'''
-replace = ''''''
-package = "spectra-core"
-test = "mark_task_done_records_a_pre_dirty_file_a_task_restored_to_its_committed_content"
-
 # 列 20：archive 的 `@trace` `code:` 照單全收（oracle 行為）。
 
 [[case]]
@@ -465,7 +430,7 @@ file = "crates/spectra-core/src/archive.rs"
 find = '''            Err(e) if touched::is_gone(&e) => false,'''
 replace = '''            Err(e) if touched::is_gone(&e) => true,'''
 package = "spectra-core"
-test = "archive_trace_footer_omits_touched_paths_that_no_longer_exist"
+test = "archive_trace_code_omits_touched_paths_that_no_longer_exist"
 
 # 列 20：`is_gone` 只認 NotFound，上層目錄被換成檔案（NotADirectory）的路徑會被保留。
 
@@ -476,7 +441,7 @@ file = "crates/spectra-core/src/touched.rs"
 find = '''    matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)'''
 replace = '''    matches!(e.kind(), ErrorKind::NotFound)'''
 package = "spectra-core"
-test = "archive_trace_footer_omits_a_path_whose_parent_became_a_file"
+test = "archive_trace_code_omits_a_path_whose_parent_became_a_file"
 
 # 列 20：用 `metadata`（跟隨 symlink）會把斷掉的 symlink 當成不存在。
 
@@ -487,19 +452,16 @@ file = "crates/spectra-core/src/archive.rs"
 find = '''        .filter(|f| match std::fs::symlink_metadata(cfg.root.join(f)) {'''
 replace = '''        .filter(|f| match std::fs::metadata(cfg.root.join(f)) {'''
 package = "spectra-core"
-test = "archive_trace_footer_keeps_a_dangling_symlink"
+test = "archive_trace_code_keeps_a_dangling_symlink"
 
-# 列 20：archive 成功後沒清掉 touched baseline sidecar。
+# 列 20：archive 成功後沒清掉 `task-baselines/<change>/`（oracle 3.0.0 會刪，只留 lock）。
 
 [[case]]
 id = "20-archive-clears-baseline-sidecar"
-issue = "PR #173"
+issue = "PR #173 / #190"
 file = "crates/spectra-core/src/change.rs"
-find = '''        crate::touched::touched_path(cfg, name),
-        crate::touched::baseline_path(cfg, name),
-    ];'''
-replace = '''        crate::touched::touched_path(cfg, name),
-    ];'''
+find = '''    match std::fs::remove_dir_all(crate::touched::baselines_dir(cfg, name)) {'''
+replace = '''    match Ok::<(), std::io::Error>(()) {'''
 package = "spectra-core"
 test = "archive_clears_touched_json_on_success"
 
@@ -526,37 +488,6 @@ find = '''        if is_rename_or_copy {
 replace = ''''''
 package = "spectra-core"
 test = "dirty_files_reports_the_new_path_for_a_rename"
-
-# 列 22：損壞的 touched JSON 被靜默丟掉（`load_readonly` 的形狀）。
-
-[[case]]
-id = "22-touched-corrupt-backup"
-issue = "review"
-file = "crates/spectra-core/src/touched.rs"
-find = '''        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
-            let backup = non_colliding_backup_path(&path);'''
-replace = '''        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
-            if true {
-                return empty();
-            }
-            let backup = non_colliding_backup_path(&path);'''
-package = "spectra-core"
-test = "load_backs_up_a_corrupt_tracking_file_instead_of_discarding_it"
-
-# 列 22：第二次損壞時覆寫第一份備份。
-
-[[case]]
-id = "22-touched-corrupt-backup-no-clobber"
-issue = "review"
-file = "crates/spectra-core/src/touched.rs"
-find = '''    if !base.exists() {
-        return base;
-    }'''
-replace = '''    if true {
-        return base;
-    }'''
-package = "spectra-core"
-test = "load_does_not_clobber_a_prior_corrupt_backup_on_a_second_corruption"
 
 # ------------------------------------------------ C. analyze、artifact、new change
 
@@ -1113,9 +1044,9 @@ test = "a_change_recording_an_unknown_schema_fails_even_with_a_healthy_project_c
 id = "50-new-change-hardcodes-spec-driven"
 issue = "#117"
 file = "crates/spectra-core/src/change.rs"
-find = '''            crate::schema::configured_schema_name(cfg)
+find = '''                .or_else(|| crate::schema::configured_schema_name(cfg))
                 .unwrap_or_else(|| crate::schema::SCHEMA_NAME.to_string()),'''
-replace = '''            crate::schema::SCHEMA_NAME.to_string(),'''
+replace = '''                .unwrap_or_else(|| crate::schema::SCHEMA_NAME.to_string()),'''
 package = "spectra-cli"
 target = ["--test", "schema_selector_integration"]
 test = "new_change_stamps_the_configured_schema_so_the_gate_stays_reachable"
@@ -1134,9 +1065,11 @@ id = "52a-instructions-json-drops-context"
 issue = "#127 / PR #136"
 file = "crates/spectra-core/src/instructions.rs"
 find = '''        context,
+        context_ref,
         rules,
         locale: LOCALE.to_string(),'''
 replace = '''        context: None,
+        context_ref,
         rules,
         locale: LOCALE.to_string(),'''
 package = "spectra-core"
@@ -1147,9 +1080,11 @@ id = "52b-instructions-json-drops-rules"
 issue = "#127 / PR #136"
 file = "crates/spectra-core/src/instructions.rs"
 find = '''        context,
+        context_ref,
         rules,
         locale: LOCALE.to_string(),'''
 replace = '''        context,
+        context_ref,
         rules: None,
         locale: LOCALE.to_string(),'''
 package = "spectra-core"
@@ -1442,3 +1377,30 @@ replace = '''    crate::git::common_dir(&cfg.root).map(|d| d.join("spectra").joi
 package = "spectra-core"
 # 目前唯一把 .git/spectra-app/changes 寫成字面路徑的測試（#118 worktree 那支）。
 test = "parking_from_a_linked_worktree_lands_in_the_shared_store"
+
+# W4（#190）：`task done` 只要解析出 change 名稱就建立 0 byte 的 lock（oracle 3.0.0）。
+
+[[case]]
+id = "w4-task-done-creates-lock"
+issue = "#190"
+file = "crates/spectra-core/src/change.rs"
+find = '''    crate::touched::touch_lock(cfg, name)?;
+    let (tasks_path, md, task_id) = read_tasks_for(cfg, name, task_arg)?;'''
+replace = '''    let (tasks_path, md, task_id) = read_tasks_for(cfg, name, task_arg)?;'''
+package = "spectra-cli"
+target = ["--test", "task_done_golden_integration"]
+test = "task_start_and_done_replay_the_oracle_golden_byte_for_byte"
+
+# W4（#190）：`task start` 只在 touched 檔不存在時建立 review_base；已存在時不可覆寫。
+
+[[case]]
+id = "w4-review-base-only-when-absent"
+issue = "#190"
+file = "crates/spectra-core/src/change.rs"
+find = '''    if tracking.is_none() {
+        crate::touched::persist('''
+replace = '''    if true {
+        crate::touched::persist('''
+package = "spectra-cli"
+target = ["--test", "task_done_golden_integration"]
+test = "task_start_and_done_replay_the_oracle_golden_byte_for_byte"

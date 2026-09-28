@@ -95,6 +95,14 @@ pub fn parse(md: &str) -> Vec<Task> {
         .collect()
 }
 
+/// oracle 3.0.0 的 task ID 比對：參數必須**逐字**等於某個 1-based 序號的十進位寫法，
+/// 所以 `0`、`01`、`+1`、`1.1`、`abc`、前後有空白、超過總數都找不到。
+pub fn resolve_task_id(md: &str, arg: &str) -> Option<usize> {
+    let total = md.lines().filter(|line| is_task_line(line)).count();
+    let n: usize = arg.parse().ok()?;
+    (n >= 1 && n <= total && n.to_string() == arg).then_some(n)
+}
+
 /// Toggle the 1-based `task_id`-th checkbox (counted across ALL checkboxes
 /// in file order, ignoring any `## N.` group headers) from pending to done.
 /// Returns the rewritten markdown and the task's raw description text

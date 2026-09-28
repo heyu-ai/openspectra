@@ -14,10 +14,6 @@ use super::Cli;
 
 /// 已知缺口：正規化後的呼叫字串（placeholder 已代入）。每個執行佇列項目補完就移除對應條目。
 const KNOWN_GAPS: &[&str] = &[
-    // W4：task start、task done --file（#190）
-    "task done --change x 1.1 --file src/lib.rs",
-    "task start",
-    "task start --change x 1.1",
     // W6：scope（#165）
     "scope --change x --check-snapshot x --json",
     "scope --change x --json",

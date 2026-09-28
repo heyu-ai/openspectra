@@ -1,313 +1,189 @@
-# Reverse-engineering `spectra task done`
+# Reverse-engineering `spectra task start` / `task done`
 
-How the closed-source `spectra task done` command marks a task complete and
-tracks which files it touched, and how OpenSpectra reproduces it.
+How the closed-source `spectra task` commands mark a task complete and track
+which files it touched, and how OpenSpectra reproduces them.
 
-> Source: `Spectra.app/Contents/MacOS/spectra` v2.3.1 (arm64 Mach-O, symbols
-> retained). String mining located the CLI help text and error-message
-> fragments; the exact behavior (checkbox indexing, touched-file selection,
-> JSON shapes) was confirmed by running the binary as a **golden oracle** in
-> scratch git repos, since none of it was covered by `drift.md`'s earlier RE
-> pass.
->
-> **Oracle v3.0.0 redesigned `task done`.** OpenSpectra still implements the
-> v2.3.1 behavior described in "CLI shape" and "Behavior" below; how v3.0.0
-> differs, and which parts still match byte-for-byte, is pinned by the golden
-> described in [Oracle 3.0.0 golden and known
-> divergences](#oracle-300-golden-and-known-divergences) (#110).
+> **Source.** Oracle `Spectra.app/Contents/MacOS/spectra` **v3.0.0** (it
+> links `libgit2-sys 0.18.8+1.9.7`). The golden
+> `golden/task-done-3.0.0.json` (#110) plus a targeted probe matrix on
+> 2026-09-28 (#190, W4 in `docs/migration-plan.md`) pin everything below.
+> The v2.3.1 behavior this file used to describe — session-wide dirty-file
+> recording, first-task-wins attribution, a `✓`-less human line, and
+> OpenSpectra's own per-change baseline (#98) — is gone: decision D7
+> replaced it with the v3.0.0 per-task baseline model.
 
 ## CLI shape
 
-`task` is a nested subcommand family (`spectra task <COMMAND>`), of which
-`done` is currently the only member:
-
 ```
-spectra task done <TASK_ID> [--change <NAME>] [--json]
+spectra task start <TASK_ID> [--change <NAME>] [--json]
+spectra task done  <TASK_ID> [--change <NAME>] [--json] [--file <PATH>]...
 ```
 
-* `TASK_ID` — 1-based index across **every** checkbox in `tasks.md`, counted
-  top-to-bottom in file order, ignoring any `## N.` group headers. A
-  checkbox is any line matching `^\s*[-*+]\s*\[(.)\]\s*(.+)$` with a
-  non-blank description — the same rule `instructions apply` uses (the code
-  shares one regex, `tasks::CHECKBOX_RE`). Oracle v3.0.0 probe (#172):
-  `* [ ]`, `+ [ ]`, `- [~]`, `- [-]` are tasks (pending); ordered-list
-  `1. [ ]` / `1) [ ]`, `- [ x]`, and `- []` are not. Before #172 OpenSpectra
-  only recognized `- [ ]`/`- [x]`/`- [X]`, so a `*`/`+` task was invisible
-  to `list`, `task done`, `drift`, `archive --mark-tasks-complete`, and
-  `validate`'s archived-task check while `instructions apply` still counted
-  it — the two numberings diverged. (`archive --mark-tasks-complete` is the
-  one consumer that does not require a non-blank description: oracle v3.0.0
-  flips `- [ ]` and `- [ ] ` too, see `archive.md`/`tasks::mark_all_done`.) A
-  `tasks.md` with two `##` groups of two tasks each numbers its checkboxes
-  1–4 regardless of the `1.1`/`1.2`/`2.1`/`2.2` labels written in the task
-  text itself — those labels are just prose, not the identifier `task done`
-  operates on.
-* `--change` — same auto-detect semantics as `drift`/`show`/`park`: omit it
-  when exactly one active change exists, otherwise it's required.
+* `TASK_ID` is matched **as a string** against the decimal, 1-based index of
+  every checkbox in `tasks.md` (file order, ignoring `##` headers and the
+  `1.1`-style labels in the task text). `0`, `01`, `+1`, `1.1`, a number past
+  the total, `abc`, and anything with surrounding spaces all report
+  `Task <arg> not found for change '<change>'` (the argument echoed verbatim).
+  `-1` is a clap error (exit 2). A checkbox is any line matching
+  `^\s*[-*+]\s*\[(.)\]\s*(.+)$` with a non-blank description — the same rule
+  `instructions apply` uses (`tasks::CHECKBOX_RE`, #172).
+* `--change` auto-detects when exactly one change is active. With several,
+  both commands report `Multiple changes found. Use --change to specify one:
+  <a>, <b>` (other commands still use the shared wording; #50).
+* A missing change and a change without `tasks.md` both report
+  `tasks.md not found for change '<name>'`.
 
-## Behavior
+## `task done`
 
-OpenSpectra's actual evaluation order. The v3.0.0 golden shows the oracle
-uses a **different** order — it resolves the change and loads `tasks.md`
-before looking at `TASK_ID` at all (`task done abc --change nope` reports
-`tasks.md not found for change 'nope'`) — and reports every bad ID with one
-message; see the `evaluation-order` and `error-message` divergence classes.
-The steps below are OpenSpectra's own:
+Evaluation order: resolve the change → create the lock → load `tasks.md`
+and resolve `TASK_ID` → already-done check → validate every `--file` in
+argument order → tracking → write `tasks.md`.
 
-0. Parse `TASK_ID` as an unsigned integer *before* looking at the change at
-   all → `Invalid task ID '<input>': must be a number` on failure.
-1. Resolve the change (auto-detect or `--change`; `--change`'s own
-   auto-detect errors, e.g. "No active changes...", are reachable here same
-   as `drift`/`show`/`park`). If the change doesn't exist, or exists but has
-   no `tasks.md`, both report the **same** error:
-   `tasks.md not found for change '<name>'` — the oracle doesn't distinguish
-   the two cases.
-2. Validate the remaining `TASK_ID` cases (inside `tasks::mark_done`, after
-   the change/`tasks.md` load above):
-   * `0` → `Task ID must be >= 1`
-   * greater than the total checkbox count → `Task <id> not found (total: <n>)`
-   * already `[x]` or `[X]` → `Task <id> is already done`
-   * any other non-blank marker (`[~]`, `[-]`) → **success** with the
-     content of `tasks.md` unchanged: oracle v3.0.0 exits 0 with
-     `status: "done"` and leaves the content as-is (probed in #172; the probe
-     compared content, not mtime). OpenSpectra reproduces this; steps 3–4
-     still run (step 3 writes the unchanged content back). Step 4 attributing
-     files to a task that stays pending is oracle behavior too: the #177
-     review probed `- [~] 1.2 b` + `task done 2 --file src/x.rs` on v3.0.0 →
-     `.spectra/touched/<name>.json` records `src/x.rs` under task 2
-     (`provenance: explicit_files`).
-3. Flip that checkbox from `[ ]` to `[x]`, rewriting `tasks.md` with every
-   other line's content preserved verbatim. (LF line endings; a CRLF
-   `tasks.md` is normalized to LF as a side effect of the line-based
-   rewrite — not literally byte-for-byte for that input.)
-4. Best-effort record newly-dirty files to `.spectra/touched/<name>.json`:
-   * "touched files" = `git status --porcelain` output (modified, staged,
-     and untracked paths; a rename reports the new path)…
-   * … **minus** anything under the change's own artifact directory
-     (`<spec_dir>/changes/<name>/` — `tasks.md` itself is always dirty right
-     after step 3, and must never show up as a "touched" file) …
-   * … **minus** anything under OpenSpectra's own `.spectra/` state directory
-     (see the dedicated section below) …
-   * … **minus** (OpenSpectra-only, #98) anything whose content fingerprint
-     is unchanged since the previous checkpoint —
-     `.spectra/changes/<name>.touched-baseline.json`, written by
-     `new change` and rewritten at the end of every `task done` whose
-     recording succeeds (a failed recording keeps the old checkpoint so a
-     later task still picks those files up). A file that was already dirty
-     before the change started and that no task edited is therefore not
-     attributed to the change; one a task reverted to its committed content
-     *is*, since it is checkpointed-but-now-clean with a changed fingerprint.
-     Paths whose state cannot be determined are checkpointed with a `null`
-     fingerprint and always count as changed (so a pre-dirty submodule is
-     attributed to the first task; see `archive.md` for this known
-     limitation). With no
-     baseline (a change created before this divergence), or an
-     unreadable/corrupt one (which warns), this filter is skipped and the
-     v2.3.1 oracle's session-wide behavior applies. See `archive.md` ›
-     "Deliberate divergences (#98)" …
-   * … **minus** anything already recorded against an *earlier* task in this
-     change's tracking file (confirmed empirically on v2.3.1: a file that's
-     still dirty after being recorded under task 1 is *not* re-attributed to
-     task 2 — attribution is first-task-wins, scoped per change). v3.0.0
-     dropped this: with per-task baselines, a file edited again during task 2
-     is recorded under both tasks (golden scenario `task-start-baseline`).
-   * If the resulting file list is empty, no tracking file is written at
-     all (confirmed on v2.3.1: marking a task done with zero unrelated dirty
-     files never creates `.spectra/`). v3.0.0 differs: it still writes no
-     tracking file, but every `task done` that resolves a change creates
-     `.spectra/touched/<change>.lock` (see
-     [How v3.0.0 records touched files](#how-v300-records-touched-files)).
-5. Print `✓ Task <id> marked as done: <task_desc>` (human, oracle-verified)
-   or `{"change","status","task_desc","task_id"}` (`--json`, alphabetical
-   key order, **`task_id` rendered as a string**, matching the oracle
-   exactly — not a JSON number). **OpenSpectra deliberately omits the `✓`**
-   in its own human-readable output — none of `park`/`unpark`/`new change`
-   use a checkmark either, and this is a conscious choice to stay
-   consistent with those already-shipped commands rather than an oversight.
-   The alphabetical `--json` key order is a byproduct of `serde_json`'s
-   default `Map` (a `BTreeMap`, since the `preserve_order` feature isn't
-   enabled) rather than something OpenSpectra sorts explicitly — pinned by
-   a dedicated test so enabling that feature later doesn't silently change
-   the shape without a failing test.
+* Already `[x]`/`[X]` → `Task <id> is already done`. Any other non-blank
+  marker (`[~]`, `[-]`) succeeds and leaves `tasks.md`'s content unchanged
+  (#172); tracking still runs for it.
+* Any error before the `tasks.md` write leaves `tasks.md` untouched.
+* Tracking, first matching rule wins:
+  1. **Not a git repository** (or git unusable): nothing recorded,
+     `--file` ignored, warning `git_tracking_unavailable`, `provenance: null`.
+     A leftover baseline for this task is deleted.
+  2. **`--file` given**: record exactly those paths (normalized, deduped,
+     byte-sorted) with `provenance: "explicit_files"`, whether or not they
+     exist; this task's baseline, if any, is deleted.
+  3. **The task has a baseline** (`task start`): record the paths changed
+     since it (rule below) with `provenance: "task_baseline"`. An empty
+     result appends no entry and leaves the tracking file untouched.
+  4. **Otherwise**: nothing recorded, warning
+     `touched_tracking_skipped_no_baseline_or_explicit_files`,
+     `provenance: null`, and no tracking file is created.
+* Recording appends one entry to `.spectra/touched/<change>.json` (created
+  without `review_base` if absent); entries are never merged, even for the
+  same task. The tracking file is written **before** `tasks.md`; if the
+  `tasks.md` write fails (`Failed to write tasks.md: <io error>`), the
+  tracking file is restored and the baseline kept.
+* An existing tracking file must parse and belong to this change, otherwise
+  exit 1: `Failed to parse touched tracking <abs path>: <serde error>` /
+  `Touched tracking belongs to "<other>", expected "<change>"`. A corrupt
+  baseline also fails.
+* Output: human `✓ Task <id> marked as done: <desc>` on stdout and each
+  warning as `! <warning>` on stderr; `--json` is one compact line with
+  alphabetical keys
+  `{"change","provenance","status":"done","task_desc","task_id","touched_files","warnings"}`.
 
-## No active changes
+## `task start`
 
-Probed on 2026-08-06: `task done 1` with zero active changes remains an
-operational error, exiting 1 with the shared no-active-change message prefixed
-by `Error: ` on stderr. This deliberately differs from the four read/report
-commands' successful empty state. See the complete matrix in
-[`artifact-workflow.md`](artifact-workflow.md#no-active-change-command-matrix).
+* Resolves the change and `TASK_ID` exactly like `task done`; on these
+  failures **no lock is created** (unlike `task done`).
+* Validates an existing tracking file the same way, then creates the lock.
+* Baseline already present (even a corrupt one) → nothing is rewritten,
+  `baseline_created: false`, human
+  `Task <id> already has a baseline; preserving the original`.
+* Otherwise writes `.spectra/task-baselines/<change>/<id>.json` with the
+  current fingerprints, and — **only if the tracking file does not exist
+  yet** — creates it with an empty `touched` list and a `review_base`
+  (`head_revision` = HEAD oid or `null` on an unborn branch, plus the same
+  fingerprints). An existing tracking file is never given or refreshed a
+  `review_base`.
+* Outside git: exit 0, no baseline, no tracking file, stdout empty, stderr
+  `! Task <id> started without a Git baseline (git_tracking_unavailable)`;
+  `git_tracking_available: false` and the warning in `--json`.
+* Starting a task that is already done succeeds.
+* Output: human `✓ Task <id> baseline captured`; `--json` one compact line
+  `{"baseline_created","change","git_tracking_available","status":"started","task_id","warnings"}`.
 
-## JSON schemas
+## Files
 
-These are the v2.3.1 shapes OpenSpectra emits; v3.0.0's additions
-(`provenance`, `touched_files`, `warnings`, `review_base`) are described in
-[How v3.0.0 records touched files](#how-v300-records-touched-files).
+All JSON files are serde_json pretty-printed with **no trailing newline**.
 
-`spectra task done <id> --json`:
+* `.spectra/task-baselines/<change>/<id>.json` — keys `change`, `task_id`
+  (string), `fingerprints`.
+* `.spectra/touched/<change>.json` — keys `change`, `touched`, then
+  `review_base` only when present. Entries: `task_id` (string), `task_desc`,
+  `files`, `provenance`. OpenSpectra also reads files written by its older
+  versions (numeric `task_id`, no `provenance`) and keeps those entries as
+  they are.
+* `.spectra/touched/<change>.lock` — always 0 bytes, never removed (not even
+  by `archive`, which deletes the tracking file and
+  `task-baselines/<change>/`).
 
-```json
-{"change": "try-feature", "status": "done", "task_desc": "1.2 ...", "task_id": "2"}
-```
+## Fingerprints
 
-`.spectra/touched/<name>.json` (recovered from the binary's bundled
-`/spectra:commit` skill doc, which reads this file to group a commit's dirty
-files by task):
+One entry per dirty path, keys `path`, `status`, `index_identity`,
+`worktree_identity` (absent identities are `null`, never omitted), sorted by
+path bytes (case-sensitive even with `core.ignorecase`). Paths are relative to
+the repository root regardless of the working directory. The oracle computes
+them with libgit2's status list: untracked files included and untracked
+directories expanded, **no rename detection**, submodules excluded, ignored
+files excluded. OpenSpectra reproduces the list with `git status
+--porcelain=v2 -z --no-renames --untracked-files=all --ignore-submodules=all`
+(`fingerprint.rs`).
 
-```json
-{
-  "change": "<change-name>",
-  "touched": [
-    { "task_id": "1", "task_desc": "Task description", "files": ["src/file1.ts", "src/file2.ts"] }
-  ]
-}
-```
+Excluded paths, compared by path component: the **whole configured spec
+directory** (not just the change's own directory) and `.spectra/`
+(`docs/spectrafoo/` and `.spectra.yaml` are included). A nested non-submodule
+repository appears once, as `inner` (no trailing slash), status 128, both
+identities `null`.
 
-Struct shapes match the binary's serde-derive error strings verbatim:
-`struct TouchedTracking with 2 elements` (`change`, `touched`) and
-`struct TouchedEntry with 3 elements` (`task_id`, `task_desc`, `files`).
+* `status` — libgit2 `git_status_t` bits: 1 INDEX_NEW, 2 INDEX_MODIFIED,
+  4 INDEX_DELETED, 16 INDEX_TYPECHANGE, 128 WT_NEW, 256 WT_MODIFIED,
+  512 WT_DELETED, 1024 WT_TYPECHANGE, 32768 CONFLICTED, OR-ed per path.
+  Examples: ` M` 256, `MM` 258, `AD` 513, `git rm --cached` (`D ` plus
+  `??`) 132, intent-to-add 257; a staged rename is two entries (4 and 1).
+* `index_identity` — the stage-0 index entry as
+  `<oid>:<decimal mode>:<on-disk flags>`, where flags =
+  `min(path length, 0xFFF) | stage<<12 | 0x4000 (extended: intent-to-add,
+  skip-worktree) | 0x8000 (assume-valid)`. It is **not** a size or line count:
+  `src/a.rs` gives 8, intent-to-add `src/ita.rs` gives 16394. `null` without
+  a stage-0 entry (untracked, staged delete, conflict).
+* `worktree_identity` — the blob oid of the raw file bytes
+  (`git hash-object --no-filters`, so no CRLF filtering); a symlink is
+  `symlink:<oid of the target string>`; `null` for a missing file or a
+  directory. The file mode is not part of it.
 
-## `.spectra/` and spec-directory exclusion
+**"Changed since the baseline"** = every path present on either side whose
+`(status, index_identity, worktree_identity)` tuple differs (absence counts
+as different). Consequences, all probed: a file dirty before `task start`
+and untouched afterwards is not attributed; editing it further, reverting it
+to HEAD, committing it, deleting it, or only staging/unstaging it *is*; a
+clean file edited and committed between start and done is **not** (HEAD
+movement is not diffed); a chmod or touch of an already-dirty file is not;
+a `git mv` after start attributes both paths.
 
-OpenSpectra excludes any dirty path under `.spectra/` from the touched-files
-candidate list, in addition to the change's own artifact directory,
-unconditionally — independent of the repository's current ignore rules.
-`init` (both the oracle's and OpenSpectra's) adds `.spectra/` to
-`.gitignore` (see [`init.md`](init.md#gitignore)), so the filter only matters when that entry is removed or
-overridden; without it, `.spectra/touched/<name>.json` would record tool state
-as an implementation file.
+## `--file` normalization
 
-**Oracle-confirmed on v3.0.0** (golden scenario `baseline-exclusions`, with
-`.spectra/` deliberately *not* ignored): after `task start 1`, writing
-`.spectra/other-state.txt`, the change's own `design.md`, an archived change's
-`proposal.md`, and a canonical `specs/cap/spec.md` alongside `src/a.rs`
-attributes only `src/a.rs`. So the oracle also excludes `.spectra/` regardless
-of ignore rules (the tracking file's own self-recording is not separately
-probed: it is already dirty before `task start 2`, so the baseline would
-mask it anyway) — and it excludes the **entire configured spec directory**, not
-just the change's own directory (`--file` pointing inside it is an error:
-`Explicit path '<path>' is inside the configured spec directory`). A second,
-independent piece of evidence is `review_base.dirty_fingerprints` (see
-[How v3.0.0 records touched files](#how-v300-records-touched-files)): in golden
-scenario `dirty-path-kinds`, `task start` runs with the change's own
-`design.md`, another change's `proposal.md`, and `specs/cap/spec.md` all dirty,
-and step #1's fingerprints list none of those three paths while listing every
-dirty path outside the spec directory. OpenSpectra excludes only the change's
-own directory, so a canonical-spec or other-change edit is a divergence; it is
-not pinned by the golden replay because v3.0.0 only exhibits it through
-`task start` or `--file`, neither of which OpenSpectra implements.
+Resolved against the project root, not the working directory, lexically:
+`./src/a.rs`, `src//a.rs`, `src/../src/a.rs`, and an absolute path inside
+the root all become `src/a.rs`; `src/` becomes `src`. No existence check;
+directories are accepted; a backslash is kept literally. Errors (exit 1,
+`tasks.md` untouched), in the order OpenSpectra checks them:
 
-## Oracle 3.0.0 golden and known divergences
+* `Explicit path '<arg>' is outside the project workspace` (`../x`,
+  `/tmp/x`, `.`)
+* `Explicit path '<arg>' resolves outside the project workspace` (a symlink
+  escaping the root)
+* `Explicit path '<arg>' is inside the configured spec directory` (lexical
+  only: a symlink into the spec directory is accepted)
+* `Explicit path '<arg>' is inside Spectra tracking metadata` (`.spectra/`)
 
-`scripts/capture-task-done.py` (macOS + the reference binary, version-pinned
-to 3.0.0) runs 14 scenarios / 60 `spectra` steps in scratch git repos and
-writes `golden/task-done-3.0.0.json`. For every step it records exit code,
-stdout, stderr, the resulting `tasks.md` bytes, the resulting
-`.spectra/touched/<change>.json` bytes, and the list of files under
-`.spectra/` (informational; not compared by the replay). The golden is
-self-describing — base tree, every setup step, and the isolated git
-environment (`GIT_CONFIG_GLOBAL=/dev/null`, fixed identity and dates, which
-also makes `review_base.head_revision` deterministic) — and the script's
-default mode fails on any drift from the committed file.
+## Verification
 
-`crates/spectra-cli/tests/task_done_golden_integration.rs` replays it against
-OpenSpectra. Divergences are handled in three layers, and each layer fails
-loudly when it goes stale:
+`crates/spectra-cli/tests/task_done_golden_integration.rs` replays all 14
+scenarios of `golden/task-done-3.0.0.json` (captured by
+`scripts/capture-task-done.py`, macOS + oracle 3.0.0) and compares, for each
+of the 60 `spectra` steps, exit code, stdout, stderr, `tasks.md` bytes,
+`touched/<change>.json` bytes, and the list of files under `.spectra/` —
+360 fields, all byte-identical, with no transforms or divergence ledger (the
+ledger `task-done-3.0.0.divergences.json` was deleted when D7 removed every
+divergence it recorded). A mutation that drops the lock creation turns 42 of
+those fields red. Rules the golden does not reach (index flags, `--file`
+errors, task-ID edge cases, the not-found rule) are unit-tested in
+`fingerprint.rs` and `change.rs`.
 
-1. **Transforms** derive OpenSpectra's expected value from the oracle's for
-   three systematic differences: `--json` keeps only v2.3.1's four keys
-   (`change`, `status`, `task_desc`, `task_id`) pretty-printed, where v3.0.0
-   prints one compact line that adds `provenance`, `touched_files`, and
-   `warnings`; human output has no `✓ ` prefix (deliberate, see step 5
-   above); and OpenSpectra prints no
-   `! touched_tracking_skipped_no_baseline_or_explicit_files` stderr line.
-   A transform that is never applied fails the test.
-2. **The ledger** `golden/task-done-3.0.0.divergences.json` pins
-   OpenSpectra's value for each remaining divergent field, grouped into
-   classes: `error-message` (v3.0.0 reports every bad ID as
-   `Task <id> not found for change '<name>'`), `evaluation-order`,
-   `leading-zero-id` (v3.0.0 rejects `01`; OpenSpectra marks task 1),
-   `change-flag-hint` (`Use --change` vs OpenSpectra's shared
-   `Use a change name`), and `session-wide-touched` (below). An unlisted
-   divergence, an entry whose value now equals the oracle's (raw or
-   transformed) value, an entry whose `args` differ from its step's, and an
-   entry matching no step all fail the test.
-3. **v3-only scenarios** — every scenario using `task start` or `--file` —
-   are not replayed; a separate test asserts OpenSpectra still rejects both
-   (clap exit 2 with clap's `unrecognized subcommand 'start'` /
-   `unexpected argument '--file'`) without touching `tasks.md`, so
-   implementing either fails that test, prompting those scenarios to be
-   added to the replay.
-
-The replay also guards against a truncated or extended golden: its scenario
-names must be exactly the ten replayed scenarios (in golden order) plus the
-four v3-only ones, it must compare exactly 195 fields (39 replayed `spectra`
-steps × 5 fields), and a step whose `expect` lacks a compared field panics.
-A ledger entry whose `args` differ from its step's also fails.
-
-**Known, uncompared divergence: `.spectra/touched/<change>.lock`.** v3.0.0
-creates the lock on every `task done` that resolves a change name (see below);
-OpenSpectra creates no lock file. The golden records it in
-`spectra_state_files`, but the replay does not compare that field, so this
-divergence is documented here rather than pinned by the test.
-
-What still matches byte-for-byte: the resulting `tasks.md` of every replayed
-step except `task done 01` (the `leading-zero-id` class: OpenSpectra flips
-task 1 where the oracle refuses) — grouped numbering that ignores `##`
-headers and `1.1`-style labels; `*`/`+`/nested bullets as tasks; ordered
-lists and blank descriptions skipped; `[x]`/`[X]` already done; `[~]`/`[-]`
-succeed with the line unchanged; trailing spaces preserved; CRLF normalized
-to LF; a missing final newline preserved. Also unchanged: the
-`already done` and `tasks.md not found` messages, the multiple-change exit
-code, and the non-git path's exit code and `tasks.md` result (its `--json`
-output differs only by the `json-shape` transform).
-
-### How v3.0.0 records touched files
-
-v3.0.0 no longer records session-wide dirty files. Without a baseline or
-`--file`, `task done` records nothing, warns
-`touched_tracking_skipped_no_baseline_or_explicit_files` (in `--json`'s
-`warnings`, or as a `! ` stderr line), and never creates the tracking file;
-outside git the warning is `git_tracking_unavailable`. OpenSpectra instead
-records every dirty file (the v2.3.1 behavior, with its own #98 baseline
-filter when `new change` wrote one) — the `session-wide-touched` class.
-
-* `task start <id> [--change] [--json]` captures a per-task baseline in
-  `.spectra/task-baselines/<change>/<id>.json` without touching `tasks.md`
-  (`✓ Task <id> baseline captured`; `--json`:
-  `{"baseline_created","change","git_tracking_available","status":"started","task_id","warnings"}`,
-  `baseline_created: false` when one already exists). It also creates the
-  tracking file with an empty `touched` list and a `review_base`:
-  `head_revision` plus a `dirty_fingerprints` entry (git status bitmask and
-  index/worktree identities) for each path already dirty **outside the
-  configured spec directory** (`dirty-path-kinds` #1 omits the three dirty
-  `docs/spectra/` paths). `review_base` is captured once, when the tracking
-  file is first created; a later `task start` does not refresh it
-  (`baseline-exclusions` #3 still has `[]` while `src/a.rs` is dirty, and in
-  `task-start-baseline` it stays `src/old.rs` alone at `task start 2` and
-  `task start 3`, although `src/a.rs` and `src/new.rs` are dirty by then).
-* `task done` after `task start` records only paths changed since that
-  baseline (`provenance: "task_baseline"`) and deletes the baseline. A path
-  dirty before `task start` and untouched afterwards is not attributed.
-* Every `task done` that resolves a change name creates
-  `.spectra/touched/<change>.lock` (golden `spectra_state_files`): on success,
-  on failure (a bad task ID, `invalid-task-ids` #1; an already-done task,
-  `marker-variants` #1; a missing `tasks.md`, `evaluation-order-id-vs-change`
-  #5), outside git (`not-a-git-repo`), and even for a nonexistent
-  `--change nope`, which creates `nope.lock` (`evaluation-order-id-vs-change`
-  #1). `task start` creates it too (the first successful `task start` of
-  `dirty-path-kinds`, `task-start-baseline`, and `baseline-exclusions`; a
-  failing `task start` is only observed with the lock already present). The
-  multiple-change auto-detect error (`change-autodetect` #1) creates none.
-  OpenSpectra creates no lock; see the known, uncompared divergence above.
-* `task done --file <PATH>` (repeatable) records the named paths,
-  deduplicated, whether or not they exist (`provenance: "explicit_files"`).
-  Path normalization (e.g. a `./` prefix) is not probed: the golden step
-  carrying `./src/c.rs` fails earlier on its spec-directory path.
-* Each tracking entry gains a fourth field, `provenance`.
-
-Porting this surface is tracked in #190; replacing or keeping OpenSpectra's
-#98 per-change baseline is an open architecture decision recorded there.
+**Not determined:** the index flags of paths longer than 0xFFF bytes
+(OpenSpectra caps at 0xFFF, as the on-disk format does); the trigger of the
+oracle string `Git tracking became unavailable after the task baseline was
+captured`; whether the lock is used with `flock` (OpenSpectra only creates
+it); Unicode normalization of paths on macOS.
 
 ## Resolved discrepancy: `new change`'s scaffold
 

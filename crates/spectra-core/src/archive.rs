@@ -3912,15 +3912,25 @@ mod tests {
         )
         .unwrap();
         assert!(touched::touched_path(&c, "my-feature").is_file());
-        write(&tmp.join("src/lib.rs"), "// lib\n");
-        let snapshot = touched::snapshot(&c, &["src/lib.rs".to_string()]);
-        touched::write_baseline(&c, "my-feature", &snapshot).unwrap();
-        assert!(touched::baseline_path(&c, "my-feature").is_file());
+        touched::write_baseline(
+            &c,
+            &touched::TaskBaseline {
+                change: "my-feature".to_string(),
+                task_id: "2".to_string(),
+                fingerprints: Vec::new(),
+            },
+        )
+        .unwrap();
+        touched::touch_lock(&c, "my-feature").unwrap();
+        assert!(touched::baseline_path(&c, "my-feature", "2").is_file());
 
         archive(&c, "my-feature", true, false, false).unwrap();
 
+        // oracle 3.0.0：archive 刪除 touched json 與整個 task-baselines/<change>/，
+        // 但保留 0 byte 的 lock。
         assert!(!touched::touched_path(&c, "my-feature").exists());
-        assert!(!touched::baseline_path(&c, "my-feature").exists());
+        assert!(!touched::baselines_dir(&c, "my-feature").exists());
+        assert!(touched::lock_path(&c, "my-feature").is_file());
     }
 
     /// After chmod(0o000), root (or a container with CAP_DAC_OVERRIDE) can

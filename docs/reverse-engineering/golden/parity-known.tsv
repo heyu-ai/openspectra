@@ -107,5 +107,3 @@ surface	scope	missing-command
 surface	show	missing-flag --deltas-only
 surface	show	missing-flag --item-type
 surface	show	missing-flag --requirements
-surface	task done	missing-flag --file
-surface	task start	missing-command

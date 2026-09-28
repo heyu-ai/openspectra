@@ -9,6 +9,7 @@ pub mod calibration;
 pub mod change;
 pub mod config;
 pub mod drift;
+pub mod fingerprint;
 mod fsutil;
 pub mod git;
 pub mod global_config;

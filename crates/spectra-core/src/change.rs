@@ -171,9 +171,18 @@ pub(crate) fn clear_stale_sidecar_state(cfg: &Config, name: &str) -> Result<()> 
         in_progress_marker_path(cfg, name),
         started_sha_path(cfg, name),
         crate::touched::touched_path(cfg, name),
-        crate::touched::baseline_path(cfg, name),
+        // 舊版 OpenSpectra（#98）的 per-change baseline，已不再寫入，只負責清掉殘留。
+        cfg.root
+            .join(".spectra")
+            .join("changes")
+            .join(format!("{name}.touched-baseline.json")),
     ];
     let mut failures = Vec::new();
+    match std::fs::remove_dir_all(crate::touched::baselines_dir(cfg, name)) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => failures.push(format!("removing stale task baselines for '{name}': {e}")),
+    }
     for path in sidecars {
         match std::fs::remove_file(&path) {
             Ok(()) => {}
@@ -488,16 +497,8 @@ fn create_inner(
         std::fs::write(&started, sha).with_context(|| format!("writing {}", started.display()))?;
     }
 
-    // Best-effort：第一個 task 的檢查點。change 建立前就 dirty 的檔案若之後
-    // 沒被改過，就不會被記成這個 change 的 touched file（見
-    // `touched::baseline_path`）。寫不出來只會退回 session-wide 收集，不是錯誤。
-    if let Some(dirty) = crate::git::dirty_files(&cfg.root) {
-        let snapshot = crate::touched::snapshot(cfg, &dirty);
-        if let Err(e) = crate::touched::write_baseline(cfg, name, &snapshot) {
-            eprintln!("warning: failed to write the touched-file baseline for '{name}': {e}");
-        }
-    }
-
+    // touched-file 的 baseline 改由 `task start` 逐 task 擷取（oracle 3.0.0，D7），
+    // 建立 change 時不再寫 per-change baseline（#98 已移除）。
     Ok(())
 }
 
@@ -654,32 +655,48 @@ pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
     resolve_optional(cfg, explicit)?.ok_or_else(|| anyhow!(NO_ACTIVE_CHANGES_MESSAGE))
 }
 
-/// Outcome of [`mark_task_done`]: enough for the CLI to render both the
-/// human ("Task {task_id} marked as done: {task_desc}") and `--json`
-/// (`{"change","status","task_desc","task_id"}`) output shapes, matching
-/// the reference CLI exactly.
+/// `task start`／`task done` 的 change 解析：多個 active change 時用 oracle 3.0.0 的
+/// 措辭 `Use --change to specify one:`（其他指令的共用措辭待 #50 裁決）。
+pub fn resolve_for_task(cfg: &Config, explicit: Option<&str>) -> Result<String> {
+    if explicit.is_none() {
+        let active = list_active(cfg);
+        if active.len() > 1 {
+            anyhow::bail!(
+                "Multiple changes found. Use --change to specify one: {}",
+                active.join(", ")
+            );
+        }
+    }
+    resolve(cfg, explicit)
+}
+
+/// `task done` 的結果（oracle 3.0.0 `--json` 的欄位）。
 #[derive(Debug)]
 pub struct TaskDoneOutcome {
     pub change: String,
-    pub task_id: usize,
+    pub task_id: String,
     pub task_desc: String,
+    /// `task_baseline`／`explicit_files`；沒有記錄任何 touched 時為 `None`。
+    pub provenance: Option<String>,
+    pub touched_files: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
-/// Mark the `task_id`-th checkbox (1-based, across all checkboxes in
-/// `tasks.md`, file order) as done, and best-effort record the files this task
-/// touched to `.spectra/touched/<name>.json`: the dirty files (via
-/// `git status --porcelain`) plus checkpointed files that are now clean, whose
-/// fingerprint changed since the previous checkpoint — `new change` or the
-/// previous successfully-recorded `task done`, see `touched::baseline_path` —
-/// excluding the change's own artifact directory, OpenSpectra's own `.spectra/`
-/// state directory, and files already recorded for an earlier task.
-///
-/// Errors when the change (or its `tasks.md`) doesn't exist use the same
-/// message for both cases — "tasks.md not found for change '<name>'" —
-/// matching the reference CLI, which doesn't distinguish them either. Any
-/// other I/O error reading `tasks.md` (permission denied, etc.) propagates
-/// with its real cause instead of being folded into that message.
-pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDoneOutcome> {
+/// `task start` 的結果（oracle 3.0.0 `--json` 的欄位）。
+#[derive(Debug)]
+pub struct TaskStartOutcome {
+    pub change: String,
+    pub task_id: String,
+    pub baseline_created: bool,
+    pub git_tracking_available: bool,
+    pub warnings: Vec<String>,
+}
+
+pub const WARNING_NO_BASELINE: &str = "touched_tracking_skipped_no_baseline_or_explicit_files";
+pub const WARNING_GIT_UNAVAILABLE: &str = "git_tracking_unavailable";
+
+/// 讀 tasks.md 並把 task ID 參數對應到序號；錯誤訊息與 oracle 3.0.0 相同。
+fn read_tasks_for(cfg: &Config, name: &str, task_arg: &str) -> Result<(PathBuf, String, usize)> {
     let not_found = || anyhow!("tasks.md not found for change '{name}'");
     let ch = try_load(cfg, name)?.ok_or_else(not_found)?;
     let tasks_path = ch.tasks_md();
@@ -688,62 +705,219 @@ pub fn mark_task_done(cfg: &Config, name: &str, task_id: usize) -> Result<TaskDo
         Err(e) if e.kind() == ErrorKind::NotFound => return Err(not_found()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", tasks_path.display())),
     };
+    let task_id = crate::tasks::resolve_task_id(&md, task_arg)
+        .ok_or_else(|| anyhow!("Task {task_arg} not found for change '{name}'"))?;
+    Ok((tasks_path, md, task_id))
+}
 
-    let (new_md, task_desc) = crate::tasks::mark_done(&md, task_id)?;
-    std::fs::write(&tasks_path, &new_md)
-        .with_context(|| format!("writing {}", tasks_path.display()))?;
-
-    // Touched-file tracking is best-effort convenience data for AI-agent
-    // commit tooling; a failure here must not undo the task-done marking
-    // that already succeeded above.
-    match crate::git::dirty_files(&cfg.root) {
-        // Not a git repo at all is an expected, common case (this tool has
-        // no `init` yet, so plenty of projects aren't git-tracked) -- only
-        // warn when git itself failed on a project that IS a repo, so the
-        // warning stays a meaningful signal instead of firing on every
-        // `task done` call for a non-git project.
-        None if !crate::git::is_repo(&cfg.root) => {}
-        None => eprintln!(
-            "warning: couldn't determine dirty files for '{name}'; this task's touched files were not recorded"
-        ),
-        Some(dirty) => {
-            let change_rel_dir = ch.dir.strip_prefix(&cfg.root).ok();
-            let is_candidate = |f: &str| {
-                let path = std::path::Path::new(f);
-                let under_change_dir = change_rel_dir.is_some_and(|rel| path.starts_with(rel));
-                // `.spectra/` is this tool's own state directory (the very
-                // tracking file being written here included) -- never a
-                // "touched" implementation file, whether or not the project
-                // happens to gitignore it.
-                let under_spectra_state_dir = path.starts_with(".spectra");
-                !under_change_dir && !under_spectra_state_dir
-            };
-            let snapshot = crate::touched::snapshot(cfg, &dirty);
-            let candidate_files =
-                crate::touched::touched_since_baseline(cfg, name, &snapshot, is_candidate);
-            match crate::touched::record_new(cfg, name, task_id, &task_desc, candidate_files) {
-                // 記錄成功，這次 task done 才成為下一個 task 的檢查點。
-                Ok(()) => {
-                    if let Err(e) = crate::touched::write_baseline(cfg, name, &snapshot) {
-                        eprintln!(
-                            "warning: failed to update the touched-file baseline for '{name}': {e}"
-                        );
-                    }
+/// `--file` 參數正規化成相對於專案 root 的路徑（oracle 3.0.0 規則，見 task.md）：
+/// 以字面方式處理 `.`／`..`／重複斜線與 root 內的絕對路徑，不檢查存在與否。
+pub(crate) fn normalize_explicit_path(cfg: &Config, arg: &str) -> Result<String> {
+    use std::path::Component;
+    let outside = || anyhow!("Explicit path '{arg}' is outside the project workspace");
+    let raw = Path::new(arg);
+    let joined = if raw.is_absolute() {
+        raw.to_path_buf()
+    } else {
+        cfg.root.join(raw)
+    };
+    let mut normalized = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(outside());
                 }
-                // 記錄失敗時不推進檢查點：否則這些檔案會以目前的指紋進入
-                // baseline，之後的 task done 會判定它們「沒變」而永遠漏記。
-                Err(e) => eprintln!(
-                    "warning: failed to record touched files for '{name}': {e}; the touched-file baseline was kept so a later `task done` can record them"
-                ),
+            }
+            Component::CurDir => {}
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    let relative = normalized.strip_prefix(&cfg.root).map_err(|_| outside())?;
+    if relative.as_os_str().is_empty() {
+        return Err(outside());
+    }
+    // 經由 symlink 逃出專案：以最長的既存祖先做 canonicalize 後再比對。
+    if let Ok(root) = cfg.root.canonicalize() {
+        let mut probe = normalized.as_path();
+        while !probe.exists() {
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => break,
+            }
+        }
+        if let Ok(real) = probe.canonicalize() {
+            if !real.starts_with(&root) {
+                anyhow::bail!("Explicit path '{arg}' resolves outside the project workspace");
             }
         }
     }
+    let relative = relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/");
+    let under = |prefix: &str| {
+        let prefix = prefix.trim_end_matches('/');
+        relative == prefix || relative.starts_with(&format!("{prefix}/"))
+    };
+    if under(cfg.spec_dir.trim_start_matches("./")) {
+        anyhow::bail!("Explicit path '{arg}' is inside the configured spec directory");
+    }
+    if under(".spectra") {
+        anyhow::bail!("Explicit path '{arg}' is inside Spectra tracking metadata");
+    }
+    Ok(relative)
+}
 
-    Ok(TaskDoneOutcome {
+/// `task start`：為一個 task 擷取 baseline 指紋，不修改 tasks.md（oracle 3.0.0）。
+///
+/// - baseline 已存在時什麼都不寫（`baseline_created: false`）。
+/// - touched 檔不存在時才建立，並記下 `review_base`；已存在就不動它。
+/// - 不在 git repo 內時不寫 baseline，回報 `git_tracking_unavailable`。
+/// - 成功才建立 lock（找不到 change 或 task 時不建立，與 `task done` 不同）。
+pub fn start_task(cfg: &Config, name: &str, task_arg: &str) -> Result<TaskStartOutcome> {
+    let (_, _, _) = read_tasks_for(cfg, name, task_arg)?;
+    let tracking = crate::touched::load_strict(cfg, name)?;
+    crate::touched::touch_lock(cfg, name)?;
+    let mut outcome = TaskStartOutcome {
         change: name.to_string(),
-        task_id,
-        task_desc,
-    })
+        task_id: task_arg.to_string(),
+        baseline_created: false,
+        git_tracking_available: true,
+        warnings: Vec::new(),
+    };
+    if crate::touched::baseline_exists(cfg, name, task_arg) {
+        return Ok(outcome);
+    }
+    let Some(fingerprints) = crate::fingerprint::dirty_fingerprints(&cfg.root, &cfg.spec_dir)
+    else {
+        outcome.git_tracking_available = false;
+        outcome.warnings.push(WARNING_GIT_UNAVAILABLE.to_string());
+        return Ok(outcome);
+    };
+    crate::touched::write_baseline(
+        cfg,
+        &crate::touched::TaskBaseline {
+            change: name.to_string(),
+            task_id: task_arg.to_string(),
+            fingerprints: fingerprints.clone(),
+        },
+    )?;
+    if tracking.is_none() {
+        crate::touched::persist(
+            cfg,
+            &crate::touched::TouchedTracking {
+                change: name.to_string(),
+                touched: Vec::new(),
+                review_base: Some(crate::touched::ReviewBase {
+                    head_revision: crate::fingerprint::head_revision(&cfg.root),
+                    dirty_fingerprints: fingerprints,
+                }),
+            },
+        )?;
+    }
+    outcome.baseline_created = true;
+    Ok(outcome)
+}
+
+/// `task done`：把 task 標為完成並記錄 touched files（oracle 3.0.0）。
+///
+/// 檢查順序：解析 change → task ID → 是否已完成 → `--file` → tracking → 寫 tasks.md。
+/// 只要 change 名稱已解析就建立 lock（即使之後失敗）。tracking：
+/// - 有 `--file`：記錄這些路徑（`explicit_files`），並刪除這個 task 的 baseline；
+/// - 否則有 baseline：記錄自 baseline 以來變動的路徑（`task_baseline`），空的就不新增條目；
+/// - 兩者皆無：不記錄，警告 `touched_tracking_skipped_no_baseline_or_explicit_files`；
+/// - 不在 git repo 內：`--file` 也忽略，警告 `git_tracking_unavailable`。
+///
+/// tracking 先寫，tasks.md 寫入失敗時還原 tracking 並保留 baseline。
+pub fn mark_task_done(
+    cfg: &Config,
+    name: &str,
+    task_arg: &str,
+    explicit_files: &[String],
+) -> Result<TaskDoneOutcome> {
+    crate::touched::touch_lock(cfg, name)?;
+    let (tasks_path, md, task_id) = read_tasks_for(cfg, name, task_arg)?;
+    let (new_md, task_desc) = crate::tasks::mark_done(&md, task_id)?;
+    let mut files = explicit_files
+        .iter()
+        .map(|arg| normalize_explicit_path(cfg, arg))
+        .collect::<Result<Vec<_>>>()?;
+    files.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+    files.dedup();
+
+    let tracking = crate::touched::load_strict(cfg, name)?;
+    let baseline = crate::touched::load_baseline(cfg, name, task_arg)?;
+    let mut outcome = TaskDoneOutcome {
+        change: name.to_string(),
+        task_id: task_arg.to_string(),
+        task_desc: task_desc.clone(),
+        provenance: None,
+        touched_files: Vec::new(),
+        warnings: Vec::new(),
+    };
+
+    let now = crate::fingerprint::dirty_fingerprints(&cfg.root, &cfg.spec_dir);
+    let recorded: Option<(Vec<String>, &str)> = match (&now, baseline.as_ref()) {
+        (None, _) => {
+            outcome.warnings.push(WARNING_GIT_UNAVAILABLE.to_string());
+            None
+        }
+        (Some(_), _) if !files.is_empty() => {
+            Some((files, crate::touched::PROVENANCE_EXPLICIT_FILES))
+        }
+        (Some(now), Some(baseline)) => Some((
+            crate::fingerprint::changed_paths(&baseline.fingerprints, now),
+            crate::touched::PROVENANCE_TASK_BASELINE,
+        )),
+        (Some(_), None) => {
+            outcome.warnings.push(WARNING_NO_BASELINE.to_string());
+            None
+        }
+    };
+
+    let touched_path = crate::touched::touched_path(cfg, name);
+    let original_touched = std::fs::read(&touched_path).ok();
+    let mut wrote_touched = false;
+    if let Some((paths, provenance)) = recorded {
+        outcome.provenance = Some(provenance.to_string());
+        outcome.touched_files = paths.clone();
+        if !paths.is_empty() {
+            let mut tracking = tracking.unwrap_or_else(|| crate::touched::TouchedTracking {
+                change: name.to_string(),
+                ..Default::default()
+            });
+            tracking.touched.push(crate::touched::TouchedEntry {
+                task_id: task_arg.to_string(),
+                task_desc,
+                files: paths,
+                provenance: Some(provenance.to_string()),
+            });
+            crate::touched::persist(cfg, &tracking)?;
+            wrote_touched = true;
+        }
+    }
+
+    if let Err(e) = std::fs::write(&tasks_path, &new_md) {
+        if wrote_touched {
+            let restored = match &original_touched {
+                Some(bytes) => std::fs::write(&touched_path, bytes),
+                None => std::fs::remove_file(&touched_path),
+            };
+            if let Err(rollback) = restored {
+                anyhow::bail!(
+                    "Failed to write tasks.md: {e}; failed to rollback touched tracking: {rollback}"
+                );
+            }
+        }
+        anyhow::bail!("Failed to write tasks.md: {e}");
+    }
+    // baseline 在 tasks.md 寫入成功後才刪除；git 不可用時同樣刪除（oracle 實測）。
+    if baseline.is_some() || crate::touched::baseline_exists(cfg, name, task_arg) {
+        crate::touched::remove_baseline(cfg, name, task_arg)?;
+    }
+    Ok(outcome)
 }
 
 #[cfg(test)]
@@ -1548,10 +1722,10 @@ mod tests {
             "- [ ] first\n- [ ] second\n",
         );
 
-        let outcome = mark_task_done(&cfg, "add-search-filter", 2).unwrap();
+        let outcome = mark_task_done(&cfg, "add-search-filter", "2", &[]).unwrap();
 
         assert_eq!(outcome.change, "add-search-filter");
-        assert_eq!(outcome.task_id, 2);
+        assert_eq!(outcome.task_id, "2");
         assert_eq!(outcome.task_desc, "second");
         let tasks_md =
             std::fs::read_to_string(cfg.changes_dir().join("add-search-filter").join("tasks.md"))
@@ -1564,7 +1738,7 @@ mod tests {
         let tmp = TempDir::new();
         let cfg = git_repo_cfg(&tmp);
 
-        let err = mark_task_done(&cfg, "does-not-exist", 1).unwrap_err();
+        let err = mark_task_done(&cfg, "does-not-exist", "1", &[]).unwrap_err();
         assert_eq!(
             err.to_string(),
             "tasks.md not found for change 'does-not-exist'"
@@ -1577,97 +1751,11 @@ mod tests {
         let cfg = git_repo_cfg(&tmp);
         create(&cfg, "add-search-filter").unwrap();
 
-        let err = mark_task_done(&cfg, "add-search-filter", 1).unwrap_err();
+        let err = mark_task_done(&cfg, "add-search-filter", "1", &[]).unwrap_err();
         assert_eq!(
             err.to_string(),
             "tasks.md not found for change 'add-search-filter'"
         );
-    }
-
-    #[test]
-    fn mark_task_done_records_dirty_files_outside_the_change_dir() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        write(&tmp.join("src.rs"), "fn main() {}\n");
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("src.rs"));
-        // The change's own artifact dir (tasks.md itself just got rewritten,
-        // and is git-dirty) must never show up as a "touched" file.
-        assert!(!recorded.iter().any(|f| f.contains("add-search-filter")));
-    }
-
-    #[test]
-    fn mark_task_done_skips_files_already_dirty_before_the_change_and_left_unchanged() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        // 建立 change 前就 dirty、之後沒再被改過：與這個 change 無關（#98）。
-        write(&tmp.join("unrelated.rs"), "// pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        write(&tmp.join("src.rs"), "fn main() {}\n");
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("src.rs"), "got {recorded:?}");
-        assert!(!recorded.contains("unrelated.rs"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_records_a_pre_dirty_file_once_a_task_changes_it() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("shared.rs"), "// before\n");
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n- [ ] second\n",
-        );
-
-        // task 1 沒碰 shared.rs；task 2 改了它，所以要記在 task 2 名下。
-        write(&tmp.join("a.rs"), "// task 1\n");
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-        write(&tmp.join("shared.rs"), "// after\n");
-        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
-
-        let tracking: touched::TouchedTracking = serde_json::from_str(
-            &std::fs::read_to_string(touched::touched_path(&cfg, "add-search-filter")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(tracking.touched.len(), 2, "got {tracking:?}");
-        assert_eq!(tracking.touched[0].files, vec!["a.rs".to_string()]);
-        assert_eq!(tracking.touched[1].task_id, "2");
-        assert_eq!(tracking.touched[1].files, vec!["shared.rs".to_string()]);
-    }
-
-    #[test]
-    fn mark_task_done_without_a_baseline_falls_back_to_every_dirty_file() {
-        // 這個功能上線前建立的 change 沒有 baseline：維持舊行為，不能漏記。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("unrelated.rs"), "// pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        std::fs::remove_file(touched::baseline_path(&cfg, "add-search-filter")).unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("unrelated.rs"), "got {recorded:?}");
     }
 
     fn git_in(tmp: &TempDir, args: &[&str]) {
@@ -1681,302 +1769,156 @@ mod tests {
             .success());
     }
 
-    fn tracking(cfg: &Config, name: &str) -> touched::TouchedTracking {
-        serde_json::from_str(&std::fs::read_to_string(touched::touched_path(cfg, name)).unwrap())
-            .unwrap()
+    /// 已 commit 的專案：change `demo`、兩個 task，以及 `src/a.rs`、`src/old.rs`。
+    fn tracked_project(tmp: &TempDir) -> Config {
+        let cfg = git_repo_cfg(tmp);
+        write(&tmp.join(".gitignore"), ".spectra/\n");
+        write(&tmp.join("src/a.rs"), "fn a() {}\n");
+        write(&tmp.join("src/old.rs"), "fn old() {}\n");
+        write(
+            &cfg.changes_dir().join("demo/.openspec.yaml"),
+            "schema: spec-driven\n",
+        );
+        write(
+            &cfg.changes_dir().join("demo/tasks.md"),
+            "- [ ] 1.1 first\n- [ ] 1.2 second\n",
+        );
+        git_in(tmp, &["add", "-A"]);
+        git_in(tmp, &["commit", "-q", "-m", "base"]);
+        cfg
     }
 
     #[test]
-    fn mark_task_done_falls_back_to_every_dirty_file_when_the_baseline_is_corrupt() {
+    fn task_done_after_task_start_records_only_paths_changed_since_the_baseline() {
         let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("unrelated.rs"), "// pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        std::fs::write(
-            touched::baseline_path(&cfg, "add-search-filter"),
-            "not json",
-        )
-        .unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
+        let cfg = tracked_project(&tmp);
+        write(&tmp.join("src/old.rs"), "fn old() { /* dirty before */ }\n");
+
+        let started = start_task(&cfg, "demo", "1").unwrap();
+        assert!(started.baseline_created && started.git_tracking_available);
+        let again = start_task(&cfg, "demo", "1").unwrap();
+        assert!(!again.baseline_created, "an existing baseline is preserved");
+        assert!(touched::lock_path(&cfg, "demo").is_file());
+
+        write(&tmp.join("src/a.rs"), "fn a() { 1 }\n");
+        write(&tmp.join("src/new.rs"), "fn new() {}\n");
+        // spec 目錄內的變動不算。
+        write(&cfg.changes_dir().join("demo/design.md"), "d\n");
+
+        let done = mark_task_done(&cfg, "demo", "1", &[]).unwrap();
+        assert_eq!(done.provenance.as_deref(), Some("task_baseline"));
+        assert_eq!(done.touched_files, vec!["src/a.rs", "src/new.rs"]);
+        assert!(done.warnings.is_empty());
+        assert!(!touched::baseline_path(&cfg, "demo", "1").exists());
+
+        let tracking = touched::load_strict(&cfg, "demo").unwrap().unwrap();
+        let review = tracking
+            .review_base
+            .expect("created by the first task start");
+        assert_eq!(
+            review
+                .dirty_fingerprints
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            vec![".gitignore", "src/old.rs"]
+                .into_iter()
+                .filter(|p| *p != ".gitignore")
+                .collect::<Vec<_>>(),
+            "only the pre-dirty file outside the spec dir"
         );
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("unrelated.rs"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_falls_back_to_every_dirty_file_when_the_baseline_is_unreadable() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("unrelated.rs"), "// pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        // 用目錄佔住 baseline 路徑：讀檔會失敗（EISDIR），但不是 NotFound。
-        let baseline = touched::baseline_path(&cfg, "add-search-filter");
-        std::fs::remove_file(&baseline).unwrap();
-        std::fs::create_dir(&baseline).unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("unrelated.rs"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_keeps_the_old_checkpoint_when_recording_fails() {
-        // #173 review：record 失敗時 baseline 若照樣前進，這些檔案就再也記不到。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n- [ ] second\n",
-        );
-        write(&tmp.join("a.rs"), "// task 1\n");
-        // 用目錄佔住 touched.json：load 會警告並從空的開始，persist 會失敗。
-        let touched_json = touched::touched_path(&cfg, "add-search-filter");
-        std::fs::create_dir_all(&touched_json).unwrap();
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-        std::fs::remove_dir(&touched_json).unwrap();
-
-        // task 2 沒碰 a.rs，但 task 1 漏記的它仍要被補記。
-        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
-
-        let t = tracking(&cfg, "add-search-filter");
-        assert_eq!(t.touched.len(), 1, "got {t:?}");
-        assert_eq!(t.touched[0].task_id, "2");
-        assert_eq!(t.touched[0].files, vec!["a.rs".to_string()]);
-    }
-
-    #[test]
-    fn mark_task_done_records_a_pre_dirty_file_a_task_restored_to_its_committed_content() {
-        // #173 review：改回 commit 內容後 git 視為乾淨，但這個 task 確實改了它。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("README.md"), "pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        git_in(&tmp, &["checkout", "--", "README.md"]);
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("README.md"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_does_not_record_a_pre_dirty_file_committed_unchanged() {
-        // 對照組：原本就 dirty 的檔案在 task 期間被原樣 commit 掉，內容沒變，不算 touched。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("README.md"), "pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        git_in(&tmp, &["commit", "-q", "-m", "wip", "--", "README.md"]);
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(!recorded.contains("README.md"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_records_a_pre_dirty_file_a_task_deleted() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        write(&tmp.join("README.md"), "pre-existing edit\n");
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        std::fs::remove_file(tmp.join("README.md")).unwrap();
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("README.md"), "got {recorded:?}");
-    }
-
-    /// 測試結束（含 panic）時把 `path` 的權限改回 0o644，讓 TempDir 刪得掉。
-    #[cfg(unix)]
-    struct RestoreReadable(std::path::PathBuf);
-
-    #[cfg(unix)]
-    impl Drop for RestoreReadable {
-        fn drop(&mut self) {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o644));
-        }
-    }
-
-    #[cfg(unix)]
-    fn set_mode(path: &std::path::Path, mode: u32) {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn mark_task_done_records_a_changed_file_that_stays_unreadable() {
-        // #173 review：讀不到內容時兩次指紋都一樣，不能因此判定「沒變」。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        let secret = tmp.join("secret.rs");
-        write(&secret, "// v1\n");
-        let _restore = RestoreReadable(secret.clone());
-        set_mode(&secret, 0o000);
-        if std::fs::read(&secret).is_ok() {
-            eprintln!("skipping: running as root (chmod 0o000 not enforced)");
-            return;
-        }
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        set_mode(&secret, 0o644);
-        write(&secret, "// v2\n");
-        set_mode(&secret, 0o000);
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("secret.rs"), "got {recorded:?}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn mark_task_done_records_an_unreadable_pre_dirty_file_a_task_restored() {
-        // #173 round 2：檢查點時指紋無法判定的路徑也要記進 baseline，
-        // 否則它被改回 commit 內容（變乾淨）後就不在任何候選來源裡。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        let readme = tmp.join("README.md");
-        write(&readme, "pre-existing edit\n");
-        let _restore = RestoreReadable(readme.clone());
-        set_mode(&readme, 0o000);
-        if std::fs::read(&readme).is_ok() {
-            eprintln!("skipping: running as root (chmod 0o000 not enforced)");
-            return;
-        }
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        set_mode(&readme, 0o644);
-        git_in(&tmp, &["checkout", "--", "README.md"]);
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("README.md"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_excludes_state_and_change_dir_files_that_became_clean() {
-        // #173 round 2：兩個 task 之間 `git commit -a` 會讓 baseline 與 tasks.md
-        // 變成「檢查點時 dirty、現在乾淨」，它們仍不能被當成 touched file。
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n- [ ] second\n",
-        );
-        write(&tmp.join("src.rs"), "fn main() {}\n");
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-        git_in(&tmp, &["add", "-A"]);
-        git_in(&tmp, &["commit", "-q", "-m", "wip"]);
-        write(&tmp.join("b.rs"), "// b\n");
-
-        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
-
-        let t = tracking(&cfg, "add-search-filter");
-        let all: Vec<&String> = t.touched.iter().flat_map(|e| e.files.iter()).collect();
-        assert_eq!(all, vec!["src.rs", "b.rs"], "got {t:?}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn mark_task_done_records_a_retargeted_pre_dirty_symlink() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        std::os::unix::fs::symlink("a", tmp.join("link")).unwrap();
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n",
-        );
-        std::fs::remove_file(tmp.join("link")).unwrap();
-        std::os::unix::fs::symlink("b", tmp.join("link")).unwrap();
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(recorded.contains("link"), "got {recorded:?}");
-    }
-
-    #[test]
-    fn mark_task_done_never_records_its_own_state_directory() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n- [ ] second\n",
-        );
-        write(&tmp.join("src.rs"), "fn main() {}\n");
-
-        // task 1 creates .spectra/touched/add-search-filter.json, which is
-        // untracked (and un-gitignored in this test fixture) at the moment
-        // task 2 runs -- it must never be attributed to task 2 as a "touched" file.
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
-
-        let recorded = touched::already_recorded(&cfg, "add-search-filter");
-        assert!(!recorded.iter().any(|f| f.contains(".spectra")));
-    }
-
-    #[test]
-    fn mark_task_done_does_not_reattribute_a_file_already_recorded() {
-        let tmp = TempDir::new();
-        let cfg = git_repo_cfg(&tmp);
-        create(&cfg, "add-search-filter").unwrap();
-        write(
-            &cfg.changes_dir().join("add-search-filter").join("tasks.md"),
-            "- [ ] first\n- [ ] second\n",
-        );
-        write(&tmp.join("src.rs"), "fn main() {}\n");
-
-        mark_task_done(&cfg, "add-search-filter", 1).unwrap();
-        // src.rs is still dirty; a second task-done call must not attribute
-        // it again to task 2 since it's already recorded under task 1.
-        mark_task_done(&cfg, "add-search-filter", 2).unwrap();
-
-        let tracking_json = std::fs::read_to_string(
-            tmp.join(".spectra")
-                .join("touched")
-                .join("add-search-filter.json"),
-        )
-        .unwrap();
-        let tracking: touched::TouchedTracking = serde_json::from_str(&tracking_json).unwrap();
         assert_eq!(tracking.touched.len(), 1);
         assert_eq!(tracking.touched[0].task_id, "1");
+    }
+
+    #[test]
+    fn task_done_without_a_baseline_warns_and_records_nothing() {
+        let tmp = TempDir::new();
+        let cfg = tracked_project(&tmp);
+        write(&tmp.join("src/a.rs"), "fn a() { 1 }\n");
+
+        let done = mark_task_done(&cfg, "demo", "2", &[]).unwrap();
+        assert_eq!(done.task_desc, "1.2 second");
+        assert_eq!(done.provenance, None);
+        assert!(done.touched_files.is_empty());
+        assert_eq!(done.warnings, vec![WARNING_NO_BASELINE]);
+        assert!(!touched::touched_path(&cfg, "demo").exists());
+        assert!(touched::lock_path(&cfg, "demo").is_file());
+    }
+
+    #[test]
+    fn task_done_with_explicit_files_records_them_normalized() {
+        let tmp = TempDir::new();
+        let cfg = tracked_project(&tmp);
+        let files = [
+            "./src//b.rs".to_string(),
+            "src/../src/a.rs".to_string(),
+            "src/b.rs".to_string(),
+        ];
+        let done = mark_task_done(&cfg, "demo", "1", &files).unwrap();
+        assert_eq!(done.provenance.as_deref(), Some("explicit_files"));
+        assert_eq!(done.touched_files, vec!["src/a.rs", "src/b.rs"]);
+    }
+
+    #[test]
+    fn explicit_paths_are_rejected_with_the_oracle_messages() {
+        let tmp = TempDir::new();
+        let cfg = tracked_project(&tmp);
+        let err = |arg: &str| normalize_explicit_path(&cfg, arg).unwrap_err().to_string();
+        assert_eq!(
+            err("../outside.rs"),
+            "Explicit path '../outside.rs' is outside the project workspace"
+        );
+        assert_eq!(
+            err("."),
+            "Explicit path '.' is outside the project workspace"
+        );
+        assert_eq!(
+            err("openspec/changes/demo/design.md"),
+            "Explicit path 'openspec/changes/demo/design.md' is inside the configured spec directory"
+        );
+        assert_eq!(
+            err(".spectra/x"),
+            "Explicit path '.spectra/x' is inside Spectra tracking metadata"
+        );
+        assert_eq!(normalize_explicit_path(&cfg, "src/").unwrap(), "src");
+        assert_eq!(
+            normalize_explicit_path(&cfg, "no/such/f.rs").unwrap(),
+            "no/such/f.rs"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(std::env::temp_dir(), tmp.join("escape")).unwrap();
+            assert_eq!(
+                err("escape/x.rs"),
+                "Explicit path 'escape/x.rs' resolves outside the project workspace"
+            );
+        }
+        // 任何 --file 錯誤都不能改動 tasks.md。
+        let before = std::fs::read_to_string(cfg.changes_dir().join("demo/tasks.md")).unwrap();
+        assert!(mark_task_done(&cfg, "demo", "1", &["../x".to_string()]).is_err());
+        assert_eq!(
+            std::fs::read_to_string(cfg.changes_dir().join("demo/tasks.md")).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn task_ids_must_match_the_decimal_index_exactly() {
+        let tmp = TempDir::new();
+        let cfg = tracked_project(&tmp);
+        for arg in ["0", "01", "+1", "1.1", "3", "abc", " 1"] {
+            assert_eq!(
+                mark_task_done(&cfg, "demo", arg, &[])
+                    .unwrap_err()
+                    .to_string(),
+                format!("Task {arg} not found for change 'demo'")
+            );
+            assert_eq!(
+                start_task(&cfg, "demo", arg).unwrap_err().to_string(),
+                format!("Task {arg} not found for change 'demo'")
+            );
+        }
     }
 
     /// RAII guard for a per-test scratch directory: removes it on drop even

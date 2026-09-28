@@ -490,6 +490,16 @@ enum TraceTarget {
 
 #[derive(Subcommand, Debug)]
 enum TaskTarget {
+    /// Capture the Git baseline for a task without modifying tasks.md.
+    Start {
+        /// Task ID (1-based sequential index across all tasks.md checkboxes).
+        task_id: String,
+        /// Change name (auto-detects if only one active change exists).
+        #[arg(long)]
+        change: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Mark a task as done and record touched files.
     Done {
         /// Task ID (1-based sequential index across all tasks.md checkboxes).
@@ -499,6 +509,9 @@ enum TaskTarget {
         change: Option<String>,
         #[arg(long)]
         json: bool,
+        /// Record this path as touched by the task (repeatable).
+        #[arg(long = "file", value_name = "PATH")]
+        files: Vec<String>,
     },
 }
 
@@ -1491,21 +1504,30 @@ fn cmd_new_artifact(
 /// `--json` shape for `task done`, reverse-engineered against
 /// `/Applications/Spectra.app` v2.3.1: `{"change","status","task_desc","task_id"}`,
 /// `task_id` rendered as a string (matching the reference CLI exactly).
+/// `task done --json`（oracle 3.0.0：單行、key 依字母排序；serde_json 的 Value
+/// 物件本來就是排序 map）。
 fn task_done_json(outcome: &change::TaskDoneOutcome) -> serde_json::Value {
     json!({
         "change": outcome.change,
+        "provenance": outcome.provenance,
         "status": "done",
         "task_desc": outcome.task_desc,
-        "task_id": outcome.task_id.to_string(),
+        "task_id": outcome.task_id,
+        "touched_files": outcome.touched_files,
+        "warnings": outcome.warnings,
     })
 }
 
-/// Parses the raw `<TASK_ID>` CLI argument, producing the reference CLI's
-/// exact error wording on a non-numeric input. Pulled out so this check
-/// (which runs before any change lookup) is unit-testable without a `Config`.
-fn parse_task_id(raw: &str) -> Result<usize> {
-    raw.parse()
-        .map_err(|_| anyhow::anyhow!("Invalid task ID '{raw}': must be a number"))
+/// `task start --json`（oracle 3.0.0：單行、key 依字母排序）。
+fn task_start_json(outcome: &change::TaskStartOutcome) -> serde_json::Value {
+    json!({
+        "baseline_created": outcome.baseline_created,
+        "change": outcome.change,
+        "git_tracking_available": outcome.git_tracking_available,
+        "status": "started",
+        "task_id": outcome.task_id,
+        "warnings": outcome.warnings,
+    })
 }
 
 /// `spectra trace migrate`：只回報需要處理的 spec。一般模式下任何一份遷移
@@ -1578,21 +1600,48 @@ fn cmd_trace_migrate(cfg: &Config, dry_run: bool, check: bool, as_json: bool) ->
 fn cmd_task_done(
     cfg: &Config,
     change_name: Option<&str>,
-    task_id_raw: &str,
+    task_arg: &str,
+    files: &[String],
     as_json: bool,
 ) -> Result<i32> {
-    let task_id = parse_task_id(task_id_raw)?;
-    let name = change::resolve(cfg, change_name)?;
-    let outcome = change::mark_task_done(cfg, &name, task_id)?;
+    let name = change::resolve_for_task(cfg, change_name)?;
+    let outcome = change::mark_task_done(cfg, &name, task_arg, files)?;
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&task_done_json(&outcome))?
-        );
+        println!("{}", serde_json::to_string(&task_done_json(&outcome))?);
     } else {
         println!(
-            "Task {} marked as done: {}",
+            "✓ Task {} marked as done: {}",
             outcome.task_id, outcome.task_desc
+        );
+        for warning in &outcome.warnings {
+            eprintln!("! {warning}");
+        }
+    }
+    Ok(0)
+}
+
+fn cmd_task_start(
+    cfg: &Config,
+    change_name: Option<&str>,
+    task_arg: &str,
+    as_json: bool,
+) -> Result<i32> {
+    let name = change::resolve_for_task(cfg, change_name)?;
+    let outcome = change::start_task(cfg, &name, task_arg)?;
+    if as_json {
+        println!("{}", serde_json::to_string(&task_start_json(&outcome))?);
+    } else if !outcome.git_tracking_available {
+        eprintln!(
+            "! Task {} started without a Git baseline ({})",
+            outcome.task_id,
+            change::WARNING_GIT_UNAVAILABLE
+        );
+    } else if outcome.baseline_created {
+        println!("✓ Task {} baseline captured", outcome.task_id);
+    } else {
+        println!(
+            "Task {} already has a baseline; preserving the original",
+            outcome.task_id
         );
     }
     Ok(0)
@@ -2098,13 +2147,22 @@ fn run() -> Result<i32> {
             }
         },
         Command::Task { target } => match target {
-            TaskTarget::Done {
+            TaskTarget::Start {
                 task_id,
                 change,
                 json,
             } => {
                 let cfg = require_initialized(&root)?;
-                cmd_task_done(&cfg, change.as_deref(), task_id, *json)
+                cmd_task_start(&cfg, change.as_deref(), task_id, *json)
+            }
+            TaskTarget::Done {
+                task_id,
+                change,
+                json,
+                files,
+            } => {
+                let cfg = require_initialized(&root)?;
+                cmd_task_done(&cfg, change.as_deref(), task_id, files, *json)
             }
         },
         Command::Trace { target } => match target {
@@ -2762,52 +2820,45 @@ mod tests {
     }
 
     #[test]
-    fn task_done_json_shape_matches_the_documented_contract() {
+    fn task_done_json_is_one_alphabetical_line_like_the_oracle() {
+        // serde_json 的 Value 物件是排序 map（沒開 preserve_order）；若日後開了這個
+        // feature，這裡會失敗而不是靜默改變 oracle 對齊的 key 順序。
         let outcome = change::TaskDoneOutcome {
-            change: "my-change".to_string(),
-            task_id: 3,
-            task_desc: "do the thing".to_string(),
+            change: "demo".to_string(),
+            task_id: "1".to_string(),
+            task_desc: "1.1 first".to_string(),
+            provenance: Some("task_baseline".to_string()),
+            touched_files: vec!["src/a.rs".to_string()],
+            warnings: Vec::new(),
         };
-        let value = task_done_json(&outcome);
-        assert_eq!(value["change"], "my-change");
-        assert_eq!(value["status"], "done");
-        assert_eq!(value["task_desc"], "do the thing");
-        // Matches the reference CLI: task_id is a string, not a number.
-        assert_eq!(value["task_id"], "3");
-    }
-
-    #[test]
-    fn task_done_json_serializes_keys_in_alphabetical_order() {
-        // Relies on serde_json's default Value::Map being a BTreeMap (the
-        // "preserve_order" feature isn't enabled) -- pinned here so enabling
-        // that feature later would fail this test instead of silently
-        // changing the --json key order documented as oracle-matching.
-        let outcome = change::TaskDoneOutcome {
-            change: "my-change".to_string(),
-            task_id: 3,
-            task_desc: "do the thing".to_string(),
-        };
-        let serialized = serde_json::to_string(&task_done_json(&outcome)).unwrap();
         assert_eq!(
-            serialized,
-            r#"{"change":"my-change","status":"done","task_desc":"do the thing","task_id":"3"}"#
+            serde_json::to_string(&task_done_json(&outcome)).unwrap(),
+            r#"{"change":"demo","provenance":"task_baseline","status":"done","task_desc":"1.1 first","task_id":"1","touched_files":["src/a.rs"],"warnings":[]}"#
+        );
+        let untracked = change::TaskDoneOutcome {
+            provenance: None,
+            touched_files: Vec::new(),
+            warnings: vec![change::WARNING_NO_BASELINE.to_string()],
+            ..outcome
+        };
+        assert_eq!(
+            task_done_json(&untracked)["provenance"],
+            serde_json::Value::Null
         );
     }
 
     #[test]
-    fn parse_task_id_accepts_a_valid_number() {
-        assert_eq!(parse_task_id("3").unwrap(), 3);
-    }
-
-    #[test]
-    fn parse_task_id_rejects_non_numeric_input() {
-        let err = parse_task_id("abc").unwrap_err();
-        assert_eq!(err.to_string(), "Invalid task ID 'abc': must be a number");
-    }
-
-    #[test]
-    fn parse_task_id_rejects_negative_numbers() {
-        let err = parse_task_id("-1").unwrap_err();
-        assert_eq!(err.to_string(), "Invalid task ID '-1': must be a number");
+    fn task_start_json_is_one_alphabetical_line_like_the_oracle() {
+        let outcome = change::TaskStartOutcome {
+            change: "demo".to_string(),
+            task_id: "1".to_string(),
+            baseline_created: true,
+            git_tracking_available: true,
+            warnings: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_string(&task_start_json(&outcome)).unwrap(),
+            r#"{"baseline_created":true,"change":"demo","git_tracking_available":true,"status":"started","task_id":"1","warnings":[]}"#
+        );
     }
 }

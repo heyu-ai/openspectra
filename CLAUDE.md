@@ -40,10 +40,9 @@ this file is agent-facing operational context.
   self-describing `docs/reverse-engineering/golden/task-done-3.0.0.json`,
   which `task_done_golden_integration.rs` replays. Drift exits non-zero and
   keeps the scratch repos; `--write` regenerates and re-verifies. The golden
-  is generated — never hand-edit it. Its sibling
-  `task-done-3.0.0.divergences.json` is the opposite: a hand-curated ledger
-  of OpenSpectra's pinned divergent values, edited deliberately when a
-  divergence is closed or accepted (the replay fails on stale entries).
+  is generated — never hand-edit it. Since D7 (per-task baselines, #190) the
+  replay compares every field of every scenario byte for byte, including the
+  files under `.spectra/`; there is no divergence ledger any more.
 
 - `scripts/mutate-check.py` + `scripts/mutations.toml` — value-level mutation
   contract for previously fixed bugs. Each case reverts one fix to its original

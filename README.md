@@ -84,7 +84,8 @@ spectra schema which [NAME] [--all] [--json]            # reports project → us
 spectra status [--change <NAME>|--all] [--schema <NAME>] [--json]   # shows one or every artifact DAG with dependencies and skip state
 spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifact's authoring instruction + template; with all artifacts done, switches to apply mode (tasks progress + preflight)
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
-spectra task done <TASK_ID> [--change <NAME>] [--json]  # marks a tasks.md checkbox done, records touched files
+spectra task start <TASK_ID> [--change <NAME>] [--json]  # captures a per-task git baseline (task-baselines/), leaves tasks.md alone
+spectra task done <TASK_ID> [--change <NAME>] [--json] [--file PATH]...  # marks a tasks.md checkbox done; records files changed since task start, or the --file paths
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete] [--preview] [--json]  # transactional merge/move with rollback; honors skip_specs/retire_capabilities metadata; trace data goes to specs/<cap>/spec.trace.yaml
 spectra trace migrate [--dry-run] [--check] [--json]  # OpenSpectra-only: moves inline <!-- @trace --> footers into spec.trace.yaml sidecars (idempotent), reports stale trace names; --check is a CI gate
 spectra completion generate [SHELL]              # prints a shell completion script (bash|zsh|fish|elvish|powershell; detects $SHELL when omitted)
