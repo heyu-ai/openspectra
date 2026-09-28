@@ -228,12 +228,19 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W7g | `schema validate`（human `✓ Schema '<name>' is valid (<N> artifacts)`、JSON `{artifactCount, name, valid}`、不帶名稱時驗證設定的 schema、找不到時的錯誤格式、無效 schema 的訊息）與 `schema fork` 寫出的 artifact 順序 | A3 | W7f 發現 | RE 完成（規格在 job tmp `w7gre/SPEC.md`），**等 D11 裁決**再實作 |
 | W7h | `drift` Structure 維度的 anchor 邊角差異（W7d 差分的 7 個 jail：例如 design 裡的 `src/n.md` oracle 判為 broken、broken anchor 的排序） | A3 | W7d 發現 | PR #213（base #212，與 W9b 平行；FilePath 只看 git index、broken 依類別排序；差分 759／761，剩 2 個為 #123 刻意分歧） |
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | PR #208（stacked on #207；tw／ja／en 對應顯示名稱、其他原樣；locale 容錯解析修掉非字串值讓所有指令報錯的問題；28 次比對相同；parity 85 → 84） |
-| W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | RE 完成（`w9re/SPEC.md`）；判定規則（D1 已裁決）先做，oracle 格式的呈現**等 D12 裁決** |
-| W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
+| W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | RE 完成（`w9re/SPEC.md`）。**W9b** 判定規則依 OpenSpec 1.13.2（D1）：PR #214（新增 `capture-validate-openspec.py` 與 fixture golden，逐欄重播；22 個 mutation 全 KILLED）。**W9a** oracle 格式的呈現**等 D12 裁決** |
+| W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | PR #215（analyze 拆成 8 個模組、新增 Localization 維度；語料 31 個 change 中 29 個逐位元組相同，其餘 2 個只差 readdir 順序；新增 `capture-analyze.py` 與 240 次執行的 golden；26 個 mutation 全 KILLED；analyze 的 parity 已知分歧 28 列 → 2 列；**3 項待裁決**見 PR） |
 | W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | PR #209（stacked on #208；另含 `scripts/shadow-report.py`；真 oracle 煙霧測試 shadow 輸出與 oracle 逐位元組相同；測試 helper 固定 `OPENSPECTRA_IMPL=oss` 並經正反向對照） |
-| W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | 待辦（最後做） |
+| W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | PR #216（A1 surface 缺口歸零；parity 62 → 56，只刪不增；`decisions --json` 在三個 corpus 共 758 筆欄位與 oracle 相同；新增 `capture-demo.py`；11 個 mutation 全被抓到；`show` 缺名稱改為 exit 1 屬行為變更；**5 項待裁決**見 PR） |
 | W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.`（W6 實測：3.0.0 所有專案指令皆然）；只有 `openspec/` 目錄、沒有 `.spectra.yaml` 的專案 oracle 視為已初始化（`spec_dir: openspec`，root 探索也認這個標記），OpenSpectra 回 Not initialized——純 OpenSpec 專案相容性缺口（W6 發現） | A3 | W2 發現 | PR #211（stacked on #209；**部分完成**：openspec 標記、未初始化訊息、`.gitkeep` 已對齊；**待裁決 D9** 新專案預設 spec_dir（oracle `docs/spectra` vs OpenSpec `openspec/`）與 `.spectra.yaml` 範本、**D10** 只有 `openspec/` 時 init 是否跟 oracle 拒絕（會犧牲失敗重試）） |
 | W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
+
+**合併狀態（2026-09-28）**：依 howie 指示，W1–W9b 的 stacked PR（#196–#214，共 17 個）已依序
+squash merge 進 main（最後一筆 `cebbb28`）。做法是每一層 squash 後，把下一層以
+`git rebase --onto origin/main <舊 parent tip>` 移到 main 上、帶 lease 推送，並斷言 rebase 後的
+tree 等於已跑過 CI 的 tree 才 merge；#214 因與 #213 平行、`CHANGELOG.md` 衝突，另在 rebase 後
+重跑本機與遠端 CI。W10（#215）、W12（#216）各自以 main 為 base 開 PR，尚未 merge。
+上表各列的「stacked on」是開 PR 當時的狀態。
 
 **每一項的標準流程**：
 
