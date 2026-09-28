@@ -220,10 +220,15 @@ pub(crate) fn render_spec_dir(text: &str, spec_dir: &str) -> String {
     )
 }
 
+/// apply 模式的一個 task（oracle 3.0.0 的欄位與順序；新欄位是 snake_case）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ApplyTask {
     pub id: String,
+    pub number: Option<String>,
+    pub prerequisites: Vec<String>,
+    pub unresolved_prerequisites: Vec<String>,
+    pub cycle_member: bool,
+    pub mixed_format: bool,
     pub description: String,
     pub done: bool,
     pub parallel: bool,
@@ -303,6 +308,8 @@ pub struct Preflight {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApplyInstructions {
+    /// oracle 3.0.0 的第一個 key（與 `drift --json` 的同一個物件）。
+    pub dormancy: crate::dormancy::Dormancy,
     pub change_name: String,
     pub change_dir: String,
     pub schema_name: String,
@@ -326,7 +333,7 @@ pub enum InstructionOutput {
 }
 
 fn parse_apply_tasks(markdown: &str) -> Vec<ApplyTask> {
-    markdown
+    let parsed: Vec<(bool, crate::tasks::TaskText)> = markdown
         .lines()
         .filter_map(|line| {
             let captures = crate::tasks::CHECKBOX_RE.captures(line)?;
@@ -341,21 +348,142 @@ fn parse_apply_tasks(markdown: &str) -> Vec<ApplyTask> {
             if raw_description.is_empty() {
                 return None;
             }
-            let (parallel, description) = raw_description
-                .strip_prefix("[P]")
-                .map_or((false, raw_description), |description| {
-                    (true, description.trim())
-                });
-            Some((captures[1].to_string(), description.to_string(), parallel))
+            Some((
+                crate::tasks::is_done_marker(&captures[1]),
+                crate::tasks::parse_task_text(raw_description),
+            ))
         })
+        .collect();
+    let numbers: HashSet<String> = parsed
+        .iter()
+        .filter_map(|(_, t)| t.number.clone())
+        .collect();
+    let cycle = cycle_members(&parsed);
+    // 任一 task 有前置宣告（即使全都解析不到）就進入 graph 模式；否則沿用 legacy `[P]`。
+    let graph_mode = parsed.iter().any(|(_, t)| !t.prerequisites.is_empty());
+    let ready: Vec<bool> = parsed
+        .iter()
         .enumerate()
-        .map(|(index, (state, description, parallel))| ApplyTask {
-            id: (index + 1).to_string(),
-            description,
-            done: crate::tasks::is_done_marker(&state),
-            parallel,
+        .map(|(i, (done, text))| {
+            !done
+                && !cycle[i]
+                && text.prerequisites.iter().all(|prereq| {
+                    numbers.contains(prereq.as_str())
+                        && parsed
+                            .iter()
+                            .filter(|(_, t)| t.number.as_deref() == Some(prereq.as_str()))
+                            .all(|(done, _)| *done)
+                })
+        })
+        .collect();
+    let ready_count = ready.iter().filter(|r| **r).count();
+    parsed
+        .into_iter()
+        .enumerate()
+        .map(|(index, (done, text))| {
+            let unresolved_prerequisites = text
+                .prerequisites
+                .iter()
+                .filter(|p| !numbers.contains(p.as_str()))
+                .cloned()
+                .collect();
+            let parallel = if graph_mode {
+                ready[index] && ready_count >= 2
+            } else {
+                text.legacy_parallel
+            };
+            ApplyTask {
+                id: (index + 1).to_string(),
+                mixed_format: text.legacy_parallel && !text.prerequisites.is_empty(),
+                number: text.number,
+                prerequisites: text.prerequisites,
+                unresolved_prerequisites,
+                cycle_member: cycle[index],
+                description: text.description,
+                done,
+                parallel,
+            }
         })
         .collect()
+}
+
+/// 位於前置依賴環上的 task（大小大於 1 的強連通分量，或自我參照）。邊是 task → 與其
+/// 前置編號相同的每個 task；完成與否不影響（oracle：環上已完成的 task 仍是 `true`）。
+fn cycle_members(parsed: &[(bool, crate::tasks::TaskText)]) -> Vec<bool> {
+    let edges: Vec<Vec<usize>> = parsed
+        .iter()
+        .map(|(_, text)| {
+            text.prerequisites
+                .iter()
+                .flat_map(|prereq| {
+                    parsed
+                        .iter()
+                        .enumerate()
+                        .filter(move |(_, (_, t))| t.number.as_deref() == Some(prereq.as_str()))
+                        .map(|(j, _)| j)
+                })
+                .collect()
+        })
+        .collect();
+    // Tarjan 的強連通分量（遞迴深度等於 task 數，tasks.md 規模下無虞）。
+    struct Tarjan<'a> {
+        edges: &'a [Vec<usize>],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        on_stack: Vec<bool>,
+        stack: Vec<usize>,
+        next: usize,
+        member: Vec<bool>,
+    }
+    impl Tarjan<'_> {
+        fn visit(&mut self, v: usize) {
+            self.index[v] = Some(self.next);
+            self.low[v] = self.next;
+            self.next += 1;
+            self.stack.push(v);
+            self.on_stack[v] = true;
+            for &w in &self.edges[v] {
+                match self.index[w] {
+                    None => {
+                        self.visit(w);
+                        self.low[v] = self.low[v].min(self.low[w]);
+                    }
+                    Some(iw) if self.on_stack[w] => self.low[v] = self.low[v].min(iw),
+                    Some(_) => {}
+                }
+            }
+            if Some(self.low[v]) == self.index[v] {
+                let mut component = Vec::new();
+                while let Some(w) = self.stack.pop() {
+                    self.on_stack[w] = false;
+                    component.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let cyclic = component.len() > 1 || self.edges[v].contains(&v);
+                for w in component {
+                    self.member[w] = cyclic;
+                }
+            }
+        }
+    }
+    let n = parsed.len();
+    let mut t = Tarjan {
+        edges: &edges,
+        index: vec![None; n],
+        low: vec![0; n],
+        on_stack: vec![false; n],
+        stack: Vec::new(),
+        next: 0,
+        member: vec![false; n],
+    };
+    for v in 0..n {
+        if t.index[v].is_none() {
+            t.visit(v);
+        }
+    }
+    t.member
 }
 
 fn push_unique(paths: &mut Vec<String>, seen: &mut HashSet<String>, path: &str) {
@@ -700,6 +828,11 @@ pub fn apply_instructions(
     });
 
     Ok(ApplyInstructions {
+        dormancy: crate::dormancy::evaluate(
+            &cfg.root,
+            &change.dir,
+            crate::show::schema_and_created(&change.dir).1.as_deref(),
+        ),
         change_name: change.name.clone(),
         change_dir: change_dir.to_string_lossy().into_owned(),
         schema_name: schema.name.clone(),

@@ -71,6 +71,89 @@ pub struct TaskCollision {
     pub commit_subject: Option<String>,
 }
 
+/// oracle 3.0.0 對 checkbox 後文字（已 trim）的解析：legacy `[P] ` 前綴、`N.M` 編號、
+/// 緊接編號的 `[after: …]` 前置宣告，以及去掉這兩者後的 description。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskText {
+    pub number: Option<String>,
+    pub prerequisites: Vec<String>,
+    pub legacy_parallel: bool,
+    pub description: String,
+}
+
+/// 依 oracle 3.0.0 解析 task 文字（規則與實證見 `docs/reverse-engineering/artifact-workflow.md`
+/// 的 apply tasks 一節）：
+/// 1. 恰好以 `"[P] "`（大小寫敏感、一個空白）開頭才是 legacy parallel，只去掉這 4 bytes；
+/// 2. 編號是開頭的 `\d+\.\d+`，後面不能再接 `.` 或數字；
+/// 3. `[after: …]` 只在編號後面隔至少一個空白（空白或 tab）時辨識，只吃第一個區塊，
+///    內容以 `,` 切開、各自 trim、丟掉空項；
+/// 4. 辨識到區塊時 description 改寫成 `"{編號} {其餘.trim_start()}"`（其餘為空時只有編號），
+///    否則維持步驟 1 之後的原文。
+pub fn parse_task_text(raw: &str) -> TaskText {
+    let (legacy_parallel, rest) = match raw.strip_prefix("[P] ") {
+        Some(rest) => (true, rest),
+        None => (false, raw),
+    };
+    let number = task_number(rest);
+    let mut text = TaskText {
+        number: number.map(str::to_string),
+        prerequisites: Vec::new(),
+        legacy_parallel,
+        description: rest.to_string(),
+    };
+    let Some(number) = number else {
+        return text;
+    };
+    let after_number = &rest[number.len()..];
+    let block = after_number.trim_start_matches([' ', '\t']);
+    if block.len() == after_number.len() {
+        return text; // 編號後面沒有空白
+    }
+    let Some(inner) = block.strip_prefix("[after:") else {
+        return text;
+    };
+    let Some(close) = inner.find(']') else {
+        return text;
+    };
+    text.prerequisites = inner[..close]
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect();
+    let remaining = inner[close + 1..].trim_start();
+    text.description = if remaining.is_empty() {
+        number.to_string()
+    } else {
+        format!("{number} {remaining}")
+    };
+    text
+}
+
+/// 開頭的 `\d+\.\d+`，後面不能再接 `.` 或數字（`1.2.3`、`1.` 都不是編號）。
+fn task_number(rest: &str) -> Option<&str> {
+    let bytes = rest.as_bytes();
+    let digits = |from: usize| {
+        bytes[from..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .count()
+    };
+    let major = digits(0);
+    if major == 0 || bytes.get(major) != Some(&b'.') {
+        return None;
+    }
+    let minor = digits(major + 1);
+    if minor == 0 {
+        return None;
+    }
+    let end = major + 1 + minor;
+    match bytes.get(end) {
+        Some(b'.') => None,
+        _ => Some(&rest[..end]),
+    }
+}
+
 /// Parse all checkbox tasks from `tasks.md` text.
 pub fn parse(md: &str) -> Vec<Task> {
     md.lines()
@@ -142,7 +225,9 @@ pub fn mark_done(md: &str, task_id: usize) -> Result<(String, String)> {
     let state = caps
         .get(1)
         .expect("group 1 always captures on a CHECKBOX_RE match");
-    let description = caps[2].trim().to_string();
+    // oracle 3.0.0 回報（JSON、human 訊息、touched 紀錄）的是去掉 `[P] ` 與 `[after: …]`
+    // 後的 description（探測 p26），tasks.md 本身不改。
+    let description = parse_task_text(caps[2].trim()).description;
     if is_done_marker(state.as_str()) {
         return Err(anyhow!("Task {task_id} is already done"));
     }
@@ -228,6 +313,134 @@ pub fn analyze(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (原文, number, prerequisites, legacy `[P]`, description)
+    type TextCase<'a> = (&'a str, Option<&'a str>, &'a [&'a str], bool, &'a str);
+
+    /// oracle 3.0.0 `instructions apply --json` 的 `number`／`prerequisites`／`description`
+    /// （docs/reverse-engineering/artifact-workflow.md 的 apply tasks 一節，探測 t01–t11、
+    /// h01–h09、u01–u08）。
+    #[test]
+    fn task_text_matches_oracle_numbers_after_blocks_and_legacy_p() {
+        let cases: &[TextCase] = &[
+            ("1.1 dotted", Some("1.1"), &[], false, "1.1 dotted"),
+            ("1. trailing dot", None, &[], false, "1. trailing dot"),
+            ("2 bare int", None, &[], false, "2 bare int"),
+            ("1.2.3 triple", None, &[], false, "1.2.3 triple"),
+            ("T1 letter", None, &[], false, "T1 letter"),
+            ("**1.4** bold", None, &[], false, "**1.4** bold"),
+            ("3.1: colon", Some("3.1"), &[], false, "3.1: colon"),
+            ("3.2) paren", Some("3.2"), &[], false, "3.2) paren"),
+            ("10.20 big", Some("10.20"), &[], false, "10.20 big"),
+            (
+                "1.2 [after: 1.1] second",
+                Some("1.2"),
+                &["1.1"],
+                false,
+                "1.2 second",
+            ),
+            (
+                "1.2 second [after: 1.1]",
+                Some("1.2"),
+                &[],
+                false,
+                "1.2 second [after: 1.1]",
+            ),
+            (
+                "[after: 1.2] 1.1 lead",
+                None,
+                &[],
+                false,
+                "[after: 1.2] 1.1 lead",
+            ),
+            (
+                "1.3 [After: 1.1] x",
+                Some("1.3"),
+                &[],
+                false,
+                "1.3 [After: 1.1] x",
+            ),
+            ("1.4 [after:1.1] y", Some("1.4"), &["1.1"], false, "1.4 y"),
+            (
+                "1.5 [after: 1.1][after: 1.2] e",
+                Some("1.5"),
+                &["1.1"],
+                false,
+                "1.5 [after: 1.2] e",
+            ),
+            ("1.1\t[after: 1.2] a", Some("1.1"), &["1.2"], false, "1.1 a"),
+            ("1.2  [after: 1.3] b", Some("1.2"), &["1.3"], false, "1.2 b"),
+            ("1.2 [after: 1.1]", Some("1.2"), &["1.1"], false, "1.2"),
+            ("1.2 [after: ] b", Some("1.2"), &[], false, "1.2 b"),
+            (
+                "1.2 [after:  1.1 ] b",
+                Some("1.2"),
+                &["1.1"],
+                false,
+                "1.2 b",
+            ),
+            (
+                "1.2 [after: 1.1 1.2] b",
+                Some("1.2"),
+                &["1.1 1.2"],
+                false,
+                "1.2 b",
+            ),
+            (
+                "1.2 [after: 1.1, 1.1] b",
+                Some("1.2"),
+                &["1.1", "1.1"],
+                false,
+                "1.2 b",
+            ),
+            (
+                "1.2 [after: setup, , 1] b",
+                Some("1.2"),
+                &["setup", "1"],
+                false,
+                "1.2 b",
+            ),
+            (
+                "1.2[after: 1.1] b",
+                Some("1.2"),
+                &[],
+                false,
+                "1.2[after: 1.1] b",
+            ),
+            ("[P] 1.2 b", Some("1.2"), &[], true, "1.2 b"),
+            (
+                "[P] 1.3 [after: 1.1] third",
+                Some("1.3"),
+                &["1.1"],
+                true,
+                "1.3 third",
+            ),
+            ("[P] nonum a", None, &[], true, "nonum a"),
+            ("[P]1.1 a", None, &[], false, "[P]1.1 a"),
+            ("[P]  1.2 b", None, &[], true, " 1.2 b"),
+            ("1.1 a [P]", Some("1.1"), &[], false, "1.1 a [P]"),
+            ("[p] lower", None, &[], false, "[p] lower"),
+        ];
+        for (raw, number, prereqs, legacy, description) in cases {
+            let expected = TaskText {
+                number: number.map(str::to_string),
+                prerequisites: prereqs.iter().map(|p| p.to_string()).collect(),
+                legacy_parallel: *legacy,
+                description: description.to_string(),
+            };
+            assert_eq!(parse_task_text(raw), expected, "{raw:?}");
+        }
+    }
+
+    /// oracle 3.0.0 `task done` 的 `task_desc`（JSON、human 訊息與 touched 紀錄）去掉 `[P] `
+    /// 與緊接編號的 `[after: …]`（探測 p26）。
+    #[test]
+    fn mark_done_reports_the_normalized_description() {
+        let md =
+            "- [ ] 1.1 first\n- [ ] 1.2 [after: 1.1] second\n- [ ] [P] 1.3 [after: 1.1] third\n";
+        assert_eq!(mark_done(md, 2).unwrap().1, "1.2 second");
+        assert_eq!(mark_done(md, 3).unwrap().1, "1.3 third");
+    }
 
     #[test]
     fn parses_checkboxes_and_done_state() {

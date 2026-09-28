@@ -12,6 +12,18 @@ changes.
 
 ### Added
 
+- `drift --json` and `instructions apply --json` (including `--compact`) start
+  with the v3.0.0 `dormancy` object (`status`, `reason`, `age_days`,
+  `idle_days`: a change older than five days whose directory has no commit in
+  three days is `triggered`), and `drift --json` adds `recommended_action`
+  (`apply` / `ingest` / `archive --skip-specs` by severity).
+- `instructions apply --json` tasks carry the v3.0.0 dependency fields:
+  `number`, `prerequisites` (from `[after: …]` right after the number),
+  `unresolved_prerequisites`, `cycle_member`, `mixed_format`; `parallel`
+  switches to the dependency graph (ready tasks, at least two) whenever any
+  task declares prerequisites, and the `[after: …]` block is removed from the
+  description.
+
 - `spectra scope` (v3.0.0, #165): the read-only implementation scope of the
   working tree or of one change (`--change`), optionally against an explicit
   pre-implementation base (`--base`). Reports each file's committed / staged /
@@ -56,6 +68,18 @@ changes.
 
 ### Changed
 
+- Human `spectra drift` output is the v3.0.0 table (`Drift Report: <c>`,
+  dimension / status / score rows, `Broken anchors`, `Severity: <LEVEL>
+  drift`, `> <recommendation>`, with the oracle's TTY colours) instead of
+  OpenSpectra's Markdown layout.
+- `drift`: the Time status quotes an invalid `created` value
+  (`invalid created date "notadate"`) and gains `, git unavailable` when HEAD
+  cannot be resolved; the Tasks status is `no tasks.md` when the file is
+  missing; `created` is read only when `.openspec.yaml` has both `schema` and
+  `created`, as `show` already does.
+- `task done` reports (human line, JSON `task_desc`, touched record) the task
+  description without the legacy `[P] ` prefix and the `[after: …]` block, as
+  v3.0.0 does; `tasks.md` is unchanged.
 - **BREAKING (D7, #190): touched-file tracking follows Spectra 3.0.0.**
   `task done` no longer records every dirty file: without a `task start`
   baseline or `--file` it records nothing and warns

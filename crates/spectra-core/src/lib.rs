@@ -8,6 +8,7 @@ pub mod artifact;
 pub mod calibration;
 pub mod change;
 pub mod config;
+pub mod dormancy;
 pub mod drift;
 pub mod fingerprint;
 mod fsutil;

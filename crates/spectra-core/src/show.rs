@@ -58,7 +58,7 @@ fn scalar_string(value: &serde_yaml::Value) -> Option<String> {
 
 /// `.openspec.yaml` 必須同時有 `schema` 與 `created`，否則兩者皆為 `None`（oracle 以
 /// 兩欄都必填的 struct 反序列化）。檔案缺失或無法解析時不警告，與 oracle 相同。
-fn schema_and_created(dir: &Path) -> (Option<String>, Option<String>) {
+pub(crate) fn schema_and_created(dir: &Path) -> (Option<String>, Option<String>) {
     let parsed = std::fs::read_to_string(dir.join(".openspec.yaml"))
         .ok()
         .and_then(|text| serde_yaml::from_str::<serde_yaml::Value>(&text).ok());

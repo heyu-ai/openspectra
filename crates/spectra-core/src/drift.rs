@@ -1,6 +1,7 @@
 //! Drift detection: assembles the four dimensions into a [`DriftReport`].
-//! Existing JSON fields preserve the reference `spectra drift --json` schema;
-//! OpenSpectra adds `unresolved_anchors` for issue #83.
+//! Existing JSON fields preserve the reference `spectra drift --json` schema
+//! (oracle 3.0.0 adds `dormancy` and `recommended_action`); OpenSpectra adds
+//! `unresolved_anchors` for issue #83.
 
 use anyhow::Result;
 use chrono::{Local, NaiveDate};
@@ -10,6 +11,7 @@ use crate::anchors::{self, BrokenAnchor, Resolver, UnresolvedAnchor};
 use crate::calibration;
 use crate::change::Change;
 use crate::config::Config;
+use crate::dormancy::{self, Dormancy};
 use crate::git;
 use crate::tasks::{self, TaskCollision};
 
@@ -29,10 +31,36 @@ pub struct Dimension {
     pub contributes_to_total: bool,
 }
 
-/// Field order is intentional: the additive unresolved list follows the
-/// reference schema's existing broken-anchor list.
+/// oracle 3.0.0 的 `recommended_action`：`severity` 的純函式，與
+/// `primary_recommendation` 一一對應。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RecommendedAction {
+    pub action_kind: &'static str,
+    pub change_name: String,
+    pub flags: Vec<&'static str>,
+}
+
+impl RecommendedAction {
+    pub fn for_severity(severity: &str, change: &str) -> Self {
+        let (action_kind, flags) = match severity {
+            "light" => ("apply", vec![]),
+            "medium" => ("ingest", vec![]),
+            _ => ("archive", vec!["--skip-specs"]),
+        };
+        Self {
+            action_kind,
+            change_name: change.to_string(),
+            flags,
+        }
+    }
+}
+
+/// Field order is intentional: it follows oracle 3.0.0 (`dormancy` first,
+/// `recommended_action` between `severity` and `primary_recommendation`), and
+/// the additive unresolved list follows the existing broken-anchor list.
 #[derive(Debug, Clone, Serialize)]
 pub struct DriftReport {
+    pub dormancy: Dormancy,
     pub change_id: String,
     pub created: Option<String>,
     /// Always `null` in observed reference output (v2.3.1); semantics of any
@@ -46,15 +74,19 @@ pub struct DriftReport {
     pub commits_since_created: u64,
     pub total_score: i64,
     pub severity: String,
+    pub recommended_action: RecommendedAction,
     pub primary_recommendation: String,
 }
 
-/// Days between `created` (YYYY-MM-DD) and today, or an error word.
-fn time_dimension(created: Option<&str>) -> Dimension {
-    let (status, score) = match created {
+/// Days between `created` (YYYY-MM-DD) and today, or an error word. oracle
+/// 3.0.0 quotes the invalid raw value (`invalid created date "notadate"`) and
+/// appends `, git unavailable` whenever HEAD cannot be resolved (no repo, a
+/// broken `.git`, or a repo without commits), whatever the date (probe p28).
+fn time_dimension(created: Option<&str>, git_available: bool) -> Dimension {
+    let (mut status, score) = match created {
         None => ("no created date".to_string(), 0),
         Some(raw) => match NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
-            Err(_) => ("invalid created date".to_string(), 0),
+            Err(_) => (format!("invalid created date {raw:?}"), 0),
             Ok(date) => {
                 // The oracle clamps future `created` dates to 0 days (probed:
                 // created = today+1/+30/+365 all report "fresh (0d)"), so the
@@ -65,6 +97,9 @@ fn time_dimension(created: Option<&str>) -> Dimension {
             }
         },
     };
+    if !git_available {
+        status.push_str(", git unavailable");
+    }
     Dimension {
         kind: DimensionKind::Time,
         status,
@@ -75,10 +110,13 @@ fn time_dimension(created: Option<&str>) -> Dimension {
 
 /// Run drift for an already-loaded change.
 pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
-    let created = change.metadata.created.as_deref();
+    // oracle 3.0.0 以 schema 與 created 都必填的 struct 讀 `.openspec.yaml`：缺任一個就
+    // 當作沒有 created（與 `show` 相同，探測 p10 y-createdonly）。
+    let (_, created) = crate::show::schema_and_created(&change.dir);
+    let created = created.as_deref();
 
     // --- Time ---------------------------------------------------------------
-    let time = time_dimension(created);
+    let time = time_dimension(created, git::head_sha(&cfg.root).is_some());
 
     // --- Structure (broken anchors) -----------------------------------------
     let design_path = change.design_md();
@@ -131,7 +169,8 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
 
     // --- Tasks --------------------------------------------------------------
     let tasks_path = change.tasks_md();
-    let task_list = if tasks_path.exists() {
+    let tasks_exists = tasks_path.exists();
+    let task_list = if tasks_exists {
         tasks::parse(&std::fs::read_to_string(&tasks_path)?)
     } else {
         Vec::new()
@@ -147,7 +186,12 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
     let maybe = analysis.maybe_resolved.len();
     let tasks_dim = Dimension {
         kind: DimensionKind::Tasks,
-        status: format!("{blocked} blocked, {maybe} maybe-done"),
+        // oracle 3.0.0：沒有 tasks.md 時是 `no tasks.md`（空的 tasks.md 仍是計數）。
+        status: if tasks_exists {
+            format!("{blocked} blocked, {maybe} maybe-done")
+        } else {
+            "no tasks.md".to_string()
+        },
         score: calibration::tasks_score(blocked, maybe),
         contributes_to_total: true,
     };
@@ -173,8 +217,10 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
         .sum();
     let severity = calibration::severity(total_score, decay).to_string();
     let primary_recommendation = calibration::primary_recommendation(&severity, &change.name);
+    let recommended_action = RecommendedAction::for_severity(&severity, &change.name);
 
     Ok(DriftReport {
+        dormancy: dormancy::evaluate(&cfg.root, &change.dir, created),
         change_id: change.name.clone(),
         created: created.map(str::to_string),
         last_commit: None,
@@ -186,6 +232,7 @@ pub fn analyze(cfg: &Config, change: &Change) -> Result<DriftReport> {
         commits_since_created,
         total_score,
         severity,
+        recommended_action,
         primary_recommendation,
     })
 }
@@ -207,21 +254,39 @@ mod tests {
 
     #[test]
     fn time_dimension_error_words_score_zero() {
-        let none = time_dimension(None);
+        let none = time_dimension(None, true);
         assert_eq!(none.status, "no created date");
         assert_eq!(none.score, 0);
         assert!(none.contributes_to_total);
 
-        let bad = time_dimension(Some("not-a-date"));
-        assert_eq!(bad.status, "invalid created date");
+        // oracle 3.0.0 以 Debug 引號附上原值（探測 p28）。
+        let bad = time_dimension(Some("not-a-date"), true);
+        assert_eq!(bad.status, "invalid created date \"not-a-date\"");
         assert_eq!(bad.score, 0);
+    }
+
+    /// oracle 3.0.0：HEAD 解析不到時，不論日期狀態都加上 `, git unavailable`（探測 p28）。
+    #[test]
+    fn time_dimension_marks_git_unavailable() {
+        assert_eq!(
+            time_dimension(None, false).status,
+            "no created date, git unavailable"
+        );
+        assert_eq!(
+            time_dimension(Some("notadate"), false).status,
+            "invalid created date \"notadate\", git unavailable"
+        );
+        assert_eq!(
+            time_dimension(Some("9999-01-01"), false).status,
+            "fresh (0d), git unavailable"
+        );
     }
 
     #[test]
     fn time_dimension_clamps_future_created_to_zero_days() {
         // Oracle-pinned: a future `created` reports "fresh (0d)", never a
         // negative day count (probed with created = today+1/+30/+365).
-        let future = time_dimension(Some("9999-01-01"));
+        let future = time_dimension(Some("9999-01-01"), true);
         assert_eq!(future.status, "fresh (0d)");
         assert_eq!(future.score, 0);
     }
