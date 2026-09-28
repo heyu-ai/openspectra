@@ -1,0 +1,23 @@
+[
+  {
+    "artifacts": [
+      "proposal",
+      "specs",
+      "design",
+      "tasks"
+    ],
+    "description": "Default OpenSpec workflow - proposal → specs → tasks (design optional)",
+    "name": "spec-driven",
+    "source": "package"
+  },
+  {
+    "artifacts": [
+      "proposal",
+      "design",
+      "tasks"
+    ],
+    "description": "No-spec workflow - proposal -> tasks (design optional)",
+    "name": "no-spec",
+    "source": "package"
+  }
+]

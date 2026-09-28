@@ -29,7 +29,7 @@ fn schemas_text_matches_the_oracle_golden() {
     assert!(out.stderr.is_empty(), "unexpected stderr: {out:?}");
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        golden("schemas-2.3.1.txt")
+        golden("schemas-3.0.0.txt")
     );
 }
 
@@ -46,7 +46,7 @@ fn schemas_json_matches_the_oracle_golden() {
     assert!(out.status.success(), "schemas failed: {out:?}");
     assert_eq!(
         String::from_utf8(out.stdout).unwrap(),
-        golden("schemas-2.3.1.json")
+        golden("schemas-3.0.0.json")
     );
 }
 
@@ -136,9 +136,13 @@ fn schemas_json_lists_project_schemas_with_null_description() {
     );
     let json: serde_json::Value = serde_json::from_slice(&json_out.stdout).unwrap();
     let arr = json.as_array().unwrap();
-    assert_eq!(arr.len(), 2, "expected 2 schemas: {json}");
-    assert_eq!(arr[1]["name"], "mycustom");
-    assert_eq!(arr[1]["source"], "project");
-    assert_eq!(arr[1]["description"], serde_json::Value::Null);
-    assert_eq!(arr[1]["artifacts"], serde_json::json!(["proposal"]));
+    assert_eq!(
+        arr.len(),
+        3,
+        "expected 2 built-ins + 1 project schema: {json}"
+    );
+    assert_eq!(arr[2]["name"], "mycustom");
+    assert_eq!(arr[2]["source"], "project");
+    assert_eq!(arr[2]["description"], serde_json::Value::Null);
+    assert_eq!(arr[2]["artifacts"], serde_json::json!(["proposal"]));
 }
