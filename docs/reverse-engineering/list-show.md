@@ -90,9 +90,25 @@ JSON `{"files": [{"content", "name"}], "name"}` with every `*.md` in the
 directory, recursively, sorted. Human: `Spec: <name>`, then
 `\n--- <file> ---\n<content>\n` per file.
 
-OpenSpectra's `show --diff` is its own extension and unchanged. The oracle's
-`--item-type`, `--deltas-only`, and `-r/--requirements` are not implemented
-yet (W12).
+**Flags** (W12 probes p15–p17, all ported):
+
+* `[ITEM]` is optional in the oracle's clap definition; without it the command
+  fails at run time with `Error: Please specify an item name.` (exit 1, not
+  clap's exit 2). That check runs after the "Not initialized" check and before
+  `--item-type` is validated (`show --item-type bogus` reports the missing
+  name).
+* `--deltas-only` and `-r/--requirements` are accepted and **inert**: output is
+  byte-identical to plain `show` for changes and specs, human and JSON, alone
+  or combined. Repeating any of the three flags is a clap error (exit 2).
+* `--item-type <type>` takes exactly `change` or `spec` (case-sensitive).
+  Anything else, including the empty string, fails before any lookup with
+  `Error: Unknown type: <v>. Use 'change' or 'spec'.` (exit 1). `change` looks
+  only at changes (`Error: Change '<n>' not found.`), `spec` only at specs
+  (`Error: Spec '<n>' not found.`), so a spec that shares a change's name is
+  reachable only through `--item-type spec`.
+
+OpenSpectra's `show --diff` is its own extension and unchanged; it ignores
+`--item-type` (the oracle rejects `--diff` outright).
 
 ## `schema which [NAME]`
 

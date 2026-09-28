@@ -72,7 +72,10 @@ spectra list  [--json]            # lists active changes
 spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
 spectra list  --specs [--json]    # lists capability specs instead of changes
 spectra list  --parked [--json]   # lists parked changes instead of active ones
-spectra show  <CHANGE|SPEC> [--diff] [--json]  # change: proposal + delta spec list (JSON: all artifacts); spec: every .md file; --diff isolates requirement-level change lines
+spectra show  <CHANGE|SPEC> [--item-type change|spec] [--diff] [--json]  # change: proposal + delta spec list (JSON: all artifacts); spec: every .md file; --item-type picks one kind; --deltas-only/-r are accepted and inert, as in the reference; --diff isolates requirement-level change lines
+spectra decisions [KEYWORD] [--json]  # lists `### ` decisions under `## Decisions` in every design.md (active, then archived) with **Supersedes** resolution
+spectra demo                      # creates a sample change (random spx-<adjective>-<pokemon> name, one of eight themes)
+spectra feedback <MESSAGE> [--body TEXT]  # prints the message and the upstream issue URL; sends nothing
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
 spectra new change <NAME> [--schema S] [--agent A] [--description D] [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)

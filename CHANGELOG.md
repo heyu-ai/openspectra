@@ -12,6 +12,27 @@ changes.
 
 ### Added
 
+- The rest of the v3.0.0 command surface (W12; acceptance A1 now has no
+  missing command or flag):
+  - `spectra decisions [KEYWORD] [--json]` lists the `### ` decisions under
+    `## Decisions` in every active and archived change's `design.md`, resolves
+    `**Supersedes**: <change> / <heading>` (marking the replaced decision, or
+    reporting an unresolvable reference) and filters by a case-insensitive
+    keyword. Archived changes are listed by directory name, where the oracle
+    uses raw `readdir` order (deliberate divergence). See
+    `docs/reverse-engineering/decisions.md`.
+  - `spectra demo` creates a sample change with a random
+    `spx-<adjective>-<pokemon>` name and one of the oracle's eight themes; the
+    theme files are byte-exact captures kept in `assets/demo/` and verified by
+    the new `scripts/capture-demo.py`.
+  - `spectra feedback <MESSAGE> [--body]` prints the oracle's local
+    acknowledgement and issue URL; like the oracle it sends nothing.
+  - `show --item-type change|spec` restricts the lookup to one kind (so a spec
+    that shares a change's name is reachable), with the oracle's
+    `Unknown type` / `Change '…' not found.` / `Spec '…' not found.` errors.
+    `--deltas-only` and `-r/--requirements` are accepted and, as in the oracle,
+    change nothing.
+
 - Built-in implementation switch (migration plan Phase 1, D6):
   `OPENSPECTRA_IMPL=oss|oracle|shadow` (else `.spectra/impl`, else
   `~/.config/openspectra/impl`, else `oss`) decides whether OpenSpectra or the
@@ -107,6 +128,9 @@ changes.
   `readdir` order. Deliberate divergences (alphabetical `params` keys, name
   order, conflict order within a section pair, no `CLICOLOR_FORCE`) are listed
   in `docs/reverse-engineering/analyze.md`.
+- `spectra show` without an item name now fails at run time with
+  `Error: Please specify an item name.` (exit 1) instead of a clap usage
+  error (exit 2), matching the oracle.
 - `drift` Structure: a FilePath anchor resolves only when the file is in the git
   index (untracked files, and every path outside a repository, are broken; a
   tracked file deleted only on disk still resolves), and broken anchors are

@@ -1,7 +1,7 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
 //! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
 //! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`,
-//! `update`, `config`, `search`, `templates`.
+//! `update`, `config`, `search`, `templates`, `decisions`, `demo`, `feedback`.
 
 mod completion;
 #[cfg(test)]
@@ -217,11 +217,40 @@ enum Command {
     /// Show a change's proposal, or a spec's content if the name isn't a change.
     Show {
         /// Change or spec name to show.
-        item: String,
+        item: Option<String>,
         #[arg(long)]
         json: bool,
+        /// Item type: change, spec
+        #[arg(long = "item-type", value_name = "type")]
+        item_type: Option<String>,
+        /// Show only delta specs
+        // oracle 3.0.0 接受但不影響輸出（W12 probe p16：change／spec、human／JSON 皆相同）。
+        #[arg(long)]
+        deltas_only: bool,
+        /// Show requirements
+        // 同上：oracle 3.0.0 接受但不影響輸出。
+        #[arg(short = 'r', long)]
+        requirements: bool,
         #[arg(long)]
         diff: bool,
+    },
+    /// List architecture decisions across changes
+    Decisions {
+        /// Only show decisions whose heading or rationale contains this text
+        keyword: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a demo change with sample data
+    Demo,
+    /// Submit feedback
+    Feedback {
+        /// Feedback message
+        message: String,
+        /// Detailed body
+        #[arg(long)]
+        body: Option<String>,
     },
     /// Park a change (mark it on hold, excluding it from the active listing).
     Park {
@@ -1097,7 +1126,13 @@ fn cmd_list_specs(cfg: &Config, as_json: bool) -> Result<i32> {
     Ok(0)
 }
 
-fn cmd_show(cfg: &Config, item: &str, as_json: bool, with_diff: bool) -> Result<i32> {
+fn cmd_show(
+    cfg: &Config,
+    item: &str,
+    item_type: Option<&str>,
+    as_json: bool,
+    with_diff: bool,
+) -> Result<i32> {
     if with_diff {
         if change::try_load(cfg, item)?.is_none() {
             anyhow::bail!("--diff requires a change name");
@@ -1125,7 +1160,7 @@ fn cmd_show(cfg: &Config, item: &str, as_json: bool, with_diff: bool) -> Result<
         return Ok(0);
     }
 
-    let view = spectra_core::show::resolve(cfg, item)?;
+    let view = spectra_core::show::resolve_typed(cfg, item, item_type)?;
     if as_json {
         let json = match &view {
             spectra_core::show::View::Change(change) => serde_json::to_string_pretty(change)?,
@@ -1136,6 +1171,111 @@ fn cmd_show(cfg: &Config, item: &str, as_json: bool, with_diff: bool) -> Result<
         print!("{}", spectra_core::show::render_human(&view));
     }
     Ok(0)
+}
+
+/// 人類版 `decisions`（oracle 3.0.0，W12 probe p04 的 TTY 位元組）：heading 粗體、
+/// `<change> · <date>` 淡色（沒有日期時只有 change），接著依序是黃色 `supersedes`、
+/// 紅色 `unresolvable supersedes:`、黃色 `superseded by a later decision`；最後空一行與
+/// 淡色的 `N decisions`（一筆也用複數）。沒有結果時是淡色的 `No decisions found.`。
+fn render_decisions_human(
+    decisions: &[spectra_core::decisions::Decision],
+    use_color: bool,
+) -> String {
+    if decisions.is_empty() {
+        return format!("{}\n", colorize("No decisions found.", "2", use_color));
+    }
+    let mut out = String::new();
+    for d in decisions {
+        out.push_str(&format!("{}\n", colorize(&d.heading, "1", use_color)));
+        let meta = if d.date.is_empty() {
+            d.change.clone()
+        } else {
+            format!("{} · {}", d.change, d.date)
+        };
+        out.push_str(&format!("  {}\n", colorize(&meta, "2", use_color)));
+        if let Some(target) = &d.supersedes {
+            out.push_str(&format!(
+                "  {} {} / {}\n",
+                colorize("supersedes", "33", use_color),
+                target.change,
+                target.heading
+            ));
+        }
+        if let Some(raw) = &d.unresolvable_supersession {
+            out.push_str(&format!(
+                "  {} {raw}\n",
+                colorize("unresolvable supersedes:", "31", use_color)
+            ));
+        }
+        if d.superseded {
+            out.push_str(&format!(
+                "  {}\n",
+                colorize("superseded by a later decision", "33", use_color)
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "\n{}\n",
+        colorize(&format!("{} decisions", decisions.len()), "2", use_color)
+    ));
+    out
+}
+
+fn cmd_decisions(
+    cfg: &Config,
+    keyword: Option<&str>,
+    as_json: bool,
+    use_color: bool,
+) -> Result<i32> {
+    let decisions = spectra_core::decisions::filter(spectra_core::decisions::collect(cfg), keyword);
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&decisions)?);
+    } else {
+        print!("{}", render_decisions_human(&decisions, use_color));
+    }
+    Ok(0)
+}
+
+/// 人類版 `demo`（oracle 3.0.0，W12 probe p18）：TTY 上只有 `✓` 是綠色。
+fn render_demo_human(outcome: &spectra_core::demo::DemoOutcome, use_color: bool) -> String {
+    format!(
+        "{} Created demo change: {}\n  Theme: {}\n  Path: {}\n",
+        colorize("✓", "32", use_color),
+        outcome.name,
+        outcome.theme,
+        outcome.path.display()
+    )
+}
+
+fn cmd_demo(cfg: &Config, use_color: bool) -> Result<i32> {
+    let outcome = spectra_core::demo::create(cfg)?;
+    print!("{}", render_demo_human(&outcome, use_color));
+    Ok(0)
+}
+
+/// oracle 3.0.0 的 feedback 導向網址（原樣保留；是否改成 OpenSpectra 自己的網址是待決
+/// 事項，見 `docs/reverse-engineering/demo-feedback.md`）。
+const FEEDBACK_URL: &str = "https://github.com/kaochenlong/spectra-app/issues";
+
+/// 人類版 `feedback`（oracle 3.0.0，W12 probe p01）：感謝句綠色、網址那行淡色；
+/// `--body` 原樣印在 `Details:` 之後（多行照印）。
+fn render_feedback_human(message: &str, body: Option<&str>, use_color: bool) -> String {
+    let mut out = format!(
+        "{}\nMessage: {message}\n",
+        colorize("Thank you for your feedback!", "32", use_color)
+    );
+    if let Some(body) = body {
+        out.push_str(&format!("Details: {body}\n"));
+    }
+    out.push_str(&format!(
+        "\n{}\n",
+        colorize(
+            &format!("To submit feedback, visit: {FEEDBACK_URL}"),
+            "2",
+            use_color
+        )
+    ));
+    out
 }
 
 fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
@@ -2175,9 +2315,37 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_list(&cfg, *specs, *parked, *json, (*sort).into())
         }
-        Command::Show { item, json, diff } => {
+        Command::Show {
+            item,
+            json,
+            item_type,
+            deltas_only: _,
+            requirements: _,
+            diff,
+        } => {
             let cfg = require_initialized(&root)?;
-            cmd_show(&cfg, item, *json, *diff)
+            // oracle 3.0.0：缺名稱是執行期錯誤（exit 1），且先於 --item-type 的檢查。
+            let Some(item) = item else {
+                anyhow::bail!("Please specify an item name.");
+            };
+            cmd_show(&cfg, item, item_type.as_deref(), *json, *diff)
+        }
+        Command::Decisions { keyword, json } => {
+            let cfg = require_initialized(&root)?;
+            cmd_decisions(&cfg, keyword.as_deref(), *json, use_color)
+        }
+        Command::Demo => {
+            let cfg = require_initialized(&root)?;
+            cmd_demo(&cfg, use_color)
+        }
+        // oracle 3.0.0 的 feedback 只在本機印出訊息與 issue 網址，不連網、不寫檔
+        // （W12 probe p01，在禁網與禁寫的 sandbox 內驗證），也不需要初始化的專案。
+        Command::Feedback { message, body } => {
+            print!(
+                "{}",
+                render_feedback_human(message, body.as_deref(), use_color)
+            );
+            Ok(0)
         }
         Command::Park { change, json } => {
             let cfg = require_initialized(&root)?;
@@ -2692,6 +2860,78 @@ mod tests {
     fn colorize_wraps_text_in_sgr_codes_only_when_enabled() {
         assert_eq!(colorize("hi", "31", true), "\x1b[31mhi\x1b[0m");
         assert_eq!(colorize("hi", "31", false), "hi");
+    }
+
+    fn decision(heading: &str, change: &str, date: &str) -> spectra_core::decisions::Decision {
+        spectra_core::decisions::Decision {
+            heading: heading.to_string(),
+            change: change.to_string(),
+            date: date.to_string(),
+            rationale: String::new(),
+            supersedes: None,
+            superseded: false,
+            unresolvable_supersession: None,
+        }
+    }
+
+    #[test]
+    fn decisions_human_matches_the_oracle_tty_bytes() {
+        // 預期位元組取自 oracle 3.0.0 在 script(1) TTY 下的輸出（W12 probe p04／p14）。
+        let mut replace = decision("Replace Cache", "alpha", "2026-09-01");
+        replace.supersedes = Some(spectra_core::decisions::SupersedesRef {
+            change: "old-change".to_string(),
+            heading: "Use Redis".to_string(),
+        });
+        let mut bad = decision("Bad Ref", "alpha", "2026-09-01");
+        bad.unresolvable_supersession = Some("ghost / Nothing".to_string());
+        let mut old = decision("Use Redis", "old-change", "2026-01-15");
+        old.superseded = true;
+        let nodate = decision("createdonly", "y-createdonly", "");
+        let all = [replace, bad, old, nodate];
+        assert_eq!(
+            render_decisions_human(&all, true),
+            "\x1b[1mReplace Cache\x1b[0m\n  \x1b[2malpha · 2026-09-01\x1b[0m\n  \x1b[33msupersedes\x1b[0m old-change / Use Redis\n\
+             \x1b[1mBad Ref\x1b[0m\n  \x1b[2malpha · 2026-09-01\x1b[0m\n  \x1b[31munresolvable supersedes:\x1b[0m ghost / Nothing\n\
+             \x1b[1mUse Redis\x1b[0m\n  \x1b[2mold-change · 2026-01-15\x1b[0m\n  \x1b[33msuperseded by a later decision\x1b[0m\n\
+             \x1b[1mcreatedonly\x1b[0m\n  \x1b[2my-createdonly\x1b[0m\n\n\x1b[2m4 decisions\x1b[0m\n"
+        );
+        assert_eq!(
+            render_decisions_human(&all[3..], false),
+            "createdonly\n  y-createdonly\n\n1 decisions\n"
+        );
+        assert_eq!(
+            render_decisions_human(&[], true),
+            "\x1b[2mNo decisions found.\x1b[0m\n"
+        );
+        assert_eq!(render_decisions_human(&[], false), "No decisions found.\n");
+    }
+
+    #[test]
+    fn feedback_human_matches_the_oracle_tty_bytes() {
+        // 預期位元組取自 oracle 3.0.0 在禁網 sandbox + script(1) TTY 下的輸出（W12 probe p01）。
+        assert_eq!(
+            render_feedback_human("hi", Some("b"), true),
+            "\x1b[32mThank you for your feedback!\x1b[0m\nMessage: hi\nDetails: b\n\n\
+             \x1b[2mTo submit feedback, visit: https://github.com/kaochenlong/spectra-app/issues\x1b[0m\n"
+        );
+        assert_eq!(
+            render_feedback_human("", None, false),
+            "Thank you for your feedback!\nMessage: \n\nTo submit feedback, visit: https://github.com/kaochenlong/spectra-app/issues\n"
+        );
+    }
+
+    #[test]
+    fn demo_human_colors_only_the_check_mark() {
+        // oracle 3.0.0 在 script(1) TTY 下的輸出（W12 probe p18）。
+        let outcome = spectra_core::demo::DemoOutcome {
+            name: "spx-light-rayquaza".to_string(),
+            theme: "batch-export",
+            path: PathBuf::from("/p/openspec/changes/spx-light-rayquaza"),
+        };
+        assert_eq!(
+            render_demo_human(&outcome, true),
+            "\x1b[32m✓\x1b[0m Created demo change: spx-light-rayquaza\n  Theme: batch-export\n  Path: /p/openspec/changes/spx-light-rayquaza\n"
+        );
     }
 
     #[test]

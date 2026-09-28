@@ -105,35 +105,65 @@ fn markdown_files(dir: &Path) -> Vec<String> {
     out
 }
 
+fn change_view(cfg: &Config, item: &str) -> Result<Option<View>> {
+    let Some(ch) = crate::change::try_load(cfg, item)? else {
+        return Ok(None);
+    };
+    let dir = cfg.root.join(&ch.dir);
+    let (schema, created) = schema_and_created(&dir);
+    Ok(Some(View::Change(ChangeView {
+        created,
+        delta_specs: markdown_files(&dir.join("specs")),
+        design: read_optional(&dir.join("design.md"))?,
+        name: item.to_string(),
+        proposal: read_optional(&dir.join("proposal.md"))?,
+        schema,
+        tasks: read_optional(&dir.join("tasks.md"))?,
+    })))
+}
+
+fn spec_view(cfg: &Config, item: &str) -> Result<Option<View>> {
+    let spec_dir = cfg.specs_dir().join(item);
+    if item.is_empty() || !spec_dir.is_dir() {
+        return Ok(None);
+    }
+    let mut files = Vec::new();
+    for name in markdown_files(&spec_dir) {
+        let content = std::fs::read_to_string(spec_dir.join(&name))
+            .with_context(|| format!("reading {}", spec_dir.join(&name).display()))?;
+        files.push(SpecFile { content, name });
+    }
+    Ok(Some(View::Spec(SpecView {
+        files,
+        name: item.to_string(),
+    })))
+}
+
 /// change 優先於同名的 spec；`specs/` 下任何目錄都可當 spec（即使沒有 `spec.md`）。
 pub fn resolve(cfg: &Config, item: &str) -> Result<View> {
-    if let Some(ch) = crate::change::try_load(cfg, item)? {
-        let dir = cfg.root.join(&ch.dir);
-        let (schema, created) = schema_and_created(&dir);
-        return Ok(View::Change(ChangeView {
-            created,
-            delta_specs: markdown_files(&dir.join("specs")),
-            design: read_optional(&dir.join("design.md"))?,
-            name: item.to_string(),
-            proposal: read_optional(&dir.join("proposal.md"))?,
-            schema,
-            tasks: read_optional(&dir.join("tasks.md"))?,
-        }));
+    if let Some(view) = change_view(cfg, item)? {
+        return Ok(view);
     }
-    let spec_dir = cfg.specs_dir().join(item);
-    if !item.is_empty() && spec_dir.is_dir() {
-        let mut files = Vec::new();
-        for name in markdown_files(&spec_dir) {
-            let content = std::fs::read_to_string(spec_dir.join(&name))
-                .with_context(|| format!("reading {}", spec_dir.join(&name).display()))?;
-            files.push(SpecFile { content, name });
-        }
-        return Ok(View::Spec(SpecView {
-            files,
-            name: item.to_string(),
-        }));
+    if let Some(view) = spec_view(cfg, item)? {
+        return Ok(view);
     }
     anyhow::bail!("Item '{item}' not found as a change or spec.")
+}
+
+/// `show --item-type <type>`（oracle 3.0.0，W12 probe p16/p17）：只接受大小寫完全相符的
+/// `change`／`spec`，其他值（含空字串）在查找之前就報錯；指定型別時只找那一種，所以
+/// 與 change 同名的 spec 只能用 `--item-type spec` 取得。
+pub fn resolve_typed(cfg: &Config, item: &str, item_type: Option<&str>) -> Result<View> {
+    match item_type {
+        None => resolve(cfg, item),
+        Some("change") => {
+            change_view(cfg, item)?.ok_or_else(|| anyhow::anyhow!("Change '{item}' not found."))
+        }
+        Some("spec") => {
+            spec_view(cfg, item)?.ok_or_else(|| anyhow::anyhow!("Spec '{item}' not found."))
+        }
+        Some(other) => anyhow::bail!("Unknown type: {other}. Use 'change' or 'spec'."),
+    }
 }
 
 /// 人類輸出（oracle 3.0.0）。
@@ -276,6 +306,37 @@ mod tests {
         assert_eq!(
             resolve(&cfg, "nothing-here").err().unwrap().to_string(),
             "Item 'nothing-here' not found as a change or spec."
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn item_type_restricts_the_lookup_and_rejects_unknown_types_first() {
+        // 預期訊息來自 oracle 3.0.0 同一 fixture 的輸出（W12 probe p16/p17）。
+        let (root, cfg) = project("item-type");
+        write(&root.join("openspec/changes/both/proposal.md"), "c\n");
+        write(&root.join("openspec/specs/both/spec.md"), "s\n");
+        write(&root.join("openspec/specs/only-spec/spec.md"), "s\n");
+        let kind = |item: &str, ty: Option<&str>| match resolve_typed(&cfg, item, ty) {
+            Ok(View::Change(_)) => "change".to_string(),
+            Ok(View::Spec(_)) => "spec".to_string(),
+            Err(e) => e.to_string(),
+        };
+        assert_eq!(kind("both", None), "change");
+        assert_eq!(kind("both", Some("change")), "change");
+        assert_eq!(kind("both", Some("spec")), "spec");
+        assert_eq!(
+            kind("only-spec", Some("change")),
+            "Change 'only-spec' not found."
+        );
+        assert_eq!(kind("ghost", Some("spec")), "Spec 'ghost' not found.");
+        assert_eq!(
+            kind("ghost", Some("Change")),
+            "Unknown type: Change. Use 'change' or 'spec'."
+        );
+        assert_eq!(
+            kind("both", Some("")),
+            "Unknown type: . Use 'change' or 'spec'."
         );
         let _ = std::fs::remove_dir_all(&root);
     }

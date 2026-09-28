@@ -31,9 +31,3 @@ output	validate --changes --json	stderr-differs
 output	validate <change>	exit 0->1
 output	validate <change>	stderr-differs
 output	validate <change>	stdout-differs
-surface	decisions	missing-command
-surface	demo	missing-command
-surface	feedback	missing-command
-surface	show	missing-flag --deltas-only
-surface	show	missing-flag --item-type
-surface	show	missing-flag --requirements
