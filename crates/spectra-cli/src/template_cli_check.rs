@@ -13,13 +13,7 @@ use clap::Parser;
 use super::Cli;
 
 /// 已知缺口：正規化後的呼叫字串（placeholder 已代入）。每個執行佇列項目補完就移除對應條目。
-const KNOWN_GAPS: &[&str] = &[
-    // W6：scope（#165）
-    "scope --change x --check-snapshot x --json",
-    "scope --change x --json",
-    "scope --check-snapshot x --json",
-    "scope --json",
-];
+const KNOWN_GAPS: &[&str] = &[];
 
 /// 3.0.0 `--help` 列出的子指令，加上本 CLI 獨有的 `search`、`trace`。
 /// 只把 `spectra` 後面接這些字的片段視為呼叫，避免把內文的 "spectra CLI" 當指令。

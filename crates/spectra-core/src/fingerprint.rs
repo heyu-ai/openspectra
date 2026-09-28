@@ -47,8 +47,11 @@ pub struct FileFingerprint {
 }
 
 /// `git -C root <args>`，回傳原始 stdout bytes；失敗回 `None`。
-fn git_bytes(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
+pub(crate) fn git_bytes(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    // `GIT_OPTIONAL_LOCKS=0`：`git status` 預設會順手寫回 index 的 stat 資訊；oracle
+    // 的 `task`／`scope` 完全唯讀（`scope` 的 snapshot_id 還會 hash `.git/index`）。
     let out = Command::new("git")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .arg("-C")
         .arg(root)
         .args(args)
@@ -192,7 +195,7 @@ fn hash_paths(root: &Path, files: &[String]) -> Option<Vec<String>> {
     (oids.len() == files.len()).then_some(oids)
 }
 
-fn hash_bytes(root: &Path, data: &[u8]) -> Option<String> {
+pub(crate) fn hash_bytes(root: &Path, data: &[u8]) -> Option<String> {
     let mut child = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -249,30 +252,7 @@ pub fn dirty_fingerprints(root: &Path, spec_dir: &str) -> Option<Vec<FileFingerp
         index_entries(&toplevel, &paths)
     };
 
-    // 工作目錄身分：一般檔案批次 hash，symlink 另外 hash 目標字串。
-    let mut regular = Vec::new();
-    let mut worktree: HashMap<String, Option<String>> = HashMap::new();
-    for (path, _) in &statuses {
-        let full = toplevel.join(path);
-        match std::fs::symlink_metadata(&full) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                let target = std::fs::read_link(&full).ok();
-                let id = target.and_then(|t| {
-                    hash_bytes(&toplevel, t.as_os_str().as_encoded_bytes())
-                        .map(|oid| format!("symlink:{oid}"))
-                });
-                worktree.insert(path.clone(), id);
-            }
-            Ok(meta) if meta.is_file() => regular.push(path.clone()),
-            _ => {
-                worktree.insert(path.clone(), None);
-            }
-        }
-    }
-    let oids = hash_paths(&toplevel, &regular)?;
-    for (path, oid) in regular.into_iter().zip(oids) {
-        worktree.insert(path, Some(oid));
-    }
+    let mut worktree = worktree_identities(&toplevel, statuses.iter().map(|(p, _)| p.as_str()))?;
 
     let mut out: Vec<FileFingerprint> = statuses
         .into_iter()
@@ -286,6 +266,89 @@ pub fn dirty_fingerprints(root: &Path, spec_dir: &str) -> Option<Vec<FileFingerp
         })
         .collect();
     out.sort_by(|a, b| a.path.as_bytes().cmp(b.path.as_bytes()));
+    Some(out)
+}
+
+/// 工作目錄身分：一般檔案批次 hash 原始位元組，symlink 為 `symlink:<目標字串的 oid>`，
+/// 不存在或是目錄（含 submodule、巢狀 repo）時為 `None`。
+fn worktree_identities<'a>(
+    toplevel: &Path,
+    paths: impl Iterator<Item = &'a str>,
+) -> Option<HashMap<String, Option<String>>> {
+    let mut regular = Vec::new();
+    let mut worktree: HashMap<String, Option<String>> = HashMap::new();
+    for path in paths {
+        let full = toplevel.join(path);
+        match std::fs::symlink_metadata(&full) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = std::fs::read_link(&full).ok();
+                let id = target.and_then(|t| {
+                    hash_bytes(toplevel, t.as_os_str().as_encoded_bytes())
+                        .map(|oid| format!("symlink:{oid}"))
+                });
+                worktree.insert(path.to_string(), id);
+            }
+            Ok(meta) if meta.is_file() => regular.push(path.to_string()),
+            _ => {
+                worktree.insert(path.to_string(), None);
+            }
+        }
+    }
+    let oids = hash_paths(toplevel, &regular)?;
+    for (path, oid) in regular.into_iter().zip(oids) {
+        worktree.insert(path, Some(oid));
+    }
+    Some(worktree)
+}
+
+/// `scope` 的 snapshot 條目 `(path, status, worktree_identity)`（oracle 3.0.0）：與
+/// [`dirty_fingerprints`] 同一個 status 函式，但**不排除** spec 目錄與 `.spectra/`、
+/// **包含** submodule，路徑相對於專案（專案在 repo 子目錄時只取該子樹），依位元組排序。
+///
+/// `touched`（專案相對路徑）中不在 status 清單裡的 clean 路徑也會收進來，status 為 0
+/// （`GIT_STATUS_CURRENT`）、身分照常計算（已刪除為 `None`）——oracle 3.0.0 以此讓已 commit
+/// 的 touched 檔在內容改變時也使 snapshot 失效（p26：未改動、已刪除、base 無效都一樣收）。
+pub fn snapshot_entries(
+    root: &Path,
+    touched: &[String],
+) -> Option<Vec<(String, u32, Option<String>)>> {
+    let toplevel = git_bytes(root, &["rev-parse", "--show-toplevel"])?;
+    let toplevel = std::path::PathBuf::from(String::from_utf8_lossy(&toplevel).trim());
+    let prefix = git_bytes(root, &["rev-parse", "--show-prefix"])
+        .map(|b| String::from_utf8_lossy(&b).trim().to_string())
+        .unwrap_or_default();
+    let status_bytes = git_bytes(
+        &toplevel,
+        &[
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--no-renames",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )?;
+    let mut statuses: Vec<(String, u32)> = parse_status(&status_bytes)
+        .into_iter()
+        .filter(|(p, _)| prefix.is_empty() || p.starts_with(&prefix))
+        .collect();
+    let mut seen: std::collections::HashSet<String> =
+        statuses.iter().map(|(p, _)| p.clone()).collect();
+    for path in touched {
+        let full = format!("{prefix}{path}");
+        if seen.insert(full.clone()) {
+            statuses.push((full, 0));
+        }
+    }
+    let mut worktree = worktree_identities(&toplevel, statuses.iter().map(|(p, _)| p.as_str()))?;
+    let mut out: Vec<(String, u32, Option<String>)> = statuses
+        .into_iter()
+        .map(|(path, status)| {
+            let id = worktree.remove(&path).flatten();
+            (path[prefix.len()..].to_string(), status, id)
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
     Some(out)
 }
 

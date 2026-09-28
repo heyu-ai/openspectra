@@ -287,6 +287,21 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect implementation scope without changing repository state
+    Scope {
+        /// Check an earlier scope identity without rendering patches; reuse its change/base arguments
+        #[arg(long = "check-snapshot", value_name = "ID")]
+        check_snapshot: Option<String>,
+        /// Limit review to an identified change's implementation
+        #[arg(long)]
+        change: Option<String>,
+        /// Explicit pre-implementation Git revision (takes precedence over stored metadata)
+        #[arg(long)]
+        base: Option<String>,
+        /// Output the read-only scope and captured patches as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Config management commands
     Config {
         #[command(subcommand)]
@@ -1718,6 +1733,37 @@ fn archive_result_json(
 
 /// `archive --preview`：不詢問確認、不修改檔案。明確給名稱時直接交給 core，
 /// 找不到 change 的訊息才會是 oracle 的 `Change '<name>' does not exist`。
+/// `spectra scope`（oracle 3.0.0，docs/reverse-engineering/scope.md）。唯讀；limitations 走 stderr，
+/// 不上色（oracle 在 TTY 上也不上色，`--no-color` 無作用）。
+fn cmd_scope(
+    cfg: &Config,
+    opts: spectra_core::scope::ScopeOptions<'_>,
+    check_snapshot: Option<&str>,
+    as_json: bool,
+) -> Result<i32> {
+    if let Some(id) = check_snapshot {
+        spectra_core::scope::check(cfg, opts, id)?;
+        if as_json {
+            println!(
+                "{}",
+                serde_json::to_string(&json!({ "snapshot_id": id, "status": "current" }))?
+            );
+        } else {
+            println!("Scope snapshot is current: {id}");
+        }
+        return Ok(0);
+    }
+    let report = spectra_core::scope::capture(cfg, opts)?;
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        let (out, err) = spectra_core::scope::render_human(&report);
+        print!("{out}");
+        eprint!("{err}");
+    }
+    Ok(0)
+}
+
 fn cmd_archive_preview(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
     let name = match change_name {
         Some(name) => name.to_string(),
@@ -2177,6 +2223,19 @@ fn run() -> Result<i32> {
                 *yes,
                 *json,
             )
+        }
+        Command::Scope {
+            check_snapshot,
+            change,
+            base,
+            json,
+        } => {
+            let cfg = require_initialized(&root)?;
+            let opts = spectra_core::scope::ScopeOptions {
+                change: change.as_deref(),
+                base: base.as_deref(),
+            };
+            cmd_scope(&cfg, opts, check_snapshot.as_deref(), *json)
         }
         // Global config management needs no project (like `init`/`schemas`).
         Command::Config { target } => cmd_config(target, use_color),
