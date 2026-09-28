@@ -1,7 +1,7 @@
 //! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
 //! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
 //! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`,
-//! `update`, `config`, `search`, `templates`, `decisions`, `demo`, `feedback`.
+//! `update`, `config`, `search`, `templates`, `decisions`, `demo`.
 
 mod completion;
 #[cfg(test)]
@@ -244,14 +244,6 @@ enum Command {
     },
     /// Generate a demo change with sample data
     Demo,
-    /// Submit feedback
-    Feedback {
-        /// Feedback message
-        message: String,
-        /// Detailed body
-        #[arg(long)]
-        body: Option<String>,
-    },
     /// Park a change (mark it on hold, excluding it from the active listing).
     Park {
         /// Change name to park.
@@ -1251,31 +1243,6 @@ fn cmd_demo(cfg: &Config, use_color: bool) -> Result<i32> {
     let outcome = spectra_core::demo::create(cfg)?;
     print!("{}", render_demo_human(&outcome, use_color));
     Ok(0)
-}
-
-/// oracle 3.0.0 的 feedback 導向網址（原樣保留；是否改成 OpenSpectra 自己的網址是待決
-/// 事項，見 `docs/reverse-engineering/demo-feedback.md`）。
-const FEEDBACK_URL: &str = "https://github.com/kaochenlong/spectra-app/issues";
-
-/// 人類版 `feedback`（oracle 3.0.0，W12 probe p01）：感謝句綠色、網址那行淡色；
-/// `--body` 原樣印在 `Details:` 之後（多行照印）。
-fn render_feedback_human(message: &str, body: Option<&str>, use_color: bool) -> String {
-    let mut out = format!(
-        "{}\nMessage: {message}\n",
-        colorize("Thank you for your feedback!", "32", use_color)
-    );
-    if let Some(body) = body {
-        out.push_str(&format!("Details: {body}\n"));
-    }
-    out.push_str(&format!(
-        "\n{}\n",
-        colorize(
-            &format!("To submit feedback, visit: {FEEDBACK_URL}"),
-            "2",
-            use_color
-        )
-    ));
-    out
 }
 
 fn cmd_park(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
@@ -2338,15 +2305,6 @@ fn run() -> Result<i32> {
             let cfg = require_initialized(&root)?;
             cmd_demo(&cfg, use_color)
         }
-        // oracle 3.0.0 的 feedback 只在本機印出訊息與 issue 網址，不連網、不寫檔
-        // （W12 probe p01，在禁網與禁寫的 sandbox 內驗證），也不需要初始化的專案。
-        Command::Feedback { message, body } => {
-            print!(
-                "{}",
-                render_feedback_human(message, body.as_deref(), use_color)
-            );
-            Ok(0)
-        }
         Command::Park { change, json } => {
             let cfg = require_initialized(&root)?;
             cmd_park(&cfg, change, *json)
@@ -2904,20 +2862,6 @@ mod tests {
             "\x1b[2mNo decisions found.\x1b[0m\n"
         );
         assert_eq!(render_decisions_human(&[], false), "No decisions found.\n");
-    }
-
-    #[test]
-    fn feedback_human_matches_the_oracle_tty_bytes() {
-        // 預期位元組取自 oracle 3.0.0 在禁網 sandbox + script(1) TTY 下的輸出（W12 probe p01）。
-        assert_eq!(
-            render_feedback_human("hi", Some("b"), true),
-            "\x1b[32mThank you for your feedback!\x1b[0m\nMessage: hi\nDetails: b\n\n\
-             \x1b[2mTo submit feedback, visit: https://github.com/kaochenlong/spectra-app/issues\x1b[0m\n"
-        );
-        assert_eq!(
-            render_feedback_human("", None, false),
-            "Thank you for your feedback!\nMessage: \n\nTo submit feedback, visit: https://github.com/kaochenlong/spectra-app/issues\n"
-        );
     }
 
     #[test]

@@ -12,8 +12,11 @@ changes.
 
 ### Added
 
-- The rest of the v3.0.0 command surface (W12; acceptance A1 now has no
-  missing command or flag):
+- The rest of the v3.0.0 command surface (W12). Acceptance A1 now has no
+  missing command or flag except `feedback`, which is intentionally not
+  ported (owner ruling W12-1: the oracle's version submits nothing and only
+  points at the Spectra.app issue tracker; no skill or template calls it), so
+  `spectra feedback` is an unrecognized subcommand:
   - `spectra decisions [KEYWORD] [--json]` lists the `### ` decisions under
     `## Decisions` in every active and archived change's `design.md`, resolves
     `**Supersedes**: <change> / <heading>` (marking the replaced decision, or
@@ -25,8 +28,6 @@ changes.
     `spx-<adjective>-<pokemon>` name and one of the oracle's eight themes; the
     theme files are byte-exact captures kept in `assets/demo/` and verified by
     the new `scripts/capture-demo.py`.
-  - `spectra feedback <MESSAGE> [--body]` prints the oracle's local
-    acknowledgement and issue URL; like the oracle it sends nothing.
   - `show --item-type change|spec` restricts the lookup to one kind (so a spec
     that shares a change's name is reachable), with the oracle's
     `Unknown type` / `Change '…' not found.` / `Spec '…' not found.` errors.

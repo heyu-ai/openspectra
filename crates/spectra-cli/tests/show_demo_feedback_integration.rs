@@ -1,5 +1,5 @@
-//! `show --deltas-only／-r／--item-type`、`demo`、`feedback` 端到端。預期輸出取自 oracle
-//! 3.0.0 在同一 fixture 上的輸出（W12 probe p16／p17／p01／p18／p19）。
+//! `show --deltas-only／-r／--item-type`、`demo` 端到端，以及 `feedback` 不存在（W12-1 裁決）。
+//! 預期輸出取自 oracle 3.0.0 在同一 fixture 上的輸出（W12 probe p16／p17／p18／p19）。
 mod common;
 
 use std::path::Path;
@@ -195,23 +195,26 @@ fn show_without_item_is_a_runtime_error() {
     }
 }
 
+/// W12-1 裁決：`feedback` 不移植（oracle 的版本什麼都不送出，只導向 Spectra.app 的 issue
+/// 追蹤）。它必須是 clap 不認得的子指令，也不出現在 `--help`。
 #[test]
-fn feedback_prints_locally_outside_any_project() {
+fn feedback_is_not_a_subcommand() {
     let root = TempDir::new("feedback");
-    assert_eq!(
-        run(&root, &["feedback", "hello", "--body", "multi\nline"]),
-        (
-            0,
-            "Thank you for your feedback!\nMessage: hello\nDetails: multi\nline\n\nTo submit feedback, visit: https://github.com/kaochenlong/spectra-app/issues\n".to_string(),
-            String::new()
-        )
+    let (code, stdout, stderr) = run(&root, &["feedback", "hello"]);
+    assert_eq!(code, 2);
+    assert_eq!(stdout, "");
+    assert!(
+        stderr.contains("unrecognized subcommand 'feedback'"),
+        "stderr: {stderr}"
     );
-    assert_eq!(
-        run(&root, &["feedback", ""]).1,
-        "Thank you for your feedback!\nMessage: \n\nTo submit feedback, visit: https://github.com/kaochenlong/spectra-app/issues\n"
-    );
-    // feedback 不寫任何檔案。
     assert_eq!(std::fs::read_dir(&*root).unwrap().count(), 0);
+
+    let (code, help, _) = run(&root, &["--help"]);
+    assert_eq!(code, 0);
+    assert!(
+        !help.lines().any(|l| l.trim_start().starts_with("feedback")),
+        "help: {help}"
+    );
 }
 
 #[test]

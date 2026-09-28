@@ -34,10 +34,15 @@ empty message is accepted. A missing message, an extra positional or `--json`
 are clap errors (exit 2). On a terminal the first line is green (`\e[32m`) and
 the whole `To submit feedback, visit: …` line dim (`\e[2m`).
 
-OpenSpectra prints the same text, including the upstream issue URL. Whether an
-OpenSpectra build should point somewhere else — and whether "Thank you for
-your feedback!" is acceptable wording for a command that submits nothing — is
-an open question for the maintainer, not a fidelity question.
+**OpenSpectra does not port it** (owner ruling W12-1, 2026-09-28; option 2 of
+#64). Thanking the user for feedback that goes nowhere, and pointing an
+OpenSpectra user at the Spectra.app tracker, would mislead; no skill or
+template calls the command. `spectra feedback …` is therefore clap's
+`unrecognized subcommand` (exit 2), pinned by `feedback_is_not_a_subcommand`.
+Acceptance A1 lists it as its one exception, and
+`golden/parity-known.tsv` keeps `surface feedback missing-command` as a known
+divergence. The oracle behaviour above is kept as the record of what was not
+ported.
 
 ## `demo`
 

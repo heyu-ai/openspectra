@@ -10,14 +10,16 @@ starting with the `drift` command.
 > `in-progress add`, `new change`, `new artifact`, `task done`, `update`,
 > `archive`, and `config` — covering the full SDD workflow. It runs on
 > Linux/macOS with no bundled runtime dependencies (`git` must be on `PATH`).
-> Two oracle commands remain unported: `demo` and `feedback` (see
-> [#65](https://github.com/heyu-ai/openspectra/issues/65) for the tracking
-> issue). Of the commands oracle v3.0.0 added, `scope`
-> ([#165](https://github.com/heyu-ai/openspectra/issues/165)) and
-> `task start` plus `task done --file`
-> ([#190](https://github.com/heyu-ai/openspectra/issues/190)) are ported;
-> `decisions` ([#166](https://github.com/heyu-ai/openspectra/issues/166)) is
-> not yet. The reverse-engineering write-ups are in
+> `demo` is ported as well. `feedback` is intentionally not ported (owner
+> ruling W12-1, option 2 of
+> [#64](https://github.com/heyu-ai/openspectra/issues/64)): the oracle's
+> version submits nothing and only points at the Spectra.app issue tracker,
+> so file OpenSpectra issues on this repository instead. Of the commands
+> oracle v3.0.0 added, `scope`
+> ([#165](https://github.com/heyu-ai/openspectra/issues/165)), `task start`
+> plus `task done --file`
+> ([#190](https://github.com/heyu-ai/openspectra/issues/190)) and `decisions`
+> ([#166](https://github.com/heyu-ai/openspectra/issues/166)) are ported. The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/`](docs/reverse-engineering/):
 > [`analyze.md`](docs/reverse-engineering/analyze.md),
 > [`archive.md`](docs/reverse-engineering/archive.md),
@@ -75,7 +77,6 @@ spectra list  --parked [--json]   # lists parked changes instead of active ones
 spectra show  <CHANGE|SPEC> [--item-type change|spec] [--diff] [--json]  # change: proposal + delta spec list (JSON: all artifacts); spec: every .md file; --item-type picks one kind; --deltas-only/-r are accepted and inert, as in the reference; --diff isolates requirement-level change lines
 spectra decisions [KEYWORD] [--json]  # lists `### ` decisions under `## Decisions` in every design.md (active, then archived) with **Supersedes** resolution
 spectra demo                      # creates a sample change (random spx-<adjective>-<pokemon> name, one of eight themes)
-spectra feedback <MESSAGE> [--body TEXT]  # prints the message and the upstream issue URL; sends nothing
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
 spectra new change <NAME> [--schema S] [--agent A] [--description D] [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)

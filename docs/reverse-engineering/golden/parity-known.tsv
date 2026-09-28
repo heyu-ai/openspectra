@@ -31,3 +31,4 @@ output	validate --changes --json	stderr-differs
 output	validate <change>	exit 0->1
 output	validate <change>	stderr-differs
 output	validate <change>	stdout-differs
+surface	feedback	missing-command
