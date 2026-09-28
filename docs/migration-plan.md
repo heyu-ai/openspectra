@@ -229,7 +229,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | PR #208（stacked on #207；tw／ja／en 對應顯示名稱、其他原樣；locale 容錯解析修掉非字串值讓所有指令報錯的問題；28 次比對相同；parity 85 → 84） |
 | W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | 待辦 |
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
-| W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | 待辦 |
+| W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | PR #209（stacked on #208；另含 `scripts/shadow-report.py`；真 oracle 煙霧測試 shadow 輸出與 oracle 逐位元組相同；測試 helper 固定 `OPENSPECTRA_IMPL=oss` 並經正反向對照） |
 | W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | 待辦（最後做） |
 | W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.`（W6 實測：3.0.0 所有專案指令皆然）；只有 `openspec/` 目錄、沒有 `.spectra.yaml` 的專案 oracle 視為已初始化（`spec_dir: openspec`，root 探索也認這個標記），OpenSpectra 回 Not initialized——純 OpenSpec 專案相容性缺口（W6 發現） | A3 | W2 發現 | 待辦（W13 之前做） |
 | W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
