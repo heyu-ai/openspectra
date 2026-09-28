@@ -119,16 +119,24 @@ fn proposal_with_capability(capability: &str) -> String {
     format!("## Capabilities\n\n### New Capabilities\n\n- `{capability}`: behavior\n\n## Impact\n")
 }
 
-fn complete_delta(section: &str, requirement: &str, scenario: &str) -> String {
+fn requirement_block(requirement: &str, scenario: &str) -> String {
     format!(
-        "## {section} Requirements\n\n\
-         ### Requirement: {requirement}\n\n\
+        "### Requirement: {requirement}\n\n\
          The system SHALL provide the behavior.\n\n\
          #### Scenario: {scenario}\n\n\
          ##### Example: concrete\n\n\
          - **GIVEN** concrete input\n\
          - **WHEN** the operation runs\n\
-         - **THEN** concrete output is returned\n"
+         - **THEN** concrete output is returned\n\n"
+    )
+}
+
+/// 有 Purpose 的完整 delta：oracle 3.0.0 對沒有 `## Purpose` 的新 capability 會多報
+/// `gapNewCapabilityNoPurpose`，各規則的正負對照不想被它干擾。
+fn complete_delta(section: &str, requirement: &str, scenario: &str) -> String {
+    format!(
+        "## Purpose\n\nThe capability exists.\n\n## {section} Requirements\n\n{}",
+        requirement_block(requirement, scenario)
     )
 }
 
@@ -161,10 +169,16 @@ fn empty_change_skips_all_dimensions_pins_snake_case_json_and_human_output() {
         serde_json::json!(["proposal", "specs", "design", "tasks"])
     );
     let dimensions = report["dimensions"].as_array().unwrap();
-    assert_eq!(dimensions.len(), 4);
-    for (index, name) in ["Coverage", "Consistency", "Ambiguity", "Gaps"]
-        .iter()
-        .enumerate()
+    assert_eq!(dimensions.len(), 5);
+    for (index, name) in [
+        "Coverage",
+        "Consistency",
+        "Ambiguity",
+        "Gaps",
+        "Localization",
+    ]
+    .iter()
+    .enumerate()
     {
         assert_eq!(dimensions[index]["dimension"], *name);
         assert_eq!(
@@ -185,6 +199,7 @@ fn empty_change_skips_all_dimensions_pins_snake_case_json_and_human_output() {
             "  ✓ Consistency    Skipped (insufficient artifacts) (0 findings)\n",
             "  ✓ Ambiguity      Skipped (insufficient artifacts) (0 findings)\n",
             "  ✓ Gaps           Skipped (insufficient artifacts) (0 findings)\n",
+            "  ✓ Localization   Skipped (insufficient artifacts) (0 findings)\n",
             "  Missing: proposal, specs, design, tasks\n",
             "\n",
             "  ✓ No issues found\n",
@@ -308,7 +323,7 @@ fn cov_delta_validation_positive_and_negative_contract() {
         &format!(
             "{}{}",
             complete_delta("ADDED", "Duplicate", "first"),
-            complete_delta("ADDED", "Duplicate", "second")
+            requirement_block("Duplicate", "second")
         ),
     );
     write_change_file(
@@ -318,7 +333,7 @@ fn cov_delta_validation_positive_and_negative_contract() {
         &format!(
             "{}{}",
             complete_delta("ADDED", "First", "first"),
-            complete_delta("ADDED", "Second", "second")
+            requirement_block("Second", "second")
         ),
     );
 
@@ -631,20 +646,22 @@ fn human_findings_output_matches_the_measured_contract() {
         output.status.success(),
         "findings must not affect exit status: {output:?}"
     );
+    // 期望值是 oracle 3.0.0 對同一個 fixture 的實際輸出（2026-09-28 實測）。
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         concat!(
             "Change: c5\n",
             "\n",
             "  ● Coverage       1 issue(s) found (1 findings)\n",
-            "  ✓ Consistency    Skipped (insufficient artifacts) (0 findings)\n",
+            "  ✓ Consistency    Clean (0 findings)\n",
             "  ● Ambiguity      1 issue(s) found (1 findings)\n",
-            "  ✓ Gaps           Clean (0 findings)\n",
+            "  ● Gaps           1 issue(s) found (1 findings)\n",
+            "  ✓ Localization   Skipped (insufficient artifacts) (0 findings)\n",
             "\n",
             "  Analyzed: proposal, specs, tasks\n",
             "  Missing: design\n",
             "\n",
-            "  Findings (2):\n",
+            "  Findings (3):\n",
             "\n",
             "  [WARNING] Requirement 'Alpha works' has no matching task\n",
             "    at: specs/alpha/spec.md\n",
@@ -652,6 +669,9 @@ fn human_findings_output_matches_the_measured_contract() {
             "  [SUGGEST] Scenario 'alpha happy' has no concrete examples\n",
             "    at: specs/alpha/spec.md\n",
             "    → Add ##### Example: with concrete GIVEN/WHEN/THEN data\n",
+            "  [WARNING] New capability 'alpha' delta has no ## Purpose section; the spec will be created with a placeholder Purpose\n",
+            "    at: specs/alpha/spec.md\n",
+            "    → Add a ## Purpose section (1-3 sentences) at the top of specs/alpha/spec.md\n",
         )
     );
 }

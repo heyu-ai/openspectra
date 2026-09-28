@@ -14,6 +14,9 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   共 22 個 case 實測 22/22 KILLED；其餘 case 未在這一輪重跑
 - #183（2026-09-28，scenario loss 只回報一則）：新增 3 個 `183-*` case，只重跑這 3 個，
   **3/3 KILLED**
+- W10（2026-09-28）：analyze 拆成 `crates/spectra-core/src/analyze/` 模組，改寫列 23、24 的
+  case 位置並新增 24 個 `w10-*` case（列 76）；只重跑這 26 個 case，**26/26 KILLED**，
+  其餘 case 未在此次重跑
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -264,3 +267,4 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 73 | PR #121 | sha2 0.11 沒有 `LowerHex`，測試編譯失敗 | — |
 | 74 | #162（開放中） | archive 的 EXDEV fallback：刪除來源時部分失敗、來源沒有凍結、delta 來源在準備後被改動 | — |
 | 75 | #159（開放中） | oracle 的 archive 在 `.claude/worktrees/` 裡有同名 change 副本時拒絕執行 | 無產品碼可突變；守護測試 `archive_ignores_same_named_change_copies_inside_worktrees` |
+| 76 | W10 | `analyze` 與 oracle 3.0.0 不一致：少了 Localization 維度與三種新 finding、specs 判定吃進巢狀檔、capability／task／design topic／具體資料的比對規則是 2.3.1 版，findings 沒有依種類分組 | `w10-specs-presence-one-level`<br>`w10-concrete-data-given`<br>`w10-scenario-block-ends-at-h4`<br>`w10-no-scenario-skips-removed`<br>`w10-requirement-block-to-next-requirement`<br>`w10-weak-language-skips-headings`<br>`w10-design-topic-token-coverage`<br>`w10-design-topic-numbering-prefix`<br>`w10-goals-overlap-forty-percent`<br>`w10-capability-token-without-spaces`<br>`w10-capability-every-section-line`<br>`w10-missing-task-task-lines-only`<br>`w10-missing-task-skips-removed`<br>`w10-renamed-from-name-checked`<br>`w10-repeated-section-replaces`<br>`w10-purpose-placeholder-case-sensitive`<br>`w10-new-capability-empty-purpose`<br>`w10-localization-letter-floor`<br>`w10-localization-findings-first`<br>`w10-numeric-same-number-index`<br>`w10-numeric-equal-values-first`<br>`w10-numeric-transition-source-structural`<br>`w10-analyze-multi-change-wording`<br>`w10-analyze-colors-on-a-terminal` |
