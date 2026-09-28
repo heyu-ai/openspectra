@@ -22,6 +22,18 @@ changes.
   sidecar that is missing. `--check` writes nothing and exits 1 whenever
   anything needs attention, for use in CI (#98, #179).
 
+### Divergences from the v3.0.0 oracle (documented)
+
+- `task done` still implements the v2.3.1 behavior. An oracle 3.0.0 golden
+  (`docs/reverse-engineering/golden/task-done-3.0.0.json`) and a replay test
+  now pin exactly where it differs: v3.0.0's `--json` adds `provenance`,
+  `touched_files`, and `warnings`; every bad task ID reports
+  `Task <id> not found for change '<name>'` after the change is resolved;
+  `01` is rejected; and touched files are recorded only after
+  `task start <id>` or with `--file`, neither of which OpenSpectra
+  implements. The resulting `tasks.md` matches byte-for-byte on every
+  replayed step except `task done 01` (#110).
+
 ### Changed
 
 - Archive writes trace data to `specs/<cap>/spec.trace.yaml`, one entry per

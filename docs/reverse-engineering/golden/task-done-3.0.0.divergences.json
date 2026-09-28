@@ -1,0 +1,272 @@
+{
+  "about": "Hand-curated ledger of known OpenSpectra-vs-oracle-3.0.0 divergences for `task done`, consumed by crates/spectra-cli/tests/task_done_golden_integration.rs. Each entry pins OpenSpectra's current value for one field of one spectra step (step = 1-based ordinal among the scenario's spectra steps). The test fails on any divergence not listed here AND on any entry whose value now matches the oracle, so closing a divergence forces removing its entry. See docs/reverse-engineering/task.md > 'Oracle 3.0.0 golden and known divergences'.",
+  "classes": {
+    "error-message": "OpenSpectra keeps v2.3.1's distinct messages (Invalid task ID / must be >= 1 / not found (total: N)); v3.0.0 reports every bad ID as \"Task <id> not found for change '<name>'\".",
+    "evaluation-order": "OpenSpectra parses TASK_ID before resolving the change; v3.0.0 resolves the change and loads tasks.md first, so a missing change/tasks.md wins over a bad ID.",
+    "leading-zero-id": "OpenSpectra parses TASK_ID as an integer, so '01' marks task 1; v3.0.0 matches the ID textually and rejects '01'.",
+    "change-flag-hint": "OpenSpectra's shared multiple-change error says 'Use a change name'; v3.0.0's task done says 'Use --change'.",
+    "session-wide-touched": "Without a baseline OpenSpectra records every dirty file (v2.3.1 behavior, first-task-wins); v3.0.0 records nothing without `task start` or `--file` and warns instead."
+  },
+  "entries": [
+    {
+      "scenario": "invalid-task-ids",
+      "step": 1,
+      "args": [
+        "task",
+        "done",
+        "abc"
+      ],
+      "field": "stderr",
+      "class": "error-message",
+      "openspectra": "Error: Invalid task ID 'abc': must be a number\n"
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 2,
+      "args": [
+        "task",
+        "done",
+        "0"
+      ],
+      "field": "stderr",
+      "class": "error-message",
+      "openspectra": "Error: Task ID must be >= 1\n"
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 3,
+      "args": [
+        "task",
+        "done",
+        "5"
+      ],
+      "field": "stderr",
+      "class": "error-message",
+      "openspectra": "Error: Task 5 not found (total: 4)\n"
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 4,
+      "args": [
+        "task",
+        "done",
+        "99",
+        "--json"
+      ],
+      "field": "stderr",
+      "class": "error-message",
+      "openspectra": "Error: Task 99 not found (total: 4)\n"
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 5,
+      "args": [
+        "task",
+        "done",
+        "1.1"
+      ],
+      "field": "stderr",
+      "class": "error-message",
+      "openspectra": "Error: Invalid task ID '1.1': must be a number\n"
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 6,
+      "args": [
+        "task",
+        "done",
+        "01",
+        "--json"
+      ],
+      "field": "exit",
+      "class": "leading-zero-id",
+      "openspectra": 0
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 6,
+      "args": [
+        "task",
+        "done",
+        "01",
+        "--json"
+      ],
+      "field": "stdout",
+      "class": "leading-zero-id",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"status\": \"done\",\n  \"task_desc\": \"1.1 first core task\",\n  \"task_id\": \"1\"\n}\n"
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 6,
+      "args": [
+        "task",
+        "done",
+        "01",
+        "--json"
+      ],
+      "field": "stderr",
+      "class": "leading-zero-id",
+      "openspectra": ""
+    },
+    {
+      "scenario": "invalid-task-ids",
+      "step": 6,
+      "args": [
+        "task",
+        "done",
+        "01",
+        "--json"
+      ],
+      "field": "tasks_md",
+      "class": "leading-zero-id",
+      "openspectra": "## 1. Core\n\n- [x] 1.1 first core task\n- [ ] 1.2 second core task\n\n## 2. Polish\n\n- [ ] 2.1 first polish task\n- [ ] 2.2 second polish task\n"
+    },
+    {
+      "scenario": "evaluation-order-id-vs-change",
+      "step": 1,
+      "args": [
+        "task",
+        "done",
+        "abc",
+        "--change",
+        "nope"
+      ],
+      "field": "stderr",
+      "class": "evaluation-order",
+      "openspectra": "Error: Invalid task ID 'abc': must be a number\n"
+    },
+    {
+      "scenario": "evaluation-order-id-vs-change",
+      "step": 6,
+      "args": [
+        "task",
+        "done",
+        "abc"
+      ],
+      "field": "stderr",
+      "class": "evaluation-order",
+      "openspectra": "Error: Invalid task ID 'abc': must be a number\n"
+    },
+    {
+      "scenario": "marker-variants",
+      "step": 9,
+      "args": [
+        "task",
+        "done",
+        "9"
+      ],
+      "field": "stderr",
+      "class": "error-message",
+      "openspectra": "Error: Task 9 not found (total: 8)\n"
+    },
+    {
+      "scenario": "first-task-wins-attribution",
+      "step": 1,
+      "args": [
+        "task",
+        "done",
+        "1"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "first-task-wins-attribution",
+      "step": 2,
+      "args": [
+        "task",
+        "done",
+        "2"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"2\",\n      \"task_desc\": \"1.2 second core task\",\n      \"files\": [\n        \"src/c.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "first-task-wins-attribution",
+      "step": 3,
+      "args": [
+        "task",
+        "done",
+        "3"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"2\",\n      \"task_desc\": \"1.2 second core task\",\n      \"files\": [\n        \"src/c.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "first-task-wins-attribution",
+      "step": 4,
+      "args": [
+        "task",
+        "done",
+        "4",
+        "--json"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"2\",\n      \"task_desc\": \"1.2 second core task\",\n      \"files\": [\n        \"src/c.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"4\",\n      \"task_desc\": \"2.2 second polish task\",\n      \"files\": [\n        \"src/b.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "spectra-dir-not-gitignored",
+      "step": 1,
+      "args": [
+        "task",
+        "done",
+        "1"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "spectra-dir-not-gitignored",
+      "step": 2,
+      "args": [
+        "task",
+        "done",
+        "2"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"2\",\n      \"task_desc\": \"1.2 second core task\",\n      \"files\": [\n        \"src/b.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "spectra-dir-not-gitignored",
+      "step": 3,
+      "args": [
+        "task",
+        "done",
+        "3"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"2\",\n      \"task_desc\": \"1.2 second core task\",\n      \"files\": [\n        \"src/b.rs\"\n      ]\n    },\n    {\n      \"task_id\": \"3\",\n      \"task_desc\": \"2.1 first polish task\",\n      \"files\": [\n        \"src/c.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "spectra-dir-committed",
+      "step": 1,
+      "args": [
+        "task",
+        "done",
+        "1"
+      ],
+      "field": "touched",
+      "class": "session-wide-touched",
+      "openspectra": "{\n  \"change\": \"demo\",\n  \"touched\": [\n    {\n      \"task_id\": \"1\",\n      \"task_desc\": \"1.1 first core task\",\n      \"files\": [\n        \"src/a.rs\"\n      ]\n    }\n  ]\n}"
+    },
+    {
+      "scenario": "change-autodetect",
+      "step": 1,
+      "args": [
+        "task",
+        "done",
+        "1"
+      ],
+      "field": "stderr",
+      "class": "change-flag-hint",
+      "openspectra": "Error: Multiple changes found. Use a change name to specify one: demo, second\n"
+    }
+  ]
+}
