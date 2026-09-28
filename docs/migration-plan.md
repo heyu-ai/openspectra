@@ -235,7 +235,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | PR #209（stacked on #208；另含 `scripts/shadow-report.py`；真 oracle 煙霧測試 shadow 輸出與 oracle 逐位元組相同；測試 helper 固定 `OPENSPECTRA_IMPL=oss` 並經正反向對照） |
 | W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | PR #216（A1 surface 缺口歸零；parity 62 → 56，只刪不增；`decisions --json` 在三個 corpus 共 758 筆欄位與 oracle 相同；新增 `capture-demo.py`；11 個 mutation 全被抓到；`show` 缺名稱改為 exit 1 屬行為變更；**5 項待裁決**見 PR） |
 | W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.`（W6 實測：3.0.0 所有專案指令皆然）；只有 `openspec/` 目錄、沒有 `.spectra.yaml` 的專案 oracle 視為已初始化（`spec_dir: openspec`，root 探索也認這個標記），OpenSpectra 回 Not initialized——純 OpenSpec 專案相容性缺口（W6 發現） | A3 | W2 發現 | PR #211（stacked on #209；**部分完成**：openspec 標記、未初始化訊息、`.gitkeep` 已對齊；剩餘部分：**D9 已裁決**新專案預設 `docs/openspec`（待實作，含 `.spectra.yaml` 範本），**D10 已裁決**維持非破壞完成（不需改動）） |
-| W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
+| W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | **第一次量測完成**（2026-09-28，未安裝，見下方「W13 量測紀錄」）；W7g、W9a、W14 剩餘部分完成後再量一次並安裝 |
 
 **合併狀態（2026-09-28）**：依 howie 指示，W1–W9b 的 stacked PR（#196–#214，共 17 個）已依序
 squash merge 進 main（最後一筆 `cebbb28`）。做法是每一層 squash 後，把下一層以
@@ -243,6 +243,20 @@ squash merge 進 main（最後一筆 `cebbb28`）。做法是每一層 squash �
 tree 等於已跑過 CI 的 tree 才 merge；#214 因與 #213 平行、`CHANGELOG.md` 衝突，另在 rebase 後
 重跑本機與遠端 CI。W10（#215）、W12（#216）各自以 main 為 base 開 PR，尚未 merge。
 上表各列的「stacked on」是開 PR 當時的狀態。
+
+**W13 量測紀錄（第一次，2026-09-28）**：本機整合分支 = main `b4aa0ea` ＋ #215（W10）＋ #216（W12），
+只用 `target/release/spectra`，**沒有**安裝到 `~/.local/bin`。fmt／clippy／release build 通過；
+`cargo test --all` 36 個 test binary、900 passed、0 failed。parity-probe（yibi-mvp、nextrek-cli、
+yibi-stack）exit 0：31 條分歧全部已知。逐條歸屬是在 parity-probe 的 sandbox 上重跑
+`list`／`status`／`drift` 定位的（一次性量測，定位腳本未收進 repo）：
+
+| 驗收 | 結果 | 剩餘缺口 |
+|---|---|---|
+| A1 指令完整 | surface 差集只剩 `feedback`（W12-1 明文例外） | #216 merge 後即達成 |
+| A2 skill 能用 | `every_template_invocation_parses` 通過，`KNOWN_GAPS` 為空 | 無 |
+| A3 輸出正確 | 已知分歧 31 條：`analyze` 12（W10 的名稱排序刻意分歧，2 個 change）、`list` 6（yibi-mvp 同秒 mtime 以名稱斷尾，`list-show.md` 已登錄）、`drift` 1（`unresolved_anchors`，#83）、`status` 3（OpenSpectra 多輸出 `artifacts[].requires`、`isPlanningComplete`，`artifact-workflow.md` 記為相容性擴充）、`validate` 8（A3 明文排除，歸 A4）、surface 1（A1 例外） | ① `status` 的兩個額外欄位已在允許清單，但**未寫進 CHANGELOG**，A3 要求兩者都要；② parity-probe 只比唯讀指令，會寫檔的指令（`new`、`task`、`archive`、`update`、`park`）目前由各自的 golden 重播覆蓋（task-done、archive preview、update templates），不是 parity-probe 量的 |
+| A4 OpenSpec 相容 | 判定規則由 `validate_openspec_integration` 對 OpenSpec 1.13.2 golden 逐欄重播 | `--format openspec`／`oracle` 尚不存在（W9a，依 D12 實作） |
+| A5 Linux | #215、#216、#218、#220 的 ubuntu job 全綠；v0.13.0 有 x86_64 與 aarch64 musl 產物 | 無 |
 
 **每一項的標準流程**：
 
