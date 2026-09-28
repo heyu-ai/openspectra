@@ -8,6 +8,31 @@ colored-output sections are backed by targeted `spectra 2.3.1 (Apple Silicon)`
 probes rather than those fixtures. Colored rendering is pinned in a unit test,
 but no PTY integration test exercises terminal detection end to end.
 
+> **Oracle 3.0.0 update (2026-09-28).** The listing is now byte-pinned to
+> `golden/schemas-3.0.0.{json,txt}`; the 2.3.1 files stay as history and the
+> 2.3.1 examples below are superseded where they differ. Two changes:
+>
+> 1. The `spec-driven` description is now
+>    `Default OpenSpec workflow - proposal → specs → tasks (design optional)`
+>    (the artifact order stays `proposal, specs, design, tasks`).
+> 2. A second built-in, **`no-spec`** (`package`,
+>    `No-spec workflow - proposal -> tasks (design optional)` — note the ASCII
+>    `->`), lists `proposal, design, tasks`. Its `design` and `tasks` both
+>    depend only on `proposal`, `applyRequires` is `[tasks]`, and every
+>    artifact has its own description, instruction, and template text; the
+>    apply instruction is the same as `spec-driven`'s. The texts are captured
+>    into `crates/spectra-core/assets/schemas/no-spec-3.0.0.json` by
+>    `scripts/capture-schemas.py`, which reads them through `instructions`
+>    with a sentinel `spec_dir` so `{{SPEC_DIR}}` can be recovered.
+>
+> Built-ins come first in the order `spec-driven`, `no-spec`, then project and
+> user schemas. `schema which no-spec` is an oracle quirk: it prints
+> `{"name": "no-spec", "resolved": null, "sources": []}` although the schema
+> resolves everywhere else, while `spec-driven` reports `"resolved":
+> "built-in"`. OpenSpectra's `schema which` output shape differs from the
+> oracle for every schema and is tracked separately (W7 in
+> `docs/migration-plan.md`).
+
 ## CLI shape
 
 ```

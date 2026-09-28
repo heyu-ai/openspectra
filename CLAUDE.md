@@ -54,6 +54,13 @@ this file is agent-facing operational context.
   you fix a bug, add its case in the same PR. See
   `docs/testing/regression-catalog.md`.
 
+- `scripts/capture-schemas.py` — same constraints (macOS + reference binary,
+  version-pinned to 3.0.0). Captures each built-in workflow schema listed in
+  its `SCHEMAS` (currently `no-spec`) through `schemas`/`status`/
+  `instructions` into `crates/spectra-core/assets/schemas/<name>-3.0.0.json`,
+  using a sentinel `spec_dir` to recover the `{{SPEC_DIR}}` placeholder. Any
+  drift exits non-zero keeping the sandbox; `--write` regenerates and
+  re-verifies. Never hand-edit the assets.
 - `scripts/parity-probe.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
   subcommand/flag is accepted) and A3 (read-only commands agree on exit code

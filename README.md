@@ -74,7 +74,7 @@ spectra list  --parked [--json]   # lists parked changes instead of active ones
 spectra show  <CHANGE|SPEC> [--diff] [--json]  # prints content; --diff isolates requirement-level change lines
 spectra park   <CHANGE> [--json]  # marks a change on hold (excluded from the active listing)
 spectra unpark <CHANGE> [--json]  # resumes a parked change
-spectra new change <NAME> [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)
+spectra new change <NAME> [--schema S] [--agent A] [--description D] [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)
 spectra new artifact <TYPE> [CAPABILITY] [--change <NAME>] [--stdin] [--force] [--json]  # creates one artifact (proposal|design|tasks|spec) from stdin or its built-in template, with per-type validation
 spectra schemas [--json]          # lists the built-in workflow schema registry (only spec-driven)
 spectra schema init <NAME> [--description TEXT] [--artifacts IDS] [--default] [--force] [--json]  # creates a project-local workflow schema

@@ -85,12 +85,6 @@ output	list --specs --json	oracle-only .specs[].id
 output	list --specs --json	oracle-only .specs[].path
 output	list --specs --json	oss-only .specs[].name
 output	list --specs --json	oss-only .specs[].summary
-output	schemas --json	value []#len
-output	schemas --json	value [].artifacts[]
-output	schemas --json	value [].artifacts[]#len
-output	schemas --json	value [].description
-output	schemas --json	value [].name
-output	schemas --json	value [].source
 output	show <change> --json	oracle-only .created
 output	show <change> --json	oracle-only .deltaSpecs[]
 output	show <change> --json	oracle-only .deltaSpecs[]#len
@@ -111,9 +105,6 @@ surface	archive	missing-flag --preview
 surface	decisions	missing-command
 surface	demo	missing-command
 surface	feedback	missing-command
-surface	new change	missing-flag --agent
-surface	new change	missing-flag --description
-surface	new change	missing-flag --schema
 surface	scope	missing-command
 surface	show	missing-flag --deltas-only
 surface	show	missing-flag --item-type

@@ -384,6 +384,62 @@ fn init_project_with_change(tmp: &Path, name: &str) {
 }
 
 #[test]
+fn new_change_text_output_and_flags_match_the_oracle() {
+    let tmp = TempDir::new("new-change-flags");
+    git(&tmp, &["init", "-q"]);
+    git(&tmp, &["config", "user.email", "t@t.co"]);
+    git(&tmp, &["config", "user.name", "t"]);
+    let init = spectra().arg("init").current_dir(&*tmp).output().unwrap();
+    assert!(init.status.success(), "init failed: {init:?}");
+
+    let out = spectra()
+        .args([
+            "new",
+            "change",
+            "demo",
+            "--schema",
+            "no-spec",
+            "--agent",
+            "codex",
+            "--description",
+            "ignored by the oracle",
+        ])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "new change failed: {out:?}");
+    let change_dir = tmp.canonicalize().unwrap().join("openspec/changes/demo");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        format!(
+            "✓ Created change: demo\n  Path: {}\n  Schema: no-spec\n",
+            change_dir.display()
+        )
+    );
+    let metadata = std::fs::read_to_string(change_dir.join(".openspec.yaml")).unwrap();
+    assert!(
+        metadata.starts_with("schema: no-spec\ncreated: "),
+        "{metadata}"
+    );
+    assert!(
+        metadata.ends_with("created_by: t <t@t.co>\ncreated_with: codex\n"),
+        "{metadata}"
+    );
+    assert!(!metadata.contains("ignored by the oracle"));
+
+    // no-spec 的 status：design 與 tasks 都只依賴 proposal。
+    let status = spectra()
+        .args(["status", "--change", "demo"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(status.stdout).unwrap(),
+        "Change: demo\nSchema: no-spec\n\n  ○ proposal (proposal.md)\n  ✗ design (design.md)\n    blocked by: proposal\n  ✗ tasks (tasks.md)\n    blocked by: proposal\n\n"
+    );
+}
+
+#[test]
 fn archive_yes_skips_confirmation_and_archives() {
     let tmp = TempDir::new("archive-yes");
     init_project_with_change(&tmp, "ready");

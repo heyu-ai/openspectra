@@ -1,0 +1,43 @@
+{
+  "name": "no-spec",
+  "description": "No-spec workflow - proposal -> tasks (design optional)",
+  "artifactOrder": [
+    "proposal",
+    "design",
+    "tasks"
+  ],
+  "applyRequires": [
+    "tasks"
+  ],
+  "applyInstruction": "Read context files, work through pending tasks, mark complete as you go.\nPause if you hit blockers or need clarification.\n",
+  "artifacts": [
+    {
+      "id": "proposal",
+      "outputPath": "proposal.md",
+      "description": "Proposal document for changes with no capability-level spec impact",
+      "deps": [],
+      "instruction": "Create the proposal document that establishes WHY this no-spec change is needed.\n\nUse this schema only when the change does not alter capability-level observable behavior.\n\nSections:\n- **Why**: 1-2 sentences on the problem or opportunity. What problem does this solve? Why now?\n- **What Changes**: Bullet list of implementation, tooling, dependency, build, or documentation changes.\n- **Non-Goals** (optional): Scope exclusions and rejected approaches. If design.md will be skipped, write Non-Goals here so rejected approaches and scope exclusions are recorded in a persistent artifact.\n- **Impact**: Affected code, APIs, dependencies, systems, and the literal line `Affected specs: none`.\n\nDo NOT create a Capabilities section for no-spec changes.\nDo NOT create delta specs.\n",
+      "template": "## Why\n\n<!-- Explain why this no-spec change is needed. What problem does this solve? Why now? -->\n\n## What Changes\n\n<!-- Describe implementation, tooling, dependency, build, or documentation changes. Be specific. -->\n\n## Non-Goals (optional)\n\n<!-- Scope exclusions and rejected approaches. Required when design.md is skipped; optional otherwise. -->\n\n## Impact\n\n- Affected specs: none\n- Affected code:\n  - New: (none)\n  - Modified: (none)\n  - Removed: (none)\n- Compatibility: no capability-level observable behavior changes\n"
+    },
+    {
+      "id": "design",
+      "outputPath": "design.md",
+      "description": "Optional technical design document with implementation details",
+      "deps": [
+        "proposal"
+      ],
+      "instruction": "Create the design document only when the no-spec change still benefits from technical decisions before coding.\n\nThis artifact is optional. Use it for cross-cutting tooling changes, dependency migrations, build/release changes, or other implementation complexity.\n\nKeep the contract focused on tooling/build/documentation behavior and state explicitly that capability-level observable behavior is unchanged.\n",
+      "template": "## Context\n\n<!-- Background, current state, constraints, and why design is useful for this no-spec change. -->\n\n## Goals / Non-Goals\n\n<!-- What this design achieves and explicitly excludes. -->\n\n## Decisions\n\n<!-- Key technical choices with rationale and alternatives considered. -->\n\n## Implementation Contract\n\n<!-- Observable tooling/build/documentation behavior, command output, failure modes, acceptance criteria, and scope boundaries. State that capability-level observable behavior is unchanged. -->\n\n## Risks / Trade-offs\n\n<!-- Format: [Risk] -> Mitigation -->\n\n## Migration Plan\n\n<!-- Steps to deploy and rollback strategy if applicable. -->\n\n## Open Questions\n\n<!-- Outstanding decisions or unknowns to resolve. -->\n"
+    },
+    {
+      "id": "tasks",
+      "outputPath": "tasks.md",
+      "description": "Implementation checklist with trackable tasks",
+      "deps": [
+        "proposal"
+      ],
+      "instruction": "Create the task list that breaks down the implementation work.\n\n**IMPORTANT: Follow the template below exactly.** The apply phase parses checkbox format to track progress. Tasks not using `- [ ]` won't be tracked.\n\nGuidelines:\n- Group related tasks under ## numbered headings\n- Each task MUST be a checkbox: `- [ ] X.Y Task description`\n- Use the instructions JSON `locale` for human-readable task group headings and task descriptions.\n- Preserve machine-readable syntax and technical tokens exactly: markdown headings, checkbox markers, task numbers, `[P]` markers, file paths, symbol names, commands, API names, and code identifiers MUST NOT be translated or localized.\n- Each task MUST state the behavior or contract being delivered and the verification target that proves completion.\n- File paths MAY appear in a task description, but only as locator context. The task SHALL still state the behavior or contract on top of any file path it mentions.\n\nReference proposal.md for scope. Reference design.md only if it exists.\n",
+      "template": "<!--\nEach task description MUST state:\n- the behavior or contract being delivered (what is observably true when the\n  task is complete), and\n- the verification target that proves completion (test, CLI invocation,\n  analyzer check, manual assertion, or content review).\n\nFile paths are supporting context for locating the work, never the task\nitself. \"Edit file X\" is not a valid task — it is missing both behavior and\nverification.\n-->\n\n## 1. <!-- Task Group Name -->\n\n- [ ] 1.1 <!-- Behavior/contract delivered + verification target -->\n- [ ] 1.2 <!-- Behavior/contract delivered + verification target -->\n"
+    }
+  ]
+}

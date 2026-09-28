@@ -373,6 +373,20 @@ pub fn load(cfg: &Config, name: &str) -> Result<Change> {
 /// change directory is removed so a retry doesn't get a misleading
 /// "already exists" error; cleanup failure itself is logged, not silenced.
 pub fn create(cfg: &Config, name: &str) -> Result<Change> {
+    create_with(cfg, name, CreateOptions::default())
+}
+
+/// `new change` 的 `--schema`／`--agent`（oracle 3.0.0）。兩者都**不驗證**，原樣寫進
+/// `.openspec.yaml`：oracle 對 `--schema bogus` 寫 `schema: bogus`、對 `--agent nope`
+/// 寫 `created_with: nope`，都 exit 0（已 probe）。`--description` 在 oracle 被接受但
+/// 不寫入任何地方，所以這裡沒有對應欄位。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CreateOptions<'a> {
+    pub schema: Option<&'a str>,
+    pub agent: Option<&'a str>,
+}
+
+pub fn create_with(cfg: &Config, name: &str, options: CreateOptions<'_>) -> Result<Change> {
     if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {
         return Err(anyhow!(
             "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
@@ -395,7 +409,7 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     if let Err(e) = clear_stale_sidecar_state(cfg, name) {
         eprintln!("warning: failed to clear stale sidecar state for '{name}': {e}");
     }
-    match create_inner(cfg, name, &dir) {
+    match create_inner(cfg, name, &dir, options) {
         Ok(()) => load(cfg, name),
         Err(e) => {
             if let Err(cleanup_err) = std::fs::remove_dir_all(&dir) {
@@ -421,7 +435,12 @@ pub fn create(cfg: &Config, name: &str) -> Result<Change> {
     }
 }
 
-fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
+fn create_inner(
+    cfg: &Config,
+    name: &str,
+    dir: &std::path::Path,
+    options: CreateOptions<'_>,
+) -> Result<()> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
 
     let today = chrono::Local::now().date_naive();
@@ -442,11 +461,15 @@ fn create_inner(cfg: &Config, name: &str, dir: &std::path::Path) -> Result<()> {
     // project recorded a schema it does not use, and `status` then passed.
     let metadata = ChangeMetadata {
         schema: Some(
-            crate::schema::configured_schema_name(cfg)
+            options
+                .schema
+                .map(str::to_string)
+                .or_else(|| crate::schema::configured_schema_name(cfg))
                 .unwrap_or_else(|| crate::schema::SCHEMA_NAME.to_string()),
         ),
         created: Some(today.to_string()),
         created_by: Some(created_by),
+        created_with: options.agent.map(str::to_string),
         ..Default::default()
     };
     let yaml = serde_yaml::to_string(&metadata)
@@ -1160,6 +1183,35 @@ mod tests {
             .join("archive")
             .join("2025-01-01-done")
             .is_dir());
+    }
+
+    #[test]
+    fn create_with_writes_schema_and_agent_unvalidated_like_the_oracle() {
+        let tmp = TempDir::new();
+        let cfg = Config {
+            root: tmp.to_path_buf(),
+            spec_dir: "openspec".to_string(),
+            locale: None,
+            claude_slash_commands: false,
+        };
+        // oracle 3.0.0：--schema 與 --agent 都不驗證，原樣寫入；created_with 排在 created_by 之後。
+        let ch = create_with(
+            &cfg,
+            "demo",
+            CreateOptions {
+                schema: Some("bogus"),
+                agent: Some("nope"),
+            },
+        )
+        .unwrap();
+        let created = ch.metadata.created.as_deref().unwrap();
+        let created_by = ch.metadata.created_by.as_deref().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(ch.dir.join(".openspec.yaml")).unwrap(),
+            format!(
+                "schema: bogus\ncreated: {created}\ncreated_by: {created_by}\ncreated_with: nope\n"
+            )
+        );
     }
 
     #[test]

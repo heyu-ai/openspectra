@@ -68,6 +68,25 @@ denied) propagates instead of being silently misreported as "not done".
 
 ## `spectra new change` (v2.3.1 alignment, BREAKING in OpenSpectra)
 
+> **Oracle 3.0.0 (probed 2026-09-28).** Text output is now three lines:
+>
+> ```
+> ✓ Created change: <name>
+>   Path: <absolute change dir>
+>   Schema: <schema written to .openspec.yaml>
+> ```
+>
+> New flags, none of them validated: `--schema <s>` writes `schema: <s>`
+> as given (`--schema bogus` exits 0 and writes `schema: bogus`; later
+> commands on that change fail to resolve it); `--agent <a>` adds
+> `created_with: <a>` after `created_by` (`--agent nope` is accepted too);
+> `--description <d>` is accepted and **stored nowhere**. Without `--schema`
+> the configured schema (or `spec-driven`) is written, as before. The
+> oracle has no `--json` for this command; OpenSpectra keeps its own.
+> 3.0.0 also writes **no** `.spectra/` state at creation. OpenSpectra still
+> writes `.started` and the touched baseline here; the 3.0.0 per-task
+> baseline model is W4 in `docs/migration-plan.md` (#190).
+
 The oracle creates only the change dir plus `.openspec.yaml`
 (`schema`/`created`/`created_by`), **no artifact files** — otherwise `status`
 would start all-done and `new artifact` would always hit "already exists".

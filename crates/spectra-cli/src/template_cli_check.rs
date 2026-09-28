@@ -14,19 +14,6 @@ use super::Cli;
 
 /// 已知缺口：正規化後的呼叫字串（placeholder 已代入）。每個執行佇列項目補完就移除對應條目。
 const KNOWN_GAPS: &[&str] = &[
-    // W3：new change 的 --agent／--schema
-    "new change x --agent antigravity",
-    "new change x --agent claude",
-    "new change x --agent codex",
-    "new change x --agent cursor",
-    "new change x --agent github-copilot",
-    "new change x --agent junie",
-    "new change x --schema no-spec --agent antigravity",
-    "new change x --schema no-spec --agent claude",
-    "new change x --schema no-spec --agent codex",
-    "new change x --schema no-spec --agent cursor",
-    "new change x --schema no-spec --agent github-copilot",
-    "new change x --schema no-spec --agent junie",
     // W4：task start、task done --file（#190）
     "task done --change x 1.1 --file src/lib.rs",
     "task start",

@@ -433,6 +433,15 @@ enum NewTarget {
         name: String,
         #[arg(long)]
         json: bool,
+        /// Description (accepted for oracle compatibility; the oracle does not store it).
+        #[arg(long)]
+        description: Option<String>,
+        /// Workflow schema to use.
+        #[arg(long)]
+        schema: Option<String>,
+        /// AI agent that created this change (e.g., claude, codex, cursor).
+        #[arg(long)]
+        agent: Option<String>,
     },
     /// Create a workflow artifact for a change.
     Artifact {
@@ -1394,12 +1403,26 @@ fn new_change_json(ch: &change::Change) -> serde_json::Value {
     })
 }
 
-fn cmd_new_change(cfg: &Config, name: &str, as_json: bool) -> Result<i32> {
-    let ch = change::create(cfg, name)?;
+fn cmd_new_change(
+    cfg: &Config,
+    name: &str,
+    as_json: bool,
+    options: change::CreateOptions<'_>,
+) -> Result<i32> {
+    let ch = change::create_with(cfg, name, options)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&new_change_json(&ch))?);
     } else {
-        println!("Created change '{}' in {}.", ch.name, ch.dir.display());
+        // oracle 3.0.0 的輸出；`Schema:` 是寫進 `.openspec.yaml` 的值（未驗證）。
+        println!("✓ Created change: {}", ch.name);
+        println!("  Path: {}", cfg.root.join(&ch.dir).display());
+        println!(
+            "  Schema: {}",
+            ch.metadata
+                .schema
+                .as_deref()
+                .unwrap_or(spectra_core::schema::SCHEMA_NAME)
+        );
         if ch.started_sha.is_none() {
             eprintln!(
                 "note: couldn't determine a git baseline for this change; \
@@ -1960,9 +1983,19 @@ fn run() -> Result<i32> {
             }
         },
         Command::New { target } => match target {
-            NewTarget::Change { name, json } => {
+            NewTarget::Change {
+                name,
+                json,
+                description: _,
+                schema,
+                agent,
+            } => {
                 let cfg = require_initialized(&root)?;
-                cmd_new_change(&cfg, name, *json)
+                let options = change::CreateOptions {
+                    schema: schema.as_deref(),
+                    agent: agent.as_deref(),
+                };
+                cmd_new_change(&cfg, name, *json, options)
             }
             NewTarget::Artifact {
                 type_name,
@@ -2290,15 +2323,15 @@ mod tests {
         // path (piped stdout), leaving this the sole guard on the colored path.
         let schemas = schema::schemas(None);
 
-        // --no-color output must equal the two oracle-golden text lines.
+        // --no-color output must equal the oracle 3.0.0 golden text lines.
         assert_eq!(
             render_schemas_human(&schemas, false),
-            "Available schemas:\n  spec-driven (package) — Default OpenSpec workflow - proposal → specs → design → tasks\n"
+            "Available schemas:\n  spec-driven (package) — Default OpenSpec workflow - proposal → specs → tasks (design optional)\n  no-spec (package) — No-spec workflow - proposal -> tasks (design optional)\n"
         );
         // Colored output: bold \x1b[1m header, dim \x1b[2m source tag.
         assert_eq!(
             render_schemas_human(&schemas, true),
-            "\x1b[1mAvailable schemas:\x1b[0m\n  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → design → tasks\n"
+            "\x1b[1mAvailable schemas:\x1b[0m\n  spec-driven \x1b[2m(package)\x1b[0m — Default OpenSpec workflow - proposal → specs → tasks (design optional)\n  no-spec \x1b[2m(package)\x1b[0m — No-spec workflow - proposal -> tasks (design optional)\n"
         );
     }
 

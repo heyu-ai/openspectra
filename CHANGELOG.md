@@ -21,9 +21,22 @@ changes.
   their order match the oracle.
 - Artifact JSON includes `contextRef` (`fnv1a64:<hex>:<bytes>` of the trimmed
   context) whenever `context` is present, as v3.0.0 does.
+- The v3.0.0 built-in `no-spec` schema (proposal → design/tasks, design
+  optional), captured by the new `scripts/capture-schemas.py`. `schemas`
+  lists it after `spec-driven`, and every command resolves it.
+- `new change --schema`, `--agent` (written as `created_with`), and
+  `--description` (accepted and, as in the oracle, not stored). Like the
+  oracle, neither `--schema` nor `--agent` is validated.
 - Five embedded skills the enumeration had missed: `test-scope`,
   `commit-archive`, `ingest-plan-mapping`, `ingest-context-mapping`, and
   `verify-spec-coverage` (20 in total).
+
+### Changed
+
+- `new change` prints the v3.0.0 three-line output (`✓ Created change:`,
+  `Path:`, `Schema:`) instead of `Created change '<name>' in <dir>.`.
+- The `spec-driven` description in `schemas` is the v3.0.0 text,
+  `proposal → specs → tasks (design optional)`.
 
 ### Fixed
 
