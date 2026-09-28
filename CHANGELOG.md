@@ -12,6 +12,19 @@ changes.
 
 ### Added
 
+- `spectra scope` (v3.0.0, #165): the read-only implementation scope of the
+  working tree or of one change (`--change`), optionally against an explicit
+  pre-implementation base (`--base`). Reports each file's committed / staged /
+  unstaged / untracked diffs with libgit2-format patches, the scope source
+  (touched tracking, review base, or an approximation), limitations
+  (binary / non-UTF-8 / submodule content, missing or invalid base,
+  approximated attribution, pre-existing dirty paths), and a `snapshot_id`
+  that `--check-snapshot` verifies later. Human output, JSON, error messages
+  and their precedence match the oracle; the remaining libgit2-only edge cases
+  (worktree rename detection, intent-to-add rendering, rename similarity near
+  50%, abbrev collisions) are deliberate divergences per the D8 ruling to keep
+  the git CLI — see `docs/reverse-engineering/scope.md` §10.
+
 - `spectra instructions` accepts the v3.0.0 flags its own skill templates
   call: `--agent` renders an embedded skill for one of the six agents
   (placeholders, `/spectra:` invocation syntax, plan directory), `--compact`

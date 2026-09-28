@@ -12,12 +12,12 @@ starting with the `drift` command.
 > Linux/macOS with no bundled runtime dependencies (`git` must be on `PATH`).
 > Two oracle commands remain unported: `demo` and `feedback` (see
 > [#65](https://github.com/heyu-ai/openspectra/issues/65) for the tracking
-> issue). Oracle v3.0.0 also added `scope`, `decisions`
-> ([#165](https://github.com/heyu-ai/openspectra/issues/165),
-> [#166](https://github.com/heyu-ai/openspectra/issues/166)), and
+> issue). Of the commands oracle v3.0.0 added, `scope`
+> ([#165](https://github.com/heyu-ai/openspectra/issues/165)) and
 > `task start` plus `task done --file`
-> ([#190](https://github.com/heyu-ai/openspectra/issues/190)); `task done`
-> still follows the v2.3.1 semantics. The reverse-engineering write-ups are in
+> ([#190](https://github.com/heyu-ai/openspectra/issues/190)) are ported;
+> `decisions` ([#166](https://github.com/heyu-ai/openspectra/issues/166)) is
+> not yet. The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/`](docs/reverse-engineering/):
 > [`analyze.md`](docs/reverse-engineering/analyze.md),
 > [`archive.md`](docs/reverse-engineering/archive.md),
@@ -28,6 +28,7 @@ starting with the `drift` command.
 > [`init.md`](docs/reverse-engineering/init.md),
 > [`park.md`](docs/reverse-engineering/park.md),
 > [`schemas.md`](docs/reverse-engineering/schemas.md),
+> [`scope.md`](docs/reverse-engineering/scope.md),
 > [`search.md`](docs/reverse-engineering/search.md),
 > [`task.md`](docs/reverse-engineering/task.md),
 > [`templates.md`](docs/reverse-engineering/templates.md),
@@ -86,6 +87,7 @@ spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifac
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
 spectra task start <TASK_ID> [--change <NAME>] [--json]  # captures a per-task git baseline (task-baselines/), leaves tasks.md alone
 spectra task done <TASK_ID> [--change <NAME>] [--json] [--file PATH]...  # marks a tasks.md checkbox done; records files changed since task start, or the --file paths
+spectra scope [--change <NAME>] [--base <REV>] [--check-snapshot <ID>] [--json]  # read-only implementation scope: per-file git diffs (committed/staged/unstaged/untracked) with patches, limitations, and a snapshot id
 spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete] [--preview] [--json]  # transactional merge/move with rollback; honors skip_specs/retire_capabilities metadata; trace data goes to specs/<cap>/spec.trace.yaml
 spectra trace migrate [--dry-run] [--check] [--json]  # OpenSpectra-only: moves inline <!-- @trace --> footers into spec.trace.yaml sidecars (idempotent), reports stale trace names; --check is a CI gate
 spectra completion generate [SHELL]              # prints a shell completion script (bash|zsh|fish|elvish|powershell; detects $SHELL when omitted)
