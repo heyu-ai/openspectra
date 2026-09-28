@@ -33,10 +33,49 @@ bullet (indented or not) to `[x]` — including blank-description ones such as
 untouched. Probed on oracle v3.0.0 during the #177 review; before that
 OpenSpectra skipped blank-description checkboxes.
 
-**No `--json` flag exists on the reference `archive` command** — confirmed
-via `--help`, unlike every other mutating command (`park`, `unpark`,
-`new change`, `task done`), which all have `--json`. OpenSpectra matches
-this asymmetry rather than inventing a flag the oracle doesn't have.
+~~**No `--json` flag exists on the reference `archive` command**~~ — true of
+2.3.1 only. **Oracle 3.0.0 adds `--preview` and `--json`** (probed
+2026-09-28, one jail per operation, both binaries on identical fixtures):
+
+- `--preview` prints what archive would do and **modifies nothing** (verified
+  by comparing the full file tree before and after on the oracle and on
+  OpenSpectra). It skips the confirmation prompt. Human form:
+  `Archive preview: <change>` / `Incomplete tasks: <n>` /
+  `Spec updates: <number of capabilities>` (or `none`).
+- `--preview --json` prints one line:
+  `{"change_id", "spec_updates": [{"capability", "exists", "added",
+  "modified", "removed", "renamed", "conflict_source"}], "incomplete_tasks",
+  "warnings", "has_delta_specs"}`. The counts include only operations that
+  would apply: a MODIFIED/REMOVED naming a requirement the canonical spec
+  lacks, or an ADDED naming one it already has, is not counted and is not an
+  error here (real archive then fails). `--skip-specs`,
+  `--mark-tasks-complete` and `--no-validate` do not change the preview; only
+  `.openspec.yaml` `skip_specs: true` empties `spec_updates` (and sets
+  `has_delta_specs: false`). A delta file with no operation section fails even
+  in preview: `Failed to parse delta spec: Invalid format: Delta spec must
+  contain at least one operation (ADDED, MODIFIED, REMOVED, or RENAMED)`. A
+  missing change reports `Change '<name>' does not exist`.
+  `conflict_source` was `null` and `warnings` was `[]` in every probed case,
+  including a second active change modifying the same capability; their
+  triggers are unknown and OpenSpectra always emits those values.
+- `--json` without `--preview` archives and prints one line:
+  `{"archived_id", "archived_path", "applied_specs", "snapshot_created",
+  "total_added", "total_modified", "total_removed", "total_renamed",
+  "cleanup_warnings"}`. The confirmation prompt still applies on a terminal.
+- The human result line is now `✓ Archived: <change> → <archived id>`,
+  followed by the `Specs applied:` lines and `Snapshot created for unarchive
+  support.`
+
+**Deliberate divergences.** (1) The oracle takes a snapshot for unarchive
+(`.spectra/snapshots/`); OpenSpectra has no snapshot mechanism (#111), so it
+prints `snapshot_created: false` and omits the snapshot line rather than
+claim one exists. (2) The oracle lists capabilities in raw `readdir` order
+(probed: identical to `ls -f`, independent of creation order, and different on
+other filesystems); OpenSpectra sorts them by name, as the archive merge
+already does. (3) Error text for a delta that cannot apply still uses
+OpenSpectra's wording; the oracle says `Delta for <cap> declares N MODIFIED
+operation(s) but 0 applied; …` (tracked with the validate alignment, W9 in
+`docs/migration-plan.md`).
 
 `[CHANGE]` is positional and optional, auto-detecting the same way as
 `drift`/`show`/`park`/`task done` (reused via `change::resolve`).

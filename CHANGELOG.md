@@ -27,12 +27,19 @@ changes.
 - `new change --schema`, `--agent` (written as `created_with`), and
   `--description` (accepted and, as in the oracle, not stored). Like the
   oracle, neither `--schema` nor `--agent` is validated.
+- `archive --preview` (read-only, no confirmation prompt) and `archive
+  --json`, with the v3.0.0 human and single-line JSON shapes. Execution JSON
+  reports `snapshot_created: false`, because OpenSpectra has no unarchive
+  snapshot (#111); preview and archive list capabilities by name where the
+  oracle uses filesystem order.
 - Five embedded skills the enumeration had missed: `test-scope`,
   `commit-archive`, `ingest-plan-mapping`, `ingest-context-mapping`, and
   `verify-spec-coverage` (20 in total).
 
 ### Changed
 
+- `archive` prints `✓ Archived: <change> → <archived id>` instead of
+  `Archived '<change>' as '<archived id>'.`, as v3.0.0 does.
 - `new change` prints the v3.0.0 three-line output (`✓ Created change:`,
   `Path:`, `Schema:`) instead of `Created change '<name>' in <dir>.`.
 - The `spec-driven` description in `schemas` is the v3.0.0 text,
