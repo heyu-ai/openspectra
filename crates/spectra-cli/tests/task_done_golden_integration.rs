@@ -7,12 +7,19 @@
 //!
 //! 已知分歧分三層處理，任何一層失準都會讓測試失敗：
 //! 1. 系統性分歧以 transform 從 oracle 值推導 OpenSpectra 的期望值（JSON 只保留
-//!    v2.3.1 的四個 key、人類輸出不帶 `✓ `、不輸出無 baseline 警告）；每個
+//!    v2.3.1 的四個 key，並把 oracle 的單行 compact JSON 重新序列化為
+//!    pretty-print；人類輸出不帶 `✓ `；不輸出無 baseline 警告）；每個
 //!    transform 至少要被用到一次，否則視為過期。
 //! 2. 個別分歧逐筆記在 `task-done-3.0.0.divergences.json`；未列的分歧失敗，
-//!    值已與 oracle 一致的條目與沒被用到的條目也失敗。
+//!    條目的 `args` 與 step 不符、值等於 oracle 原始值或 transform 後的值、
+//!    或沒被用到的條目也失敗。
 //! 3. 用到 `task start` 或 `--file` 的情境整段不重播（OpenSpectra 尚未實作），
 //!    另以測試鎖住「這兩個介面仍被拒絕」，實作後必須回來改這裡。
+//!
+//! 截短保護：golden 的情境名稱必須恰好是 `REPLAYED_SCENARIOS` 與
+//! `V3_ONLY_SCENARIOS` 的聯集（不多不少、重播情境依 golden 順序），且實際比對
+//! 的欄位數必須等於 `EXPECTED_COMPARED_FIELDS`；每個 step 的 `expect` 缺少欄位
+//! 即 panic，不會靜默當成 Null。
 
 mod common;
 
@@ -32,6 +39,22 @@ const V3_ONLY_SCENARIOS: [&str; 4] = [
     "baseline-exclusions",
     "explicit-file-attribution",
 ];
+/// 重播的情境，依 golden 中的順序。
+const REPLAYED_SCENARIOS: [&str; 10] = [
+    "grouped-numbering-ignores-headers-and-labels",
+    "invalid-task-ids",
+    "evaluation-order-id-vs-change",
+    "marker-variants",
+    "line-endings-and-final-newline",
+    "first-task-wins-attribution",
+    "spectra-dir-not-gitignored",
+    "spectra-dir-committed",
+    "not-a-git-repo",
+    "change-autodetect",
+];
+/// 重播情境共 39 個 spectra step，每個比對 5 個欄位。
+const EXPECTED_COMPARED_FIELDS: usize = 39 * 5;
+const COMPARED_FIELDS: [&str; 5] = ["exit", "stdout", "stderr", "tasks_md", "touched"];
 
 fn load(name: &str) -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -47,7 +70,20 @@ fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
         .unwrap_or_else(|| panic!("{key} 不是字串：{v}"))
 }
 
+/// 取出 step 的 oracle 期望值；缺欄位即 panic，避免被截短的 golden 靜默變成 Null。
+fn expect_of<'a>(step: &'a Value, field: &str) -> &'a Value {
+    step["expect"]
+        .as_object()
+        .unwrap_or_else(|| panic!("step 沒有 expect 物件：{step}"))
+        .get(field)
+        .unwrap_or_else(|| panic!("step 的 expect 缺少 {field}：{step}"))
+}
+
 fn with_git_env(cmd: &mut Command, golden: &Value) {
+    // 繼承來的 repo 位置覆寫會讓 git 指向別的 repo，而不是暫存 repo。
+    for k in ["GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"] {
+        cmd.env_remove(k);
+    }
     for (k, v) in golden["git_env"].as_object().unwrap() {
         cmd.env(k, v.as_str().unwrap());
     }
@@ -153,7 +189,36 @@ fn task_done_replays_the_oracle_golden_modulo_the_pinned_divergences() {
     assert_eq!(str_of(&golden, "oracle_version"), "3.0.0");
     let root_token = str_of(&golden, "root_token");
 
-    let mut divergences: HashMap<(String, u64, String), Value> = HashMap::new();
+    let names: Vec<&str> = golden["scenarios"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|sc| str_of(sc, "name"))
+        .collect();
+    let replayed_in_golden: Vec<&str> = names
+        .iter()
+        .copied()
+        .filter(|n| !V3_ONLY_SCENARIOS.contains(n))
+        .collect();
+    assert_eq!(
+        replayed_in_golden, REPLAYED_SCENARIOS,
+        "golden 的重播情境與 REPLAYED_SCENARIOS 不符（缺漏、多出或順序不同）"
+    );
+    let mut v3_in_golden: Vec<&str> = names
+        .iter()
+        .copied()
+        .filter(|n| V3_ONLY_SCENARIOS.contains(n))
+        .collect();
+    v3_in_golden.sort_unstable();
+    let mut v3_expected = V3_ONLY_SCENARIOS.to_vec();
+    v3_expected.sort_unstable();
+    assert_eq!(
+        v3_in_golden, v3_expected,
+        "golden 的 v3-only 情境與 V3_ONLY_SCENARIOS 不符（缺漏或重複）"
+    );
+
+    // 每個條目連同它的 args 一起保存，使用時比對 step 的 args。
+    let mut divergences: HashMap<(String, u64, String), (Value, Value)> = HashMap::new();
     for e in ledger["entries"].as_array().unwrap() {
         assert!(
             ledger["classes"].get(str_of(e, "class")).is_some(),
@@ -164,7 +229,11 @@ fn task_done_replays_the_oracle_golden_modulo_the_pinned_divergences() {
             e["step"].as_u64().unwrap(),
             str_of(e, "field").to_string(),
         );
-        let dup = divergences.insert(key, e["openspectra"].clone());
+        assert!(
+            COMPARED_FIELDS.contains(&key.2.as_str()),
+            "ledger 條目的 field 不是比對欄位：{e}"
+        );
+        let dup = divergences.insert(key, (e["args"].clone(), e["openspectra"].clone()));
         assert!(dup.is_none(), "ledger 條目重複：{e}");
     }
 
@@ -219,12 +288,19 @@ fn task_done_replays_the_oracle_golden_modulo_the_pinned_divergences() {
                     ];
                     for (field, actual) in got {
                         compared += 1;
-                        let derived = transforms.apply(field, &step["expect"][field]);
+                        let oracle = expect_of(step, field);
+                        let derived = transforms.apply(field, oracle);
                         let key = (name.to_string(), ordinal, field.to_string());
                         let expected = match divergences.get(&key) {
-                            Some(pinned) => {
+                            Some((entry_args, pinned)) => {
                                 used.insert(key.clone());
-                                if *pinned == derived {
+                                if *entry_args != step["args"] {
+                                    failures.push(format!(
+                                        "{name} #{ordinal} {args:?} {field}：ledger 條目 args 與 step 不符（條目為 {entry_args}）"
+                                    ));
+                                }
+                                // 條目值等於 oracle 原始值或 transform 後的值，都代表分歧已不存在。
+                                if pinned == oracle || *pinned == derived {
                                     failures.push(format!(
                                         "{name} #{ordinal} {args:?} {field}：ledger 條目已與 oracle 一致，請移除"
                                     ));
@@ -255,9 +331,9 @@ fn task_done_replays_the_oracle_golden_modulo_the_pinned_divergences() {
             failures.push(format!("transform {name} 從未套用，已過期"));
         }
     }
-    assert!(
-        compared >= 150,
-        "只比對了 {compared} 個欄位，golden 可能被截短"
+    assert_eq!(
+        compared, EXPECTED_COMPARED_FIELDS,
+        "比對欄位數與預期不符，golden 可能被截短或擴充"
     );
     assert!(
         failures.is_empty(),
@@ -278,15 +354,26 @@ fn v3_only_task_start_and_explicit_files_are_still_rejected() {
         .find(|s| s["name"] == "task-start-baseline")
         .unwrap();
     let repo = seed(scenario, &golden);
-    for args in [
-        vec!["task", "start", "1"],
-        vec!["task", "done", "1", "--file", "src/a.rs"],
+    for (args, clap_error) in [
+        (
+            vec!["task", "start", "1"],
+            "unrecognized subcommand 'start'",
+        ),
+        (
+            vec!["task", "done", "1", "--file", "src/a.rs"],
+            "unexpected argument '--file'",
+        ),
     ] {
         let out = run_spectra(&repo, &golden, &args);
         assert_eq!(
             out.status.code(),
             Some(2),
             "{args:?} 應被 clap 拒絕：{out:?}"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(clap_error),
+            "{args:?} 的 stderr 應含 {clap_error:?}：{stderr}"
         );
     }
     assert_eq!(
