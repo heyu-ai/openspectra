@@ -10,6 +10,28 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- `spectra instructions` accepts the v3.0.0 flags its own skill templates
+  call: `--agent` renders an embedded skill for one of the six agents
+  (placeholders, `/spectra:` invocation syntax, plan directory), `--compact`
+  and `--summary` project the apply JSON, `--omit-context` drops `context`
+  from artifact JSON while keeping the new `contextRef`, and `--type
+  bug-fix|refactor` selects a proposal template variant. Validation errors and
+  their order match the oracle.
+- Artifact JSON includes `contextRef` (`fnv1a64:<hex>:<bytes>` of the trimmed
+  context) whenever `context` is present, as v3.0.0 does.
+- Five embedded skills the enumeration had missed: `test-scope`,
+  `commit-archive`, `ingest-plan-mapping`, `ingest-context-mapping`, and
+  `verify-spec-coverage` (20 in total).
+
+### Fixed
+
+- `instructions` renders the configured `spec_dir` in the proposal and specs
+  instruction/template text instead of a hard-coded `openspec/specs/`.
+  `new artifact` keeps writing the unrendered `{{SPEC_DIR}}` placeholder, as
+  the oracle does.
+
 ### Divergences from the v3.0.0 oracle (documented)
 
 - `task done` still implements the v2.3.1 behavior. An oracle 3.0.0 golden

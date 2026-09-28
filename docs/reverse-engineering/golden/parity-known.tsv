@@ -111,11 +111,6 @@ surface	archive	missing-flag --preview
 surface	decisions	missing-command
 surface	demo	missing-command
 surface	feedback	missing-command
-surface	instructions	missing-flag --agent
-surface	instructions	missing-flag --compact
-surface	instructions	missing-flag --omit-context
-surface	instructions	missing-flag --summary
-surface	instructions	missing-flag --type
 surface	new change	missing-flag --agent
 surface	new change	missing-flag --description
 surface	new change	missing-flag --schema

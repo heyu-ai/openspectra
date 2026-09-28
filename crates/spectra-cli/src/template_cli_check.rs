@@ -14,27 +14,6 @@ use super::Cli;
 
 /// 已知缺口：正規化後的呼叫字串（placeholder 已代入）。每個執行佇列項目補完就移除對應條目。
 const KNOWN_GAPS: &[&str] = &[
-    // W2：instructions 的 --agent／--compact／--summary／--omit-context／--type
-    "instructions --skill analyze --agent codex",
-    "instructions --skill analyze --agent github-copilot",
-    "instructions --skill commit-archive --agent antigravity",
-    "instructions --skill commit-archive --agent claude",
-    "instructions --skill commit-archive --agent codex",
-    "instructions --skill commit-archive --agent cursor",
-    "instructions --skill commit-archive --agent github-copilot",
-    "instructions --skill commit-archive --agent junie",
-    "instructions --skill verify --agent codex",
-    "instructions --skill verify --agent github-copilot",
-    "instructions --skill verify-spec-coverage --agent antigravity",
-    "instructions --skill verify-spec-coverage --agent claude",
-    "instructions --skill verify-spec-coverage --agent codex",
-    "instructions --skill verify-spec-coverage --agent cursor",
-    "instructions --skill verify-spec-coverage --agent github-copilot",
-    "instructions --skill verify-spec-coverage --agent junie",
-    "instructions apply --change x --json --compact",
-    "instructions apply --change x --json --summary",
-    "instructions proposal --change x --json --omit-context",
-    "instructions proposal --change x --json --type bug-fix",
     // W3：new change 的 --agent／--schema
     "new change x --agent antigravity",
     "new change x --agent claude",

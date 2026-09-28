@@ -161,8 +161,9 @@ fn artifact_json_for_all_four_modes_has_canonical_order_constants_and_dag_fields
         );
         let definition = &schema::ARTIFACTS[index];
         assert_eq!(value["artifactId"], *id);
-        assert_eq!(value["instruction"], definition.instruction);
-        assert_eq!(value["template"], definition.template);
+        assert_eq!(value["instruction"], with_spec_dir(definition.instruction));
+        assert_eq!(value["template"], with_spec_dir(definition.template));
+        assert!(!value.to_string().contains("{{SPEC_DIR}}"));
         assert!(Path::new(value["changeDir"].as_str().unwrap()).is_absolute());
     }
 
@@ -648,6 +649,12 @@ fn skill_manifest() -> Vec<SkillManifestRow> {
         .collect()
 }
 
+/// 內建 schema 文字以 `{{SPEC_DIR}}` 表示 spec 目錄，`instructions` 輸出時代入；
+/// 這些測試專案的 spec_dir 是預設的 `openspec`。
+fn with_spec_dir(text: &str) -> String {
+    text.replace("{{SPEC_DIR}}", "openspec/")
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -659,8 +666,26 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn embedded_skills_match_the_assets_and_oracle_manifest_outside_a_project() {
     let root = TempDir::new("skills");
     let names = [
-        "tdd", "audit", "apply", "archive", "commit", "debug", "discuss", "drift", "ingest",
-        "propose", "analyze", "verify", "review", "sync", "clarify",
+        "tdd",
+        "audit",
+        "apply",
+        "archive",
+        "commit",
+        "debug",
+        "discuss",
+        "drift",
+        "ingest",
+        "propose",
+        "analyze",
+        "verify",
+        "review",
+        "sync",
+        "clarify",
+        "test-scope",
+        "commit-archive",
+        "ingest-plan-mapping",
+        "ingest-context-mapping",
+        "verify-spec-coverage",
     ];
     let manifest = skill_manifest();
     assert_eq!(
@@ -822,8 +847,8 @@ fn human_artifact_and_apply_outputs_are_byte_exact() {
         format!(
             "Artifact: proposal\nOutput: proposal.md\nDescription: {}\n\nInstruction:\n{}\n\nUnlocks:\n  - design\n  - specs\n\nTemplate:\n{}\n",
             schema::PROPOSAL_DESCRIPTION,
-            schema::PROPOSAL_INSTRUCTION,
-            schema::PROPOSAL_TEMPLATE
+            with_spec_dir(schema::PROPOSAL_INSTRUCTION),
+            with_spec_dir(schema::PROPOSAL_TEMPLATE)
         )
     );
 
