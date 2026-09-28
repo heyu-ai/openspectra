@@ -16,8 +16,8 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
 use spectra_core::{
-    analyze, artifact, change, config::Config, drift, instructions, schema, search, skills, spec,
-    templates,
+    analyze, artifact, change, config::Config, drift, impl_switch, instructions, schema, search,
+    skills, spec, templates,
 };
 
 #[derive(Parser, Debug)]
@@ -299,6 +299,12 @@ enum Command {
         #[arg(long)]
         base: Option<String>,
         /// Output the read-only scope and captured patches as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show which implementation runs `spectra` (OpenSpectra-only; OPENSPECTRA_IMPL)
+    Impl {
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -2264,6 +2270,7 @@ fn run() -> Result<i32> {
             };
             cmd_scope(&cfg, opts, check_snapshot.as_deref(), *json)
         }
+        Command::Impl { json } => cmd_impl(*json),
         // Global config management needs no project (like `init`/`schemas`).
         Command::Config { target } => cmd_config(target, use_color),
         Command::Schema { command } => match command {
@@ -2374,14 +2381,249 @@ fn run() -> Result<i32> {
     }
 }
 
+/// 設定檔內容（不存在或讀不到時為 `None`）。
+fn read_impl_file(path: Option<std::path::PathBuf>) -> Option<(std::path::PathBuf, String)> {
+    let path = path?;
+    let text = std::fs::read_to_string(&path).ok()?;
+    Some((path, text))
+}
+
+/// 目前生效的實作模式與來源（docs/migration-plan.md「Phase 1」）。
+fn resolve_impl() -> Result<(impl_switch::Mode, impl_switch::Source)> {
+    let cwd = std::env::current_dir().context("getting current directory")?;
+    impl_switch::resolve(
+        std::env::var(impl_switch::ENV_MODE).ok().as_deref(),
+        read_impl_file(impl_switch::project_impl_file(&cwd)),
+        read_impl_file(impl_switch::user_impl_path()),
+    )
+}
+
+fn oracle_path() -> std::path::PathBuf {
+    impl_switch::oracle_bin(std::env::var(impl_switch::ENV_ORACLE_BIN).ok().as_deref())
+}
+
+/// `spectra impl`：顯示現在由誰執行、設定來源、oracle 路徑與 log 目錄。
+fn cmd_impl(as_json: bool) -> Result<i32> {
+    let (mode, source) = resolve_impl()?;
+    let oracle = oracle_path();
+    let logs = impl_switch::state_dir();
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "mode": mode.as_str(),
+                "source": source.describe(),
+                "oracle": oracle.to_string_lossy(),
+                "oracle_found": oracle.is_file(),
+                "logs": logs.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            }))?
+        );
+    } else {
+        println!("Mode: {}", mode.as_str());
+        println!("Source: {}", source.describe());
+        let found = if oracle.is_file() {
+            "found"
+        } else {
+            "not found"
+        };
+        println!("Oracle: {} ({found})", oracle.display());
+        if let Some(logs) = logs {
+            println!("Logs: {}", logs.display());
+        }
+    }
+    Ok(0)
+}
+
+/// 子行程的 exit code；被 signal 終止時為 128 + signal（shell 慣例）。
+fn exit_code_of(status: std::process::ExitStatus) -> i32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return 128 + signal;
+        }
+    }
+    status.code().unwrap_or(1)
+}
+
+/// 把整個呼叫交給 oracle（argv、stdin、stdout、stderr、exit code 原封不動）。
+fn exec_oracle(args: &[std::ffi::OsString]) -> ExitCode {
+    let oracle = oracle_path();
+    if !oracle.is_file() {
+        eprintln!(
+            "Error: the oracle binary was not found at {} (set {} or use {}=oss)",
+            oracle.display(),
+            impl_switch::ENV_ORACLE_BIN,
+            impl_switch::ENV_MODE
+        );
+        return ExitCode::from(1);
+    }
+    let mut cmd = std::process::Command::new(&oracle);
+    cmd.args(args);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let err = cmd.exec();
+        eprintln!("Error: running {}: {err}", oracle.display());
+        ExitCode::from(1)
+    }
+    #[cfg(not(unix))]
+    match cmd.status() {
+        Ok(status) => ExitCode::from(exit_code_of(status) as u8),
+        Err(err) => {
+            eprintln!("Error: running {}: {err}", oracle.display());
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn captured(output: std::process::Output) -> impl_switch::Captured {
+    impl_switch::Captured {
+        code: exit_code_of(output.status),
+        stdout: output.stdout,
+        stderr: output.stderr,
+    }
+}
+
+/// shadow 模式的唯讀指令：oracle 的結果回給呼叫端，OpenSpectra 以子行程再算一次，不同時寫一筆
+/// `shadow.jsonl`。log 寫不進去時不出聲——呼叫端看到的必須和 oracle 完全相同。
+fn shadow(args: &[std::ffi::OsString], display_args: &[String]) -> ExitCode {
+    use std::io::Write;
+    let oracle = oracle_path();
+    if !oracle.is_file() {
+        return exec_oracle(args);
+    }
+    let oracle_run = match std::process::Command::new(&oracle).args(args).output() {
+        Ok(out) => captured(out),
+        Err(err) => {
+            eprintln!("Error: running {}: {err}", oracle.display());
+            return ExitCode::from(1);
+        }
+    };
+    let _ = std::io::stdout().write_all(&oracle_run.stdout);
+    let _ = std::io::stderr().write_all(&oracle_run.stderr);
+    let _ = std::io::stdout().flush();
+    let oss_run = std::env::current_exe().ok().and_then(|me| {
+        std::process::Command::new(me)
+            .args(args)
+            .env(impl_switch::ENV_MODE, "oss")
+            .env(impl_switch::ENV_SHADOW_CHILD, "1")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+    });
+    let diffs = match &oss_run {
+        Some(out) => impl_switch::compare(&oracle_run, &captured(out.clone()), 20),
+        None => vec!["oss-failed-to-run".to_string()],
+    };
+    if !diffs.is_empty() {
+        if let (Some(dir), Ok(cwd)) = (impl_switch::state_dir(), std::env::current_dir()) {
+            let oss = oss_run.map(captured).unwrap_or(impl_switch::Captured {
+                code: -1,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+            let line = impl_switch::shadow_record(
+                &impl_switch::now_rfc3339(),
+                &cwd,
+                display_args,
+                &oracle_run,
+                &oss,
+                &diffs,
+            );
+            let _ = impl_switch::append_line(&dir, "shadow.jsonl", &line);
+        }
+    }
+    ExitCode::from(oracle_run.code as u8)
+}
+
+/// 分派結果：交給 oracle／shadow 已處理完，或由 OpenSpectra 照常執行（`log_errors` 表示
+/// 是否要把非 0 exit 與 panic 記到 `errors.jsonl`）。
+enum Dispatch {
+    Done(ExitCode),
+    Oss { log_errors: bool },
+}
+
+fn dispatch_impl(args: &[std::ffi::OsString], display_args: &[String]) -> Dispatch {
+    use impl_switch::Mode;
+    // shadow 模式的 OpenSpectra 子行程：照常執行，不記錯誤（差異已由父行程記錄）。
+    if std::env::var_os(impl_switch::ENV_SHADOW_CHILD).is_some() {
+        return Dispatch::Oss { log_errors: false };
+    }
+    // `spectra impl` 永遠由 OpenSpectra 回答，才能排查「現在是誰在跑」。
+    if impl_switch::subcommand(display_args) == Some("impl") {
+        return Dispatch::Oss { log_errors: false };
+    }
+    let mode = match resolve_impl() {
+        Ok((mode, _)) => mode,
+        Err(e) => {
+            eprintln!("Error: {e:#}");
+            return Dispatch::Done(ExitCode::from(1));
+        }
+    };
+    match mode {
+        Mode::Oss => Dispatch::Oss { log_errors: true },
+        Mode::Oracle => Dispatch::Done(exec_oracle(args)),
+        Mode::Shadow if impl_switch::is_shadowable(display_args) => {
+            Dispatch::Done(shadow(args, display_args))
+        }
+        Mode::Shadow => Dispatch::Done(exec_oracle(args)),
+    }
+}
+
+fn log_error(display_args: &[String], code: i32, summary: &str, panic: bool) {
+    if let (Some(dir), Ok(cwd)) = (impl_switch::state_dir(), std::env::current_dir()) {
+        let line = impl_switch::error_record(
+            &impl_switch::now_rfc3339(),
+            &cwd,
+            display_args,
+            code,
+            summary,
+            panic,
+        );
+        let _ = impl_switch::append_line(&dir, "errors.jsonl", &line);
+    }
+}
+
 fn main() -> ExitCode {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let display_args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let log_errors = match dispatch_impl(&args, &display_args) {
+        Dispatch::Done(code) => return code,
+        Dispatch::Oss { log_errors } => log_errors,
+    };
+    if log_errors {
+        let hook_args = display_args.clone();
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            log_error(&hook_args, 101, &info.to_string(), true);
+            default_hook(info);
+        }));
+    }
     match run() {
-        Ok(code) => ExitCode::from(code as u8),
+        Ok(code) => {
+            if log_errors && code != 0 {
+                log_error(&display_args, code, "", false);
+            }
+            ExitCode::from(code as u8)
+        }
         Err(e) => {
             // The oracle exits 1 on operational errors (probed: "Change 'x'
             // not found." exits 1); successful drift always exits 0 regardless
             // of severity, so 1 is unambiguously "tool error".
             eprintln!("Error: {e:#}");
+            if log_errors {
+                let summary = format!("{e:#}");
+                log_error(
+                    &display_args,
+                    1,
+                    summary.lines().next().unwrap_or(""),
+                    false,
+                );
+            }
             ExitCode::from(1)
         }
     }

@@ -72,6 +72,12 @@ this file is agent-facing operational context.
   `crates/spectra-cli/src/template_cli_check.rs` (every `spectra ...` call in
   the embedded templates/skills must parse; its `KNOWN_GAPS` ratchets the
   same way). See `docs/migration-plan.md`.
+- `scripts/shadow-report.py` — summarizes the implementation-switch logs
+  (`shadow.jsonl`, `errors.jsonl` under `$XDG_STATE_HOME/openspectra`) as
+  Markdown; see README "Switching between the reference `spectra` and
+  OpenSpectra". Any CLI integration test helper that spawns the binary must set
+  `OPENSPECTRA_IMPL=oss`, or a developer's own switch setting would hand the
+  test suite to the reference binary.
 
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 

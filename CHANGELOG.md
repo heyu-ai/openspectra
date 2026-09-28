@@ -12,6 +12,15 @@ changes.
 
 ### Added
 
+- Built-in implementation switch (migration plan Phase 1, D6):
+  `OPENSPECTRA_IMPL=oss|oracle|shadow` (else `.spectra/impl`, else
+  `~/.config/openspectra/impl`, else `oss`) decides whether OpenSpectra or the
+  reference `spectra` binary (`OPENSPECTRA_ORACLE_BIN`) runs a call. `shadow`
+  returns the reference result and logs read-only differences to
+  `~/.local/state/openspectra/shadow.jsonl`; `oss` logs failures to
+  `errors.jsonl`. New `spectra impl [--json]` shows the active mode, and
+  `scripts/shadow-report.py` summarizes the logs.
+
 - `drift --json` and `instructions apply --json` (including `--compact`) start
   with the v3.0.0 `dormancy` object (`status`, `reason`, `age_days`,
   `idle_days`: a change older than five days whose directory has no commit in
