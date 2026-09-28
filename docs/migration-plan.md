@@ -1,7 +1,7 @@
 # OpenSpectra 導入計畫：從 Spectra.app 遷移到各專案
 
-> 狀態：**proposed**（2026-09-28 起草；D1–D6 已由 howie 於同日裁決，見「裁決紀錄」一節，
-> 其中 D4 的執行待確認）。
+> 狀態：**執行中**（2026-09-28 起草；D1–D6 已由 howie 於同日裁決，見「裁決紀錄」；
+> 工作依「執行佇列」一節逐項進行）。
 > 本文的「實測」都有附重現指令（見附錄）；標「推論」的是尚未驗證的判斷。
 
 ## 背景與目標
@@ -14,6 +14,25 @@
 2. **不中斷**：不讓 Claude Code skill、yibi-stack plugin、CI 在切換當下壞掉。
 3. **持續監控**：切換後，OpenSpectra 的錯誤與行為分歧要能被主動發現，不能等到使用者撞到才知道。
 4. **跟上上游**：持續追蹤 oracle（`kaochenlong/spectra-app`）與 OpenSpec（`Fission-AI/OpenSpec`）的差異，在兩者之間盡量保持相容。
+
+### 總目標與驗收條件（howie，2026-09-28）
+
+**目標**：在 macOS 與 Linux 上都能用 OpenSpectra 取代 spectra，並相容 OpenSpec 格式。
+
+**驗收條件**：在 macOS 上安裝 OpenSpectra release、放到 `PATH` 取代 spectra 之後：
+
+- **A1 指令完整**：oracle 3.0.0 `--help` 列出的每個子指令與 flag，OpenSpectra 都能接受，不會出現
+  `unexpected argument` 或 `unrecognized subcommand`。量測方式：`--help` flag 差集為空
+  （D5 那四項延到最後做，但仍在驗收範圍內）。
+- **A2 skill 能用**：3.0.0 skill 模板裡每一個 `spectra ...` 呼叫都能被 OpenSpectra 解析。
+  量測方式：`cargo test` 內的模板 CLI 解析測試，CI 在 Linux 與 macOS 上都跑。
+- **A3 輸出正確**：在 corpus 專案（yibi-mvp、nextrek-cli、yibi-stack 的副本）上，唯讀指令的
+  exit code 與 JSON 輸出和 oracle 語意一致（validate 例外，見 A4）。會寫檔的指令
+  （`new`、`task`、`archive`、`update`、`park`）在 sandbox 產生的檔案與 oracle 一致。
+  量測方式：`scripts/parity-probe.py` exit 0。刻意分歧必須登錄在 probe 的允許清單並寫進 CHANGELOG。
+- **A4 OpenSpec 相容**：`validate` 的判定與 `@fission-ai/openspec` 1.13.2 逐項一致；
+  `--format openspec` 的 JSON 與 OpenSpec 逐欄位一致；預設的 oracle 格式在欄位上與 oracle 一致。
+- **A5 Linux**：CI 的 ubuntu job 跑 A2 與無 oracle 版本的整合測試全綠；release 有 Linux musl 產物。
 
 **不在範圍內**：刪除 Spectra.app。它是本 repo 所有 `scripts/capture-*.py` 校準腳本的 oracle，
 「解除」指的是把它移出各專案的 `PATH`，不是從機器上移除（見 Phase 5）。
@@ -188,6 +207,38 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 4. **先 shadow 再切換。** 先讓 OpenSpectra 在背景跑唯讀指令並記錄差異，差異收斂之後才讓它成為主要實作。
 5. **由低風險到高風險，逐個專案切換**，每個專案切換後至少觀察一週再換下一批。
 
+## 執行佇列
+
+以 loop 逐項執行，一項一個 PR（從 `origin/main` 開分支，彼此獨立）。狀態欄在每項開 PR 時更新。
+
+| # | 工作項 | 對應驗收 | 追蹤 | 狀態 |
+|---|---|---|---|---|
+| W1 | 量測工具：模板 CLI 解析測試（`cargo test`，Linux／macOS 皆跑）＋ `scripts/parity-probe.py`（oracle 比對、允許清單） | A2、A3 的量尺 | 新 issue | 待辦 |
+| W2 | `instructions` 補 `--omit-context`／`--compact`／`--summary`／`--agent`／`--type` | A1、A2 | 新 issue | 待辦 |
+| W3 | `new change` 補 `--agent`／`--description`／`--schema`，內建 `no-spec` schema；`schemas`／`status` 的 artifact 順序對齊 3.0.0 | A1、A2、A3 | 新 issue | 待辦 |
+| W4 | `task start`、`task done --file`（per-task baseline） | A1、A2 | #190 | 待辦 |
+| W5 | `archive --preview`／`--json` | A1、A2 | 新 issue | 待辦 |
+| W6 | `scope`（含 `--change`／`--base`／`--check-snapshot`／`--json`） | A1、A2 | #165 | 待辦 |
+| W7 | JSON 形狀對齊 3.0.0：`list`（`summary`、排序）、`list --specs`、`show`、`drift`／`instructions` 的 `dormancy`、`recommended_action`、`tasks[]` 欄位 | A3 | 新 issue | 待辦 |
+| W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | 待辦 |
+| W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | 待辦 |
+| W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | 待辦 |
+| W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | 待辦 |
+| W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | 待辦（最後做） |
+| W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
+
+**每一項的標準流程**：
+
+1. 從 `origin/main` 建 worktree 與分支；`git branch --show-current` 確認分支。
+2. 先在 sandbox 用 oracle 探測行為並記下 golden（一個 jail 只做一個操作），寫進對應的
+   `docs/reverse-engineering/*.md`；oracle 與 OpenSpec 衝突時停下來回報，不自行裁決。
+3. 先寫會失敗的測試，再實作（TDD）；新行為放 `spectra-core`，CLI 只做接線。
+4. 跑 `cargo fmt --all -- --check`、`cargo clippy --all-targets -- -D warnings`、
+   `cargo build --release --locked`、`cargo test --all`，全綠才推送。
+5. 更新 CHANGELOG `[Unreleased]`、README（如有新指令），用 explicit refspec 推送並開 PR，
+   PR body 寫 `Closes #N`（只列真的要關的）。
+6. **PR 不由 agent merge**，由 howie 審查後合併。W13 的整合驗收在本機整合分支上進行，不需要等 merge。
+
 ## 分階段計畫
 
 ```
@@ -234,11 +285,11 @@ Phase 0（openspectra repo：補阻擋項 + parity 基礎建設）
 OpenSpectra 現行輸出和 OpenSpec 1.13.2 原版只差三處：`version` 是 `"2.0"`（OpenSpec 是 `"1.0"`）、
 `summary.totals` 多一個 `total`、`root` 是 `{path, spec_dir}`（OpenSpec 是 `{path, source}`）。
 
-做法：新增 `--format oracle|openspec`。oracle 格式讓依賴 oracle 輸出的工具可以無痛切換；
-openspec 格式補齊上述三處差異，做到與 OpenSpec 1.13.2 逐欄位一致。**預設值建議維持 openspec**，
-理由是實測找到的唯一 JSON 消費者是 yibi-mvp 的 `scripts/openspec_validate_report.py`，它讀的是
-OpenSpec 格式的 `summary.totals.failed`（:869）；3.0.0 skill 呼叫 `spectra validate "<name>"`
-時不帶 `--json`，只看 exit code 與文字。預設值若要改成 oracle，請再告知。
+做法：新增 `--format oracle|openspec`，**預設 `oracle`**（D3），直到 openspec 格式與 OpenSpec 1.13.2
+逐欄位一致後再重新評估預設值。openspec 格式要補齊上述三處差異。
+注意：這是對現行 OpenSpectra 輸出的 breaking change（README 的 CI gate 範例、yibi-mvp 的
+`openspec_validate_report.py:869` 讀 `summary.totals.failed`），CHANGELOG 要標明，
+README 範例改成明確帶 `--format openspec`。
 
 **M4. 解決 B3**：
 - `validate` 依 D1 裁決先與 OpenSpec 1.13.2 一致：MODIFIED 目標不存在降為 INFO「Archive would
@@ -403,9 +454,9 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 |---|---|---|---|
 | D1 | validate 嚴格度跟 oracle 還是 OpenSpec（#189） | **先與 OpenSpec 一致**。理由：OpenSpec 有公開原始碼，每條規則都能指到程式碼位置，比黑箱 oracle 容易理解與驗證 | 「validate 嚴格度」三方比對、M4 |
 | D2 | B1（模板呼叫未移植的 CLI）怎麼處理 | **(a) 先補齊 CLI 介面**；不做降級模板，補齊前各專案不跑 `update` | M2 |
-| D3 | `validate --json` 格式 | **提供 oracle 相容格式，之後再把 OpenSpec 格式補齊到逐欄位一致**；預設值建議維持 OpenSpec 格式（理由見 M3），待確認 | M3 |
-| D4 | `yibi-mvp-fix-*` | **清掉**；執行前的檢查結果見下 | Phase 4 |
-| D5 | 沒有消費端的 3.0.0 指令要不要移植 | 待決定（已補上說明，見下） | M5 |
+| D3 | `validate --json` 格式 | **提供 oracle 相容格式並設為預設，直到 OpenSpec 格式完全跟上為止**；之後再把 OpenSpec 格式補齊到逐欄位一致 | M3 |
+| D4 | `yibi-mvp-fix-*` | **清掉**；已於 2026-09-28 以 `git worktree remove` 移除（檢查結果見下），分支保留待 `/clean-wt` | Phase 4 |
+| D5 | 沒有消費端的 3.0.0 指令要不要移植 | **以後再做**：排在執行佇列最後 | M5 |
 | D6 | 實作切換放在哪裡 | **做成 OpenSpectra 內建** | Phase 1 |
 
 **D4 執行前檢查（實測）**：四個目錄是 yibi-mvp 的 linked worktree，都沒有未 commit 的改動；
