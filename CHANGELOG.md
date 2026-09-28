@@ -29,7 +29,8 @@ changes.
   `Task <id> not found for change '<name>'` after the change is resolved;
   `01` is rejected; and touched files are recorded only after
   `task start <id>` or with `--file`, neither of which OpenSpectra
-  implements. `tasks.md` rewriting matches byte-for-byte (#110).
+  implements. The resulting `tasks.md` matches byte-for-byte on every
+  replayed step except `task done 01` (#110).
 
 ### Changed
 

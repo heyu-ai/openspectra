@@ -227,13 +227,16 @@ loudly when it goes stale:
    (clap exit 2) without touching `tasks.md`, so implementing either forces
    those scenarios into the replay.
 
-What still matches byte-for-byte: every `tasks.md` rewrite (grouped
-numbering that ignores `##` headers and `1.1`-style labels; `*`/`+`/nested
-bullets as tasks; ordered lists and blank descriptions skipped; `[x]`/`[X]`
-already done; `[~]`/`[-]` succeed with the line unchanged; trailing spaces
-preserved; CRLF normalized to LF; a missing final newline preserved), the
+What still matches byte-for-byte: the resulting `tasks.md` of every replayed
+step except `task done 01` (the `leading-zero-id` class: OpenSpectra flips
+task 1 where the oracle refuses) — grouped numbering that ignores `##`
+headers and `1.1`-style labels; `*`/`+`/nested bullets as tasks; ordered
+lists and blank descriptions skipped; `[x]`/`[X]` already done; `[~]`/`[-]`
+succeed with the line unchanged; trailing spaces preserved; CRLF normalized
+to LF; a missing final newline preserved. Also unchanged: the
 `already done` and `tasks.md not found` messages, the multiple-change exit
-code, and the non-git success path.
+code, and the non-git path's exit code and `tasks.md` result (its `--json`
+output differs only by the `json-shape` transform).
 
 ### How v3.0.0 records touched files
 

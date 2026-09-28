@@ -12,7 +12,12 @@ starting with the `drift` command.
 > Linux/macOS with no bundled runtime dependencies (`git` must be on `PATH`).
 > Two oracle commands remain unported: `demo` and `feedback` (see
 > [#65](https://github.com/heyu-ai/openspectra/issues/65) for the tracking
-> issue). The reverse-engineering write-ups are in
+> issue). Oracle v3.0.0 also added `scope`, `decisions`
+> ([#165](https://github.com/heyu-ai/openspectra/issues/165),
+> [#166](https://github.com/heyu-ai/openspectra/issues/166)), and
+> `task start` plus `task done --file`
+> ([#190](https://github.com/heyu-ai/openspectra/issues/190)); `task done`
+> still follows the v2.3.1 semantics. The reverse-engineering write-ups are in
 > [`docs/reverse-engineering/`](docs/reverse-engineering/):
 > [`analyze.md`](docs/reverse-engineering/analyze.md),
 > [`archive.md`](docs/reverse-engineering/archive.md),
