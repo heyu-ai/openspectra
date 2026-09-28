@@ -1,0 +1,1791 @@
+{
+  "openspec": "1.13.2",
+  "scopes": {
+    "changes": {
+      "normal": [
+        {
+          "id": "d01-good",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d02-nospecs",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d03-noops",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d04-rootspec",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "spec.md",
+              "message": "Delta spec found at specs/spec.md. Delta specs must live under a capability path (e.g. specs/<capability-path>/spec.md) — a file at the specs/ root is ignored when the change is applied or archived."
+            }
+          ]
+        },
+        {
+          "id": "d05-dupadded",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate requirement in ADDED: \"Alpha\""
+            }
+          ]
+        },
+        {
+          "id": "d06-addrem",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both ADDED and REMOVED: \"Alpha\""
+            }
+          ]
+        },
+        {
+          "id": "d07-noscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" must include at least one scenario"
+            }
+          ]
+        },
+        {
+          "id": "d08-notext",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" is missing requirement text"
+            }
+          ]
+        },
+        {
+          "id": "d09-noshall",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" should contain SHALL or MUST (RFC 2119 best practice for English specs)"
+            }
+          ]
+        },
+        {
+          "id": "d10-modmissing",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "base/spec.md",
+              "message": "Archive would refuse this delta: base MODIFIED failed for header \"### Requirement: Nope\" - not found"
+            }
+          ]
+        },
+        {
+          "id": "d11-modnomain",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "nomain/spec.md",
+              "message": "Archive would refuse this delta: nomain: target spec does not exist; only ADDED requirements are allowed for new specs. MODIFIED and RENAMED operations require an existing spec."
+            }
+          ]
+        },
+        {
+          "id": "d12-modloss",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Alpha\" omits scenario(s) the current spec still has: \"a2\". The modified block has 1 scenario; the current spec has 2 scenarios. It adds none. Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d13-strayh3",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "line": 7,
+              "message": "Header \"### Notes\" in ADDED Requirements is not a \"### Requirement:\" header and is ignored by validation. Use \"### Requirement: Notes\" if it should be validated as a requirement."
+            }
+          ]
+        },
+        {
+          "id": "d14-noname",
+          "valid": false,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Header \"### Requirement:\" in ADDED Requirements is missing a requirement name and is ignored by validation. Add a name, e.g. \"### Requirement: <name>\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Delta sections ## ADDED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d15-fromonly",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "line": 3,
+              "message": "RENAMED FROM: \"Alpha\" has no matching TO: line. Write each rename as a FROM: line followed immediately by its TO: line."
+            },
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "Delta sections ## RENAMED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d16-twoadded",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d17-emptyadded",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Delta sections ## ADDED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d18-capmd",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x.md",
+              "message": "Delta spec found at specs/x.md. Delta specs must be a spec.md inside a capability folder — this file is ignored when the change is applied or archived. Move its requirements into specs/x/spec.md."
+            }
+          ]
+        },
+        {
+          "id": "d19-skipspecs",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "file",
+              "message": "skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted"
+            }
+          ]
+        },
+        {
+          "id": "d20-addexisting",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "base/spec.md",
+              "message": "Archive would refuse this delta: base ADDED failed for header \"### Requirement: Alpha\" - already exists"
+            }
+          ]
+        },
+        {
+          "id": "d21-remmissing",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d22-modbrokenmain",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "broken-main/spec.md",
+              "message": "Archive would refuse this delta: broken-main: target spec is structurally invalid and cannot be updated until fixed:\nline 18: Main spec contains delta header \"## ADDED Requirements\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section.\nline 20: Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "d23-mixed",
+          "valid": false,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "base/spec.md",
+              "message": "Archive would refuse this delta: base MODIFIED failed for header \"### Requirement: Nope\" - not found"
+            },
+            {
+              "level": "ERROR",
+              "path": "zz/spec.md",
+              "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
+            }
+          ]
+        },
+        {
+          "id": "d24-noproposal",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d25-emptyscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" must include at least one scenario (a scenario header with no body under it does not count; add its steps, e.g. \"- **WHEN** ...\" and \"- **THEN** ...\")"
+            }
+          ]
+        },
+        {
+          "id": "d26-h5scenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" must include at least one scenario"
+            }
+          ]
+        },
+        {
+          "id": "d27-orphan",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Requirement \"Alpha\" is under \"## Notes\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d28-shallheader",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"The system SHALL alpha\" must contain SHALL or MUST in the requirement body, not only in the header. Move the SHALL/MUST statement to the line immediately after the \"### Requirement: ...\" header."
+            }
+          ]
+        },
+        {
+          "id": "d29-dupscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Alpha\" omits scenario(s) the current spec still has: \"a2\". The modified block has 2 scenarios; the current spec has 2 scenarios. It adds 1 scenario not in the current spec: \"a1\". Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d30-tasks",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "tasks.md",
+              "line": 4,
+              "message": "Task ID \"1.1\" is duplicated; it was first declared on line 3."
+            },
+            {
+              "level": "WARNING",
+              "path": "tasks.md",
+              "line": 5,
+              "message": "Task \"2.1\" is under group 1, but its leading number points to group 2. Move it to group 2 or renumber it."
+            }
+          ]
+        },
+        {
+          "id": "d31-conflicts",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate requirement in MODIFIED: \"Beta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate requirement in REMOVED: \"Delta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate FROM in RENAMED: \"Old  One\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate TO in RENAMED: \"New One\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both MODIFIED and ADDED: \"Alpha\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both MODIFIED and REMOVED: \"Beta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "MODIFIED references old name from RENAMED. Use new header for \"Gamma\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "RENAMED TO collides with ADDED for \"Gamma\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both RENAMED and REMOVED: \"Beta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both RENAMED and REMOVED: \"Old  One\" (REMOVED spells it \"old one\")"
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both RENAMED and REMOVED: \"Old  One\" (REMOVED spells it \"old one\")"
+            }
+          ]
+        },
+        {
+          "id": "d32-rename-ok",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d33-rename-missing",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "pair/spec.md",
+              "message": "Archive would refuse this delta: pair RENAMED failed for header \"### Requirement: Nope\" - source not found"
+            }
+          ]
+        },
+        {
+          "id": "d34-added-nearmiss",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "pair/spec.md",
+              "message": "Archive would refuse this delta: pair ADDED failed for header \"### Requirement: alpha\" - \"### Requirement: Alpha\" already exists and differs only in case or spacing; use MODIFIED with that exact header to change it, or choose a distinct name"
+            }
+          ]
+        },
+        {
+          "id": "d35-tasks-nocheckbox",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "tasks.md",
+              "line": 3,
+              "message": "This change counts as 0 tasks: no line in its tracked task files is a checkbox, so \"openspec list\" and \"openspec status\" report no work and \"openspec archive\" has nothing to flag as incomplete. Write each task as \"- [ ] 1.1 Description\"."
+            }
+          ]
+        },
+        {
+          "id": "d36-orphan-above",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 1,
+              "message": "Requirement \"Early\" is above the first \"## \" section, which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            }
+          ]
+        },
+        {
+          "id": "d37-to-only",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "pair/spec.md",
+              "line": 3,
+              "message": "RENAMED TO: \"Other\" has no matching FROM: line. Write each rename as a FROM: line followed immediately by its TO: line."
+            },
+            {
+              "level": "ERROR",
+              "path": "pair/spec.md",
+              "message": "Delta sections ## RENAMED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d38-removed-bullet",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d39-rename-then-modify",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Beta\" omits scenario(s) the current spec still has: \"a2\". The modified block has 1 scenario; the current spec has 2 scenarios. It adds none. Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d40-removed-nearmiss",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "pair/spec.md",
+              "message": "Archive would refuse this delta: pair REMOVED failed for header \"### Requirement: beta\" - not found, but \"### Requirement: Beta\" exists; fix the header to match it exactly"
+            }
+          ]
+        },
+        {
+          "id": "d41-rename-sync",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d42-fenced",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d43-addscenarios",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Alpha\" omits scenario(s) the current spec still has: \"a2\". The modified block has 5 scenarios; the current spec has 2 scenarios. It adds 4 scenarios not in the current spec: \"n1\", \"n2\", \"n3\" and 1 more. Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d44-mixed-case-sections",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d45-metadata-only",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d46-second-copy-checked",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Two\" must include at least one scenario"
+            }
+          ]
+        }
+      ],
+      "strict": [
+        {
+          "id": "d01-good",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d02-nospecs",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d03-noops",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d04-rootspec",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "spec.md",
+              "message": "Delta spec found at specs/spec.md. Delta specs must live under a capability path (e.g. specs/<capability-path>/spec.md) — a file at the specs/ root is ignored when the change is applied or archived."
+            }
+          ]
+        },
+        {
+          "id": "d05-dupadded",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate requirement in ADDED: \"Alpha\""
+            }
+          ]
+        },
+        {
+          "id": "d06-addrem",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both ADDED and REMOVED: \"Alpha\""
+            }
+          ]
+        },
+        {
+          "id": "d07-noscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" must include at least one scenario"
+            }
+          ]
+        },
+        {
+          "id": "d08-notext",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" is missing requirement text"
+            }
+          ]
+        },
+        {
+          "id": "d09-noshall",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" should contain SHALL or MUST (RFC 2119 best practice for English specs)"
+            }
+          ]
+        },
+        {
+          "id": "d10-modmissing",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "base/spec.md",
+              "message": "Archive would refuse this delta: base MODIFIED failed for header \"### Requirement: Nope\" - not found"
+            }
+          ]
+        },
+        {
+          "id": "d11-modnomain",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "nomain/spec.md",
+              "message": "Archive would refuse this delta: nomain: target spec does not exist; only ADDED requirements are allowed for new specs. MODIFIED and RENAMED operations require an existing spec."
+            }
+          ]
+        },
+        {
+          "id": "d12-modloss",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Alpha\" omits scenario(s) the current spec still has: \"a2\". The modified block has 1 scenario; the current spec has 2 scenarios. It adds none. Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d13-strayh3",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "line": 7,
+              "message": "Header \"### Notes\" in ADDED Requirements is not a \"### Requirement:\" header and is ignored by validation. Use \"### Requirement: Notes\" if it should be validated as a requirement."
+            }
+          ]
+        },
+        {
+          "id": "d14-noname",
+          "valid": false,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Header \"### Requirement:\" in ADDED Requirements is missing a requirement name and is ignored by validation. Add a name, e.g. \"### Requirement: <name>\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Delta sections ## ADDED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d15-fromonly",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "line": 3,
+              "message": "RENAMED FROM: \"Alpha\" has no matching TO: line. Write each rename as a FROM: line followed immediately by its TO: line."
+            },
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "Delta sections ## RENAMED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d16-twoadded",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d17-emptyadded",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Delta sections ## ADDED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d18-capmd",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x.md",
+              "message": "Delta spec found at specs/x.md. Delta specs must be a spec.md inside a capability folder — this file is ignored when the change is applied or archived. Move its requirements into specs/x/spec.md."
+            }
+          ]
+        },
+        {
+          "id": "d19-skipspecs",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "file",
+              "message": "skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted"
+            }
+          ]
+        },
+        {
+          "id": "d20-addexisting",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "base/spec.md",
+              "message": "Archive would refuse this delta: base ADDED failed for header \"### Requirement: Alpha\" - already exists"
+            }
+          ]
+        },
+        {
+          "id": "d21-remmissing",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d22-modbrokenmain",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "broken-main/spec.md",
+              "message": "Archive would refuse this delta: broken-main: target spec is structurally invalid and cannot be updated until fixed:\nline 18: Main spec contains delta header \"## ADDED Requirements\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section.\nline 20: Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "d23-mixed",
+          "valid": false,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "base/spec.md",
+              "message": "Archive would refuse this delta: base MODIFIED failed for header \"### Requirement: Nope\" - not found"
+            },
+            {
+              "level": "ERROR",
+              "path": "zz/spec.md",
+              "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
+            }
+          ]
+        },
+        {
+          "id": "d24-noproposal",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d25-emptyscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" must include at least one scenario (a scenario header with no body under it does not count; add its steps, e.g. \"- **WHEN** ...\" and \"- **THEN** ...\")"
+            }
+          ]
+        },
+        {
+          "id": "d26-h5scenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\" must include at least one scenario"
+            }
+          ]
+        },
+        {
+          "id": "d27-orphan",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Requirement \"Alpha\" is under \"## Notes\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d28-shallheader",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"The system SHALL alpha\" must contain SHALL or MUST in the requirement body, not only in the header. Move the SHALL/MUST statement to the line immediately after the \"### Requirement: ...\" header."
+            }
+          ]
+        },
+        {
+          "id": "d29-dupscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Alpha\" omits scenario(s) the current spec still has: \"a2\". The modified block has 2 scenarios; the current spec has 2 scenarios. It adds 1 scenario not in the current spec: \"a1\". Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d30-tasks",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "tasks.md",
+              "line": 4,
+              "message": "Task ID \"1.1\" is duplicated; it was first declared on line 3."
+            },
+            {
+              "level": "WARNING",
+              "path": "tasks.md",
+              "line": 5,
+              "message": "Task \"2.1\" is under group 1, but its leading number points to group 2. Move it to group 2 or renumber it."
+            }
+          ]
+        },
+        {
+          "id": "d31-conflicts",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate requirement in MODIFIED: \"Beta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate requirement in REMOVED: \"Delta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate FROM in RENAMED: \"Old  One\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Duplicate TO in RENAMED: \"New One\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both MODIFIED and ADDED: \"Alpha\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both MODIFIED and REMOVED: \"Beta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "MODIFIED references old name from RENAMED. Use new header for \"Gamma\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "RENAMED TO collides with ADDED for \"Gamma\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both RENAMED and REMOVED: \"Beta\""
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both RENAMED and REMOVED: \"Old  One\" (REMOVED spells it \"old one\")"
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "Requirement present in both RENAMED and REMOVED: \"Old  One\" (REMOVED spells it \"old one\")"
+            }
+          ]
+        },
+        {
+          "id": "d32-rename-ok",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d33-rename-missing",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "pair/spec.md",
+              "message": "Archive would refuse this delta: pair RENAMED failed for header \"### Requirement: Nope\" - source not found"
+            }
+          ]
+        },
+        {
+          "id": "d34-added-nearmiss",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "pair/spec.md",
+              "message": "Archive would refuse this delta: pair ADDED failed for header \"### Requirement: alpha\" - \"### Requirement: Alpha\" already exists and differs only in case or spacing; use MODIFIED with that exact header to change it, or choose a distinct name"
+            }
+          ]
+        },
+        {
+          "id": "d35-tasks-nocheckbox",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "tasks.md",
+              "line": 3,
+              "message": "This change counts as 0 tasks: no line in its tracked task files is a checkbox, so \"openspec list\" and \"openspec status\" report no work and \"openspec archive\" has nothing to flag as incomplete. Write each task as \"- [ ] 1.1 Description\"."
+            }
+          ]
+        },
+        {
+          "id": "d36-orphan-above",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 1,
+              "message": "Requirement \"Early\" is above the first \"## \" section, which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            }
+          ]
+        },
+        {
+          "id": "d37-to-only",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "pair/spec.md",
+              "line": 3,
+              "message": "RENAMED TO: \"Other\" has no matching FROM: line. Write each rename as a FROM: line followed immediately by its TO: line."
+            },
+            {
+              "level": "ERROR",
+              "path": "pair/spec.md",
+              "message": "Delta sections ## RENAMED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas."
+            }
+          ]
+        },
+        {
+          "id": "d38-removed-bullet",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d39-rename-then-modify",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Beta\" omits scenario(s) the current spec still has: \"a2\". The modified block has 1 scenario; the current spec has 2 scenarios. It adds none. Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d40-removed-nearmiss",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "pair/spec.md",
+              "message": "Archive would refuse this delta: pair REMOVED failed for header \"### Requirement: beta\" - not found, but \"### Requirement: Beta\" exists; fix the header to match it exactly"
+            }
+          ]
+        },
+        {
+          "id": "d41-rename-sync",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d42-fenced",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d43-addscenarios",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "base/spec.md",
+              "message": "MODIFIED \"Alpha\" omits scenario(s) the current spec still has: \"a2\". The modified block has 5 scenarios; the current spec has 2 scenarios. It adds 4 scenarios not in the current spec: \"n1\", \"n2\", \"n3\" and 1 more. Copy the omitted scenarios into the MODIFIED block (a MODIFIED requirement replaces the whole block, so archive refuses to drop them)."
+            }
+          ]
+        },
+        {
+          "id": "d44-mixed-case-sections",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d45-metadata-only",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d46-second-copy-checked",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "message": "ADDED \"Two\" must include at least one scenario"
+            }
+          ]
+        }
+      ]
+    },
+    "specs": {
+      "normal": [
+        {
+          "id": "base",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "broken-main",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Main spec contains delta header \"## ADDED Requirements\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "pair",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s01-good",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s02-nopurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Spec must have a Purpose section. Missing required sections. Expected headers: \"## Purpose\" and \"## Requirements\". Example:\n## Purpose\n[brief purpose]\n\n## Requirements\n### Requirement: Clear requirement statement\nUsers SHALL ...\n\n#### Scenario: Descriptive name\n- **WHEN** ...\n- **THEN** ..."
+            }
+          ]
+        },
+        {
+          "id": "s03-emptypurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Spec must have a Purpose section. Missing required sections. Expected headers: \"## Purpose\" and \"## Requirements\". Example:\n## Purpose\n[brief purpose]\n\n## Requirements\n### Requirement: Clear requirement statement\nUsers SHALL ...\n\n#### Scenario: Descriptive name\n- **WHEN** ...\n- **THEN** ..."
+            }
+          ]
+        },
+        {
+          "id": "s04-tbdpurpose",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s05-noreqsection",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Spec must have a Requirements section. Missing required sections. Expected headers: \"## Purpose\" and \"## Requirements\". Example:\n## Purpose\n[brief purpose]\n\n## Requirements\n### Requirement: Clear requirement statement\nUsers SHALL ...\n\n#### Scenario: Descriptive name\n- **WHEN** ...\n- **THEN** ..."
+            }
+          ]
+        },
+        {
+          "id": "s06-emptyreqs",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements",
+              "message": "Spec must have at least one requirement"
+            }
+          ]
+        },
+        {
+          "id": "s07-plainh3",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s08-noscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements.0.scenarios",
+              "message": "Requirement must have at least one scenario"
+            },
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement must have at least one scenario. Scenarios must use level-4 headers. Convert bullet lists into:\n#### Scenario: Short name\n- **WHEN** ...\n- **THEN** ...\n- **AND** ..."
+            }
+          ]
+        },
+        {
+          "id": "s09-notext",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements[0]",
+              "message": "Requirement \"Alpha\" must contain SHALL or MUST"
+            }
+          ]
+        },
+        {
+          "id": "s10-noshall",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "requirements[0]",
+              "message": "Requirement \"Alpha\" should contain SHALL or MUST (RFC 2119 best practice for English specs)"
+            }
+          ]
+        },
+        {
+          "id": "s11-deltaheader",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Main spec contains delta header \"## MODIFIED Requirements\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "s12-dupreq",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Requirement header \"### Requirement: Alpha\" duplicates the requirement declared on line 9. Requirement names must be unique so spec updates cannot discard one block while updating another."
+            }
+          ]
+        },
+        {
+          "id": "s13-outside",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "s14-noname",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s15-shortpurpose",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "message": "Purpose section is too brief (less than 50 characters)"
+            }
+          ]
+        },
+        {
+          "id": "s16-longtext",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "requirements[0]",
+              "message": "Requirement text is very long (>500 characters). Consider breaking it down."
+            }
+          ]
+        },
+        {
+          "id": "s17-h5scenario",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s18-emptyscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements.0.scenarios",
+              "message": "Requirement must have at least one scenario"
+            },
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement must have at least one scenario. Scenarios must use level-4 headers. Convert bullet lists into:\n#### Scenario: Short name\n- **WHEN** ...\n- **THEN** ...\n- **AND** ..."
+            }
+          ]
+        },
+        {
+          "id": "s19-todopurpose",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s20-h3purpose",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s21-fenced",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s22-cjk-short",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "message": "Purpose section is too brief (less than 50 characters)"
+            }
+          ]
+        },
+        {
+          "id": "s23-cjk-shall",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s24-todo-lower",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s25-todo-spanish",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s26-nested-purpose",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s27-requirements-h3",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s28-header-shall",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements[0]",
+              "message": "Requirement \"The system SHALL log\" must contain SHALL or MUST in the requirement body, not only in the header. Move the SHALL/MUST statement to the line immediately after the \"### Requirement: ...\" header."
+            }
+          ]
+        },
+        {
+          "id": "s29-closed-heading-dup",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Requirement header \"### Requirement: Alpha ###\" duplicates the requirement declared on line 9. Requirement names must be unique so spec updates cannot discard one block while updating another."
+            }
+          ]
+        },
+        {
+          "id": "s30-generated-placeholder",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 6,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        }
+      ],
+      "strict": [
+        {
+          "id": "base",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "broken-main",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Main spec contains delta header \"## ADDED Requirements\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "pair",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s01-good",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s02-nopurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Spec must have a Purpose section. Missing required sections. Expected headers: \"## Purpose\" and \"## Requirements\". Example:\n## Purpose\n[brief purpose]\n\n## Requirements\n### Requirement: Clear requirement statement\nUsers SHALL ...\n\n#### Scenario: Descriptive name\n- **WHEN** ...\n- **THEN** ..."
+            }
+          ]
+        },
+        {
+          "id": "s03-emptypurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Spec must have a Purpose section. Missing required sections. Expected headers: \"## Purpose\" and \"## Requirements\". Example:\n## Purpose\n[brief purpose]\n\n## Requirements\n### Requirement: Clear requirement statement\nUsers SHALL ...\n\n#### Scenario: Descriptive name\n- **WHEN** ...\n- **THEN** ..."
+            }
+          ]
+        },
+        {
+          "id": "s04-tbdpurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s05-noreqsection",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "message": "Spec must have a Requirements section. Missing required sections. Expected headers: \"## Purpose\" and \"## Requirements\". Example:\n## Purpose\n[brief purpose]\n\n## Requirements\n### Requirement: Clear requirement statement\nUsers SHALL ...\n\n#### Scenario: Descriptive name\n- **WHEN** ...\n- **THEN** ..."
+            }
+          ]
+        },
+        {
+          "id": "s06-emptyreqs",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements",
+              "message": "Spec must have at least one requirement"
+            }
+          ]
+        },
+        {
+          "id": "s07-plainh3",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s08-noscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements.0.scenarios",
+              "message": "Requirement must have at least one scenario"
+            },
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement must have at least one scenario. Scenarios must use level-4 headers. Convert bullet lists into:\n#### Scenario: Short name\n- **WHEN** ...\n- **THEN** ...\n- **AND** ..."
+            }
+          ]
+        },
+        {
+          "id": "s09-notext",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements[0]",
+              "message": "Requirement \"Alpha\" must contain SHALL or MUST"
+            }
+          ]
+        },
+        {
+          "id": "s10-noshall",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "requirements[0]",
+              "message": "Requirement \"Alpha\" should contain SHALL or MUST (RFC 2119 best practice for English specs)"
+            }
+          ]
+        },
+        {
+          "id": "s11-deltaheader",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Main spec contains delta header \"## MODIFIED Requirements\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "s12-dupreq",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Requirement header \"### Requirement: Alpha\" duplicates the requirement declared on line 9. Requirement names must be unique so spec updates cannot discard one block while updating another."
+            }
+          ]
+        },
+        {
+          "id": "s13-outside",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Beta\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "s14-noname",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s15-shortpurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "message": "Purpose section is too brief (less than 50 characters)"
+            }
+          ]
+        },
+        {
+          "id": "s16-longtext",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "requirements[0]",
+              "message": "Requirement text is very long (>500 characters). Consider breaking it down."
+            }
+          ]
+        },
+        {
+          "id": "s17-h5scenario",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s18-emptyscenario",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements.0.scenarios",
+              "message": "Requirement must have at least one scenario"
+            },
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement must have at least one scenario. Scenarios must use level-4 headers. Convert bullet lists into:\n#### Scenario: Short name\n- **WHEN** ...\n- **THEN** ...\n- **AND** ..."
+            }
+          ]
+        },
+        {
+          "id": "s19-todopurpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s20-h3purpose",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s21-fenced",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s22-cjk-short",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "message": "Purpose section is too brief (less than 50 characters)"
+            }
+          ]
+        },
+        {
+          "id": "s23-cjk-shall",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s24-todo-lower",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s25-todo-spanish",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s26-nested-purpose",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s27-requirements-h3",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s28-header-shall",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "requirements[0]",
+              "message": "Requirement \"The system SHALL log\" must contain SHALL or MUST in the requirement body, not only in the header. Move the SHALL/MUST statement to the line immediately after the \"### Requirement: ...\" header."
+            }
+          ]
+        },
+        {
+          "id": "s29-closed-heading-dup",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Requirement header \"### Requirement: Alpha ###\" duplicates the requirement declared on line 9. Requirement names must be unique so spec updates cannot discard one block while updating another."
+            }
+          ]
+        },
+        {
+          "id": "s30-generated-placeholder",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 6,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

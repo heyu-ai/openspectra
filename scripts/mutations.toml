@@ -13,23 +13,27 @@ test = "parking_from_a_linked_worktree_lands_in_the_shared_store"
 
 [[case]]
 id = "80-first-block-only"
-issue = "#80 / OpenSpec 1.12"
-file = "crates/spectra-core/src/markdown.rs"
-find = '''            } else {
-                text_lines.join("\n")
-            },'''
-replace = '''            } else {
-                text_lines[0].to_string()
-            },'''
+issue = "#80 / OpenSpec 1.12（W9b 起 validate 走 openspec_md）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''    } else {
+        captured.join("\n")
+    }'''
+replace = '''    } else {
+        captured[0].to_string()
+    }'''
 package = "spectra-core"
 test = "a_goal_first_requirement_passes"
 
 [[case]]
 id = "80-scenario-text-counts"
-issue = "#80 / OpenSpec 1.12"
-file = "crates/spectra-core/src/markdown.rs"
-find = "if scenarios.is_empty() && !trimmed.is_empty() {"
-replace = "if !trimmed.is_empty() {"
+issue = "#80 / OpenSpec 1.12（W9b 起 validate 走 openspec_md）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''        if HEADER_LINE.is_match(line) {
+            break;
+        }'''
+replace = '''        if HEADER_LINE.is_match(line) {
+            continue;
+        }'''
 package = "spectra-core"
 test = "a_shall_that_appears_only_inside_a_scenario_is_not_normative"
 
@@ -746,15 +750,10 @@ test = "validate_rejects_a_modified_requirement_that_drops_a_current_scenario"
 id = "35-rename-chain-single-step"
 issue = "#160-1 / PR #161"
 file = "crates/spectra-core/src/validate.rs"
-find = '''        current = normalize_name(&rename.from);
-    }
-    current'''
-replace = '''        current = normalize_name(&rename.from);
-        break;
-    }
-    current'''
+find = '''            cursor = renamed_from.get(&name).cloned();'''
+replace = '''            cursor = renamed_from.get(&name).cloned().filter(|_| visited.len() < 2);'''
 package = "spectra-core"
-test = "reverse_rename_resolution_is_transitive_and_cycle_safe"
+test = "scenario_loss_follows_a_chain_of_renames_back_to_the_main_spec"
 
 # requirement header 偵測不看 fence mask，code block 內的 ### Requirement: 被當成真的 requirement
 
@@ -1404,3 +1403,219 @@ replace = '''    if true {
 package = "spectra-cli"
 target = ["--test", "task_done_golden_integration"]
 test = "task_start_and_done_replay_the_oracle_golden_byte_for_byte"
+
+# ==================== W9b：validate 規則依 OpenSpec 1.13.2（決策 D1） ====================
+
+# archive 會拒絕的 delta 報成 ERROR（舊行為）而不是 OpenSpec 的 INFO
+
+[[case]]
+id = "w9b-c1-archive-refusal-as-error"
+issue = "C1"
+file = "crates/spectra-core/src/validate.rs"
+find = '''            issues.push(Issue::info(
+                entry_path.clone(),
+                format!("Archive would refuse this delta: {message}"),'''
+replace = '''            issues.push(Issue::error(
+                entry_path.clone(),
+                format!("Archive would refuse this delta: {message}"),'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# 已有 ERROR 的 delta 檔又以 archive 的措辭重報一次
+
+[[case]]
+id = "w9b-c3-rereport-reported-delta"
+issue = "C3 / #183"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        if already_reported.contains(entry_path) {
+            continue;
+        }'''
+replace = '''        if false && already_reported.contains(entry_path) {
+            continue;
+        }'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# archive 相容性檢查的每個錯誤都報成 ERROR（舊行為），不只 OpenSpectra 獨有的拒絕
+
+[[case]]
+id = "w9b-c20-keeps-every-archive-error"
+issue = "C1 / C20"
+file = "crates/spectra-core/src/validate.rs"
+find = '''                .downcast_ref::<crate::archive::OpenSpectraOnlyRefusal>()
+                .is_some()'''
+replace = '''                .downcast_ref::<crate::archive::OpenSpectraOnlyRefusal>()
+                .is_some()
+                || true'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# OpenSpectra 獨有的 archive 拒絕（retirement、trace footer）不再報
+
+[[case]]
+id = "w9b-c20-drops-openspectra-only"
+issue = "C20"
+file = "crates/spectra-core/src/validate.rs"
+find = '''                .downcast_ref::<crate::archive::OpenSpectraOnlyRefusal>()
+                .is_some()'''
+replace = '''                .downcast_ref::<crate::archive::OpenSpectraOnlyRefusal>()
+                .is_some()
+                && false'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "validate_reports_archive_retirement_preflight_failures_as_findings"
+
+# delta 裡 stray 的 `###` 結束 requirement block，後面的 scenario 遺失
+
+[[case]]
+id = "w9b-c4-stray-h3-ends-block"
+issue = "C4"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''            && !is_top_level_header(body, index)
+        {'''
+replace = '''            && !is_top_level_header(body, index)
+            && !STRAY_H3.is_match(body.lines[index])
+        {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# 沒有內文的 `#### ` 也算 scenario
+
+[[case]]
+id = "w9b-c5-empty-scenario-counts"
+issue = "C5"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''        .filter(|body| !body.trim().is_empty())'''
+replace = '''        .filter(|_| true)'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# 重複的 `## ADDED Requirements` 只讀第一個（OpenSpec 會合併）
+
+[[case]]
+id = "w9b-c7-first-section-only"
+issue = "C7"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''            matches.iter().map(|section| &section.body).collect(),'''
+replace = '''            matches.iter().take(1).map(|section| &section.body).collect(),'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# specs/ 底下沒有任何 delta section 的檔案不報 ERROR
+
+[[case]]
+id = "w9b-c9-no-missing-header-error"
+issue = "C9"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    for path in &missing_header_specs {'''
+replace = '''    for path in missing_header_specs.iter().take(0) {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# specs/spec.md 不報成 item 的 ERROR
+
+[[case]]
+id = "w9b-c11-root-spec-ignored"
+issue = "C11"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    if has_root_level_spec {'''
+replace = '''    if false && has_root_level_spec {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+# task 編號檢查不看 schema 來源，專案同名的 spec-driven 也檢查
+
+[[case]]
+id = "w9b-c18-gate-ignores-source"
+issue = "C18"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    if schema.name == crate::schema::SCHEMA_NAME
+        && schema.source == crate::schema::SchemaSource::Package'''
+replace = '''    if schema.name == crate::schema::SCHEMA_NAME'''
+package = "spectra-core"
+test = "task_numbering_is_skipped_for_a_project_schema_that_shadows_spec_driven"
+
+# main spec 只把 `### Requirement:` 當 requirement（OpenSpec 是 Requirements 的每個子標題）
+
+[[case]]
+id = "w9b-s1-only-requirement-children"
+issue = "S1"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''    let requirements = nodes[requirements]
+        .children
+        .iter()'''
+replace = '''    let requirements = nodes[requirements]
+        .children
+        .iter()
+        .filter(|&&child| nodes[child].title.starts_with("Requirement:"))'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+# main spec 的結構檢查（delta header、Requirements 外的 requirement、重複）不跑
+
+[[case]]
+id = "w9b-s2-no-structure-check"
+issue = "S2 / S3 / S4"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    for structural in openspec_md::main_spec_structure_issues(content) {'''
+replace = '''    for structural in openspec_md::main_spec_structure_issues(content).into_iter().take(0) {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+# Purpose／Requirements 只在最上層找（OpenSpec 深度優先找任何層級）
+
+[[case]]
+id = "w9b-s7-purpose-level-two-only"
+issue = "S7"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''            if let Some(found) = find(nodes, &nodes[node].children, title) {'''
+replace = '''            if let Some(found) = find(nodes, &nodes[node].children[..0], title) {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+# Purpose 少於 50 字不報 WARNING
+
+[[case]]
+id = "w9b-s9-no-brevity-warning"
+issue = "S9"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    } else if openspec_md::js_len(&spec.overview) < MIN_PURPOSE_LENGTH {'''
+replace = '''    } else if false {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+# 長度用 UTF-8 位元組計（JS `.length` 是 UTF-16 code unit），中文 Purpose 不再算太短
+
+[[case]]
+id = "w9b-utf8-byte-length"
+issue = "S9 / S11"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''    text.encode_utf16().count()'''
+replace = '''    text.len()'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+# SHALL/MUST 用 Unicode 字界，「系統SHALL」不算有 SHALL
+
+[[case]]
+id = "w9b-unicode-word-boundary"
+issue = "C16 / S12"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''    Lazy::new(|| Regex::new(r"(?-u:\b)(SHALL|MUST)(?-u:\b)").unwrap());'''
+replace = '''    Lazy::new(|| Regex::new(r"\b(SHALL|MUST)\b").unwrap());'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"

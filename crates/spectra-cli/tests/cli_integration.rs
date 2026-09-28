@@ -1154,7 +1154,9 @@ fn validation_bulk_scopes_emit_versioned_additive_reports() {
     std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
     std::fs::write(
         spec,
-        "# auth Specification\n\n## Purpose\n\nAuthentication behavior.\n\n\
+        // Purpose 要 ≥ 50 字：OpenSpec 1.13.2 對較短的 Purpose 報 WARNING（S9），
+        // 這個 spec 必須沒有任何 finding。
+        "# auth Specification\n\n## Purpose\n\nAuthentication behavior for every family account and device.\n\n\
          ## Requirements\n\n### Requirement: Login\nThe system SHALL authenticate.\n\n\
          #### Scenario: Login\n- **WHEN** requested\n- **THEN** access is granted\n",
     )
@@ -1794,8 +1796,10 @@ fn show_diff_reports_renamed_requirements() {
     assert!(diff.contains("+### Requirement: NewName"));
 }
 
+/// C1：OpenSpec 1.13.2 對「archive 會拒絕」只報 INFO、不影響判定（p08 d10 實測；
+/// archive 本身仍會拒絕，見 archive.rs 的 `archive_errors_on_a_modified_delta_for_a_nonexistent_requirement`）。
 #[test]
-fn validate_rejects_a_modified_requirement_missing_from_the_canonical_spec() {
+fn validate_reports_a_modified_requirement_missing_from_the_canonical_spec_as_info() {
     let tmp = TempDir::new("validate-missing-modified");
     init_project_with_change(&tmp, "feat");
     let main = tmp.join("openspec/specs/auth/spec.md");
@@ -1823,16 +1827,17 @@ fn validate_rejects_a_modified_requirement_missing_from_the_canonical_spec() {
         .output()
         .unwrap();
 
-    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["summary"]["totals"]["failed"], 1);
-    assert!(report["items"][0]["issues"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|issue| issue["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("MODIFY") && message.contains("Missing"))));
+    assert_eq!(report["summary"]["totals"]["failed"], 0);
+    assert_eq!(
+        report["items"][0]["issues"],
+        serde_json::json!([{
+            "level": "INFO",
+            "path": "auth/spec.md",
+            "message": "Archive would refuse this delta: auth MODIFIED failed for header \"### Requirement: Missing\" - not found",
+        }])
+    );
 }
 
 #[test]
@@ -1988,7 +1993,7 @@ fn validate_human_output_prints_warning_findings_for_a_valid_item() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("feat"), "{stdout}");
     assert!(stdout.contains("OK"), "{stdout}");
-    assert!(stdout.contains("WARNING specs/auth/spec.md:"), "{stdout}");
+    assert!(stdout.contains("WARNING auth/spec.md:"), "{stdout}");
     assert!(stdout.contains("SHALL or MUST"), "{stdout}");
 }
 
@@ -2011,8 +2016,13 @@ fn validate_human_output_prints_info_findings_for_a_valid_item() {
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("OK"), "{stdout}");
-    assert!(stdout.contains("INFO .openspec.yaml:"), "{stdout}");
-    assert!(stdout.contains("declares skip_specs"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "INFO file: skip_specs is set in .openspec.yaml: change declares no spec-level \
+             behavior changes, zero deltas accepted"
+        ),
+        "{stdout}"
+    );
 }
 
 #[cfg(unix)]
@@ -2058,12 +2068,19 @@ fn show_diff_and_validation_propagate_unreadable_canonical_spec_errors() {
         .unwrap();
     std::fs::set_permissions(&main, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-    for out in [diff, validation] {
-        assert_eq!(out.status.code(), Some(1), "{out:?}");
-        let stderr = String::from_utf8(out.stderr).unwrap();
-        assert!(stderr.contains("reading"), "{stderr}");
-        assert!(stderr.contains("openspec/specs/auth/spec.md"), "{stderr}");
-    }
+    assert_eq!(diff.status.code(), Some(1), "{diff:?}");
+    let stderr = String::from_utf8(diff.stderr).unwrap();
+    assert!(stderr.contains("reading"), "{stderr}");
+    assert!(stderr.contains("openspec/specs/auth/spec.md"), "{stderr}");
+
+    // validate 依 OpenSpec 1.13.2（validator.js:586-602，實測相同）把它報成 finding。
+    assert_eq!(validation.status.code(), Some(1), "{validation:?}");
+    let stdout = String::from_utf8(validation.stdout).unwrap();
+    assert!(
+        stdout.contains("ERROR auth/spec.md: Could not read ")
+            && stdout.contains("openspec/specs/auth/spec.md to check the MODIFIED requirements against it (EACCES)"),
+        "{stdout}"
+    );
 }
 
 /// 在 `script` 建立的 PTY 裡執行 spectra，讓 stdout/stdin 都是終端機。

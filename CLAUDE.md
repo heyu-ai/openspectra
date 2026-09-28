@@ -60,6 +60,17 @@ this file is agent-facing operational context.
   using a sentinel `spec_dir` to recover the `{{SPEC_DIR}}` placeholder. Any
   drift exits non-zero keeping the sandbox; `--write` regenerates and
   re-verifies. Never hand-edit the assets.
+- `scripts/capture-validate-openspec.py` — needs Node.js and OpenSpec 1.13.2
+  (`--openspec-js`/`OPENSPEC_JS`; the version is checked), not the oracle.
+  Owner ruling D1 makes OpenSpec 1.13.2 the authority for `validate`'s rules,
+  so it runs OpenSpec on the rule fixture
+  `crates/spectra-cli/tests/fixtures/validate_openspec` (`--changes`/`--specs`,
+  normal and `--strict`) and compares with
+  `docs/reverse-engineering/golden/validate-openspec-1.13.2.json`, which
+  `validate_openspec_integration.rs` replays field for field. Drift exits
+  non-zero keeping the sandbox; `--write` regenerates and re-verifies. When a
+  validate rule changes, add a fixture case and recapture — never hand-edit
+  the golden.
 - `scripts/parity-probe.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
   subcommand/flag is accepted) and A3 (read-only commands agree on exit code,
