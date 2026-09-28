@@ -1921,3 +1921,253 @@ replace = '''        print!("{}", analyze::format_human(&report, false));'''
 package = "spectra-cli"
 target = ["--test", "analyze_golden_integration"]
 test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+# ---- W7g：schema validate／fork 對齊 oracle 3.0.0（owner 裁決 D11）----
+
+# 不帶名稱時固定驗 spec-driven（D11-6），不是 config 或全部專案 schema
+
+[[case]]
+id = "w7g-validate-default-spec-driven"
+issue = "W7g / D11-6"
+file = "crates/spectra-cli/src/main.rs"
+find = '''                let name = name.as_deref().unwrap_or(schema::SCHEMA_NAME);
+                cmd_schema_validate'''
+replace = '''                let name = name.as_deref().unwrap_or("no-spec");
+                cmd_schema_validate'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "schema_validate_without_a_name_validates_spec_driven_only"
+
+# 失敗時 human 模式 stdout 為空，`Schema '<N>' is invalid` 印在 stderr
+
+[[case]]
+id = "w7g-validate-failure-on-stderr"
+issue = "W7g"
+file = "crates/spectra-cli/src/main.rs"
+find = '''                eprintln!("Schema '{name}' is invalid: {error}");'''
+replace = '''                println!("Schema '{name}' is invalid: {error}");'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "schema_validate_reports_a_missing_schema_on_the_oracle_streams"
+
+# `version` 必填（先前接受缺少 version）
+
+[[case]]
+id = "w7g-version-required"
+issue = "W7g"
+file = "crates/spectra-core/src/schema.rs"
+find = '''    name: String,
+    version: u32,'''
+replace = '''    name: String,
+    #[serde(default)]
+    version: u32,'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# serde_yaml 的錯誤原文要帶出來（先前只有 `parsing <path>` 的 context）
+
+[[case]]
+id = "w7g-parse-error-cause"
+issue = "W7g"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            .map_err(|error| anyhow::anyhow!("Schema parse error: {error}"))?;'''
+replace = '''            .with_context(|| format!("parsing {}", yaml_path.display()))?;'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# apply.requires 未知 id 要在循環檢查之前回報（先前 cycle 先）
+
+[[case]]
+id = "w7g-apply-requires-check"
+issue = "W7g"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        if let Some(apply) = &raw.apply {
+            if let Some(req) = apply'''
+replace = '''        if let Some(apply) = raw.apply.as_ref().filter(|_| false) {
+            if let Some(req) = apply'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# schema.yaml 是目錄時仍算找到（先前用 is_file，變成 not found）
+
+[[case]]
+id = "w7g-schema-yaml-exists"
+issue = "W7g"
+file = "crates/spectra-core/src/schema.rs"
+find = '''    if project_dir.join("schema.yaml").exists() {'''
+replace = '''    if project_dir.join("schema.yaml").is_file() {'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# 沒有 apply 時 apply 階段要求全部 artifact
+
+[[case]]
+id = "w7g-no-apply-requires-all"
+issue = "W7g"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            None => (artifacts.iter().map(|a| a.id.clone()).collect(), None, None),'''
+replace = '''            None => (Vec::new(), None, None),'''
+package = "spectra-cli"
+target = ["--test", "custom_schema_integration"]
+test = "apply_without_an_apply_section_requires_every_artifact"
+
+# 缺少的 artifact instruction 在 JSON 省略 key
+
+[[case]]
+id = "w7g-instruction-key-omitted"
+issue = "W7g"
+file = "crates/spectra-core/src/instructions.rs"
+find = '''    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,'''
+replace = '''    pub instruction: Option<String>,'''
+package = "spectra-cli"
+target = ["--test", "custom_schema_integration"]
+test = "instructions_omit_a_missing_artifact_instruction"
+
+# 缺少的 artifact instruction 在 human 輸出省略整段
+
+[[case]]
+id = "w7g-instruction-section-omitted"
+issue = "W7g"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    if let Some(instruction) = &report.instruction {'''
+replace = '''    if let Some(instruction) = report.instruction.as_ref().or(Some(&String::new())) {'''
+package = "spectra-cli"
+target = ["--test", "custom_schema_integration"]
+test = "instructions_omit_a_missing_artifact_instruction"
+
+# template 缺檔時 human 輸出省略 Template 段落
+
+[[case]]
+id = "w7g-template-section-omitted"
+issue = "W7g"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    if report.template.is_empty() {'''
+replace = '''    if false {'''
+package = "spectra-cli"
+target = ["--test", "custom_schema_integration"]
+test = "instructions_omit_the_template_section_for_a_missing_template"
+
+# D11-2：缺檔／空檔不擋，只警告（先前 validate 回報為 invalid）
+
+[[case]]
+id = "w7g-template-warning-not-error"
+issue = "W7g / D11-2"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            for warning in &validation.warnings {
+                eprintln!("Warning: {warning}");
+            }'''
+replace = '''            if let Some(warning) = validation.warnings.first() {
+                anyhow::bail!("{warning}");
+            }'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# D11-2：空檔要警告
+
+[[case]]
+id = "w7g-template-warning-empty"
+issue = "W7g / D11-2"
+file = "crates/spectra-core/src/schema.rs"
+find = '''                Ok(metadata) if metadata.is_file() && metadata.len() == 0 => "empty",'''
+replace = '''                Ok(metadata) if false => "empty",'''
+package = "spectra-cli"
+target = ["--test", "schema_fork_integration"]
+test = "fork_skips_missing_templates_copies_empty_ones_and_warns"
+
+# D11-1：template 離開 schema 目錄一律拒絕
+
+[[case]]
+id = "w7g-template-escape-rejected"
+issue = "W7g / D11-1"
+file = "crates/spectra-core/src/schema.rs"
+find = '''                ("template", &artifact.template_name),
+                ("generates", &artifact.output_path),'''
+replace = '''                ("generates", &artifact.output_path),'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# D11-7：generates 離開 change 目錄一律拒絕
+
+[[case]]
+id = "w7g-generates-escape-rejected"
+issue = "W7g / D11-7"
+file = "crates/spectra-core/src/schema.rs"
+find = '''                ("template", &artifact.template_name),
+                ("generates", &artifact.output_path),'''
+replace = '''                ("template", &artifact.template_name),'''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "schema_validate_and_fork_match_the_oracle_golden"
+
+# 內建 schema fork 依 artifact_order（proposal、specs、design、tasks）寫出
+
+[[case]]
+id = "w7g-builtin-fork-order"
+issue = "W7g"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            artifacts: ordered_artifacts(schema)
+                .map('''
+replace = '''            artifacts: schema.artifacts.iter()
+                .map('''
+package = "spectra-cli"
+target = ["--test", "schema_validate_golden_integration"]
+test = "builtin_forks_match_the_oracle_bytes_except_the_name_line"
+
+# D11-3：空字串目標（寫進 schemas/ 本身，先前還會外洩 stage 目錄）
+
+[[case]]
+id = "w7g-fork-empty-target"
+issue = "W7g / D11-3"
+file = "crates/spectra-core/src/schema.rs"
+find = '''    if target.is_empty() || target == "." {'''
+replace = '''    if target == "." {'''
+package = "spectra-cli"
+target = ["--test", "schema_fork_integration"]
+test = "fork_rejects_targets_outside_the_schemas_directory"
+
+# D11-3：`.` 目標
+
+[[case]]
+id = "w7g-fork-dot-target"
+issue = "W7g / D11-3"
+file = "crates/spectra-core/src/schema.rs"
+find = '''    if target.is_empty() || target == "." {'''
+replace = '''    if target.is_empty() {'''
+package = "spectra-cli"
+target = ["--test", "schema_fork_integration"]
+test = "fork_rejects_targets_outside_the_schemas_directory"
+
+# D11-4：`--force` 換下的舊目標是一般檔案時也要刪掉（先前外洩 `.tf.backup-*`）
+
+[[case]]
+id = "w7g-fork-backup-file-removed"
+issue = "W7g / D11-4"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        std::fs::remove_file(backup)
+    }'''
+replace = '''        Ok(())
+    }'''
+package = "spectra-cli"
+target = ["--test", "schema_fork_integration"]
+test = "fork_force_replaces_a_regular_file_target_without_leaking_a_backup"
+
+# fork 成功行的 ✓ 在終端機上是綠色
+
+[[case]]
+id = "w7g-fork-check-mark-color"
+issue = "W7g"
+file = "crates/spectra-cli/src/main.rs"
+find = '''                    "{} Forked '{}' \u{2192} '{}'",
+                    colorize("\u{2713}", "32", use_color),'''
+replace = '''                    "{} Forked '{}' \u{2192} '{}'",
+                    "\u{2713}",'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "schema_validate_and_fork_color_only_the_check_mark_on_a_terminal"

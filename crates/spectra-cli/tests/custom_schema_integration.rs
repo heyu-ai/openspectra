@@ -450,3 +450,91 @@ fn apply_without_tracks_is_ready_with_no_tasks() {
     );
     assert_eq!(v["tasks"], serde_json::json!([]));
 }
+
+/// W7g 的 schema fixture（`tests/fixtures/schema_validate/<case>/`）放進
+/// `openspec/schemas/m/`，並建一個 `schema: m` 的 change `c1`——與 oracle 探測 p04
+/// 的 jail 相同的配置。
+fn project_with_fixture_schema(case: &str) -> TempDir {
+    let root = TempDir::new(&format!("custom-schema-{case}"));
+    git(&root, &["init", "-q"]);
+    std::fs::create_dir_all(root.join("openspec/changes/archive")).unwrap();
+    std::fs::create_dir_all(root.join("openspec/specs")).unwrap();
+    std::fs::create_dir_all(root.join("openspec/changes/c1")).unwrap();
+    std::fs::write(root.join(".spectra.yaml"), "spec_dir: openspec\n").unwrap();
+    std::fs::write(root.join("openspec/config.yaml"), "schema: spec-driven\n").unwrap();
+    std::fs::write(
+        root.join("openspec/changes/c1/.openspec.yaml"),
+        "schema: m\ncreated: 2026-09-01\n",
+    )
+    .unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schema_validate")
+        .join(case);
+    let target = root.join("openspec/schemas/m");
+    std::fs::create_dir_all(target.join("templates")).unwrap();
+    std::fs::copy(fixture.join("schema.yaml"), target.join("schema.yaml")).unwrap();
+    for entry in std::fs::read_dir(fixture.join("templates"))
+        .into_iter()
+        .flatten()
+    {
+        let entry = entry.unwrap();
+        std::fs::copy(
+            entry.path(),
+            target.join("templates").join(entry.file_name()),
+        )
+        .unwrap();
+    }
+    root
+}
+
+fn stdout_of(root: &Path, args: &[&str]) -> String {
+    let output = spectra().args(args).current_dir(root).output().unwrap();
+    assert!(output.status.success(), "{args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+/// oracle 3.0.0（W7g 探測 q01／q03）：artifact 沒有 `instruction` 時，human 輸出整段
+/// 省略，`--json` 沒有 `instruction` 這個 key。
+#[test]
+fn instructions_omit_a_missing_artifact_instruction() {
+    let root = project_with_fixture_schema("art-no-instruction");
+
+    assert_eq!(
+        stdout_of(
+            &root,
+            &["instructions", "a", "--change", "c1", "--no-color"]
+        ),
+        "Artifact: a\nOutput: a.md\nDescription: A\n\nUnlocks:\n  - b\n\nTemplate:\n# A\n\n"
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["instructions", "a", "--change", "c1", "--json"],
+    ))
+    .unwrap();
+    assert!(
+        !json.as_object().unwrap().contains_key("instruction"),
+        "{json}"
+    );
+}
+
+/// oracle 3.0.0（W7g 探測 q03）：template 缺檔時 human 輸出省略 `Template:` 段落。
+#[test]
+fn instructions_omit_the_template_section_for_a_missing_template() {
+    let root = project_with_fixture_schema("tpl-missing");
+
+    assert_eq!(
+        stdout_of(&root, &["instructions", "b", "--change", "c1", "--no-color"]),
+        "Artifact: b\nOutput: b.md\nDescription: B\n\nInstruction:\ndo b\n\nDependencies:\n  \u{25cb} a (a.md)\n"
+    );
+}
+
+/// oracle 3.0.0（W7g 探測 q01）：schema 沒有 `apply` 時 apply 階段要求全部 artifact。
+#[test]
+fn apply_without_an_apply_section_requires_every_artifact() {
+    let root = project_with_fixture_schema("no-apply");
+
+    assert_eq!(
+        stdout_of(&root, &["instructions", "apply", "--change", "c1", "--no-color"]),
+        "Change: c1\nSchema: m\nState: blocked\nProgress: 0/0 complete\n\nMissing artifacts:\n  - a\n  - b\n"
+    );
+}

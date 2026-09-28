@@ -92,6 +92,17 @@ this file is agent-facing operational context.
   files, the observed name/theme sets against `demo.rs`, and
   `crates/spectra-core/assets/demo/`. `--write` regenerates and re-verifies.
   Never hand-edit the assets.
+- `scripts/capture-schema-validate.py` — same constraints (macOS + reference
+  binary, version-pinned to 3.0.0, `--spectra-bin`/`SPECTRA_BIN` override).
+  Runs `schema validate` (human, `--json`, `--verbose`) and `schema fork` on
+  every project schema under
+  `crates/spectra-cli/tests/fixtures/schema_validate/<case>/`, plus forks of
+  both built-ins, into
+  `docs/reverse-engineering/golden/schema-validate-3.0.0.json`, which
+  `schema_validate_golden_integration.rs` replays; OpenSpectra's deliberate
+  divergences (owner ruling D11) sit in that test's `divergence` ratchet.
+  Drift exits non-zero keeping the scratch dir; `--write` regenerates. When a
+  schema rule changes, add a fixture case and recapture — never hand-edit.
 - `scripts/parity-probe.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
   subcommand/flag is accepted) and A3 (read-only commands agree on exit code,

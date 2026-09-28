@@ -17,6 +17,8 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
 - W10（2026-09-28）：analyze 拆成 `crates/spectra-core/src/analyze/` 模組，改寫列 23、24 的
   case 位置並新增 24 個 `w10-*` case（列 76）；只重跑這 26 個 case，**26/26 KILLED**，
   其餘 case 未在此次重跑
+- W7g（2026-09-28，schema validate／fork 對齊 oracle 3.0.0，owner 裁決 D11）：新增 19 個
+  `w7g-*` case，逐一以 `--only` 實測 19/19 KILLED；其餘 case 未在這一輪重跑
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -235,6 +237,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 42 | v0.12.0 Fixed | 重建後的 spec 結尾換行數不一致 | `42-final-newline-not-canonicalized` |
 | 43 | #80 / PR #82 | SHALL/MUST 掃描整個 body，Goal-first 的 requirement 因此通過（OSS 1.5.0 會拒絕） | `80-first-block-only`<br>`80-scenario-text-counts`<br>`43-no-metadata-fallback` |
 | 43b | W9b（D1） | validate 規則與 OpenSpec 1.13.2 不同：archive 衝突報 ERROR、stray `###` 吃掉 scenario、空 scenario 算數、重複 section 被拒、`specs/spec.md` 中止整批、main spec 只認 `### Requirement:`、Purpose 只找 `##`、沒有結構檢查與 Purpose 長度檢查、長度用 UTF-8 位元組、SHALL 用 Unicode 字界、task 編號不看 schema 來源 | `w9b-c1-archive-refusal-as-error`<br>`w9b-c3-rereport-reported-delta`<br>`w9b-c20-keeps-every-archive-error`<br>`w9b-c20-drops-openspectra-only`<br>`w9b-c4-stray-h3-ends-block`<br>`w9b-c5-empty-scenario-counts`<br>`w9b-c7-first-section-only`<br>`w9b-c9-no-missing-header-error`<br>`w9b-c11-root-spec-ignored`<br>`w9b-c18-gate-ignores-source`<br>`w9b-s1-only-requirement-children`<br>`w9b-s2-no-structure-check`<br>`w9b-s7-purpose-level-two-only`<br>`w9b-s9-no-brevity-warning`<br>`w9b-utf8-byte-length`<br>`w9b-unicode-word-boundary` |
+| 43c | W7g（D11） | `schema validate`／`fork` 與 oracle 3.0.0 不同：不帶名稱時驗全部專案 schema、輸出形狀與串流、serde 錯誤原文被吃掉、不要求 version、要求 apply／instruction、cycle 先於 apply 檢查、`schema.yaml` 是目錄時當成找不到、缺檔 template 被判無效、內建 fork 的 artifact 順序、空字串與 `.` 目標外洩 stage 目錄、`--force` 蓋一般檔案時外洩 backup、fork 的 ✓ 沒上色；以及 D11-1／D11-7 的路徑拒絕（刻意分歧） | `w7g-validate-default-spec-driven`<br>`w7g-validate-failure-on-stderr`<br>`w7g-version-required`<br>`w7g-parse-error-cause`<br>`w7g-apply-requires-check`<br>`w7g-schema-yaml-exists`<br>`w7g-no-apply-requires-all`<br>`w7g-instruction-key-omitted`<br>`w7g-instruction-section-omitted`<br>`w7g-template-section-omitted`<br>`w7g-template-warning-not-error`<br>`w7g-template-warning-empty`<br>`w7g-template-escape-rejected`<br>`w7g-generates-escape-rejected`<br>`w7g-builtin-fork-order`<br>`w7g-fork-empty-target`<br>`w7g-fork-dot-target`<br>`w7g-fork-backup-file-removed`<br>`w7g-fork-check-mark-color` |
 | 44 | mob review | `validate <打錯的名稱>` 回報令人誤解的「no delta」，而不是 `Change 'x' not found.` | `44-validate-typo-as-change` |
 | 45 | #134 / PR #138 | 沒有 active change 時，`status`/`instructions`/`drift`/`analyze` exit 1（oracle exit 0） | `45a-no-active-read-cmd-exits-1`<br>`45b-resolve-optional-empty-is-error` |
 | 46 | #118 / PR #125 | park 寫一個 `.parked` 標記，而不是把目錄移進 `<git common dir>/spectra-app/changes/`；與 oracle 互相看不到 | `46b-parked-store-location-literal-path` |

@@ -1,0 +1,3725 @@
+{
+  "builtinForks": {
+    "no-spec": {
+      "files": {
+        "schema.yaml": "name: no-spec\nversion: 1\ndescription: No-spec workflow - proposal -> tasks (design optional)\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: Proposal document for changes with no capability-level spec impact\n  template: proposal.md\n  instruction: |\n    Create the proposal document that establishes WHY this no-spec change is needed.\n\n    Use this schema only when the change does not alter capability-level observable behavior.\n\n    Sections:\n    - **Why**: 1-2 sentences on the problem or opportunity. What problem does this solve? Why now?\n    - **What Changes**: Bullet list of implementation, tooling, dependency, build, or documentation changes.\n    - **Non-Goals** (optional): Scope exclusions and rejected approaches. If design.md will be skipped, write Non-Goals here so rejected approaches and scope exclusions are recorded in a persistent artifact.\n    - **Impact**: Affected code, APIs, dependencies, systems, and the literal line `Affected specs: none`.\n\n    Do NOT create a Capabilities section for no-spec changes.\n    Do NOT create delta specs.\n  requires: []\n- id: design\n  generates: design.md\n  description: Optional technical design document with implementation details\n  template: design.md\n  instruction: |\n    Create the design document only when the no-spec change still benefits from technical decisions before coding.\n\n    This artifact is optional. Use it for cross-cutting tooling changes, dependency migrations, build/release changes, or other implementation complexity.\n\n    Keep the contract focused on tooling/build/documentation behavior and state explicitly that capability-level observable behavior is unchanged.\n  requires:\n  - proposal\n- id: tasks\n  generates: tasks.md\n  description: Implementation checklist with trackable tasks\n  template: tasks.md\n  instruction: |\n    Create the task list that breaks down the implementation work.\n\n    **IMPORTANT: Follow the template below exactly.** The apply phase parses checkbox format to track progress. Tasks not using `- [ ]` won't be tracked.\n\n    Guidelines:\n    - Group related tasks under ## numbered headings\n    - Each task MUST be a checkbox: `- [ ] X.Y Task description`\n    - Use the instructions JSON `locale` for human-readable task group headings and task descriptions.\n    - Preserve machine-readable syntax and technical tokens exactly: markdown headings, checkbox markers, task numbers, `[P]` markers, file paths, symbol names, commands, API names, and code identifiers MUST NOT be translated or localized.\n    - Each task MUST state the behavior or contract being delivered and the verification target that proves completion.\n    - File paths MAY appear in a task description, but only as locator context. The task SHALL still state the behavior or contract on top of any file path it mentions.\n\n    Reference proposal.md for scope. Reference design.md only if it exists.\n  requires:\n  - proposal\napply:\n  requires:\n  - tasks\n  tracks: tasks.md\n  instruction: |\n    Read context files, work through pending tasks, mark complete as you go.\n    Pause if you hit blockers or need clarification.\n",
+        "templates/design.md": "## Context\n\n<!-- Background, current state, constraints, and why design is useful for this no-spec change. -->\n\n## Goals / Non-Goals\n\n<!-- What this design achieves and explicitly excludes. -->\n\n## Decisions\n\n<!-- Key technical choices with rationale and alternatives considered. -->\n\n## Implementation Contract\n\n<!-- Observable tooling/build/documentation behavior, command output, failure modes, acceptance criteria, and scope boundaries. State that capability-level observable behavior is unchanged. -->\n\n## Risks / Trade-offs\n\n<!-- Format: [Risk] -> Mitigation -->\n\n## Migration Plan\n\n<!-- Steps to deploy and rollback strategy if applicable. -->\n\n## Open Questions\n\n<!-- Outstanding decisions or unknowns to resolve. -->\n",
+        "templates/proposal.md": "## Why\n\n<!-- Explain why this no-spec change is needed. What problem does this solve? Why now? -->\n\n## What Changes\n\n<!-- Describe implementation, tooling, dependency, build, or documentation changes. Be specific. -->\n\n## Non-Goals (optional)\n\n<!-- Scope exclusions and rejected approaches. Required when design.md is skipped; optional otherwise. -->\n\n## Impact\n\n- Affected specs: none\n- Affected code:\n  - New: (none)\n  - Modified: (none)\n  - Removed: (none)\n- Compatibility: no capability-level observable behavior changes\n",
+        "templates/tasks.md": "<!--\nEach task description MUST state:\n- the behavior or contract being delivered (what is observably true when the\n  task is complete), and\n- the verification target that proves completion (test, CLI invocation,\n  analyzer check, manual assertion, or content review).\n\nFile paths are supporting context for locating the work, never the task\nitself. \"Edit file X\" is not a valid task — it is missing both behavior and\nverification.\n-->\n\n## 1. <!-- Task Group Name -->\n\n- [ ] 1.1 <!-- Behavior/contract delivered + verification target -->\n- [ ] 1.2 <!-- Behavior/contract delivered + verification target -->\n"
+      },
+      "stderr": "",
+      "stdout": "✓ Forked 'no-spec' → 'f'\n"
+    },
+    "spec-driven": {
+      "files": {
+        "schema.yaml": "name: spec-driven\nversion: 1\ndescription: Default OpenSpec workflow - proposal → specs → tasks (design optional)\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: Initial proposal document outlining the change\n  template: proposal.md\n  instruction: |\n    Create the proposal document that establishes WHY this change is needed.\n\n    Sections:\n    - **Why**: 1-2 sentences on the problem or opportunity. What problem does this solve? Why now?\n    - **What Changes**: Bullet list of changes. Be specific about new capabilities, modifications, or removals. Mark breaking changes with **BREAKING**.\n    - **Non-Goals** (optional): Scope exclusions and rejected approaches. If design.md will be created, Non-Goals belong there (in Goals/Non-Goals section) — leave this section empty or omit it. If design.md will be skipped, write Non-Goals here so rejected approaches and scope exclusions are recorded in a persistent artifact.\n    - **Capabilities**: Identify which specs will be created or modified:\n      - **New Capabilities**: List capabilities being introduced. Each becomes a new `specs/<name>/spec.md`. Use kebab-case names (e.g., `user-auth`, `data-export`).\n      - **Modified Capabilities**: List existing capabilities whose REQUIREMENTS are changing. Only include if spec-level behavior changes (not just implementation details). Each needs a delta spec file. Check `{{SPEC_DIR}}specs/` for existing spec names. Leave empty if no requirement changes.\n    - **Impact**: Affected code, APIs, dependencies, or systems.\n\n    IMPORTANT: The Capabilities section is critical. It creates the contract between\n    proposal and specs phases. Research existing specs before filling this in.\n    Each capability listed here will need a corresponding spec file.\n    The exact capability name becomes the `specs/<name>/` directory name —\n    the analyzer flags any capability without a matching spec file as Critical.\n\n    Keep it concise (1-2 pages). Focus on the \"why\" not the \"how\" -\n    implementation details belong in design.md.\n\n    This is the foundation - specs, design, and tasks all build on this.\n  requires: []\n- id: specs\n  generates: specs/**/*.md\n  description: Detailed specifications for the change\n  template: spec.md\n  instruction: |\n    Create specification files that define WHAT the system should do.\n\n    Create one spec file per capability listed in the proposal's Capabilities section.\n    - New capabilities: use the exact kebab-case name from the proposal (specs/<capability>/spec.md).\n    - Modified capabilities: use the existing spec folder name from {{SPEC_DIR}}specs/<capability>/ when creating the delta spec at specs/<capability>/spec.md.\n\n    Delta operations (use ## headers):\n    - **ADDED Requirements**: New capabilities\n    - **MODIFIED Requirements**: Changed behavior - MUST include full updated content\n    - **REMOVED Requirements**: Deprecated features - MUST include **Reason** and **Migration**\n    - **RENAMED Requirements**: Name changes only - use FROM:/TO: format\n\n    Purpose section (new capabilities only):\n    - A NEW capability's delta spec MUST begin with a top-level `## Purpose` section:\n      1-3 English sentences describing what the capability is and why it exists.\n      The text must not contain placeholder words such as TBD or TODO. Archive\n      copies it into the newly created spec.\n    - Delta specs targeting EXISTING capabilities do not include a Purpose section.\n\n    Format requirements:\n    - Each requirement: `### Requirement: <name>` followed by description\n    - Use SHALL/MUST for normative requirements. Forbidden words (analyzer flags these): should, may, might, consider, possibly, TBD, TODO, ???, TKTK — replace with SHALL/SHALL NOT/MUST/MUST NOT.\n    - Each scenario: `#### Scenario: <name>` with WHEN/THEN format\n    - **CRITICAL**: Scenarios MUST use exactly 4 hashtags (`####`). Using 3 hashtags or bullets will fail silently.\n    - Every requirement MUST have at least one scenario.\n\n    MODIFIED requirements workflow:\n    1. Locate the existing requirement in {{SPEC_DIR}}specs/<capability>/spec.md\n    2. Copy the ENTIRE requirement block (from `### Requirement:` through all scenarios)\n    3. Paste under `## MODIFIED Requirements` and edit to reflect new behavior\n    4. Ensure header text matches exactly (whitespace-insensitive)\n\n    Common pitfall: Using MODIFIED with partial content loses detail at archive time.\n    If adding new concerns without changing existing behavior, use ADDED instead.\n\n    Example:\n    ```\n    ## ADDED Requirements\n\n    ### Requirement: User can export data\n    The system SHALL allow users to export their data in CSV format.\n\n    #### Scenario: Successful export\n    - **WHEN** user clicks \"Export\" button\n    - **THEN** system downloads a CSV file with all user data\n\n    ## REMOVED Requirements\n\n    ### Requirement: Legacy export\n    **Reason**: Replaced by new export system\n    **Migration**: Use new export endpoint at /api/v2/export\n    ```\n\n    Specs should be testable - each scenario is a potential test case.\n\n    Scenario subject rule:\n    A scenario describes an observable behavior contract. It does not describe a\n    visual property confined to the single surface being specified — corner radius,\n    padding, centering, dimensions, and spacing that affect only that surface belong\n    in the implementation rather than in a scenario.\n    The rendered class contract of a component reused across the application remains\n    a valid scenario subject, because that contract crosses its use sites.\n\n    Concrete examples (SBE — Specification by Example):\n\n    Scenarios can include `##### Example: <name>` blocks (5 hashtags) with concrete\n    GIVEN/WHEN/THEN data that illustrates the scenario with real values:\n\n        #### Scenario: sort by relevance\n        - **WHEN** user searches\n        - **THEN** results appear sorted by score\n\n        ##### Example: three items sorted\n        - **GIVEN** items: A(score=0.9), B(score=0.3), C(score=0.7)\n        - **WHEN** user searches for \"test\"\n        - **THEN** results appear in order: A, C, B\n\n    For multiple test cases, use a table inside the example block:\n\n        ##### Example: boundary cases\n        | Input | Expected | Notes |\n        |-------|----------|-------|\n        | \"\" | error: empty query | empty string |\n        | \"a\" | minimum 2 chars warning | too short |\n        | \"valid query\" | results returned | normal case |\n\n    When to add examples:\n    - The scenario involves computed output (sorting, filtering, scoring, ranking)\n    - The scenario involves state transitions or data transformation\n    - The boundary behavior is non-obvious\n    - A table can replace 3+ separate scenarios\n\n    When to skip examples:\n    - Simple UI navigation flows (click button, see page)\n    - Straightforward CRUD with no computed logic\n    - The WHEN/THEN already contains concrete values\n\n    Examples are optional — the analyzer will suggest adding them for abstract scenarios\n    but will not block specs without examples.\n\n    Spec files MUST always be written in English regardless of project locale settings,\n    because they use normative language (SHALL/MUST/WHEN/THEN).\n  requires:\n  - proposal\n- id: design\n  generates: design.md\n  description: Technical design document with implementation details\n  template: design.md\n  instruction: |\n    Create the design document that explains HOW to implement the change.\n\n    When to include design.md (create only if any apply):\n    - Cross-cutting change (multiple services/modules) or new architectural pattern\n    - New external dependency or significant data model changes\n    - Security, performance, or migration complexity\n    - Ambiguity that benefits from technical decisions before coding\n\n    Sections:\n    - **Context**: Background, current state, constraints, stakeholders\n    - **Design Source**: Include ONLY when the change originates from a visual design source (a Claude Design handoff, `.dc.html`, bundle, or design screenshot). Record the source (which `.dc.html` and when obtained), the local cache path under `.spectra/design-cache/` holding the original `.dc.html`, and a table of key visual values (exact px / hex / radius / spacing / icon names) read from it so apply can reproduce pixel-by-pixel. Omit entirely for changes with no visual design source.\n    - **Goals / Non-Goals**: What this design achieves and explicitly excludes. When the change is driven by a visual design, a Non-Goal MUST NOT be used to keep an element absent from the design; an element the design does not contain is to be removed, and any dependency this triggers is handled in this change or explicitly deferred to a documented follow-up change — never preserved by listing it as a Non-Goal.\n    - **Decisions**: Key technical choices with rationale (why X over Y?). Include alternatives considered for each decision.\n    - **Implementation Contract**: For any change that creates or modifies behavior beyond a trivial artifact-only edit, this section is REQUIRED. The contract describes the durable handoff to apply: name the observable behavior, interface or data shape, command output, error or failure mode, acceptance criteria, and explicit scope boundaries (what is in scope, what is out). The contract MUST NOT rely on source line numbers, and MUST NOT use file-path-only references as the sole way to identify required work — file paths are supporting context for behavior, never a substitute for it. Skip this section only when the change is purely artifact / documentation cleanup with no runtime, build, or tooling effect.\n    - **Risks / Trade-offs**: Known limitations, things that could go wrong. Format: [Risk] → Mitigation\n    - **Migration Plan**: Steps to deploy, rollback strategy (if applicable)\n    - **Open Questions**: Outstanding decisions or unknowns to resolve\n\n    Focus on architecture and approach, not line-by-line implementation.\n    Reference the proposal for motivation and specs for requirements.\n\n    Good design docs explain the \"why\" behind technical decisions.\n\n    Note: The analyzer cross-checks `###` decision headings against tasks.md.\n    Use descriptive heading text that will naturally appear in task descriptions.\n  requires:\n  - proposal\n- id: tasks\n  generates: tasks.md\n  description: Implementation checklist with trackable tasks\n  template: tasks.md\n  instruction: |\n    Create the task list that breaks down the implementation work.\n\n    **IMPORTANT: Follow the template below exactly.** The apply phase parses\n    checkbox format to track progress. Tasks not using `- [ ]` won't be tracked.\n\n    Guidelines:\n    - Group related tasks under ## numbered headings\n    - Each task MUST be a checkbox: `- [ ] X.Y Task description`\n    - Use the instructions JSON `locale` for human-readable task group headings\n      and task descriptions.\n    - Preserve machine-readable syntax and technical tokens exactly: markdown\n      headings, checkbox markers, task numbers, `[P]` markers, file paths,\n      symbol names, commands, API names, and code identifiers MUST NOT be\n      translated or localized.\n    - Tasks should be small enough to complete in one session\n    - Order tasks by dependency (what must be done first?)\n    - **Behavior + verification (REQUIRED for every non-trivial task):**\n      - Each task MUST state the behavior or contract being delivered — what is\n        observably true when the task is complete (user-visible behavior, generated\n        artifact contract, CLI/IPC output, or tool behavior). \"Edit file X\" is\n        NOT a behavior; it is supporting context for locating the work.\n      - Each task MUST also state how completion is verified — a test name, a\n        CLI invocation, an analyzer check, a manual assertion, or a content\n        review on a generated artifact. A task without a verification target\n        is not a valid task.\n      - File paths MAY appear in a task description, but only as locator\n        context. The task SHALL still state the behavior or contract on top\n        of any file path it mentions.\n      - File-edit-only tasks (e.g. \"Update file X to handle Y\") are invalid\n        unless they also describe the resulting behavior and how it is\n        verified.\n    - Cross-referencing (analyzer checks these):\n      - Every `### Requirement:` name from specs MUST appear as a case-insensitive substring in at least one task description\n      - If design.md exists, every `###` heading from design.md should be referenced in at least one task description\n\n    Example:\n    ```\n    ## 1. Setup\n\n    - [ ] 1.1 Create new module structure\n    - [ ] 1.2 Add dependencies to package.json\n\n    ## 2. Core Implementation\n\n    - [ ] 2.1 Implement data export function\n    - [ ] 2.2 Add CSV formatting utilities\n    ```\n\n    Reference specs for what needs to be built. If design.md exists, reference it for how to build it.\n    Each task should be verifiable - you know when it's done.\n  requires:\n  - specs\napply:\n  requires:\n  - tasks\n  tracks: tasks.md\n  instruction: |\n    Read context files, work through pending tasks, mark complete as you go.\n    Pause if you hit blockers or need clarification.\n",
+        "templates/design.md": "## Context\n\n<!-- Background and current state -->\n\n## Design Source\n\n<!--\nInclude this section ONLY when the change originates from a visual design source\n(a Claude Design handoff, .dc.html, bundle, or design screenshot). Omit it\nentirely for changes with no visual design source — same conditional rule as the\nImplementation Contract section below.\n\nRecord:\n- Source: which .dc.html / handoff, and when it was obtained\n- Cache: the local path under .spectra/design-cache/<change-name>/ that holds\n  the original .dc.html (gitignored, never committed)\n- Key values: a table of the exact px / hex / radius / spacing / icon names read\n  from the .dc.html, so apply can reproduce the design pixel-by-pixel\n-->\n\n## Goals / Non-Goals\n\n**Goals:**\n\n<!-- What this design aims to achieve -->\n\n**Non-Goals:**\n\n<!-- What is explicitly out of scope -->\n\n## Decisions\n\n<!-- Key design decisions and rationale.\n\nEach decision is a `###` heading; `spectra decisions` lists them across changes,\nso the heading text is what a reader sees when scanning for a past decision.\n\nWhen a decision replaces an earlier one, declare it directly under the heading:\n\n    **Supersedes**: <change-name> / <decision heading>\n\nUse the change name without its archive date prefix. The field is optional, and\nsupersession is never inferred — two decisions on the same subject stay\nunrelated unless one of them says otherwise.\n-->\n\n## Implementation Contract\n\n<!--\nRequired for changes that create or modify behavior. Skip only for pure\nartifact / documentation cleanup with no runtime or tooling effect.\n\nCover the durable handoff to apply:\n- Behavior: what an end user, caller, or operator observes once this change ships\n- Interface / data shape: command names, function signatures, JSON shapes,\n  IPC contracts, file formats — name them, do not reference line numbers\n- Failure modes: error shapes, fallback behavior, what is intentionally\n  silent vs. surfaced\n- Acceptance criteria: how an implementer or reviewer can confirm the\n  contract is satisfied (tests, CLI invocations, analyzer checks, manual\n  verification)\n- Scope boundaries: what is explicitly in scope and what is out — keeps\n  apply from drifting into adjacent work\n\nFile paths are supporting context for locating the work; they are never\nthe contract itself.\n-->\n\n## Risks / Trade-offs\n\n<!-- Known risks and trade-offs -->\n",
+        "templates/proposal.md": "## Why\n\n<!-- Explain the motivation for this change. What problem does this solve? Why now? -->\n\n## What Changes\n\n<!-- Describe what will change. Be specific about new capabilities, modifications, or removals. -->\n\n## Non-Goals (optional)\n\n<!-- Scope exclusions and rejected approaches. Required when design.md is skipped; optional otherwise. -->\n\n## Capabilities\n\n### New Capabilities\n\n<!-- Capabilities being introduced. Replace <name> with kebab-case identifier (e.g., user-auth, data-export, api-rate-limiting). Each creates specs/<name>/spec.md -->\n\n- `<name>`: <brief description of what this capability covers>\n\n### Modified Capabilities\n\n<!-- Existing capabilities whose REQUIREMENTS are changing (not just implementation).\n     Only list here if spec-level behavior changes. Each needs a delta spec file.\n     Use existing spec names from {{SPEC_DIR}}specs/. Leave empty if no requirement changes. -->\n\n- `<existing-name>`: <what requirement is changing>\n\n## Impact\n\n<!-- Affected code, APIs, dependencies, systems -->\n",
+        "templates/spec.md": "## ADDED Requirements\n\n### Requirement: <!-- requirement name -->\n\n<!-- requirement text -->\n\n#### Scenario: <!-- scenario name -->\n\n- **WHEN** <!-- condition -->\n- **THEN** <!-- expected outcome -->\n\n<!-- Optional: add concrete examples when the scenario involves data transformation,\n     ordering, filtering, scoring, or state transitions. Skip for simple UI flows. -->\n\n##### Example: <!-- example name (optional) -->\n\n- **GIVEN** <!-- concrete test data with real values -->\n- **WHEN** <!-- specific input -->\n- **THEN** <!-- specific expected output -->\n\n<!-- For multiple test cases, use a table instead:\n\n##### Example: <!-- example name -->\n\n| Input | Expected Output | Notes |\n| ----- | --------------- | ----- |\n| ...   | ...             | ...   |\n\n-->\n",
+        "templates/tasks.md": "<!--\nEach task description MUST state:\n- the behavior or contract being delivered (what is observably true when the\n  task is complete), and\n- the verification target that proves completion (test, CLI invocation,\n  analyzer check, manual assertion, or content review).\n\nFile paths are supporting context for locating the work, never the task\nitself. \"Edit file X\" is not a valid task — it is missing both behavior and\nverification.\n-->\n\n## 1. <!-- Task Group Name -->\n\n- [ ] 1.1 <!-- Behavior/contract delivered + verification target -->\n- [ ] 1.2 <!-- Behavior/contract delivered + verification target -->\n\n## 2. <!-- Task Group Name -->\n\n- [ ] 2.1 <!-- Behavior/contract delivered + verification target -->\n- [ ] 2.2 <!-- Behavior/contract delivered + verification target -->\n"
+      },
+      "stderr": "",
+      "stdout": "✓ Forked 'spec-driven' → 'f'\n"
+    }
+  },
+  "cases": [
+    {
+      "name": "apply-empty",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "apply-no-instruction",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "apply-no-requires",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: apply: missing field `requires` at line 19 column 3\nError: Schema validation failed: Schema parse error: apply: missing field `requires` at line 19 column 3\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: apply: missing field `requires` at line 19 column 3\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: apply: missing field `requires` at line 19 column 3\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: apply: missing field `requires` at line 19 column 3\nError: Schema validation failed: Schema parse error: apply: missing field `requires` at line 19 column 3\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: apply: missing field `requires` at line 19 column 3\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "apply-no-tracks",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "apply-unknown",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'zzz'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Apply phase requires unknown artifact 'zzz'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Apply phase requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art-missing-desc-tpl",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[0]: missing field `description` at line 4 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art-missing-gen-tpl",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[0]: missing field `generates` at line 4 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art-no-description",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art-no-generates",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art-no-id",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art-no-instruction",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "art-no-requires",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "art-no-template",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "art2-missing",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\nError: Schema validation failed: Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[1]: missing field `id` at line 5 column 5\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "artifacts-map",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\nError: Schema validation failed: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\nError: Schema validation failed: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "bom",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version` at line 1 column 2\nError: Schema validation failed: Schema parse error: missing field `version` at line 1 column 2\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `version` at line 1 column 2\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `version` at line 1 column 2\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version` at line 1 column 2\nError: Schema validation failed: Schema parse error: missing field `version` at line 1 column 2\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `version` at line 1 column 2\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "crlf",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "cycle",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Schema contains circular dependencies\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "cycle-and-applyunk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'yyy'\nError: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'yyy'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'yyy'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Apply phase requires unknown artifact 'yyy'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'yyy'\nError: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'yyy'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Apply phase requires unknown artifact 'yyy'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "cycle-selfdep-3",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Schema contains circular dependencies\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "description-null",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "dup-and-applyunk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Duplicate artifact IDs\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "dup-and-cycle",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Duplicate artifact IDs\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "dup-and-requnk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Duplicate artifact IDs\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "dup-field",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: duplicate field `name`\nError: Schema validation failed: Schema parse error: duplicate field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: duplicate field `name`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: duplicate field `name`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: duplicate field `name`\nError: Schema validation failed: Schema parse error: duplicate field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: duplicate field `name`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "dup-id",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Duplicate artifact IDs\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "dup-in-requires",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "empty-artifacts",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (0 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 0,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (0 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "empty-file",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `name`\nError: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `name`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `name`\nError: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "gen-absolute",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "gen-glob",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "gen-traversal",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "id-empty",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "id-weird",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "instruction-multiline",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "missing-name-version",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `name`\nError: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `name`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `name`\nError: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "missing-version-artifacts",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `version`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "missing-version-only-apply",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `version`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "name-empty",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "name-list",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\nError: Schema validation failed: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\nError: Schema validation failed: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "name-mismatch",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "no-apply",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "no-artifacts",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `artifacts`\nError: Schema validation failed: Schema parse error: missing field `artifacts`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `artifacts`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `artifacts`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `artifacts`\nError: Schema validation failed: Schema parse error: missing field `artifacts`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `artifacts`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "no-description",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "no-name",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `name`\nError: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `name`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `name`\nError: Schema validation failed: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `name`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "no-schema-yaml",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema not found: Schema 'm' not found in project, user, or built-in locations\nError: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": "{\n  \"error\": \"Schema not found: Schema 'm' not found in project, user, or built-in locations\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema not found: Schema 'm' not found in project, user, or built-in locations\nError: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "no-version",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `version`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "one",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (1 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 1,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (1 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "one-art-two-unk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'a' requires unknown artifact 'x'\nError: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Artifact 'a' requires unknown artifact 'x'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'a' requires unknown artifact 'x'\nError: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "parse-and-semantic",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: missing field `version`\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: missing field `version`\nError: Schema validation failed: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: missing field `version`\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "req-unknown",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "requires-string",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15\nError: Schema validation failed: Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: artifacts[1].requires: invalid type: string \\\"a\\\", expected a sequence at line 16 column 15\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15\nError: Schema validation failed: Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "requnk-and-applyunk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "requnk-and-cycle",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\nError: Schema validation failed: Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Artifact 'c' requires unknown artifact 'zzz'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "requnk-and-dup-order",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Duplicate artifact IDs\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs\nError: Schema validation failed: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Duplicate artifact IDs\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "schema-dir-is-file",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\nError: Schema validation failed: Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\nError: Schema validation failed: Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: Failed to read <ROOT>/openspec/schemas/m/schema.yaml: Is a directory (os error 21)\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "schema-yml",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema not found: Schema 'm' not found in project, user, or built-in locations\nError: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": "{\n  \"error\": \"Schema not found: Schema 'm' not found in project, user, or built-in locations\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema not found: Schema 'm' not found in project, user, or built-in locations\nError: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema not found: Schema 'm' not found in project, user, or built-in locations\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "self-dep",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Schema contains circular dependencies\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "tpl-dir-missing",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "tpl-empty",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "tpl-missing",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "tpl-subdir",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: No such file or directory (os error 2)\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "tpl-traversal",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "tpl-traversal-missing",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "two-applyunk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'x'\nError: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'x'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'x'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Apply phase requires unknown artifact 'x'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'x'\nError: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'x'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Apply phase requires unknown artifact 'x'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "two-cycles",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Schema contains circular dependencies\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies\nError: Schema validation failed: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Schema contains circular dependencies\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "two-requnk",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'a' requires unknown artifact 'x'\nError: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Artifact 'a' requires unknown artifact 'x'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'a' requires unknown artifact 'x'\nError: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Artifact 'a' requires unknown artifact 'x'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "two-requnk-rev",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'y'\nError: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'y'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'y'\n",
+          "stdout": "{\n  \"error\": \"Invalid schema: Artifact 'b' requires unknown artifact 'y'\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'y'\nError: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'y'\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Invalid schema: Artifact 'b' requires unknown artifact 'y'\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "unknown-apply-key",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "unknown-art-key",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "unknown-top-key",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "valid",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "version-0",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "version-2",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "{\n  \"artifactCount\": 2,\n  \"name\": \"m\",\n  \"valid\": true\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Schema 'm' is valid (2 artifacts)\n"
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 0,
+          "stderr": "",
+          "stdout": "✓ Forked 'm' → 'm2'\n"
+        }
+      ]
+    },
+    {
+      "name": "version-str",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10\nError: Schema validation failed: Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: version: invalid type: string \\\"x\\\", expected u32 at line 2 column 10\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10\nError: Schema validation failed: Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "yaml-syntax",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\nError: Schema validation failed: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\nError: Schema validation failed: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node\n",
+          "stdout": ""
+        }
+      ]
+    },
+    {
+      "name": "yaml-tab",
+      "runs": [
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\nError: Schema validation failed: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--json"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema validation failed: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\n",
+          "stdout": "{\n  \"error\": \"Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\",\n  \"name\": \"m\",\n  \"valid\": false\n}\n"
+        },
+        {
+          "args": [
+            "schema",
+            "validate",
+            "m",
+            "--verbose"
+          ],
+          "exitCode": 1,
+          "stderr": "Schema 'm' is invalid: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\nError: Schema validation failed: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\n",
+          "stdout": ""
+        },
+        {
+          "args": [
+            "schema",
+            "fork",
+            "m",
+            "m2"
+          ],
+          "exitCode": 1,
+          "stderr": "Error: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9\n",
+          "stdout": ""
+        }
+      ]
+    }
+  ],
+  "fixtureRoot": "crates/spectra-cli/tests/fixtures/schema_validate",
+  "oracleVersion": "3.0.0"
+}

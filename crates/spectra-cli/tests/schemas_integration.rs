@@ -83,7 +83,7 @@ fn schemas_lists_project_schemas_alongside_the_builtin() {
     std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
     std::fs::write(
         schema_dir.join("schema.yaml"),
-        "name: Display Name\ndescription: Hidden desc\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [proposal]\n  instruction: y\n",
+        "name: Display Name\nversion: 1\ndescription: Hidden desc\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [proposal]\n  instruction: y\n",
     )
     .unwrap();
 
@@ -121,7 +121,7 @@ fn schemas_json_lists_project_schemas_with_null_description() {
     std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
     std::fs::write(
         schema_dir.join("schema.yaml"),
-        "name: Display Name\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [proposal]\n  instruction: y\n",
+        "name: Display Name\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [proposal]\n  instruction: y\n",
     )
     .unwrap();
 

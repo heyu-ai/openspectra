@@ -1,0 +1,8 @@
+name: m
+version: 1
+description: test schema
+apply:
+  requires:
+    - b
+  tracks: b.md
+  instruction: go

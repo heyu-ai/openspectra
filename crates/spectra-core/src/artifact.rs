@@ -624,7 +624,7 @@ mod tests {
         std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: My Custom\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+            "name: My Custom\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
         )
         .unwrap();
         std::fs::write(

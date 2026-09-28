@@ -442,11 +442,14 @@ enum SchemaCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Validate one schema, or every project schema when omitted.
+    /// Validate a schema
     Validate {
+        /// Schema name
         name: Option<String>,
+        /// Verbose output
         #[arg(long)]
         verbose: bool,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -464,8 +467,10 @@ enum SchemaCommand {
         source: String,
         /// New schema name
         name: Option<String>,
+        /// Overwrite if exists
         #[arg(long)]
         force: bool,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -1472,9 +1477,13 @@ fn cmd_status_all(cfg: &Config, schema_name: Option<&str>, as_json: bool) -> Res
 
 fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> String {
     let mut output = format!(
-        "Artifact: {}\nOutput: {}\nDescription: {}\n\nInstruction:\n{}\n\n",
-        report.artifact_id, report.output_path, report.description, report.instruction
+        "Artifact: {}\nOutput: {}\nDescription: {}\n\n",
+        report.artifact_id, report.output_path, report.description
     );
+    // oracle 3.0.0（W7g 探測 q01）：schema 沒有 instruction 時整段連同空行省略。
+    if let Some(instruction) = &report.instruction {
+        output.push_str(&format!("Instruction:\n{instruction}\n\n"));
+    }
     if !report.dependencies.is_empty() {
         output.push_str("Dependencies:\n");
         for dependency in &report.dependencies {
@@ -1493,9 +1502,15 @@ fn artifact_instructions_human(report: &instructions::ArtifactInstructions) -> S
         }
         output.push('\n');
     }
-    output.push_str("Template:\n");
-    output.push_str(&report.template);
-    output.push('\n');
+    if report.template.is_empty() {
+        // oracle 3.0.0（W7g 探測 q03）：template 缺檔或空檔時省略整段，連同前面的
+        // 空行，以單一換行結尾（與 apply 沒有 instruction 時相同）。
+        output.pop();
+    } else {
+        output.push_str("Template:\n");
+        output.push_str(&report.template);
+        output.push('\n');
+    }
     output
 }
 
@@ -2467,40 +2482,16 @@ fn run() -> Result<i32> {
                 }
                 Ok(0)
             }
+            // oracle 3.0.0（docs/reverse-engineering/schema.md）：沒給名稱時固定驗
+            // `spec-driven`（不看 config，D11-6）；`--verbose` 沒有作用。
             SchemaCommand::Validate {
                 name,
-                verbose,
+                verbose: _,
                 json,
             } => {
                 let cfg = require_initialized(&root)?;
-                let names = match name {
-                    Some(name) => vec![name.clone()],
-                    None => schema::project_schema_names(&cfg)?,
-                };
-                let checks: Vec<_> = names
-                    .iter()
-                    .map(|name| schema::validate_schema(&cfg, name))
-                    .collect();
-                if *json {
-                    println!("{}", serde_json::to_string_pretty(&checks)?);
-                } else {
-                    for check in &checks {
-                        println!(
-                            "{} {}{}",
-                            if check.valid { "\u{2713}" } else { "\u{2717}" },
-                            check.name,
-                            if *verbose {
-                                format!(" ({})", check.path)
-                            } else {
-                                String::new()
-                            }
-                        );
-                        for issue in &check.issues {
-                            println!("  {issue}");
-                        }
-                    }
-                }
-                Ok(i32::from(checks.iter().any(|check| !check.valid)))
+                let name = name.as_deref().unwrap_or(schema::SCHEMA_NAME);
+                cmd_schema_validate(&cfg, name, *json, use_color)
             }
             // oracle 3.0.0：不需要已初始化的專案；沒給名稱時固定查 `spec-driven`（不看
             // config.yaml）；`--all` 在所有 probe 過的情境都沒有作用；找不到也 exit 0。
@@ -2532,13 +2523,67 @@ fn run() -> Result<i32> {
             } => {
                 let cfg = require_initialized(&root)?;
                 let outcome = schema::fork(&cfg, source, name.as_deref(), *force)?;
+                for warning in &outcome.warnings {
+                    eprintln!("Warning: {warning}");
+                }
                 println!(
-                    "\u{2713} Forked '{}' \u{2192} '{}'",
-                    outcome.source, outcome.target
+                    "{} Forked '{}' \u{2192} '{}'",
+                    colorize("\u{2713}", "32", use_color),
+                    outcome.source,
+                    outcome.target
                 );
                 Ok(0)
             }
         },
+    }
+}
+
+/// `schema validate` 的輸出（oracle 3.0.0）。成功：stdout 一行（`--json` 為
+/// `{artifactCount,name,valid}`）。失敗：human 模式 stdout 為空、stderr 先印
+/// `Schema '<N>' is invalid: <ERR>`；`--json` 模式 stdout 為 `{error,name,valid:false}`、
+/// 不印那一行。兩者都以 `Error: Schema validation failed: <ERR>` 結束，exit 1。
+/// template 缺檔或空檔的警告（D11-2）只在成功時印到 stderr。
+fn cmd_schema_validate(cfg: &Config, name: &str, as_json: bool, use_color: bool) -> Result<i32> {
+    match schema::validate_schema(cfg, name) {
+        Ok(validation) => {
+            for warning in &validation.warnings {
+                eprintln!("Warning: {warning}");
+            }
+            if as_json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "artifactCount": validation.artifact_count,
+                        "name": validation.name,
+                        "valid": true,
+                    }))?
+                );
+            } else {
+                println!(
+                    "{} Schema '{}' is valid ({} artifacts)",
+                    colorize("\u{2713}", "32", use_color),
+                    validation.name,
+                    validation.artifact_count
+                );
+            }
+            Ok(0)
+        }
+        Err(error) => {
+            let error = format!("{error:#}");
+            if as_json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "error": error,
+                        "name": name,
+                        "valid": false,
+                    }))?
+                );
+            } else {
+                eprintln!("Schema '{name}' is invalid: {error}");
+            }
+            anyhow::bail!("Schema validation failed: {error}")
+        }
     }
 }
 

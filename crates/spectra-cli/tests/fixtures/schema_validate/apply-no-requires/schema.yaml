@@ -1,0 +1,20 @@
+name: m
+version: 1
+description: test schema
+artifacts:
+  - id: a
+    generates: a.md
+    description: A
+    template: a.md
+    instruction: do a
+    requires: []
+  - id: b
+    generates: b.md
+    description: B
+    template: b.md
+    instruction: do b
+    requires:
+      - a
+apply:
+  tracks: b.md
+  instruction: go

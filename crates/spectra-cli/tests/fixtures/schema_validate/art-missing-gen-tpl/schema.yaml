@@ -1,0 +1,8 @@
+name: m
+version: 1
+artifacts:
+  - id: a
+    description: A
+    instruction: i
+apply:
+  requires: []
