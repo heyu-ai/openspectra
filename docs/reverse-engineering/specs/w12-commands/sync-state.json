@@ -1,0 +1,22 @@
+{
+ "crates/spectra-core/src/lib.rs": "40bc8ecc52b5bcc7a89c26d15a23e69fc83b2db51b861740e646ab0279e5c498",
+ "crates/spectra-core/src/change.rs": "804642aeb48c9749844e6c88dd32de4248935fd4c25985055394a62df05a0f46",
+ "crates/spectra-core/src/show.rs": "af4418ebc0e02c659c1c5d3bce4f30a38887868f3592943bf2df949acfbb8661",
+ "crates/spectra-cli/src/main.rs": "64604100954d504b3e2e7482eede9cbca678318609956d64a181605fa0aa7ca4",
+ "crates/spectra-cli/src/template_cli_check.rs": "a11b417f8add9ef9cc09666037b250a35eecade23dbf109f709a20d7f3b90d07",
+ "crates/spectra-cli/src/completion.rs": "73217b74314a50b23e64d76816a6db85ccb3fd7799d0faea6096508cf139e73e",
+ "docs/reverse-engineering/list-show.md": "4607c1a74836f905fd740d513ed900079f4aeeb9559717549ab6fbb1cfaf4f0c",
+ "docs/reverse-engineering/golden/parity-known.tsv": "04f55f2d62c0be62551e1ff3340d14bb33bc15289d55af0edc191f8a607d2436",
+ "README.md": "3bc08d10c4fdcd505df13de67b95dd6f628ccb1591a03ef4140fcb11a09b44fa",
+ "CHANGELOG.md": "da66954ad4f6e7d3b1ecc553365ac549e0eff1ff98fc0cea38fcebed9efed253",
+ "CLAUDE.md": "a277ffcbde5e4d1fafe381897ec6c375eb832ddf2b8094102c48aa64d5db5e3f",
+ "scripts/mutations.toml": "9d1dbc06d51d54f44a03dc646dcf02c7b2a0398d49d0464f8bf8ef35b4748d25",
+ "docs/testing/regression-catalog.md": "505cf4c4e8f0d7d0874c84e8ef7d4c93b0fa0badc9c336592ffcb9c7bef6f5e4",
+ "crates/spectra-core/src/decisions.rs": "2bfc75ac5a3012394bf1505b9b4a52731ef2147af632fefa612f9ce9f42a8f8f",
+ "crates/spectra-core/src/demo.rs": "32e69a5a3c8113a86b2cec22fead03f863585159b89f908b7ff7ce9cca4e430a",
+ "scripts/capture-demo.py": "afffd9dcc5ebe5e0d7b568d6e17e5a350adc3715f1f75d23c8d28fcc15c9551f",
+ "crates/spectra-cli/tests/decisions_integration.rs": "13bc27754c63527d8ed7acd743c7514674add28f154f5d2d86503a02d4070432",
+ "crates/spectra-cli/tests/show_demo_feedback_integration.rs": "bfa305443df1b1d14e3125baebcbbb2527ed67f2d1f99bbe619e3867c007c69d",
+ "docs/reverse-engineering/decisions.md": "915e948b8bcbaff8d4de0831e980bf6a8c7bcc39a4e853c7e5c0c8d918ee0e92",
+ "docs/reverse-engineering/demo-feedback.md": "86d804194481da859b7bdb29d368412bdbfc17d8f50371db90883c3e4cfa3ca7"
+}

@@ -1,0 +1,606 @@
+== valid: control: BASE is valid
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA V --verbose rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== yaml-syntax: invalid YAML syntax
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node
+  ORA V --json rc=1
+        "error": "Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node",
+      Error: Schema validation failed: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node
+  ORA V --verbose rc=1
+      Schema 'm' is invalid: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node
+  ORA status --json rc=1
+      Error: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node
+  ORA instructions a --json rc=1
+      Error: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: did not find expected node content at line 3 column 3, while parsing a flow node
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== yaml-tab: tab indentation
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9
+  ORA V --json rc=1
+        "error": "Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9",
+      Error: Schema validation failed: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9
+  ORA status --json rc=1
+      Error: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9
+  ORA instructions a --json rc=1
+      Error: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: found a tab character that violates indentation at line 6 column 1, while scanning a plain scalar at line 5 column 9
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== empty-file: schema.yaml empty
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: missing field `name`
+  ORA V --json rc=1
+        "error": "Schema parse error: missing field `name`",
+      Error: Schema validation failed: Schema parse error: missing field `name`
+  ORA status --json rc=1
+      Error: Schema parse error: missing field `name`
+  ORA instructions a --json rc=1
+      Error: Schema parse error: missing field `name`
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: missing field `name`
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== no-name: missing top-level name
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: missing field `name`
+  ORA V --json rc=1
+        "error": "Schema parse error: missing field `name`",
+      Error: Schema validation failed: Schema parse error: missing field `name`
+  ORA status --json rc=1
+      Error: Schema parse error: missing field `name`
+  ORA instructions a --json rc=1
+      Error: Schema parse error: missing field `name`
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: missing field `name`
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== no-version: missing version
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: missing field `version`
+  ORA V --json rc=1
+        "error": "Schema parse error: missing field `version`",
+      Error: Schema validation failed: Schema parse error: missing field `version`
+  ORA status --json rc=1
+      Error: Schema parse error: missing field `version`
+  ORA instructions a --json rc=1
+      Error: Schema parse error: missing field `version`
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: missing field `version`
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== no-description: missing description
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== no-artifacts: missing artifacts
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: missing field `artifacts`
+  ORA V --json rc=1
+        "error": "Schema parse error: missing field `artifacts`",
+      Error: Schema validation failed: Schema parse error: missing field `artifacts`
+  ORA status --json rc=1
+      Error: Schema parse error: missing field `artifacts`
+  ORA instructions a --json rc=1
+      Error: Schema parse error: missing field `artifacts`
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: missing field `artifacts`
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== no-apply: missing apply
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== art-no-id: artifact a missing id
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5
+  ORA V --json rc=1
+        "error": "Schema parse error: artifacts[0]: missing field `id` at line 5 column 5",
+      Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5
+  ORA status --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5
+  ORA instructions a --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `id` at line 5 column 5
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== art-no-generates: artifact a missing generates
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5
+  ORA V --json rc=1
+        "error": "Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5",
+      Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5
+  ORA status --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5
+  ORA instructions a --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `generates` at line 5 column 5
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== art-no-description: artifact a missing description
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5
+  ORA V --json rc=1
+        "error": "Schema parse error: artifacts[0]: missing field `description` at line 5 column 5",
+      Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5
+  ORA status --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5
+  ORA instructions a --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `description` at line 5 column 5
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== art-no-template: artifact a missing template
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5
+  ORA V --json rc=1
+        "error": "Schema parse error: artifacts[0]: missing field `template` at line 5 column 5",
+      Error: Schema validation failed: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5
+  ORA status --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5
+  ORA instructions a --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: artifacts[0]: missing field `template` at line 5 column 5
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== art-no-instruction: artifact a missing instruction
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== art-no-requires: artifact a missing requires
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== unknown-top-key: unknown top-level key
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== unknown-art-key: unknown artifact key
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== unknown-apply-key: unknown apply key
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== dup-id: third artifact with duplicate id a
+  ORA V rc=1
+      Schema 'm' is invalid: Invalid schema: Duplicate artifact IDs
+  ORA V --json rc=1
+        "error": "Invalid schema: Duplicate artifact IDs",
+      Error: Schema validation failed: Invalid schema: Duplicate artifact IDs
+  ORA status --json rc=1
+      Error: Invalid schema: Duplicate artifact IDs
+  ORA instructions a --json rc=1
+      Error: Invalid schema: Duplicate artifact IDs
+  ORA instructions apply --json rc=1
+      Error: Invalid schema: Duplicate artifact IDs
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== req-unknown: b requires unknown artifact
+  ORA V rc=1
+      Schema 'm' is invalid: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'
+  ORA V --json rc=1
+        "error": "Invalid schema: Artifact 'b' requires unknown artifact 'zzz'",
+      Error: Schema validation failed: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'
+  ORA status --json rc=1
+      Error: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'
+  ORA instructions a --json rc=1
+      Error: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'
+  ORA instructions apply --json rc=1
+      Error: Invalid schema: Artifact 'b' requires unknown artifact 'zzz'
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== cycle: a requires b, b requires a
+  ORA V rc=1
+      Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies
+  ORA V --json rc=1
+        "error": "Invalid schema: Schema contains circular dependencies",
+      Error: Schema validation failed: Invalid schema: Schema contains circular dependencies
+  ORA status --json rc=1
+      Error: Invalid schema: Schema contains circular dependencies
+  ORA instructions a --json rc=1
+      Error: Invalid schema: Schema contains circular dependencies
+  ORA instructions apply --json rc=1
+      Error: Invalid schema: Schema contains circular dependencies
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== self-dep: a requires a
+  ORA V rc=1
+      Schema 'm' is invalid: Invalid schema: Schema contains circular dependencies
+  ORA V --json rc=1
+        "error": "Invalid schema: Schema contains circular dependencies",
+      Error: Schema validation failed: Invalid schema: Schema contains circular dependencies
+  ORA status --json rc=1
+      Error: Invalid schema: Schema contains circular dependencies
+  ORA instructions a --json rc=1
+      Error: Invalid schema: Schema contains circular dependencies
+  ORA instructions apply --json rc=1
+      Error: Invalid schema: Schema contains circular dependencies
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== apply-unknown: apply.requires unknown
+  ORA V rc=1
+      Schema 'm' is invalid: Invalid schema: Apply phase requires unknown artifact 'zzz'
+  ORA V --json rc=1
+        "error": "Invalid schema: Apply phase requires unknown artifact 'zzz'",
+      Error: Schema validation failed: Invalid schema: Apply phase requires unknown artifact 'zzz'
+  ORA status --json rc=1
+      Error: Invalid schema: Apply phase requires unknown artifact 'zzz'
+  ORA instructions a --json rc=1
+      Error: Invalid schema: Apply phase requires unknown artifact 'zzz'
+  ORA instructions apply --json rc=1
+      Error: Invalid schema: Apply phase requires unknown artifact 'zzz'
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== apply-empty: apply.requires []
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== apply-no-requires: apply without requires
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: apply: missing field `requires` at line 19 column 3
+  ORA V --json rc=1
+        "error": "Schema parse error: apply: missing field `requires` at line 19 column 3",
+      Error: Schema validation failed: Schema parse error: apply: missing field `requires` at line 19 column 3
+  ORA status --json rc=1
+      Error: Schema parse error: apply: missing field `requires` at line 19 column 3
+  ORA instructions a --json rc=1
+      Error: Schema parse error: apply: missing field `requires` at line 19 column 3
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: apply: missing field `requires` at line 19 column 3
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== apply-no-tracks: apply without tracks
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== apply-no-instruction: apply without instruction
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== tpl-missing: templates/b.md absent
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== tpl-empty: templates/b.md empty
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== tpl-dir-missing: no templates/ dir at all
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== tpl-traversal: template ../x.md (file exists at schemas/m/x.md)
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== tpl-traversal-missing: template ../nope.md (absent)
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== tpl-absolute: template absolute path to existing file
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== tpl-subdir: template sub/b.md existing
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== gen-absolute: generates absolute
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== gen-traversal: generates ../b.md
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== gen-glob: generates specs/**/*.md
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== empty-artifacts: artifacts: [] (apply.requires [])
+  ORA V rc=0
+      ✓ Schema 'm' is valid (0 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=1
+      Error: Artifact 'a' not found in schema
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== name-mismatch: name: other in dir m
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA V --verbose rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== no-schema-yaml: schemas/m/ has templates but no schema.yaml
+  ORA V rc=1
+      Schema 'm' is invalid: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA V --json rc=1
+        "error": "Schema not found: Schema 'm' not found in project, user, or built-in locations",
+      Error: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA status --json rc=1
+      Error: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA instructions a --json rc=1
+      Error: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA instructions apply --json rc=1
+      Error: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec']
+  OUR V rc=1
+== schema-yml: schema.yml instead of schema.yaml
+  ORA V rc=1
+      Schema 'm' is invalid: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA V --json rc=1
+        "error": "Schema not found: Schema 'm' not found in project, user, or built-in locations",
+      Error: Schema validation failed: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA status --json rc=1
+      Error: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA instructions a --json rc=1
+      Error: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA instructions apply --json rc=1
+      Error: Schema not found: Schema 'm' not found in project, user, or built-in locations
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec']
+  OUR V rc=1
+== version-str: version: "x"
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: version: invalid type: string "x", expected u32 at line 2 column 10
+  ORA V --json rc=1
+        "error": "Schema parse error: version: invalid type: string \"x\", expected u32 at line 2 column 10",
+      Error: Schema validation failed: Schema parse error: version: invalid type: string "x", expected u32 at line 2 column 10
+  ORA status --json rc=1
+      Error: Schema parse error: version: invalid type: string "x", expected u32 at line 2 column 10
+  ORA instructions a --json rc=1
+      Error: Schema parse error: version: invalid type: string "x", expected u32 at line 2 column 10
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: version: invalid type: string "x", expected u32 at line 2 column 10
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== version-2: version: 2
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== version-0: version: 0
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== name-empty: name: ''
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== name-list: name: [x]
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7
+  ORA V --json rc=1
+        "error": "Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7",
+      Error: Schema validation failed: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7
+  ORA status --json rc=1
+      Error: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7
+  ORA instructions a --json rc=1
+      Error: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: name: invalid type: sequence, expected a string at line 1 column 7
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== requires-string: requires: a (scalar)
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: artifacts[1].requires: invalid type: string "a", expected a sequence at line 16 column 15
+  ORA V --json rc=1
+        "error": "Schema parse error: artifacts[1].requires: invalid type: string \"a\", expected a sequence at line 16 column 15",
+      Error: Schema validation failed: Schema parse error: artifacts[1].requires: invalid type: string "a", expected a sequence at line 16 column 15
+  ORA status --json rc=1
+      Error: Schema parse error: artifacts[1].requires: invalid type: string "a", expected a sequence at line 16 column 15
+  ORA instructions a --json rc=1
+      Error: Schema parse error: artifacts[1].requires: invalid type: string "a", expected a sequence at line 16 column 15
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: artifacts[1].requires: invalid type: string "a", expected a sequence at line 16 column 15
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== artifacts-map: artifacts is a mapping
+  ORA V rc=1
+      Schema 'm' is invalid: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3
+  ORA V --json rc=1
+        "error": "Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3",
+      Error: Schema validation failed: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3
+  ORA status --json rc=1
+      Error: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3
+  ORA instructions a --json rc=1
+      Error: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3
+  ORA instructions apply --json rc=1
+      Error: Schema parse error: artifacts: invalid type: map, expected a sequence at line 5 column 3
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=1
+== id-empty: artifact id ''
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== id-weird: artifact id 'B C/..'
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== description-null: description: ~
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m
+== instruction-multiline: instruction block scalar (control)
+  ORA V rc=0
+      ✓ Schema 'm' is valid (2 artifacts)
+  ORA V --json rc=0
+  ORA status --json rc=0
+  ORA instructions a --json rc=0
+  ORA instructions apply --json rc=0
+  ORA schemas --json rc=0 names=['spec-driven', 'no-spec', 'm']
+  OUR V rc=0
+      ✓ m

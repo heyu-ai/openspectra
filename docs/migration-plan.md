@@ -23,7 +23,9 @@
 
 - **A1 指令完整**：oracle 3.0.0 `--help` 列出的每個子指令與 flag，OpenSpectra 都能接受，不會出現
   `unexpected argument` 或 `unrecognized subcommand`。量測方式：`--help` flag 差集為空
-  （D5 那四項延到最後做，但仍在驗收範圍內）。
+  （D5 那四項延到最後做，但仍在驗收範圍內）。**例外**：`feedback` 依 W12-1 裁決（2026-09-28）
+  不移植，A1 量測時以已知分歧列排除；理由是 oracle 的 `feedback` 什麼都不送出，只把使用者導向
+  Spectra.app 的 issue 追蹤，而且沒有任何 skill 或 template 呼叫它。
 - **A2 skill 能用**：3.0.0 skill 模板裡每一個 `spectra ...` 呼叫都能被 OpenSpectra 解析。
   量測方式：`cargo test` 內的模板 CLI 解析測試，CI 在 Linux 與 macOS 上都跑。
 - **A3 輸出正確**：在 corpus 專案（yibi-mvp、nextrek-cli、yibi-stack 的副本）上，唯讀指令的
@@ -225,14 +227,14 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 | W7d | `drift` 的 `tasks_blocked_external`／`tasks_maybe_resolved` 偵測（oracle 3.0.0 在 corpus 上有正樣本，含 `commit_sha`／`commit_date`／`commit_subject`；連帶 Tasks 分數、`severity`、`recommended_action`），以及 apply `preflight` 的 `missingFiles`／`driftedFiles` | A3 | W7b 發現 | PR #212（stacked on #211；RE 模型對 oracle 重播 733＋730 次全吻合；fixture 另在 oracle 上驗證；parity 84 → 62） |
 | W7e | human 輸出納入量尺：`parity-probe.py` 目前只比 `--json`，human 版面的差異（W7b 的 `drift` 整片不同即因此漏掉）不會被抓到；擴充為同時比對各指令的 human stdout／stderr，逐項修正或列為已知分歧 | A3 | W7b 發現 | PR #206（stacked on #205；量尺擴充後另修 status 的 artifact 順序（Kahn 逐輪＋字母序）與選填 apply instruction；parity 80 → 85，新增列皆已歸屬 W7d／W9／W10／W7a） |
 | W7f | 自訂 schema 的 apply 與 validate：apply 沒有 `tracks`／tasks 檔時 oracle 為 `ready`（OpenSpectra `blocked`）；`contextFiles` 以 id 列出已完成的自訂 artifact；`schema validate` human 訊息 `✓ Schema '<name>' is valid (<N> artifacts)` | A3 | W7e 發現 | PR #207（stacked on #206；apply 依 `apply.tracks` 讀 task、state 規則 10 個情境與 oracle 一致、contextFiles 以 id 列出；`schema validate` 移到 W7g） |
-| W7g | `schema validate`（human `✓ Schema '<name>' is valid (<N> artifacts)`、JSON `{artifactCount, name, valid}`、不帶名稱時驗證設定的 schema、找不到時的錯誤格式、無效 schema 的訊息）與 `schema fork` 寫出的 artifact 順序 | A3 | W7f 發現 | RE 完成（規格在 job tmp `w7gre/SPEC.md`），**等 D11 裁決**再實作 |
+| W7g | `schema validate`（human `✓ Schema '<name>' is valid (<N> artifacts)`、JSON `{artifactCount, name, valid}`、不帶名稱時驗證設定的 schema、找不到時的錯誤格式、無效 schema 的訊息）與 `schema fork` 寫出的 artifact 順序 | A3 | W7f 發現 | RE 完成（規格 `docs/reverse-engineering/specs/w7g-schema/SPEC.md`）；D11 已裁決，待實作 |
 | W7h | `drift` Structure 維度的 anchor 邊角差異（W7d 差分的 7 個 jail：例如 design 裡的 `src/n.md` oracle 判為 broken、broken anchor 的排序） | A3 | W7d 發現 | PR #213（base #212，與 W9b 平行；FilePath 只看 git index、broken 依類別排序；差分 759／761，剩 2 個為 #123 刻意分歧） |
 | W8 | `locale` 對應（`tw` 等）套用到 `instructions` 等輸出 | A3 | 新 issue | PR #208（stacked on #207；tw／ja／en 對應顯示名稱、其他原樣；locale 容錯解析修掉非字串值讓所有指令報錯的問題；28 次比對相同；parity 85 → 84） |
-| W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | RE 完成（`w9re/SPEC.md`）。**W9b** 判定規則依 OpenSpec 1.13.2（D1）：PR #214（新增 `capture-validate-openspec.py` 與 fixture golden，逐欄重播；22 個 mutation 全 KILLED）。**W9a** oracle 格式的呈現**等 D12 裁決** |
+| W9 | `validate`：規則對齊 OpenSpec 1.13.2（含 #183）＋ `--format oracle`（預設）／`openspec` | A1、A4 | #189、#183 | RE 完成（`docs/reverse-engineering/specs/w9-validate/SPEC.md`）。**W9b** 判定規則依 OpenSpec 1.13.2（D1）：PR #214（新增 `capture-validate-openspec.py` 與 fixture golden，逐欄重播；22 個 mutation 全 KILLED）。**W9a** oracle 格式的呈現：D12 已裁決，待實作 |
 | W10 | `analyze` 對齊 3.0.0（dimension 數與檢查項） | A3 | #169 | PR #215（analyze 拆成 8 個模組、新增 Localization 維度；語料 31 個 change 中 29 個逐位元組相同，其餘 2 個只差 readdir 順序；新增 `capture-analyze.py` 與 240 次執行的 golden；26 個 mutation 全 KILLED；analyze 的 parity 已知分歧 28 列 → 2 列；**3 項待裁決**見 PR） |
 | W11 | 內建實作切換 `OPENSPECTRA_IMPL`／`.spectra/impl`／shadow／`spectra impl` | 切換與回退 | 新 issue | PR #209（stacked on #208；另含 `scripts/shadow-report.py`；真 oracle 煙霧測試 shadow 輸出與 oracle 逐位元組相同；測試 helper 固定 `OPENSPECTRA_IMPL=oss` 並經正反向對照） |
 | W12 | D5 項目：`decisions`、`show --deltas-only/--requirements/--item-type`、`demo`、`feedback` | A1 | #166、#62 | PR #216（A1 surface 缺口歸零；parity 62 → 56，只刪不增；`decisions --json` 在三個 corpus 共 758 筆欄位與 oracle 相同；新增 `capture-demo.py`；11 個 mutation 全被抓到；`show` 缺名稱改為 exit 1 屬行為變更；**5 項待裁決**見 PR） |
-| W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.`（W6 實測：3.0.0 所有專案指令皆然）；只有 `openspec/` 目錄、沒有 `.spectra.yaml` 的專案 oracle 視為已初始化（`spec_dir: openspec`，root 探索也認這個標記），OpenSpectra 回 Not initialized——純 OpenSpec 專案相容性缺口（W6 發現） | A3 | W2 發現 | PR #211（stacked on #209；**部分完成**：openspec 標記、未初始化訊息、`.gitkeep` 已對齊；**待裁決 D9** 新專案預設 spec_dir（oracle `docs/spectra` vs OpenSpec `openspec/`）與 `.spectra.yaml` 範本、**D10** 只有 `openspec/` 時 init 是否跟 oracle 拒絕（會犧牲失敗重試）） |
+| W14 | `init` 對齊 3.0.0（oracle 預設寫出 `spec_dir: docs/spectra`，OpenSpectra 仍是 `openspec`）；未初始化錯誤訊息改為 oracle 的 `Not initialized. Run 'spectra init' to initialize.`（W6 實測：3.0.0 所有專案指令皆然）；只有 `openspec/` 目錄、沒有 `.spectra.yaml` 的專案 oracle 視為已初始化（`spec_dir: openspec`，root 探索也認這個標記），OpenSpectra 回 Not initialized——純 OpenSpec 專案相容性缺口（W6 發現） | A3 | W2 發現 | PR #211（stacked on #209；**部分完成**：openspec 標記、未初始化訊息、`.gitkeep` 已對齊；剩餘部分：**D9 已裁決**新專案預設 `docs/openspec`（待實作，含 `.spectra.yaml` 範本），**D10 已裁決**維持非破壞完成（不需改動）） |
 | W13 | 總驗收：本機整合分支合併所有 W 分支，release build 安裝到 `~/.local/bin`，在 corpus 上跑 A1–A4，列出剩餘問題並回填佇列 | A1–A5 | — | 待辦 |
 
 **合併狀態（2026-09-28）**：依 howie 指示，W1–W9b 的 stacked PR（#196–#214，共 17 個）已依序
@@ -475,6 +477,18 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | D6 | 實作切換放在哪裡 | **做成 OpenSpectra 內建** | Phase 1 |
 | D7 | touched／baseline 模型（W4、W6） | **(a) 以 v3 per-task baseline 取代 #98 per-change baseline** | W4、W6 |
 | D8 | git 存取方式（`scope`） | **(b) 維持 git CLI**，libgit2 特有的 7 種 patch 差異記為刻意分歧 | W6 |
+| D9 | 新專案 `init` 的預設 spec_dir | **`docs/openspec`**（oracle `docs/spectra`、OpenSpec `openspec/` 皆不採用）。已告知並確認代價：OpenSpec 1.13.2 把目錄寫死為 `<專案根>/openspec`（`dist/core/config.js:1`），在 repo 根目錄跑 OpenSpec CLI 會找不到規格 | W14 |
+| D10 | 只有 `openspec/` 的專案跑 `init` | **維持非破壞完成**（保住中途失敗可重試），oracle 的拒絕記為刻意分歧 | W14 |
+| D11 | `schema validate`／`fork` 的 6 項取捨 | 1 路徑含 `..`／絕對路徑：**維持拒絕**；2 template 缺檔／空檔：**跟 oracle 視為合法，但輸出 warning**；3 fork 目標名稱：**維持檢查**；4 fork 寫入：**維持原子替換**；5 fork 專案 schema：**必填欄位跟 oracle 放寬，複製維持原樣（保留註解）**；6 不帶名稱：**跟 oracle 驗 `spec-driven`** | W7g |
+| D12 | `validate` oracle 格式如何呈現 OpenSpec 規則 | 1 INFO：**只把「Archive would refuse」放進 warnings**；2 措辭：**OpenSpec 措辭，delta 檔加 `specs/<cap>/spec.md: ` 前綴**；3 `--all`／`--changes --specs`：**照 OpenSpec 語意**；4 `validate <item>`：**接受 spec 名稱**；5 不帶參數：**跟 oracle 驗全部 changes**；6 trace footer 檢查：**維持 ERROR** | W9a |
+| W10-1 | `CLICOLOR_FORCE` | **不支援**，維持 CLI 全域規則（TTY、`--no-color`、`NO_COLOR`），記為刻意分歧 | W10（#215） |
+| W10-2 | 同一對區段內多個衝突 requirement 的順序（oracle 為 HashSet 序、每次不同） | **前一個區段的文件順序** | W10（#215） |
+| W10-3 | `capture-analyze.py` 的 CLAUDE.md 條目 | **補上** | W10（#215） |
+| W12-1 | `feedback` | **完全移除**（不註冊子指令），A1 記為例外 | W12（#216）、A1 |
+| W12-2 | `decisions` 封存項目順序（oracle 為 APFS readdir 序） | **目錄名稱遞增**，記為刻意分歧 | W12（#216） |
+| W12-3 | `list` 濾掉日期開頭的使用中 change（既有分歧） | **對齊 oracle**，另開 issue 處理 | 新 issue |
+| W12-4 | `demo` 是否寫 `.started` | **跟 oracle 不寫** | W12（#216） |
+| W12-5 | `created_by` 是否遵守 `GIT_CONFIG_GLOBAL`（既有分歧） | **維持遵守**，記為刻意分歧 | — |
 
 **D8（2026-09-28 howie 裁決：(b) 維持 git CLI）：`scope` 的 git 存取方式。** 下列 7 種邊角情況記為刻意分歧。原始說明： oracle 內含 libgit2，`scope`
 輸出的 patch 是 libgit2 的格式。RE 實測（`scope` 規格）與 `git diff` 相比有 7 種位元組差異：
@@ -524,7 +538,9 @@ fix-1833 沒有 upstream，但它獨有的 3 個 commit 都在已 merge 的 PR #
 唯一的風險是**未來**的 oracle 模板開始呼叫它們。M1 的「模板 CLI 解析檢查」會在那時立刻失敗，
 所以晚點做不會被靜默漏掉。
 
-## 待裁決（2026-09-28 執行中發現，建議在括號內）
+## D9–D12 原始選項（2026-09-28 執行中發現；同日已裁決，結果見「裁決紀錄」）
+
+以下保留提出裁決時的選項說明與當時的建議（括號內），供日後追溯理由；D9 的裁決與建議不同。
 
 **D9 新專案預設 spec_dir**（W14，PR #211）：oracle 3.0.0 的 `init` 預設 `docs/spectra`，OpenSpec 慣例與
 OpenSpectra 預設是 `openspec/`——oracle 與 OpenSpec 衝突。`.spectra.yaml` 範本文字隨此決定。
@@ -533,7 +549,7 @@ OpenSpectra 預設是 `openspec/`——oracle 與 OpenSpec 衝突。`.spectra.ya
 **D10 只有 `openspec/` 的專案跑 `init`**（W14）：oracle 拒絕（`Already initialized`），OpenSpectra 以非破壞方式完成。
 照 oracle 會讓 init 中途失敗後無法直接重試。（建議維持現狀：寬鬆且保住可重試的保證。）
 
-**D11 `schema validate`／`schema fork`**（W7g，規格 `w7gre/SPEC.md` §5）：
+**D11 `schema validate`／`schema fork`**（W7g，規格 `specs/w7g-schema/SPEC.md` §5）：
 1. template 路徑含 `..` 或絕對路徑：oracle 會讀 schema 目錄外的檔案、fork 也寫到外面；OpenSpectra 拒絕。（建議維持拒絕，安全考量，記為刻意分歧。）
 2. template 缺檔或空檔：oracle 視為合法、fork 略過缺檔；OpenSpectra 視為錯誤。（建議跟 oracle：只報 warning 不擋。）
 3. fork 目標名稱：oracle 不檢查，`../esc` 會寫到 `schemas/` 外。（建議維持檢查。）
@@ -542,7 +558,7 @@ OpenSpectra 預設是 `openspec/`——oracle 與 OpenSpec 衝突。`.spectra.ya
 6. `schema validate` 不帶名稱：oracle 一律驗 `spec-driven`（不看 config）；OpenSpectra 驗全部專案 schema。（建議跟 oracle。）
 輸出格式（`✓ Schema '<n>' is valid (<N> artifacts)`、JSON `{artifactCount,name,valid}`、錯誤兩行）與 fork 的 artifact 順序不涉取捨，裁決後一併實作。
 
-**D12 `validate` 的 oracle 格式怎麼呈現 OpenSpec 規則的結果**（W9，規格 `w9re/SPEC.md`）：
+**D12 `validate` 的 oracle 格式怎麼呈現 OpenSpec 規則的結果**（W9，規格 `specs/w9-validate/SPEC.md`）：
 1. OpenSpec 的 INFO 在只有 errors／warnings 的 oracle 格式中怎麼放。（建議只把「Archive would refuse」放進 warnings；全部放會讓 corpus specs 多 317 條「requirement 太長」。）
 2. 訊息措辭。（建議用 OpenSpec 措辭，delta 檔的訊息前綴 `specs/<cap>/spec.md: `。）
 3. `--all` 與 `--changes --specs`：oracle 的 `--all` 只驗 changes、兩者並用只驗 specs。（建議照 OpenSpec 的語意，oracle 行為記為分歧。）

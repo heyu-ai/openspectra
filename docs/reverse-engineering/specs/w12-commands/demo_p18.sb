@@ -1,0 +1,6 @@
+(version 1)
+(allow default)
+(deny network*)
+(deny process-exec (literal "/usr/bin/open"))
+(deny file-write* (subpath "/Users") (subpath "/private/var/folders") (subpath "/private/tmp"))
+(allow file-write* (subpath "/Users/howie/.claude/jobs/9eb90dff/tmp/w12/jails/p18"))

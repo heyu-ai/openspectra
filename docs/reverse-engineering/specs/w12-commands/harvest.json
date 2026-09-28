@@ -1,0 +1,107 @@
+{
+  "runs": 600,
+  "adjectives": {
+    "bold": 29,
+    "bright": 34,
+    "calm": 35,
+    "cool": 30,
+    "dark": 28,
+    "deep": 38,
+    "eager": 21,
+    "fast": 28,
+    "gentle": 28,
+    "happy": 29,
+    "keen": 31,
+    "light": 31,
+    "neat": 25,
+    "proud": 38,
+    "quick": 22,
+    "rare": 32,
+    "sharp": 32,
+    "tall": 33,
+    "vivid": 30,
+    "warm": 26
+  },
+  "pokemon": {
+    "absol": 31,
+    "arcanine": 22,
+    "bulbasaur": 36,
+    "charizard": 35,
+    "charmander": 36,
+    "dragonite": 31,
+    "eevee": 28,
+    "gardevoir": 25,
+    "gengar": 34,
+    "gyarados": 30,
+    "jigglypuff": 29,
+    "lapras": 20,
+    "lucario": 40,
+    "mewtwo": 28,
+    "pikachu": 31,
+    "rayquaza": 28,
+    "snorlax": 30,
+    "squirtle": 28,
+    "togekiss": 32,
+    "umbreon": 26
+  },
+  "themes": {
+    "access-control": 82,
+    "audit-trail": 91,
+    "batch-export": 72,
+    "keyboard-macros": 69,
+    "real-time-sync": 66,
+    "smart-search": 75,
+    "snapshot-restore": 81,
+    "theme-engine": 64
+  },
+  "files": {
+    "access-control": [
+      "design.md",
+      "proposal.md",
+      "specs/access-control/spec.md",
+      "tasks.md"
+    ],
+    "audit-trail": [
+      "design.md",
+      "proposal.md",
+      "specs/audit-trail/spec.md",
+      "tasks.md"
+    ],
+    "batch-export": [
+      "design.md",
+      "proposal.md",
+      "specs/batch-export/spec.md",
+      "tasks.md"
+    ],
+    "keyboard-macros": [
+      "design.md",
+      "proposal.md",
+      "specs/keyboard-macros/spec.md",
+      "tasks.md"
+    ],
+    "real-time-sync": [
+      "design.md",
+      "proposal.md",
+      "specs/real-time-sync/spec.md",
+      "tasks.md"
+    ],
+    "smart-search": [
+      "design.md",
+      "proposal.md",
+      "specs/smart-search/spec.md",
+      "tasks.md"
+    ],
+    "snapshot-restore": [
+      "design.md",
+      "proposal.md",
+      "specs/snapshot-restore/spec.md",
+      "tasks.md"
+    ],
+    "theme-engine": [
+      "design.md",
+      "proposal.md",
+      "specs/theme-engine/spec.md",
+      "tasks.md"
+    ]
+  }
+}

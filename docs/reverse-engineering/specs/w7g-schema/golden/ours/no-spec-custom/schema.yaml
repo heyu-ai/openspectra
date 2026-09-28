@@ -1,0 +1,61 @@
+name: no-spec-custom
+version: 1
+description: No-spec workflow - proposal -> tasks (design optional)
+artifacts:
+- id: proposal
+  generates: proposal.md
+  description: Proposal document for changes with no capability-level spec impact
+  template: proposal.md
+  instruction: |
+    Create the proposal document that establishes WHY this no-spec change is needed.
+
+    Use this schema only when the change does not alter capability-level observable behavior.
+
+    Sections:
+    - **Why**: 1-2 sentences on the problem or opportunity. What problem does this solve? Why now?
+    - **What Changes**: Bullet list of implementation, tooling, dependency, build, or documentation changes.
+    - **Non-Goals** (optional): Scope exclusions and rejected approaches. If design.md will be skipped, write Non-Goals here so rejected approaches and scope exclusions are recorded in a persistent artifact.
+    - **Impact**: Affected code, APIs, dependencies, systems, and the literal line `Affected specs: none`.
+
+    Do NOT create a Capabilities section for no-spec changes.
+    Do NOT create delta specs.
+  requires: []
+- id: design
+  generates: design.md
+  description: Optional technical design document with implementation details
+  template: design.md
+  instruction: |
+    Create the design document only when the no-spec change still benefits from technical decisions before coding.
+
+    This artifact is optional. Use it for cross-cutting tooling changes, dependency migrations, build/release changes, or other implementation complexity.
+
+    Keep the contract focused on tooling/build/documentation behavior and state explicitly that capability-level observable behavior is unchanged.
+  requires:
+  - proposal
+- id: tasks
+  generates: tasks.md
+  description: Implementation checklist with trackable tasks
+  template: tasks.md
+  instruction: |
+    Create the task list that breaks down the implementation work.
+
+    **IMPORTANT: Follow the template below exactly.** The apply phase parses checkbox format to track progress. Tasks not using `- [ ]` won't be tracked.
+
+    Guidelines:
+    - Group related tasks under ## numbered headings
+    - Each task MUST be a checkbox: `- [ ] X.Y Task description`
+    - Use the instructions JSON `locale` for human-readable task group headings and task descriptions.
+    - Preserve machine-readable syntax and technical tokens exactly: markdown headings, checkbox markers, task numbers, `[P]` markers, file paths, symbol names, commands, API names, and code identifiers MUST NOT be translated or localized.
+    - Each task MUST state the behavior or contract being delivered and the verification target that proves completion.
+    - File paths MAY appear in a task description, but only as locator context. The task SHALL still state the behavior or contract on top of any file path it mentions.
+
+    Reference proposal.md for scope. Reference design.md only if it exists.
+  requires:
+  - proposal
+apply:
+  requires:
+  - tasks
+  tracks: tasks.md
+  instruction: |
+    Read context files, work through pending tasks, mark complete as you go.
+    Pause if you hit blockers or need clarification.
