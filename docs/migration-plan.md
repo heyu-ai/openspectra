@@ -1,6 +1,7 @@
 # OpenSpectra 導入計畫：從 Spectra.app 遷移到各專案
 
-> 狀態：**proposed**（2026-09-28 起草，待人類裁決「需要裁決的事項」一節後再執行）。
+> 狀態：**proposed**（2026-09-28 起草；D1–D6 已由 howie 於同日裁決，見「裁決紀錄」一節，
+> 其中 D4 的執行待確認）。
 > 本文的「實測」都有附重現指令（見附錄）；標「推論」的是尚未驗證的判斷。
 
 ## 背景與目標
@@ -34,7 +35,7 @@
 | 專案 | 特徵 | 生成的 skill 數 | 風險 |
 |---|---|---|---|
 | `heyu-ai/yibi-mvp` | 22 個 active change、80 份 spec、自訂 schema `spec-driven-yibi`、`locale: tw`、`.spectra/spectra.db`；CI 已混用 openspec 1.5.0 與 OpenSpectra v0.8.0（`docs/openspec/spectra-vendor/`，ADR-0021） | 13 | 高 |
-| `heyu-ai/yibi-mvp-fix-1826/1827/1828/1833` | yibi-mvp 的整份複本（不是 git worktree） | 13 | 跟隨 yibi-mvp，或直接清掉 |
+| `heyu-ai/yibi-mvp-fix-1826/1827/1828/1833` | yibi-mvp 的 linked worktree（`--git-common-dir` 指向 `yibi-mvp/.git`），對應的 PR #2011／#2007／#2008／#2010 都已 merge | 13 | 不遷移，清掉（D4） |
 | `yibi-stack` | plugin 原始碼 repo；root `openspec/` 有 8 個 active change，`docs/openspec/` 另有 3 個 | 13 | 高（它同時是 skill 的上游） |
 | `heyu-ai/nextrek-cli` | `worktree: true`、多數 skill 的 `claude_effort` 設為 `xhigh` | 13 | 中 |
 | `heyu-ai/yibi-agent` | 3 個 active change | 12 | 中 |
@@ -109,12 +110,40 @@
 
 **阻擋項 B3：判定結果不同。**
 
-- `validate --changes`：oracle 判 **0/21** 無效（exit 0），OpenSpectra 判 **9/21** 無效（exit 1）。
-  這就是 #189「oracle 3.0.0 與 OpenSpec 分歧」待裁決的內容。任何在 archive 前先跑 validate 的
-  skill，切換後會卡在這 9 個 change。
+- `validate --changes`：oracle 判 **0/21** 無效（exit 0），OpenSpec 1.13.2 判 **8/21**，
+  OpenSpectra 判 **9/21**（exit 1）。3.0.0 skill 在 archive 前會跑 `spectra validate "<name>"`
+  （看 exit code 與文字，不帶 `--json`），所以切換後會卡在這些 change。詳見下方三方比對。
 - `instructions`：OpenSpectra 有讀 `.spectra.yaml` 的 `locale: tw`（`config.rs:14`），但輸出的
   `locale` 仍是 `English`，oracle 則是 `Traditional Chinese (繁體中文)`。這會讓 agent 用錯語言寫 artifact。
 - `analyze`：dimension 數量不同（oracle 5 個，OpenSpectra 4 個），各 dimension 的 finding 數量也不同（#169）。
+
+### validate 嚴格度：oracle、OpenSpec、OpenSpectra 三方比對
+
+同一份 yibi-mvp 副本、同樣 21 個 change，分別用三個工具跑 `validate --changes --json`
+（OpenSpec 用 `npx @fission-ai/openspec@1.13.2`，在副本加一個 `openspec -> docs/openspec`
+symlink，因為它固定從 cwd 找 `openspec/`）：
+
+| 規則 | oracle 3.0.0 | OpenSpec 1.13.2（原始碼位置） | OpenSpectra v0.13.0 | 受影響的 change |
+|---|---|---|---|---|
+| MODIFIED 區塊漏掉主 spec 仍有的 scenario | 不檢查 | **ERROR**（`dist/core/validation/validator.js:645`，#1477；理由是 archive 會整塊取代，漏掉就等於刪掉） | ERROR，但**同一件事報兩則**（#183） | 0070、0098、0140、0141、0148 |
+| change 完全沒有 delta | WARNING「No delta specs found」，仍判 valid | **ERROR**（`validator.js:448`，除非 `.openspec.yaml` 宣告 `skip_specs`） | ERROR | 0084、0126、0144 |
+| ADDED／MODIFIED requirement 沒有 scenario | 不檢查 | ERROR（`validator.js:257`、`:289`） | ERROR，另外在 0098 多報了一則 OpenSpec 沒報的 | 0098 |
+| MODIFIED 指向主 spec 不存在的 requirement | WARNING（archive 會拒絕） | **INFO**「Archive would refuse this delta」（`validator.js:842`），仍判 valid | **ERROR** | 0046 |
+| 目標 requirement 帶有無法辨識的 `@trace` footer | 無 | 無 | ERROR（OpenSpectra 獨有，來自 sidecar 分歧 #179） | 0141 |
+| **合計無效** | **0** | **8** | **9** | |
+
+解讀：
+
+- oracle 的 validate 對這些語意問題全部放行，問題要到 archive 時才浮現：0046 的 MODIFIED
+  目標不存在，oracle 自己的 warning 就說 archive 會拒絕。0070 等 5 個漏 scenario 的 change，
+  MODIFIED 是整塊取代，所以推論 oracle archive 後那些 scenario 會消失（**未實測**，要在 M4
+  用 oracle 跑一次 archive 確認）。OpenSpec 則是把這類「archive 會出事」的情況提前到 validate 擋下。
+- OpenSpectra 大致跟隨 OpenSpec，但有三處偏離：比 OpenSpec 嚴（0046 的 ERROR 應為 INFO）、
+  重複回報（#183）、0098 多一則誤報（待查），以及獨有的 trace footer 檢查。
+- 依 D1 裁決（先與 OpenSpec 一致），上面三處偏離要修掉；trace footer 那條屬於 OpenSpectra
+  的刻意分歧，要另外決定在「OpenSpec 模式」下是 ERROR 還是降級（見 M4）。
+- 對 yibi-mvp 的實際意義：切換後有 8 個 change 需要修。其中漏 scenario 的 5 個與沒有 delta 的
+  3 個，在 OpenSpec 的規則下本來就不合格，所以這主要是把既有問題提早揭露。
 
 ### `update` 的副作用（與相容性無關，但切換時一定會遇到）
 
@@ -154,7 +183,8 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
    （忠實優先；刻意分歧要 opt-in、寫進 CHANGELOG）。
 2. **相容性的優先序：消費端合約 > oracle 3.0.0 > OpenSpec。** 三者衝突時先保住合約；oracle 與
    OpenSpec 互相矛盾時（#189），由人裁決，不由 agent 自行決定（見 `CLAUDE.md` 的 Agent conduct）。
-3. **切換必須可以一鍵回退。** 用 shim 決定 `spectra` 指向哪個實作，不直接改 symlink（見 Phase 1）。
+3. **切換必須可以一鍵回退。** 由 OpenSpectra 內建的實作切換（`OPENSPECTRA_IMPL`）決定實際執行者，
+   不靠逐台機器改 symlink（見 Phase 1）。
 4. **先 shadow 再切換。** 先讓 OpenSpectra 在背景跑唯讀指令並記錄差異，差異收斂之後才讓它成為主要實作。
 5. **由低風險到高風險，逐個專案切換**，每個專案切換後至少觀察一週再換下一批。
 
@@ -162,7 +192,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
 
 ```
 Phase 0（openspectra repo：補阻擋項 + parity 基礎建設）
-   └─> Phase 1（本機 shim + shadow 模式）
+   └─> Phase 1（內建實作切換 + shadow 模式）
           └─> Phase 2（試點：低風險專案）
                  └─> Phase 3（中風險專案）
                         └─> Phase 4（yibi-mvp、yibi-stack、CI）
@@ -187,37 +217,74 @@ Phase 0（openspectra repo：補阻擋項 + parity 基礎建設）
 **M2. 解決 B1**（模板呼叫的 CLI 介面）。依呼叫次數排序：
 `instructions --omit-context/--compact/--summary/--agent/--type` → `new change --agent/--schema`
 加上 `no-spec` schema → `task start`／`task done --file`（#190）→ `scope`（#165）→ `archive --preview/--json`。
-每一項都要先抓 oracle golden（依本 repo 慣例）。在全部完成之前，也可以考慮讓 `update` 暫時改寫
-模板、只呼叫已支援的 flag。這是架構取捨，**需要人裁決**（見下方「需要裁決的事項」D2）。
+每一項都要先抓 oracle golden（依本 repo 慣例）。依 D2 裁決採 (a)：先補齊 CLI 介面，
+`update` 維持逐位元組輸出 oracle 模板，不做降級版模板。在 M2 完成之前，任何專案都不跑 `update`。
 
 **M3. 解決 B2**：`list`／`list --specs`／`show`／`drift`／`instructions` 的 JSON 欄位補齊到 3.0.0。
-`validate --json` 的形狀比較特殊：OpenSpectra 刻意採用 OpenSpec v2 格式（README 有寫），
-要決定是否提供 oracle 相容格式（例如 `--format oracle`，或反過來把 v2 放在 flag 後面），**需要人裁決**（D3）。
+`validate --json` 依 D3 裁決提供兩種格式，兩者的差異如下：
 
-**M4. 解決 B3**：`locale` 的對應（`tw` → `Traditional Chinese (繁體中文)`）、`analyze` 的 dimension
-（#169）；`validate` 嚴格度依 #189 的裁決處理。
+| | oracle 3.0.0 格式 | OpenSpec 格式（OpenSpectra 現行，README 稱「v2」） |
+|---|---|---|
+| 頂層 | 陣列 `[...]` | 物件 `{items, summary, version, root}` |
+| 每個項目 | `{change 或 spec, valid, errors, warnings}`，用 key 名稱區分是 change 還是 spec | `{id, type, valid, issues, durationMs}`，用 `type` 欄位區分 |
+| 問題清單 | `errors`、`warnings` 兩個**字串陣列**，只有訊息文字 | 單一 `issues` 陣列，每筆是 `{level: ERROR/WARNING/INFO, path, message, line?}`，有嚴重度、檔案路徑，部分有行號 |
+| 彙總 | 無，要自己數 | `summary.totals`（passed／failed／items）與 `summary.byType` |
+| 其他 | 無 | `version`、`root`（專案根目錄） |
 
-**M5. 其他 3.0.0 缺口**：`decisions`（#166）、`show` 的三個 flag、`demo`（#62）。這些目前沒有
-消費端，優先度最低。依 `CLAUDE.md` 的規定，移植前要先確認有消費者，沒有就回報給人決定要不要做。
+OpenSpectra 現行輸出和 OpenSpec 1.13.2 原版只差三處：`version` 是 `"2.0"`（OpenSpec 是 `"1.0"`）、
+`summary.totals` 多一個 `total`、`root` 是 `{path, spec_dir}`（OpenSpec 是 `{path, source}`）。
+
+做法：新增 `--format oracle|openspec`。oracle 格式讓依賴 oracle 輸出的工具可以無痛切換；
+openspec 格式補齊上述三處差異，做到與 OpenSpec 1.13.2 逐欄位一致。**預設值建議維持 openspec**，
+理由是實測找到的唯一 JSON 消費者是 yibi-mvp 的 `scripts/openspec_validate_report.py`，它讀的是
+OpenSpec 格式的 `summary.totals.failed`（:869）；3.0.0 skill 呼叫 `spectra validate "<name>"`
+時不帶 `--json`，只看 exit code 與文字。預設值若要改成 oracle，請再告知。
+
+**M4. 解決 B3**：
+- `validate` 依 D1 裁決先與 OpenSpec 1.13.2 一致：MODIFIED 目標不存在降為 INFO「Archive would
+  refuse this delta」、scenario 遺失只報一則（#183）、查明 0098 多報的「缺 Scenario」是否為誤報。
+  trace footer 檢查是 OpenSpectra 的刻意分歧，在 OpenSpec 一致性的比對中要排除或另外標註。
+  驗收：在 yibi-mvp 副本上與 `openspec validate --changes --json` 的判定逐 change 相同（8/21）。
+- 另外用 oracle 在副本上實際 archive 一個漏 scenario 的 change（例如 0070），確認 oracle 是否真的
+  會刪掉 scenario，把結果記進 `docs/reverse-engineering/validate.md`，作為「跟 OpenSpec 而不跟
+  oracle」的證據。
+- `locale` 的對應（`tw` → `Traditional Chinese (繁體中文)`）、`analyze` 的 dimension（#169）。
+
+**M5. 其他 3.0.0 缺口**：`decisions`（#166）、`show` 的 `--deltas-only`／`--requirements`／
+`--item-type`、`demo`（#62）、`feedback`。實測沒有任何消費端（見「裁決紀錄」D5）。**建議**
+列為最低優先，等 M1–M4 完成後再依需要移植；要不要做仍待決定。
 
 **Phase 0 出口條件**：parity probe 在 yibi-mvp、nextrek-cli、yibi-stack 三個 corpus 上，
 消費端合約欄位 0 分歧；模板 CLI 解析檢查在 CI 上全綠；發一個 release。
 
-### Phase 1 — 本機 shim 與 shadow 模式
+### Phase 1 — OpenSpectra 內建實作切換與 shadow 模式
 
-1. 從 release tarball 安裝 OpenSpectra 到 `~/.local/opt/openspectra/<version>/spectra`，
-   **不要**直接覆蓋 `~/.local/bin/spectra`。
-2. 把 `~/.local/bin/spectra` 換成一支 shim script，由環境變數或設定檔決定要用哪個實作：
-   - `SPECTRA_IMPL=oracle`（Phase 1 的預設）：執行 Spectra.app。
-   - `SPECTRA_IMPL=shadow`：以 oracle 的結果為準回傳；如果是唯讀指令（`list`、`show`、`status`、
-     `validate`、`analyze`、`drift`、`instructions`、`schemas`、`templates`），就在背景用 OpenSpectra
-     再跑一次，輸出不同時寫一筆 JSONL 到 `~/.local/state/openspectra/shadow.jsonl`
-     （內容：時間、cwd、argv、兩邊的 exit code、diff 摘要）。
+依 D6 裁決，「由誰來執行 `spectra`」的切換機制做成 OpenSpectra 內建功能，不另外寫外部 shim script。
+（shim 指的是插在呼叫端與真正程式之間的一層薄轉接：呼叫端照舊執行 `spectra`，轉接層再決定要交給
+oracle 還是 OpenSpectra。內建的意思是這層轉接就寫在 OpenSpectra 的 binary 裡。）
+
+1. **新增到 openspectra 的功能**（需要另開 issue 與 PR，屬 Phase 0 之後的第一個開發項）：
+   - 實作選擇：環境變數 `OPENSPECTRA_IMPL=oracle|shadow|oss`，優先於專案層級的
+     `.spectra/impl`（`.spectra/` 本來就在 `.gitignore` 裡，是本機狀態），再優先於使用者層級設定；
+     都沒設定時為 `oss`。
+     刻意**不**寫進 `.spectra.yaml`，因為 oracle 也會讀這個檔，不要在 oracle 的設定檔裡放它不認識的 key。
+   - oracle 路徑：預設 `/Applications/Spectra.app/Contents/MacOS/spectra`，可用 `OPENSPECTRA_ORACLE_BIN`
+     覆寫。選了 `oracle` 或 `shadow` 但找不到 oracle 時直接報錯並 exit 非 0，不可靜默改用 `oss`
+     （Linux 上本來就沒有 oracle，所以這兩個模式只在 macOS 有意義）。
+   - `oracle` 模式：原封不動地 exec oracle（argv、stdin、exit code 全部透傳）。
+   - `shadow` 模式：以 oracle 的結果為準回傳給呼叫端。若是唯讀指令（`list`、`show`、`status`、
+     `validate`、`analyze`、`drift`、`instructions`、`schemas`、`templates`），OpenSpectra 在同一個
+     process 內也算一次，比對 exit code 與輸出（JSON 做語意比對，與 M1 共用比對邏輯），不同時寫一筆
+     JSONL 到 `~/.local/state/openspectra/shadow.jsonl`（時間、cwd、argv、兩邊 exit code、差異摘要）。
      **會寫檔的指令（`archive`、`task done`、`new`、`park`、`update`……）絕對不能 shadow**，
-     因為兩個實作會對同一份檔案各寫一次。
-   - `SPECTRA_IMPL=oss`：執行 OpenSpectra，同時記錄非 0 exit、stderr、panic。
-   - 可以用專案層級的 `.spectra-impl` 檔覆寫（讓 Phase 2 逐專案切換）；回退就是改回 `oracle`。
-3. 本機先全域開 `shadow` 一週，累積真實使用下的差異樣本。
+     因為兩個實作會對同一份檔案各寫一次；這份唯讀白名單要寫死在程式碼裡並有測試守住。
+   - `oss` 模式：正常執行，另外把非 0 exit、stderr 摘要、panic 記到 `errors.jsonl`。
+   - 新增 `spectra impl` 子指令（OpenSpectra 獨有），顯示目前生效的模式、設定來源與 oracle 路徑，
+     方便排查「現在到底是誰在跑」。
+2. 安裝：把 OpenSpectra release 放到 `~/.local/bin/spectra`，取代現在指向 Spectra.app 的 symlink。
+   因為預設是 `oss`，**在 shadow 驗證期間要全域設定 `OPENSPECTRA_IMPL=shadow`**，讓行為仍以 oracle 為準。
+3. 本機全域開 `shadow` 一週，累積真實使用下的差異樣本。回退：`OPENSPECTRA_IMPL=oracle`，
+   或把 symlink 指回 Spectra.app。
 
 **Phase 1 出口條件**：shadow log 裡沒有未分類的消費端合約分歧。每一筆分歧都已經分類為
 「開了 issue」「刻意分歧」或「不影響消費端」。
@@ -232,9 +299,9 @@ Phase 0（openspectra repo：補阻擋項 + parity 基礎建設）
 1. **前置**：確認沒有其他 session 正在該專案跑 spectra 流程；從 `origin/main` 開分支。
 2. **備份受管區塊內的手寫內容**：`CLAUDE.md`／`AGENTS.md` 在 `<!-- SPECTRA:START -->` 與
    `<!-- SPECTRA:END -->` 之間，如果有人手動加的內容，先搬到區塊外。`update` 會整段覆寫這個區塊。
-3. **寫入 `.spectra-impl` 內容為 `oss`**（這個檔要加進 `.gitignore`，它是本機設定）。
+3. **寫入 `.spectra/impl` 內容為 `oss`**（`.spectra/` 已被 gitignore，這是本機設定）。
 4. **只讀驗證**：`spectra list --json`、`spectra validate --changes`、`spectra status --change <x> --json`，
-   並對照 oracle 的輸出（`SPECTRA_IMPL=oracle` 再跑一次）。
+   並對照 oracle 的輸出（`OPENSPECTRA_IMPL=oracle` 再跑一次）。
 5. **`spectra update`**（只在 Phase 0 B1 解決之後）：審 diff。重點看受管區塊、`settings.json`、
    新增或刪除的 skill，確認沒有 3.0.0 已移除的 skill 殘留（#170）。
 6. **trace 格式**：OpenSpectra 的 archive 會寫 `spec.trace.yaml` sidecar，oracle 則寫 inline footer
@@ -265,8 +332,7 @@ OpenSpectra 不會讀這個檔）、`openab-projects/openab-workspace`（沒有 
 2. **yibi-mvp 本機**：照 runbook 操作，並加做：自訂 schema `spec-driven-yibi` 的 `schema which`／
    `schema validate`、`locale: tw` 的輸出語言、`claude_effort` 與 `parallel_tasks` 等設定值
    是否被 `update` 正確帶入 skill frontmatter。
-3. **`yibi-mvp-fix-18xx` 複本**：它們是整份 clone，不是 worktree。建議確認沒有未推送的工作後
-   直接清掉，不要逐一遷移（**需要人確認**）。
+3. **`yibi-mvp-fix-18xx`**：依 D4 清掉，不遷移（檢查結果與待確認事項見「裁決紀錄」D4）。
 4. **yibi-stack plugin**：plugin 呼叫 `spectra archive <name> --yes`，兩個實作都支援。
    但 plugin 文件應註明「支援 OpenSpectra ≥ vX」，而且 plugin 自己的 CI 應該要能用 OpenSpectra
    跑它文件裡的範例指令。
@@ -275,7 +341,7 @@ OpenSpectra 不會讀這個檔）、`openab-projects/openab-workspace`（沒有 
 
 條件：所有專案都已經切到 `oss` 至少兩週，shadow／oss log 裡沒有未處理的合約分歧。
 
-1. shim 的預設值改成 `oss`，接著移除 shim 裡 `oracle` 的預設路徑（仍保留用 `SPECTRA_IMPL=oracle`
+1. 移除全域的 `OPENSPECTRA_IMPL=shadow` 設定，讓預設值 `oss` 生效（仍保留用 `OPENSPECTRA_IMPL=oracle`
    手動切換的能力）。
 2. Spectra.app **保留在 `/Applications`**，但關掉它的自動更新（推論：它有自己的更新機制；
    若會自動更新，就會讓 golden 在不知情的情況下換版本）。它的角色改成純粹的 oracle，
@@ -288,7 +354,7 @@ OpenSpectra 不會讀這個檔）、`openab-projects/openab-workspace`（沒有 
 
 | 來源 | 做法 | 頻率 |
 |---|---|---|
-| 本機 shim | `oss` 模式記錄非 0 exit、stderr、panic 到 `~/.local/state/openspectra/errors.jsonl`；`shadow` 模式記錄分歧到 `shadow.jsonl` | 即時 |
+| 內建實作切換 | `oss` 模式記錄非 0 exit、stderr、panic 到 `~/.local/state/openspectra/errors.jsonl`；`shadow` 模式記錄分歧到 `shadow.jsonl` | 即時 |
 | 彙整報告 | 一支 `scripts/shadow-report.py`：依指令與分歧欄位分組，找出新出現的分歧類型，產生 markdown 摘要。可以接到現有的 `call-it-a-day`／`km-daily-review` 流程裡 | 每日或每週 |
 | clap 解析錯誤 | `unexpected argument` 這類錯誤代表有 skill 呼叫了 OpenSpectra 不支援的介面，要當成 P1 處理（B1 類問題又出現了） | 即時 |
 | 專案 CI | yibi-mvp 的 `spec-drift-backlog.yml` 已經有 report-only 的 drift 報告；其他專案可以加 `spectra validate --changes` 與 `spectra trace migrate --check` | 每個 PR |
@@ -319,34 +385,56 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
   裁決之前維持現狀，不擴大也不縮小。
 - 分歧一律列在 `CHANGELOG.md` 與對應的 `docs/reverse-engineering/*.md`；消費端合約欄位不允許
   出現未記錄的分歧（M1 會擋）。
-- 目前已知的刻意分歧有兩項：trace sidecar（ADR-0029 D3）與 validate v2 JSON。切換專案時要讓使用者知道。
+- 目前已知的刻意分歧：trace sidecar（ADR-0029 D3）、validate 預設採 OpenSpec 規則與 OpenSpec
+  JSON 格式（D1、D3；oracle 格式可用 `--format oracle` 取得）。切換專案時要讓使用者知道。
 
 ## 回退方案
 
 | 情境 | 動作 |
 |---|---|
-| 單一專案出問題 | 把該專案的 `.spectra-impl` 改回 `oracle`，不用動其他專案 |
-| 全面出問題 | `SPECTRA_IMPL=oracle`，或把 shim 的預設值改回 oracle |
+| 單一專案出問題 | 把該專案的 `.spectra/impl` 改成 `oracle`，不用動其他專案 |
+| 全面出問題 | 全域設定 `OPENSPECTRA_IMPL=oracle`，或把 `~/.local/bin/spectra` 指回 Spectra.app |
 | `update` 改壞 skill | `git revert` 該專案的 update commit；因為 runbook 要求 update 獨立成一個 commit，所以可以乾淨地還原 |
 | trace sidecar 已經寫入 | sidecar 是加法：`spec.md` 只多一行 pointer，舊的 inline footer 被吸收進 sidecar。回到 oracle 後，oracle 會繼續寫 inline footer，兩種格式並存但不會遺失資料（推論，要在 Phase 2 試點時實測確認） |
 
-## 需要裁決的事項
+## 裁決紀錄（2026-09-28，howie）
 
-以下每一項都是人的決策，agent 不應自行選定方向：
+| 項目 | 問題 | 裁決 | 落在本文哪裡 |
+|---|---|---|---|
+| D1 | validate 嚴格度跟 oracle 還是 OpenSpec（#189） | **先與 OpenSpec 一致**。理由：OpenSpec 有公開原始碼，每條規則都能指到程式碼位置，比黑箱 oracle 容易理解與驗證 | 「validate 嚴格度」三方比對、M4 |
+| D2 | B1（模板呼叫未移植的 CLI）怎麼處理 | **(a) 先補齊 CLI 介面**；不做降級模板，補齊前各專案不跑 `update` | M2 |
+| D3 | `validate --json` 格式 | **提供 oracle 相容格式，之後再把 OpenSpec 格式補齊到逐欄位一致**；預設值建議維持 OpenSpec 格式（理由見 M3），待確認 | M3 |
+| D4 | `yibi-mvp-fix-*` | **清掉**；執行前的檢查結果見下 | Phase 4 |
+| D5 | 沒有消費端的 3.0.0 指令要不要移植 | 待決定（已補上說明，見下） | M5 |
+| D6 | 實作切換放在哪裡 | **做成 OpenSpectra 內建** | Phase 1 |
 
-- **D1. #189：validate 嚴格度。** oracle 判 0/21 無效，OpenSpectra 判 9/21 無效。
-  預設要跟 oracle，還是跟 OpenSpec？這會直接決定 yibi-mvp 切換時有多少個 change 需要修。
-- **D2. B1 的處理方式。** 選項 (a)：先補齊 CLI 介面，才允許各專案 `update`（慢，但忠實）；
-  選項 (b)：`update` 暫時產生「降級版」模板，只呼叫已支援的介面（快，但會跟 oracle 模板分歧，
-  而且之後要再改回來）；選項 (c)：切換後各專案都不跑 `update`，繼續用舊 skill（最快，但舊 skill
-  本身已經有 `spectra sync` 這種失效呼叫，也拿不到 3.0.0 的改進）。
-- **D3. `validate --json` 的格式。** 維持 OpenSpec v2 格式，還是提供 oracle 相容格式？
-  哪一種應該是預設？
-- **D4. `yibi-mvp-fix-18xx` 複本**：清掉還是保留？
-- **D5. 移植沒有消費端的 3.0.0 指令**（`decisions`、`demo`、`feedback`、`show` 的三個 flag）：
-  要不要做？依 `CLAUDE.md` 規定，這類問題要先問。
-- **D6. shim 放在哪裡**：放在 `~/.local/bin`（只影響這台機器），還是做成 OpenSpectra 內建的
-  `spectra --impl` 機制（其他人也能用，但 OpenSpectra 就要知道 oracle 的存在）？
+**D4 執行前檢查（實測）**：四個目錄是 yibi-mvp 的 linked worktree，都沒有未 commit 的改動；
+fix-1826／1827／1828 本機的每個 commit 在各自遠端分支上都有等價 patch（`git cherry` 0 unmatched）；
+fix-1833 沒有 upstream，但它獨有的 3 個 commit 都在已 merge 的 PR #2010 的 commit 清單裡。
+所以**已追蹤的內容不會遺失**。會跟著刪掉的是被 gitignore 的本機檔案：
+
+- fix-1827 的 `mobile/.env` 與 yibi-mvp 主目錄的**不同**（其他 `.env` 都相同）。
+- 每個目錄底下有約 10 個 `.claude/worktrees/*` 子目錄，它們**沒有**註冊在 yibi-mvp 的
+  `git worktree list` 裡，推測是建立 fix 目錄時連同主目錄的 `.claude/worktrees/` 整份複製過來的舊副本。
+- 各自的 `.spectra/`（165–168 個檔）、`.pr-review/`、`.runtime/`。
+
+刪除方式：在 yibi-mvp 主目錄執行 `git worktree remove <path>`（不加 `--force`，有未 commit 的改動時會拒絕），
+分支先保留，之後交給 `/clean-wt` 處理。
+
+**D5 說明**：「沒有消費端」指的是在以下所有會呼叫 `spectra` 的地方，都找不到這些指令或 flag：
+3.0.0 skill 模板（6 家 AI 工具共 72 個檔）、yibi-mvp 現有的 skill、yibi-stack plugin
+（`sdd`、`dev-cycle`）、yibi-mvp 的 CI 與 scripts（搜尋有正向對照：同一組路徑搜得到 `spectra scope` 26 次）。
+也就是說，目前沒有任何自動化流程會呼叫它們，只有人在終端機手動打才會用到。缺少這些功能的影響：
+
+| 缺少的功能 | oracle 的用途 | OpenSpectra 缺少時的影響 |
+|---|---|---|
+| `decisions` | 列出各 change `design.md` 的架構決策 | 人要自己翻 `design.md`；skill 不受影響 |
+| `show --deltas-only`／`--requirements`／`--item-type` | 只顯示 delta、只顯示 requirement、指定是 change 還是 spec | 手動用時會得到 `unexpected argument`；OpenSpectra 有 `show --diff` 可部分替代 |
+| `demo` | 產生一個示範 change | 無實際影響 |
+| `feedback` | 回報意見給 Spectra 作者 | 無影響，而且對 OpenSpectra 沒有意義（回報對象不同） |
+
+唯一的風險是**未來**的 oracle 模板開始呼叫它們。M1 的「模板 CLI 解析檢查」會在那時立刻失敗，
+所以晚點做不會被靜默漏掉。
 
 ## 建議開的新 issue（尚未開立）
 
@@ -360,6 +448,9 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 6. `status`／`schemas` 的 artifact 順序仍是 3.0.0 之前的版本（B2）
 7. M1：parity probe 與模板 CLI 解析檢查
 8. `upstream-watch.yml` 加上版本落差檢查
+9. D1：validate 與 OpenSpec 1.13.2 對齊（MODIFIED 目標不存在降為 INFO、0098 的多報），#183 併入
+10. D3：`validate --format oracle|openspec`，openspec 格式補齊 `version`／`total`／`root.source` 三處差異
+11. D6：內建實作切換（`OPENSPECTRA_IMPL`、`.spectra/impl`、shadow 模式、`spectra impl`）
 
 ## 附錄 A：重現本文的實測
 
