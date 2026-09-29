@@ -2262,8 +2262,10 @@ fn run_on_terminal(tmp: &TempDir, args: &[&str], stdin: &[u8]) -> (std::process:
     }
     #[cfg(not(target_os = "macos"))]
     let script_command = format!("{} {}", env!("CARGO_BIN_EXE_spectra"), args.join(" "));
+    // util-linux 的 `script` 預設回傳自己的 exit status（0），`-e` 才會傳回子程序的；
+    // macOS 版本預設就傳回子程序的，所以只有這一支需要。
     #[cfg(not(target_os = "macos"))]
-    command.args(["-q", "-c", &script_command, "/dev/null"]);
+    command.args(["-q", "-e", "-c", &script_command, "/dev/null"]);
 
     let mut child = command
         .current_dir(&**tmp)
