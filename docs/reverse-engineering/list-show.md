@@ -17,9 +17,15 @@ entries under `parked` with `status: "parked"`.
 
 **Which directories count.** Every directory under `changes/` except
 `archive`, including names with upper-case letters or underscores and
-directories without `.openspec.yaml`. OpenSpectra also skips hidden
-directories (its own archive staging directories) and `YYYY-MM-DD-` names.
-Before this, OpenSpectra silently dropped non-kebab-case names.
+directories without `.openspec.yaml`, and names that start with a
+`YYYY-MM-DD-` date: v3.0.0 lists `changes/2026-05-05-dated/` as an active
+change, and every command that walks active changes (`status`, `drift`,
+`analyze`, `validate --changes`, `instructions apply`, and their auto-selection
+of a lone change) treats it the same way (#219 probe). The date prefix is only
+reserved when *creating* a change: `new change 2026-06-06-x` is rejected.
+OpenSpectra also skips hidden directories (its own archive staging
+directories). Before this, OpenSpectra silently dropped non-kebab-case names,
+and until #219 it dropped date-prefixed names as well.
 
 **`summary`** comes from `proposal.md` only:
 

@@ -232,6 +232,97 @@ fn list_human_and_json_follow_the_oracle_3_0_0_shapes() {
     assert_eq!(which["sources"][0]["path"], "(embedded in binary)");
 }
 
+/// 在 `changes/` 放一個日期開頭的使用中 change，並在 `archive/` 放一個封存 change
+/// （#219 的 oracle 探測情境）。
+fn seed_dated_active_change(tmp: &Path) {
+    let changes = tmp.join("openspec/changes");
+    for dir in ["2026-05-05-dated", "archive/2026-01-01-old"] {
+        let name = dir.rsplit('/').next().unwrap();
+        std::fs::create_dir_all(changes.join(dir)).unwrap();
+        std::fs::write(
+            changes.join(dir).join("proposal.md"),
+            format!("## Why\n\nWhy {name} matters here.\n\n## What Changes\n\n- stuff\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            changes.join(dir).join("tasks.md"),
+            "## 1. Work\n\n- [ ] 1.1 do it\n- [x] 1.2 done\n",
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn list_and_validate_include_date_prefixed_active_changes_like_the_oracle() {
+    // oracle 3.0.0（#219 探測）：`changes/2026-05-05-dated/` 是使用中 change，
+    // `list` 與 `validate --changes` 都列出它；`archive/` 底下的不算。
+    let tmp = TempDir::new("list-dated");
+    init_project_with_change(&tmp, "plain-change");
+    seed_dated_active_change(&tmp);
+    std::fs::write(
+        tmp.join("openspec/changes/plain-change/proposal.md"),
+        "## Why\n\nWhy plain-change matters here.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("openspec/changes/plain-change/tasks.md"),
+        "- [ ] 1.1 do it\n- [x] 1.2 done\n",
+    )
+    .unwrap();
+
+    let list = spectra()
+        .args(["list", "--sort", "name"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(list.status.success(), "list failed: {list:?}");
+    assert_eq!(
+        String::from_utf8(list.stdout).unwrap(),
+        "Changes:\n  • 2026-05-05-dated [1/2] — Why 2026-05-05-dated matters h…\n  \
+         • plain-change [1/2] — Why plain-change matters here.\n"
+    );
+
+    let validate = spectra()
+        .args(["validate", "--changes", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    // 兩個 change 都沒有 delta spec：規則依 D1 走 OpenSpec（錯誤、exit 1），與 oracle
+    // 的警告不同，這裡只驗證哪些 change 被走訪。
+    let value: serde_json::Value = serde_json::from_slice(&validate.stdout).unwrap();
+    let mut names: Vec<&str> = value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["change"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["2026-05-05-dated", "plain-change"]);
+}
+
+#[test]
+fn drift_auto_selects_a_lone_date_prefixed_active_change_like_the_oracle() {
+    // oracle 3.0.0（#219 探測）：唯一的使用中 change 是日期開頭時，不指定 change 的
+    // `drift` 會自動選到它，而不是回報沒有使用中的 change。
+    let tmp = TempDir::new("drift-dated");
+    init_project_with_change(&tmp, "plain-change");
+    std::fs::remove_dir_all(tmp.join("openspec/changes/plain-change")).unwrap();
+    seed_dated_active_change(&tmp);
+
+    let out = spectra()
+        .args(["drift", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "drift failed: {out:?}");
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["change_id"], "2026-05-05-dated");
+    assert_eq!(
+        value["primary_recommendation"],
+        "/spectra-apply 2026-05-05-dated"
+    );
+}
+
 #[test]
 fn list_parked_human_output_uses_the_oracle_header_and_bullets() {
     let tmp = TempDir::new("list-parked-human");
