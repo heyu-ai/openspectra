@@ -1,0 +1,5 @@
+(version 1)
+(allow default)
+(deny network*)
+(deny process-exec (literal "/usr/bin/open"))
+(deny file-write* (subpath "/Users") (subpath "/private/var") (subpath "/private/tmp"))
