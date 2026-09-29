@@ -10,6 +10,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-30
+
 ### Added
 
 - The rest of the v3.0.0 command surface (W12). Acceptance A1 now has no
