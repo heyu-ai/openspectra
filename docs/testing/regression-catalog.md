@@ -32,7 +32,11 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   `w14b-force-rewrites-spectra-yaml` 與 `w14b-force-ignores-configured-spec-dir`，實測 2/2 KILLED
 - #226（2026-09-29，`schemas` 列出載入失敗的 schema）：新增 `226-schemas-skip-unloadable`
   （改回「載入失敗就略過」）與 `226-schemas-require-schema-yaml-file`（改回要求
-  `schema.yaml` 是檔案），逐一以 `--only` 實測 2/2 KILLED；其餘 case 未在這一輪重跑
+  `schema.yaml` 是檔案），逐一以 `--only` 實測 2/2 KILLED；其餘 case 未在這一輪重跑。
+  同日依 owner 裁決（與內建同名的專案 schema 跟 oracle 一樣嚴格載入）再加
+  `226-shadow-load-failure-skipped`、`226-shadow-appended-after-builtins`、
+  `226-shadow-description-dropped`，`226-schemas-skip-unloadable` 的 anchor 改指向新的
+  內建名稱判斷；五個 #226 case 逐一 `--only` 重跑 5/5 KILLED
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 

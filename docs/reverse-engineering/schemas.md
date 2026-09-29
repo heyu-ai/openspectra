@@ -165,20 +165,38 @@ OpenSpectra matches all 156 outputs of those 78 cases and the hand-written shape
 skipped any that failed, so after #224 made `version` required, a schema
 without it silently vanished from the list.
 
+**A project schema named after a built-in** (`spec-driven`, `no-spec`) is the
+exception: the oracle loads it strictly. Implemented as probed (owner ruling
+on #226, 2026-09-29):
+
+- If it fails to load, the whole command fails, in both modes: stdout empty,
+  exit 1, and the load error on stderr — ``Error: Schema parse error: missing
+  field `version` ``, `… did not find expected node content at line 2 column
+  1, while parsing a flow node`, `… Failed to read <abs path>/schema.yaml: Is a
+  directory (os error 21)`, or a semantic one such as `Error: Invalid schema:
+  Apply phase requires unknown artifact 'zz'`. `spec-driven` is checked before
+  `no-spec`, and the error wins over any other (leniently listed) broken
+  schema.
+- If it loads, it replaces the built-in *in its slot*, keeps `source:
+  "package"`, and shows the file's `name:` (not the directory name — `name: x`
+  in `schemas/spec-driven/` prints `x (package)`) and `description` (absent →
+  `null` and no ` — ` tail; `''` → `""` and a bare ` — ` tail). `artifacts`
+  are the file's ids in file order. A missing template file does not matter.
+
 Divergences that remain:
 
-- **Order.** The oracle lists project schemas in `readdir` order (APFS gave
-  `valid, no-version, broken-yaml, odd-entries, yaml-is-dir` for a directory
-  created in the order `no-version, broken-yaml, odd-entries, valid,
-  yaml-is-dir`); OpenSpectra sorts by name.
-- **A project schema named after a built-in** (`spec-driven`, `no-spec`). The
-  oracle loads it strictly: a valid one replaces the built-in *in place* and
-  keeps `source: "package"` with the file's `description` and `artifacts`; a
-  broken one (missing `version`, bad YAML, `schema.yaml` directory) makes the
-  whole command fail with `Error: Schema parse error: …` on stderr, exit 1,
-  empty stdout (both modes). OpenSpectra lists a valid one as `(project)`
-  after the built-ins and, for a broken one, keeps showing the built-in. Not
-  changed by #226.
+- **Order** (deliberate, owner ruling on #226). The oracle lists project
+  schemas in `readdir` order (APFS gave `valid, no-version, broken-yaml,
+  odd-entries, yaml-is-dir` for a directory created in the order `no-version,
+  broken-yaml, odd-entries, valid, yaml-is-dir`); OpenSpectra sorts by name,
+  which is reproducible across filesystems.
+- **A built-in shadow whose `template`/`generates` leaves its directory.** The
+  oracle lists it; OpenSpectra's strict load rejects it (D11-1 / D11-7,
+  "rejected by every command"), so `schemas` fails with `Error: Invalid
+  schema: Artifact 'a' template '../../x.md' must not contain '..'`.
+- **A user-level schema named after a built-in** was not probed; OpenSpectra
+  keeps listing a loadable one as `(user)` after the built-ins and skips a
+  broken one.
 - **`XDG_DATA_HOME` on macOS.** The oracle ignored `XDG_DATA_HOME` for the
   user level (a schema there was not listed); OpenSpectra's
   `user_schemas_dir` reads it first. Not changed by #226.

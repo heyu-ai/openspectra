@@ -261,3 +261,143 @@ fn schemas_lists_user_schemas_that_fail_to_load() {
         .unwrap()[..]
     );
 }
+
+const SHADOW_VALID: &str = "name: y\nversion: 1\ndescription: D\nartifacts:\n  - id: a\n    generates: a.md\n    description: A\n    template: a.md\n    instruction: do a\n    requires: []\napply:\n  requires: [a]\n  tracks: a.md\n  instruction: go\n";
+
+/// 斷言 human 與 `--json` 兩種模式都以 `stderr` 失敗（rc 1、stdout 為空）。
+fn assert_schemas_fails(root: &Path, project: &Path, stderr: &str) {
+    for args in [&["schemas", "--no-color"][..], &["schemas", "--json"][..]] {
+        let out = schemas_isolated(root, project, args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {out:?}");
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "", "{args:?}");
+        assert_eq!(String::from_utf8(out.stderr).unwrap(), stderr, "{args:?}");
+    }
+}
+
+/// #226 owner 裁決（2026-09-29）：與內建同名的專案 schema 無法載入時，`schemas`
+/// 跟 oracle 3.0.0 一樣整個失敗。期望值是 oracle 對同一組 schema 的輸出。
+#[test]
+fn schemas_fails_when_a_project_schema_named_after_a_builtin_is_missing_version() {
+    let root = TempDir::new("schemas-shadow-no-version");
+    let project = isolated_project(&root);
+    let schemas = project.join("openspec/schemas");
+    write_schema(
+        &schemas.join("spec-driven"),
+        &SHADOW_VALID.replace("version: 1\n", ""),
+    );
+    // 其他載入失敗的 schema 照樣寬鬆列出，不影響結果；內建名稱的錯誤優先。
+    write_schema(&schemas.join("aaa"), "artifacts: [\n");
+
+    assert_schemas_fails(
+        &root,
+        &project,
+        "Error: Schema parse error: missing field `version`\n",
+    );
+}
+
+#[test]
+fn schemas_reports_the_spec_driven_shadow_before_the_no_spec_one() {
+    let root = TempDir::new("schemas-shadow-both-broken");
+    let project = isolated_project(&root);
+    let schemas = project.join("openspec/schemas");
+    write_schema(&schemas.join("no-spec"), "artifacts: [\n");
+    write_schema(
+        &schemas.join("spec-driven"),
+        &SHADOW_VALID.replace("version: 1\n", ""),
+    );
+
+    assert_schemas_fails(
+        &root,
+        &project,
+        "Error: Schema parse error: missing field `version`\n",
+    );
+}
+
+#[test]
+fn schemas_fails_on_a_semantically_invalid_builtin_shadow() {
+    let root = TempDir::new("schemas-shadow-semantic");
+    let project = isolated_project(&root);
+    write_schema(
+        &project.join("openspec/schemas/no-spec"),
+        &SHADOW_VALID.replace("requires: [a]", "requires: [zz]"),
+    );
+
+    assert_schemas_fails(
+        &root,
+        &project,
+        "Error: Invalid schema: Apply phase requires unknown artifact 'zz'\n",
+    );
+}
+
+#[test]
+fn schemas_fails_when_a_builtin_shadow_schema_yaml_is_a_directory() {
+    let root = TempDir::new("schemas-shadow-dir");
+    let project = isolated_project(&root);
+    let yaml = project.join("openspec/schemas/spec-driven/schema.yaml");
+    std::fs::create_dir_all(&yaml).unwrap();
+
+    assert_schemas_fails(
+        &root,
+        &project,
+        &format!(
+            "Error: Schema parse error: Failed to read {}: Is a directory (os error 21)\n",
+            yaml.display()
+        ),
+    );
+}
+
+/// 合法的同名專案 schema 在內建的位置原地取代，`source` 仍是 `package`，
+/// `name` 與 `description` 取自檔案（缺 `description` 是 null、`''` 照印）。
+#[test]
+fn schemas_replaces_a_builtin_in_place_with_a_valid_same_named_project_schema() {
+    let root = TempDir::new("schemas-shadow-valid");
+    let project = isolated_project(&root);
+    let schemas = project.join("openspec/schemas");
+    write_schema(
+        &schemas.join("spec-driven"),
+        &SHADOW_VALID
+            .replace("name: y\n", "name: x\n")
+            .replace("description: D\n", ""),
+    );
+    write_schema(&schemas.join("no-spec"), SHADOW_VALID);
+    write_schema(&schemas.join("mine"), "artifacts: [\n");
+
+    let text = schemas_isolated(&root, &project, &["schemas", "--no-color"]);
+    assert!(text.status.success(), "schemas failed: {text:?}");
+    assert_eq!(String::from_utf8(text.stderr).unwrap(), "");
+    assert_eq!(
+        String::from_utf8(text.stdout).unwrap(),
+        "Available schemas:\n  x (package)\n  y (package) — D\n  mine (project)\n"
+    );
+
+    let json = schemas_isolated(&root, &project, &["schemas", "--json"]);
+    assert!(json.status.success(), "schemas --json failed: {json:?}");
+    let listed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(
+        listed,
+        serde_json::json!([
+            {"artifacts": ["a"], "description": null, "name": "x", "source": "package"},
+            {"artifacts": ["a"], "description": "D", "name": "y", "source": "package"},
+            {"artifacts": [], "description": null, "name": "mine", "source": "project"},
+        ])
+    );
+}
+
+#[test]
+fn schemas_keeps_an_empty_description_of_a_builtin_shadow() {
+    let root = TempDir::new("schemas-shadow-empty-desc");
+    let project = isolated_project(&root);
+    write_schema(
+        &project.join("openspec/schemas/spec-driven"),
+        &SHADOW_VALID
+            .replace("name: y\n", "name: x\n")
+            .replace("description: D\n", "description: ''\n"),
+    );
+
+    let text = schemas_isolated(&root, &project, &["schemas", "--no-color"]);
+    assert!(text.status.success(), "schemas failed: {text:?}");
+    assert_eq!(
+        String::from_utf8(text.stdout).unwrap(),
+        "Available schemas:\n  x (package) — \n  no-spec (package) — No-spec workflow - proposal -> tasks (design optional)\n"
+    );
+}

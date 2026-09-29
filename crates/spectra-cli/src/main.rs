@@ -1426,7 +1426,7 @@ fn cmd_schemas(root: &Path, as_json: bool, use_color: bool) -> Result<i32> {
             None
         }
     };
-    let schemas = schema::schemas(cfg.as_ref());
+    let schemas = schema::schemas(cfg.as_ref())?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&schemas)?);
     } else {
@@ -3189,7 +3189,7 @@ mod tests {
         // the header SGR `"1"`->`"2"`, or dropping the dim on the source tag —
         // fails here. The golden integration tests only reach the --no-color
         // path (piped stdout), leaving this the sole guard on the colored path.
-        let schemas = schema::schemas(None);
+        let schemas = schema::schemas(None).unwrap();
 
         // --no-color output must equal the oracle 3.0.0 golden text lines.
         assert_eq!(
