@@ -376,6 +376,16 @@ changes.
   instruction/template text instead of a hard-coded `openspec/specs/`.
   `new artifact` keeps writing the unrendered `{{SPEC_DIR}}` placeholder, as
   the oracle does.
+- Active changes whose names start with a `YYYY-MM-DD-` date (e.g.
+  `changes/2026-05-05-foo/`) are no longer mistaken for archived ones and
+  hidden (#219, owner ruling W12-3), matching v3.0.0. Affected: `list` /
+  `list --json` (and `--sort`), `validate` over changes (`--changes`, `--all`,
+  the default, and the `--format openspec` "did you mean" suggestions),
+  `status --all`, and the lone-change auto-selection of `drift`, `analyze`,
+  `status`, `instructions`, `new artifact`, `task start` / `task done`,
+  `archive` (including `--preview`). Only `changes/archive/` and hidden
+  directories are excluded now; `new change` still rejects date-prefixed
+  names, as the oracle does.
 
 ## [0.13.0] - 2026-09-27
 

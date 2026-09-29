@@ -2585,3 +2585,24 @@ replace = '''        None'''
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "init_force_keeps_the_configured_spec_dir_and_spectra_yaml"
+
+# #219（owner 裁決 W12-3，跟 oracle）：日期開頭的使用中 change 不可被 list_active 濾掉
+
+[[case]]
+id = "219-dated-active-filtered"
+issue = "#219"
+file = "crates/spectra-core/src/change.rs"
+find = '''        if name == "archive" || name.starts_with('.') {'''
+replace = '''        if name == "archive" || name.starts_with('.') || ARCHIVED_PREFIX_RE.is_match(&name) {'''
+package = "spectra-core"
+test = "list_active_includes_date_prefixed_changes_but_not_archive_or_hidden_dirs"
+
+[[case]]
+id = "219-dated-active-not-auto-selected"
+issue = "#219"
+file = "crates/spectra-core/src/change.rs"
+find = '''        if name == "archive" || name.starts_with('.') {'''
+replace = '''        if name == "archive" || name.starts_with('.') || ARCHIVED_PREFIX_RE.is_match(&name) {'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "drift_auto_selects_a_lone_date_prefixed_active_change_like_the_oracle"

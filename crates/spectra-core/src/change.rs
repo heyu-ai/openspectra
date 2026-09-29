@@ -502,15 +502,14 @@ fn create_inner(
     Ok(())
 }
 
-/// Change directory names under `changes_dir()` that pass the archive/name
+/// Change directory names under `changes_dir()` that pass the archive/hidden
 /// filters, unsorted.
 fn walk_change_names(cfg: &Config) -> Vec<String> {
     walk_names_in(&cfg.changes_dir())
 }
 
-/// The shared directory-name filter behind `list_active` and `list_parked`,
-/// applied to whichever store holds the change directories, so the two
-/// listings can't drift apart on what counts as a change.
+/// The directory-name filter behind `list_active` and `list_active_sorted`
+/// (`list_parked` reads its own store with a different filter).
 fn walk_names_in(dir: &Path) -> Vec<String> {
     let mut names = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -522,8 +521,9 @@ fn walk_names_in(dir: &Path) -> Vec<String> {
         }
         let name = entry.file_name().to_string_lossy().to_string();
         // oracle 3.0.0 列出 `archive` 以外的每個目錄，包括含大寫或底線的名稱
-        // （W7 probe）；隱藏目錄（archive 交易用的 `.spectra-archive-*.staged`）不算。
-        if name == "archive" || name.starts_with('.') || ARCHIVED_PREFIX_RE.is_match(&name) {
+        // （W7 probe），日期開頭的名稱（`2026-05-05-foo`）也是使用中 change（#219 probe）；
+        // 隱藏目錄（archive 交易用的 `.spectra-archive-*.staged`）不算。
+        if name == "archive" || name.starts_with('.') {
             continue;
         }
         names.push(name);
@@ -667,9 +667,8 @@ pub fn list_active_sorted(cfg: &Config, sort_key: SortKey) -> Vec<String> {
 /// List parked change names — the directories the oracle moved into
 /// `<git common dir>/spectra-app/changes/` — sorted.
 ///
-/// Unlike [`list_active`] this applies no archived-prefix filter: the store
-/// has no `archive/` subdirectory to disambiguate against, and the oracle
-/// parks and lists `2026-01-01-old` like any other name (probed).
+/// Like [`list_active`] it keeps date-prefixed names: the oracle parks and
+/// lists `2026-01-01-old` like any other name (probed).
 pub fn list_parked(cfg: &Config) -> Vec<String> {
     let Some(dir) = parked_root(cfg) else {
         return Vec::new();
@@ -1072,6 +1071,52 @@ mod tests {
     }
 
     #[test]
+    fn list_active_includes_date_prefixed_changes_but_not_archive_or_hidden_dirs() {
+        // oracle 3.0.0 把 `changes/2026-05-05-dated/` 當使用中 change 列出（#219 探測）；
+        // 只有 `archive/` 與隱藏目錄（archive 交易的暫存目錄）不算。
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        let changes = cfg.changes_dir();
+        for dir in [
+            "2026-05-05-dated",
+            "plain-change",
+            "archive/2026-01-01-old",
+            ".spectra-archive-x.staged",
+        ] {
+            write(&changes.join(dir).join("proposal.md"), "# P\n");
+        }
+
+        assert_eq!(
+            list_active(&cfg),
+            vec!["2026-05-05-dated".to_string(), "plain-change".to_string()]
+        );
+        assert_eq!(
+            list_active_sorted(&cfg, SortKey::Name),
+            vec!["2026-05-05-dated".to_string(), "plain-change".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_auto_selects_a_lone_date_prefixed_active_change() {
+        let tmp = TempDir::new();
+        let cfg = git_repo_cfg(&tmp);
+        write(
+            &cfg.changes_dir()
+                .join("2026-05-05-dated")
+                .join("proposal.md"),
+            "# P\n",
+        );
+        write(
+            &cfg.changes_dir()
+                .join("archive/2026-01-01-old")
+                .join("proposal.md"),
+            "# P\n",
+        );
+
+        assert_eq!(resolve(&cfg, None).unwrap(), "2026-05-05-dated");
+    }
+
+    #[test]
     fn list_parked_is_empty_when_the_store_is_missing() {
         let tmp = TempDir::new();
         let cfg = git_repo_cfg(&tmp);
@@ -1109,8 +1154,7 @@ mod tests {
 
     #[test]
     fn list_parked_includes_archived_prefixed_names() {
-        // The oracle parks and lists them; only `list_active` needs the
-        // archived-prefix filter, because `changes/` also holds `archive/`.
+        // The oracle parks and lists them, as it does for active changes (#219).
         let tmp = TempDir::new();
         let cfg = git_repo_cfg(&tmp);
         seed_parked(&cfg, "2026-01-01-old-change", "# Old\n");
