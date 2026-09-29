@@ -19,6 +19,17 @@ for both scopes and both strictness modes, drops the non-deterministic
 ``spectra validate``. Any difference exits 1 and keeps the sandbox;
 ``--write`` regenerates the golden file and then verifies it again.
 
+It also pins the whole ``--json`` envelope for ``--format openspec`` (W9a,
+ruling D3): ``ENVELOPES`` runs a list of invocations on
+``tests/fixtures/validate_openspec_envelope`` (mixed-case, punctuated and
+nested ids, a change and a spec sharing a name) and
+``tests/fixtures/validate_openspec_empty`` (nothing to validate), and on the
+rule fixture only the ``--all`` item order and summary. Each stdout is kept as
+text (key order matters), after three normalizations the replay applies too:
+``durationMs`` values become 0, the sandbox path becomes ``<ROOT>``, and a
+change and a spec with the same id are put change-first (OpenSpec orders such
+a tie by async completion, which is not deterministic).
+
 Requires Node.js and the OpenSpec 1.13.2 package. ``--openspec-js`` overrides
 ``OPENSPEC_JS``, which overrides the npx cache path this was captured with.
 The package version is checked before anything runs.
@@ -29,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,15 +51,41 @@ from typing import NoReturn
 EXPECTED_VERSION = "1.13.2"
 DEFAULT_JS = "/Users/howie/.npm/_npx/0aaef5be8686a8bb/node_modules/@fission-ai/openspec/bin/openspec.js"
 REPO = Path(__file__).resolve().parent.parent
-FIXTURE = REPO / "crates/spectra-cli/tests/fixtures/validate_openspec"
+FIXTURES = REPO / "crates/spectra-cli/tests/fixtures"
+FIXTURE = FIXTURES / "validate_openspec"
 GOLDEN = REPO / "docs/reverse-engineering/golden/validate-openspec-1.13.2.json"
 ENV = {
-    **os.environ,
+    **{k: v for k, v in os.environ.items() if k != "FORCE_COLOR"},
     "CI": "1",
     "OPENSPEC_TELEMETRY": "0",
     "DO_NOT_TRACK": "1",
     "NO_COLOR": "1",
 }
+# (fixture, validate 的參數)。每個都另加 `--json --no-interactive`；重播端改加
+# `--json --format openspec`。
+ENVELOPES = [
+    ("validate_openspec_envelope", ["--all"]),
+    ("validate_openspec_envelope", ["--changes"]),
+    ("validate_openspec_envelope", ["--specs"]),
+    ("validate_openspec_envelope", ["--changes", "--specs"]),
+    ("validate_openspec_envelope", ["--all", "--report", "findings"]),
+    ("validate_openspec_envelope", ["--changes", "--specs", "--report", "findings"]),
+    ("validate_openspec_envelope", ["--changes", "--report", "findings"]),
+    ("validate_openspec_envelope", ["--specs", "--report", "full"]),
+    ("validate_openspec_envelope", ["zeta"]),
+    ("validate_openspec_envelope", ["alpha"]),
+    ("validate_openspec_envelope", ["a/b"]),
+    ("validate_openspec_envelope", ["only"]),
+    ("validate_openspec_envelope", ["only", "--type", "spec"]),
+    ("validate_openspec_envelope", ["nope"]),
+    # 帶 `line` 的 issue：key 順序是 level, path, line, message。
+    ("validate_openspec", ["d13-strayh3"]),
+    ("validate_openspec_empty", ["--all"]),
+    ("validate_openspec_empty", ["--changes"]),
+    ("validate_openspec_empty", ["--specs"]),
+    ("validate_openspec_empty", ["--all", "--report", "findings"]),
+]
+DURATION = re.compile(r'"durationMs": \d+')
 
 
 def fail(msg: str) -> NoReturn:
@@ -55,12 +93,74 @@ def fail(msg: str) -> NoReturn:
     sys.exit(1)
 
 
-def openspec(js: str, args: list[str], cwd: Path) -> str:
+def openspec_run(js: str, args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     p = subprocess.run(["node", js, *args], cwd=cwd, capture_output=True, text=True, env=ENV)
     # 有 invalid item 時 rc 為 1，這是正常結果；只有 stdout 不是 JSON 才算失敗。
     if p.returncode not in (0, 1):
         fail(f"`openspec {' '.join(args)}` exited {p.returncode}: {p.stderr.strip()}")
-    return p.stdout
+    return p
+
+
+def openspec(js: str, args: list[str], cwd: Path) -> str:
+    return openspec_run(js, args, cwd).stdout
+
+
+def change_first_on_ties(items: list) -> list:
+    """同 id 的相鄰 item 排成 change 在前（OpenSpec 依 async 完成順序排這種平手）。"""
+    out = list(items)
+    for i in range(len(out) - 1):
+        a, b = out[i], out[i + 1]
+        if a["id"] == b["id"] and a["type"] == "spec" and b["type"] == "change":
+            out[i], out[i + 1] = b, a
+    return out
+
+
+def normalize_envelope(stdout: str, project: Path) -> str:
+    """把 `--json` 的 stdout 正規化成重播端會產生的同一份文字（見模組說明）。"""
+    try:
+        report = json.loads(stdout)
+    except json.JSONDecodeError:
+        fail(f"envelope stdout is not JSON: {stdout[:300]!r}")
+    for key in ("items", "itemFindings"):
+        if isinstance(report.get(key), list):
+            report[key] = change_first_on_ties(report[key])
+    text = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    text = DURATION.sub('"durationMs": 0', text)
+    roots = {str(project), str(project.resolve())}
+    for root in sorted(roots, key=len, reverse=True):
+        text = text.replace(json.dumps(root), json.dumps("<ROOT>"))
+    if "<ROOT>" not in text and '"root"' in text:
+        fail(f"root path was not normalized in: {text[:300]!r}")
+    return text
+
+
+def capture_envelopes(js: str, sandbox: Path) -> list:
+    envelopes = []
+    copies: dict[str, Path] = {}
+    for fixture, args in ENVELOPES:
+        if fixture not in copies:
+            copies[fixture] = sandbox / fixture
+            shutil.copytree(FIXTURES / fixture, copies[fixture])
+        project = copies[fixture]
+        p = openspec_run(js, ["validate", *args, "--json", "--no-interactive"], project)
+        envelopes.append({
+            "fixture": fixture,
+            "args": args,
+            "rc": p.returncode,
+            "stdout": normalize_envelope(p.stdout, project),
+            "stderr": p.stderr,
+        })
+    return envelopes
+
+
+def capture_rule_fixture_order(js: str, project: Path) -> dict:
+    """規則 fixture 上 `--all` 的 item 順序與 summary（item 內容已在 scopes 逐欄比對）。"""
+    report = json.loads(openspec(js, ["validate", "--all", "--json", "--no-interactive"], project))
+    items = change_first_on_ties(report["items"])
+    return {
+        "order": [f"{item['type']}/{item['id']}" for item in items],
+        "summary": report["summary"],
+    }
 
 
 def capture(js: str, sandbox: Path) -> dict:
@@ -88,6 +188,8 @@ def capture(js: str, sandbox: Path) -> dict:
                 ),
                 key=lambda item: item["id"],
             )
+    result["all_order"] = capture_rule_fixture_order(js, project)
+    result["envelopes"] = capture_envelopes(js, sandbox)
     return result
 
 

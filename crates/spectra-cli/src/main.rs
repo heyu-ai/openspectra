@@ -159,22 +159,21 @@ enum Command {
         #[arg(long = "type", value_name = "TYPE")]
         proposal_type: Option<String>,
     },
-    /// Validate changes against the OpenSpec structural rules (a change needs
-    /// at least one requirement delta; with --strict, each ADDED/MODIFIED
-    /// requirement also needs a normative SHALL/MUST and a `#### Scenario:`).
-    /// Unlike `drift`, this is a pass/fail gate: it exits non-zero when any
-    /// change is invalid.
+    /// Validate changes and specs against the OpenSpec 1.13.2 rules. Unlike
+    /// `drift`, this is a pass/fail gate: it exits non-zero when any item is
+    /// invalid. With no item or scope it validates every active change.
     Validate {
         /// Change or spec name to validate.
         item: Option<String>,
-        /// Validate every active change.
-        #[arg(long, conflicts_with_all = ["item", "specs", "all", "archived"])]
+        /// Validate every active change (with --specs: changes and specs).
+        #[arg(long, conflicts_with_all = ["item", "archived"])]
         changes: bool,
-        /// Validate every canonical spec.
-        #[arg(long, conflicts_with_all = ["item", "changes", "all", "archived"])]
+        /// Validate every canonical spec (with --changes: changes and specs).
+        #[arg(long, conflicts_with_all = ["item", "archived"])]
         specs: bool,
-        /// Validate all active changes and canonical specs.
-        #[arg(long, conflicts_with_all = ["item", "changes", "specs", "archived"])]
+        /// Validate all active changes and canonical specs (ignored with ITEM,
+        /// as the oracle does).
+        #[arg(long, conflicts_with_all = ["archived"])]
         all: bool,
         /// Validate that archived changes have no incomplete tasks.
         #[arg(long, conflicts_with_all = ["item", "changes", "specs", "all"])]
@@ -195,6 +194,10 @@ enum Command {
         strict: bool,
         #[arg(long)]
         json: bool,
+        /// JSON shape: `oracle` (the Spectra 3.0.0 array, the default) or
+        /// `openspec` (the OpenSpec 1.13.2 report).
+        #[arg(long, value_name = "FORMAT", requires = "json")]
+        format: Option<ValidateFormat>,
     },
     /// List active changes (or specs with --specs, or parked changes with --parked).
     List {
@@ -358,6 +361,13 @@ enum ValidationItemType {
 enum ValidationReportKind {
     Full,
     Findings,
+}
+
+/// `validate --json --format`（決策 D3：oracle 為預設）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ValidateFormat {
+    Oracle,
+    Openspec,
 }
 
 impl From<ListSort> for change::SortKey {
@@ -729,9 +739,41 @@ struct ValidateOptions<'a> {
     report_kind: Option<ValidationReportKind>,
     strict: bool,
     as_json: bool,
+    format: Option<ValidateFormat>,
 }
 
-fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>) -> Result<i32> {
+/// OpenSpec 1.13.2 在 `--json` 時把 item 解析錯誤印成 stdout 的 `status` envelope
+/// （`commands/validate.js` `validateDirectItem`）。
+fn print_openspec_status(code: &str, message: String, fix: Option<&str>) -> Result<i32> {
+    // 用 struct 而非 `json!`：後者會把 key 排成字母序，OpenSpec 的順序是
+    // severity, code, message, fix。
+    #[derive(serde::Serialize)]
+    struct Status<'a> {
+        severity: &'a str,
+        code: &'a str,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        fix: Option<&'a str>,
+    }
+    #[derive(serde::Serialize)]
+    struct Envelope<'a> {
+        status: [Status<'a>; 1],
+    }
+    let envelope = Envelope {
+        status: [Status {
+            severity: "error",
+            code,
+            message,
+            fix,
+        }],
+    };
+    println!("{}", serde_json::to_string_pretty(&envelope)?);
+    Ok(1)
+}
+
+fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> Result<i32> {
+    use spectra_core::validate;
+
     let ValidateOptions {
         item,
         changes,
@@ -742,111 +784,170 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>) -> Result<i32> {
         report_kind,
         strict,
         as_json,
+        format,
     } = options;
+    // owner 裁決 W9a-3：`validate <item> --all` 跟 oracle 3.0.0，忽略 `--all`。
+    let all = all && item.is_none();
     let bulk = changes || specs || all || archived;
     if report_kind.is_some() && !bulk {
         anyhow::bail!("--report requires --changes, --specs, --all, or --archived");
     }
+    let openspec_json = as_json && format == Some(ValidateFormat::Openspec);
 
-    let mut report = if archived {
-        spectra_core::validate::validate_archived(cfg)?
-    } else if bulk {
-        let change_names = if changes || all {
-            change::list_active(cfg)
+    let (items, requested_types) = if archived {
+        (validate::validate_archived(cfg)?, vec!["change"])
+    } else if let (Some(item), false) = (item, bulk) {
+        let is_change = change::try_load(cfg, item)?.is_some();
+        let is_spec = spec::try_load(cfg, item)?.is_some();
+        let as_change = match item_type {
+            Some(ValidationItemType::Change) if is_change => true,
+            Some(ValidationItemType::Spec) if is_spec => false,
+            Some(ValidationItemType::Change) => anyhow::bail!("Change '{item}' not found."),
+            Some(ValidationItemType::Spec) => anyhow::bail!("Spec '{item}' not found."),
+            // 同名時 OpenSpec 1.13.2 回 ambiguous（golden envelope 實測）；oracle 3.0.0
+            // 直接取 change（p09），oracle 格式照 oracle（owner 裁決 W9a-1：skill 的
+            // `spectra validate "<name>"` 不能因撞名而失敗）。
+            None if is_change && is_spec && openspec_json => {
+                return print_openspec_status(
+                    "ambiguous_item",
+                    format!("Ambiguous item '{item}' matches both a change and a spec."),
+                    Some("Pass --type change|spec."),
+                );
+            }
+            None if is_change => true,
+            None if is_spec => false,
+            None => {
+                if openspec_json {
+                    let mut candidates = change::list_active(cfg);
+                    candidates.extend(spec::list(cfg)?);
+                    let suggestions = validate::nearest_matches(item, &candidates, 5);
+                    let message = if suggestions.is_empty() {
+                        format!("Unknown item '{item}'.")
+                    } else {
+                        format!(
+                            "Unknown item '{item}'. Did you mean: {}?",
+                            suggestions.join(", ")
+                        )
+                    };
+                    return print_openspec_status("unknown_item", message, None);
+                }
+                anyhow::bail!("Change '{item}' not found.")
+            }
+        };
+        if as_change {
+            (
+                vec![validate::validate_change(cfg, item, strict)?],
+                vec!["change"],
+            )
+        } else {
+            (
+                vec![validate::validate_spec(cfg, item, strict)?],
+                vec!["spec"],
+            )
+        }
+    } else {
+        // D12-3：`--all` 或 `--changes --specs` 都驗兩者（OpenSpec 語意）。
+        // D12-5：什麼都沒指定時跟 oracle，驗全部 changes。
+        let want_changes = all || changes || !bulk;
+        let want_specs = all || specs;
+        // oracle 的順序：changes 同 `list --json`（最新檔案 mtime 由新到舊），
+        // specs 依 id 的 byte 順序；OpenSpec 格式另行排序。
+        let change_names = if want_changes {
+            change::list_active_sorted(cfg, change::SortKey::Modified)
         } else {
             Vec::new()
         };
-        let spec_names = if specs || all {
+        let spec_names = if want_specs {
             spec::list(cfg)?
         } else {
             Vec::new()
         };
-        spectra_core::validate::build_mixed_report(cfg, &change_names, &spec_names, strict)?
-    } else if let Some(item) = item {
-        let is_change = change::try_load(cfg, item)?.is_some();
-        let is_spec = spec::try_load(cfg, item)?.is_some();
-        let validation = match item_type {
-            Some(ValidationItemType::Change) if is_change => {
-                spectra_core::validate::validate_change(cfg, item, strict)?
-            }
-            Some(ValidationItemType::Spec) if is_spec => {
-                spectra_core::validate::validate_spec(cfg, item, strict)?
-            }
-            Some(ValidationItemType::Change) => anyhow::bail!("Change '{item}' not found."),
-            Some(ValidationItemType::Spec) => anyhow::bail!("Spec '{item}' not found."),
-            None if is_change && is_spec => {
-                anyhow::bail!(
-                    "Ambiguous item '{item}' matches both a change and a spec; pass --type change|spec"
-                )
-            }
-            None if is_change => spectra_core::validate::validate_change(cfg, item, strict)?,
-            None if is_spec => spectra_core::validate::validate_spec(cfg, item, strict)?,
-            None => anyhow::bail!("Change '{item}' not found."),
-        };
-        spectra_core::validate::report_from_items(cfg, vec![validation])
-    } else if change::list_active(cfg).is_empty() {
-        spectra_core::validate::report_from_items(cfg, Vec::new())
-    } else {
-        let name = change::resolve(cfg, None)?;
-        spectra_core::validate::build_report(cfg, std::slice::from_ref(&name), strict)?
+        let mut requested = Vec::new();
+        if want_changes {
+            requested.push("change");
+        }
+        if want_specs {
+            requested.push("spec");
+        }
+        (
+            validate::validate_items(cfg, &change_names, &spec_names, strict)?,
+            requested,
+        )
     };
 
-    let failed = report.any_failed();
+    let failed = items.iter().any(|item| !item.valid);
     let findings = matches!(report_kind, Some(ValidationReportKind::Findings));
-    if findings {
-        report.items.retain(|item| !item.issues.is_empty());
-    }
-    if as_json && findings {
-        let scope = if archived {
-            "archived"
-        } else if all {
-            "all"
-        } else if changes {
-            "changes"
+    if openspec_json {
+        let report = validate::openspec_report(cfg, &items, &requested_types);
+        if findings {
+            let scope = if archived {
+                "archived"
+            } else if all || (changes && specs) {
+                "all"
+            } else if changes {
+                "changes"
+            } else {
+                "specs"
+            };
+            let findings = validate::findings_report(report, scope);
+            println!("{}", serde_json::to_string_pretty(&findings)?);
         } else {
-            "specs"
-        };
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "report": {
-                    "kind": "validation-findings",
-                    "version": "1.0",
-                    "scope": scope,
-                    "returnedItems": report.items.len(),
-                    "totalItems": report.summary.totals.total,
-                },
-                "itemFindings": report.items,
-                "summary": report.summary,
-                "root": report.root,
-            }))?
-        );
-    } else if as_json {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        return Ok(i32::from(failed));
+    }
+
+    let mut oracle_items: Vec<validate::OracleItem> =
+        items.iter().map(validate::oracle_item).collect();
+    if findings {
+        oracle_items.retain(|item| !item.errors.is_empty() || !item.warnings.is_empty());
+    }
+    if as_json {
+        println!("{}", serde_json::to_string_pretty(&oracle_items)?);
     } else {
-        print_validate_human(&report);
+        print!("{}", validate_human(&oracle_items, use_color));
+    }
+    if failed {
+        std::io::stdout().flush()?;
+        eprintln!("Error: Validation failed.");
     }
     Ok(i32::from(failed))
 }
 
-fn print_validate_human(report: &spectra_core::validate::ValidateReport) {
-    for item in &report.items {
+/// Human `validate` output, byte-for-byte oracle 3.0.0 (W9 RE spec A2):
+/// `✓ <name> — valid` / `✗ <name> — invalid`, then every `  error: ` line,
+/// then every `  warn: ` line. On a terminal only the glyph (green/red) and
+/// the `error:` (red) / `warn:` (yellow) labels are colored.
+fn validate_human(items: &[spectra_core::validate::OracleItem], use_color: bool) -> String {
+    let mut out = String::new();
+    for item in items {
         if item.valid {
-            println!("{:<45} OK", item.id);
+            out.push_str(&format!(
+                "{} {} — valid\n",
+                colorize("✓", "32", use_color),
+                item.name
+            ));
         } else {
-            let n = item.issues.len();
-            let noun = if n == 1 { "issue" } else { "issues" };
-            println!("{:<45} FAIL ({n} {noun})", item.id);
+            out.push_str(&format!(
+                "{} {} — invalid\n",
+                colorize("✗", "31", use_color),
+                item.name
+            ));
         }
-        for issue in &item.issues {
-            println!("  {} {}: {}", issue.level, issue.path, issue.message);
+        for error in &item.errors {
+            out.push_str(&format!(
+                "  {} {error}\n",
+                colorize("error:", "31", use_color)
+            ));
+        }
+        for warning in &item.warnings {
+            out.push_str(&format!(
+                "  {} {warning}\n",
+                colorize("warn:", "33", use_color)
+            ));
         }
     }
-    let t = &report.summary.totals;
-    println!(
-        "\n{} passed, {} failed ({} total).",
-        t.passed, t.failed, t.total
-    );
+    out
 }
 
 /// Whether to emit ANSI color codes: the `--no-color` flag and the `NO_COLOR`
@@ -2265,6 +2366,7 @@ fn run() -> Result<i32> {
             report,
             strict,
             json,
+            format,
         } => {
             let cfg = require_initialized(&root)?;
             cmd_validate(
@@ -2279,7 +2381,9 @@ fn run() -> Result<i32> {
                     report_kind: *report,
                     strict: *strict,
                     as_json: *json,
+                    format: *format,
                 },
+                use_color,
             )
         }
         Command::List {

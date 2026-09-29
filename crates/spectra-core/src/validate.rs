@@ -10,6 +10,11 @@
 //! Changes and canonical specs may be validated directly or in bulk;
 //! archived validation checks incomplete tasks. Errors always fail, warnings
 //! fail only under `--strict`, and informational findings never fail.
+//!
+//! Two output shapes exist (ruling D3, W9a): the oracle 3.0.0 shape
+//! ([`oracle_item`], the default) and the OpenSpec 1.13.2 `--json` report
+//! ([`openspec_report`], `--format openspec`). Both are built from the same
+//! [`ChangeValidation`] list; only the presentation differs.
 
 use anyhow::{Context, Result};
 use once_cell::sync::Lazy;
@@ -21,15 +26,21 @@ use crate::config::Config;
 use crate::fsutil::read_optional;
 use crate::openspec_md;
 
-/// One validation finding. Existing field order remains level/path/message;
-/// `line` is additive and omitted when the parser cannot ground it.
+/// One validation finding, serialized in OpenSpec's key order: `level`,
+/// `path`, then `line` when the rule grounds one, then `message`.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Issue {
     pub level: String,
     pub path: String,
-    pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
+    pub message: String,
+    /// The finding belongs to a delta file under the change's `specs/` (its
+    /// `path` is relative to that directory). The oracle format prefixes such
+    /// messages with `specs/<path>: ` (ruling D12-2); OpenSpec's JSON has no
+    /// such field.
+    #[serde(skip)]
+    pub delta_file: bool,
 }
 
 impl Issue {
@@ -37,8 +48,9 @@ impl Issue {
         Self {
             level: level.to_string(),
             path,
-            message,
             line: None,
+            message,
+            delta_file: false,
         }
     }
 
@@ -71,27 +83,34 @@ pub struct ChangeValidation {
     pub duration_ms: u64,
 }
 
+/// OpenSpec 1.13.2's `{items, passed, failed}` counters, in that key order.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Totals {
+    pub items: usize,
     pub passed: usize,
     pub failed: usize,
-    pub total: usize,
-    pub items: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     pub totals: Totals,
+    /// One entry per **requested** type, even when it has no item
+    /// (`commands/validate.js` `runBulkValidation`); `change` sorts before
+    /// `spec`, matching OpenSpec's insertion order.
     pub by_type: std::collections::BTreeMap<String, Totals>,
 }
 
+/// `toRootOutput` (`core/root-selection.js:297-303`). OpenSpectra finds its
+/// root by walking up to the nearest `.spectra.yaml`, which is OpenSpec's
+/// `nearest` source; store roots do not exist here.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RootInfo {
     pub path: String,
-    pub spec_dir: String,
+    pub source: String,
 }
 
+/// The OpenSpec 1.13.2 `validate --json` report (`--format openspec`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ValidateReport {
     pub items: Vec<ChangeValidation>,
@@ -106,25 +125,40 @@ impl ValidateReport {
     }
 }
 
+/// `projectValidationFindings`: `--report findings` keeps the items that
+/// carry any finding (INFO included) and the full-run summary.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingsReport {
+    pub report: FindingsMeta,
+    pub item_findings: Vec<ChangeValidation>,
+    pub summary: Summary,
+    pub root: RootInfo,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingsMeta {
+    pub kind: String,
+    pub version: String,
+    pub scope: String,
+    pub returned_items: usize,
+    pub total_items: usize,
+}
+
+/// Validates every active change, as the OpenSpec report.
 pub fn validate_all_active(cfg: &Config, strict: bool) -> Result<ValidateReport> {
-    let names = change::list_active(cfg);
-    build_report(cfg, &names, strict)
+    let items = validate_items(cfg, &change::list_active(cfg), &[], strict)?;
+    Ok(openspec_report(cfg, &items, &["change"]))
 }
 
-pub fn build_report(cfg: &Config, names: &[String], strict: bool) -> Result<ValidateReport> {
-    let mut items = Vec::with_capacity(names.len());
-    for name in names {
-        items.push(validate_change(cfg, name, strict)?);
-    }
-    Ok(report_from_items(cfg, items))
-}
-
-pub fn build_mixed_report(
+/// Validates the named changes, then the named specs, in the given order.
+pub fn validate_items(
     cfg: &Config,
     change_names: &[String],
     spec_names: &[String],
     strict: bool,
-) -> Result<ValidateReport> {
+) -> Result<Vec<ChangeValidation>> {
     let mut items = Vec::with_capacity(change_names.len() + spec_names.len());
     for name in change_names {
         items.push(validate_change(cfg, name, strict)?);
@@ -132,51 +166,211 @@ pub fn build_mixed_report(
     for name in spec_names {
         items.push(validate_spec(cfg, name, strict)?);
     }
-    Ok(report_from_items(cfg, items))
+    Ok(items)
 }
 
-pub fn report_from_items(cfg: &Config, items: Vec<ChangeValidation>) -> ValidateReport {
+/// Builds the OpenSpec 1.13.2 report. `requested_types` are the scopes asked
+/// for (`change`, `spec`): each gets a `byType` entry even when empty. Items
+/// are ordered like OpenSpec's `results.sort((a, b) => a.id.localeCompare(b.id))`
+/// ([`locale_compare`]); the sort is stable, so a change and a spec sharing an
+/// id keep the input order (OpenSpec orders that tie by async completion,
+/// which is not deterministic).
+pub fn openspec_report(
+    cfg: &Config,
+    items: &[ChangeValidation],
+    requested_types: &[&str],
+) -> ValidateReport {
     fn totals<'a>(items: impl Iterator<Item = &'a ChangeValidation>) -> Totals {
-        let items: Vec<_> = items.collect();
-        let failed = items.iter().filter(|item| !item.valid).count();
-        let total = items.len();
+        let (mut passed, mut failed) = (0, 0);
+        for item in items {
+            if item.valid {
+                passed += 1;
+            } else {
+                failed += 1;
+            }
+        }
         Totals {
-            passed: total - failed,
+            items: passed + failed,
+            passed,
             failed,
-            total,
-            items: total,
         }
     }
 
-    let mut by_type = std::collections::BTreeMap::new();
-    for item_type in ["change", "spec"] {
-        let selected: Vec<_> = items
-            .iter()
-            .filter(|item| item.item_type == item_type)
-            .collect();
-        if !selected.is_empty() {
-            by_type.insert(item_type.to_string(), totals(selected.into_iter()));
-        }
-    }
+    let mut sorted = items.to_vec();
+    sorted.sort_by(|left, right| locale_compare(&left.id, &right.id));
+    let by_type = requested_types
+        .iter()
+        .map(|item_type| {
+            (
+                item_type.to_string(),
+                totals(sorted.iter().filter(|item| item.item_type == *item_type)),
+            )
+        })
+        .collect();
     ValidateReport {
         summary: Summary {
-            totals: totals(items.iter()),
+            totals: totals(sorted.iter()),
             by_type,
         },
-        items,
-        version: "2.0".to_string(),
+        items: sorted,
+        version: "1.0".to_string(),
         root: RootInfo {
             path: cfg.root.to_string_lossy().to_string(),
-            spec_dir: cfg.spec_dir.clone(),
+            source: "nearest".to_string(),
         },
     }
+}
+
+/// `projectValidationFindings` over a full report; `scope` is `all`,
+/// `changes`, `specs`, or `archived`.
+pub fn findings_report(full: ValidateReport, scope: &str) -> FindingsReport {
+    let total_items = full.summary.totals.items;
+    let item_findings: Vec<ChangeValidation> = full
+        .items
+        .into_iter()
+        .filter(|item| !item.issues.is_empty())
+        .collect();
+    FindingsReport {
+        report: FindingsMeta {
+            kind: "validation-findings".to_string(),
+            version: "1.0".to_string(),
+            scope: scope.to_string(),
+            returned_items: item_findings.len(),
+            total_items,
+        },
+        item_findings,
+        summary: full.summary,
+        root: full.root,
+    }
+}
+
+/// One item in the oracle 3.0.0 shape: `{change|spec, errors, valid,
+/// warnings}`, keys alphabetical (W9 RE spec A3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OracleItem {
+    pub name: String,
+    pub is_spec: bool,
+    pub valid: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl Serialize for OracleItem {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(4))?;
+        if !self.is_spec {
+            map.serialize_entry("change", &self.name)?;
+        }
+        map.serialize_entry("errors", &self.errors)?;
+        if self.is_spec {
+            map.serialize_entry("spec", &self.name)?;
+        }
+        map.serialize_entry("valid", &self.valid)?;
+        map.serialize_entry("warnings", &self.warnings)?;
+        map.end()
+    }
+}
+
+/// The INFO that ruling D12-1 keeps: archive's merge would refuse the delta,
+/// which the oracle itself reports as a warning.
+const ARCHIVE_REFUSAL_PREFIX: &str = "Archive would refuse this delta: ";
+
+/// Maps one item into the oracle shape (ruling D12): ERROR → `errors`,
+/// WARNING → `warnings`, INFO → `warnings` only when it is an archive refusal
+/// (every other INFO is dropped). Messages keep OpenSpec's wording; a
+/// delta-file finding gets the `specs/<path>: ` prefix the oracle uses. The
+/// verdict is the item's own (so `--strict` still fails on warnings).
+pub fn oracle_item(item: &ChangeValidation) -> OracleItem {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+    for issue in &item.issues {
+        let bucket = match issue.level.as_str() {
+            "ERROR" => &mut errors,
+            "WARNING" => &mut warnings,
+            _ if issue.message.starts_with(ARCHIVE_REFUSAL_PREFIX) => &mut warnings,
+            _ => continue,
+        };
+        bucket.push(if issue.delta_file {
+            format!("specs/{}: {}", issue.path, issue.message)
+        } else {
+            issue.message.clone()
+        });
+    }
+    OracleItem {
+        name: item.id.clone(),
+        is_spec: item.item_type == "spec",
+        valid: item.valid,
+        errors,
+        warnings,
+    }
+}
+
+/// `String.prototype.localeCompare` as Node 22 (ICU 78, CLDR root collation,
+/// alternate = non-ignorable) orders the ids OpenSpec sorts: punctuation and
+/// symbols first in CLDR order, then digits, then letters compared
+/// case-insensitively; only when every primary weight ties does case decide,
+/// lowercase first. Exact for printable ASCII (checked against
+/// `node -e` over all 95 characters); any other character sorts after `z` by
+/// code point, which is an approximation (no corpus has non-ASCII ids).
+pub fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
+    const ASCII_ORDER: &str =
+        " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz";
+    fn primary(ch: char) -> u32 {
+        let lower = ch.to_ascii_lowercase();
+        match ASCII_ORDER.find(lower) {
+            Some(index) if ch.is_ascii() => index as u32,
+            _ => 0x100 + ch as u32,
+        }
+    }
+    fn tertiary(ch: char) -> u8 {
+        u8::from(ch.is_ascii_uppercase())
+    }
+    left.chars()
+        .map(primary)
+        .cmp(right.chars().map(primary))
+        .then_with(|| left.chars().map(tertiary).cmp(right.chars().map(tertiary)))
+}
+
+/// `nearestMatches` (`utils/match.js`): the `max` candidates with the
+/// smallest Levenshtein distance over UTF-16 code units, ties in candidate
+/// order (the sort is stable).
+pub fn nearest_matches(input: &str, candidates: &[String], max: usize) -> Vec<String> {
+    fn levenshtein(a: &[u16], b: &[u16]) -> usize {
+        let mut previous: Vec<usize> = (0..=b.len()).collect();
+        for (i, left) in a.iter().enumerate() {
+            let mut current = vec![i + 1; b.len() + 1];
+            for (j, right) in b.iter().enumerate() {
+                let cost = usize::from(left != right);
+                current[j + 1] = (previous[j + 1] + 1)
+                    .min(current[j] + 1)
+                    .min(previous[j] + cost);
+            }
+            previous = current;
+        }
+        previous[b.len()]
+    }
+    let input: Vec<u16> = input.encode_utf16().collect();
+    let mut scored: Vec<(usize, &String)> = candidates
+        .iter()
+        .map(|candidate| {
+            let units: Vec<u16> = candidate.encode_utf16().collect();
+            (levenshtein(&input, &units), candidate)
+        })
+        .collect();
+    scored.sort_by_key(|(distance, _)| *distance);
+    scored
+        .into_iter()
+        .take(max)
+        .map(|(_, candidate)| candidate.clone())
+        .collect()
 }
 
 /// 驗證一個 change：逐條移植 OpenSpec 1.13.2 的
 /// `Validator.validateChangeDeltaSpecs`（`dist/core/validation/validator.js`
 /// 123-455），連 issue 的順序、path、line 都照搬（決策 D1）。OpenSpec 沒有的
 /// 規則不報，唯一例外是 OpenSpectra 獨有的 archive 拒絕理由（trace footer、
-/// trace sidecar、capability retirement），仍是 ERROR，待 owner 裁決（C20）。
+/// trace sidecar、capability retirement），依 owner 裁決 D12-6 仍是 ERROR（C20）。
 pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
     let started = std::time::Instant::now();
     let change_dir = cfg.changes_dir().join(name);
@@ -320,6 +514,18 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
                 format!("Change must have at least one delta. {GUIDE_NO_DELTAS}"),
             ));
         }
+    }
+    // 到這裡為止，path 相對於 change 的 specs/ 的 finding 都屬於某個 delta 檔
+    // （根目錄的 spec.md、非 spec.md 的 delta 檔也算）；task 檔的 finding 在下面才加，
+    // path 是相對 change 目錄，不能混進來。
+    let delta_paths: std::collections::HashSet<&str> = plans
+        .iter()
+        .map(|(_, entry_path, _)| entry_path.as_str())
+        .chain(has_root_level_spec.then_some("spec.md"))
+        .chain(unread_delta_files.iter().map(|(path, _)| path.as_str()))
+        .collect();
+    for issue in &mut issues {
+        issue.delta_file = delta_paths.contains(issue.path.as_str());
     }
     issues.extend(task_file_issues(cfg, &change_dir, loaded_change.as_ref())?);
 
@@ -1475,12 +1681,13 @@ fn missing_checkbox_issues(documents: &[(String, String)]) -> Vec<Issue> {
         .collect()
 }
 
-pub fn validate_archived(cfg: &Config) -> Result<ValidateReport> {
+/// `--archived`: one item per archived change directory, in name order.
+pub fn validate_archived(cfg: &Config) -> Result<Vec<ChangeValidation>> {
     let archive_dir = cfg.changes_dir().join("archive");
     let entries = match std::fs::read_dir(&archive_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(report_from_items(cfg, Vec::new()));
+            return Ok(Vec::new());
         }
         Err(error) => {
             return Err(error).with_context(|| format!("reading {}", archive_dir.display()));
@@ -1524,7 +1731,7 @@ pub fn validate_archived(cfg: &Config) -> Result<ValidateReport> {
             duration_ms: elapsed_ms(started),
         });
     }
-    Ok(report_from_items(cfg, items))
+    Ok(items)
 }
 fn elapsed_ms(started: std::time::Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
@@ -1779,11 +1986,102 @@ mod tests {
         write_delta(&c, "good", "auth", GOOD_ADDED);
         fs::create_dir_all(c.changes_dir().join("bad")).unwrap();
 
-        let report = build_report(&c, &["good".to_string(), "bad".to_string()], true).unwrap();
-        assert_eq!(report.summary.totals.total, 2);
+        let items =
+            validate_items(&c, &["good".to_string(), "bad".to_string()], &[], true).unwrap();
+        let report = openspec_report(&c, &items, &["change", "spec"]);
+        assert_eq!(report.summary.totals.items, 2);
         assert_eq!(report.summary.totals.passed, 1);
         assert_eq!(report.summary.totals.failed, 1);
         assert!(report.any_failed());
+        // 要求的 type 即使沒有 item 也有一格 byType（commands/validate.js）。
+        assert_eq!(
+            report.summary.by_type["spec"],
+            Totals {
+                items: 0,
+                passed: 0,
+                failed: 0
+            }
+        );
+        assert_eq!(report.summary.by_type["change"].failed, 1);
+    }
+
+    /// Node 22／ICU 78 的 `localeCompare` 實測順序（`node -e`，W9a）。
+    #[test]
+    fn locale_compare_matches_node_for_ascii_ids() {
+        let mut ids: Vec<&str> = vec![
+            "zeta",
+            "Upper_Case",
+            "only",
+            "alpha",
+            "B-upper",
+            "a-b",
+            "a.b",
+            "a/b",
+            "aa",
+            "parentless/child",
+            "a",
+            "A",
+            "ab",
+            "Ab",
+            "aB",
+            "a1",
+            "a10",
+            "a2",
+            "a-",
+            "a_",
+            "a b",
+        ];
+        ids.sort_by(|a, b| locale_compare(a, b));
+        assert_eq!(
+            ids,
+            [
+                "a",
+                "A",
+                "a b",
+                "a_",
+                "a-",
+                "a-b",
+                "a.b",
+                "a/b",
+                "a1",
+                "a10",
+                "a2",
+                "aa",
+                "ab",
+                "aB",
+                "Ab",
+                "alpha",
+                "B-upper",
+                "only",
+                "parentless/child",
+                "Upper_Case",
+                "zeta",
+            ]
+        );
+    }
+
+    #[test]
+    fn nearest_matches_ranks_by_levenshtein_keeping_candidate_order_on_ties() {
+        let candidates: Vec<String> = [
+            "Upper_Case",
+            "alpha",
+            "only",
+            "zeta",
+            "B-upper",
+            "a-b",
+            "a.b",
+            "a/b",
+            "aa",
+            "only",
+            "parentless/child",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            nearest_matches("nope", &candidates, 5),
+            ["alpha", "only", "zeta", "a-b", "a.b"]
+        );
+        assert_eq!(nearest_matches("zetta", &candidates, 1), ["zeta"]);
     }
 
     #[test]
@@ -1879,9 +2177,9 @@ mod tests {
     fn report_json_shape_matches_the_downstream_gate_contract() {
         let tmp = TempDir::new();
         let c = cfg(&tmp);
-        let report = report_from_items(
+        let report = openspec_report(
             &c,
-            vec![ChangeValidation {
+            &[ChangeValidation {
                 id: "feat".to_string(),
                 item_type: "change".to_string(),
                 valid: false,
@@ -1891,6 +2189,7 @@ mod tests {
                 )],
                 duration_ms: 0,
             }],
+            &["change"],
         );
         let value = serde_json::to_value(&report).unwrap();
         assert_eq!(value["items"][0]["id"], "feat");
@@ -1899,6 +2198,91 @@ mod tests {
         assert_eq!(value["items"][0]["issues"][0]["path"], "specs/auth/spec.md");
         assert_eq!(value["items"][0]["issues"][0]["message"], "boom");
         assert_eq!(value["summary"]["totals"]["failed"], 1);
+    }
+
+    fn item(item_type: &str, issues: Vec<Issue>) -> ChangeValidation {
+        ChangeValidation {
+            id: "x".to_string(),
+            item_type: item_type.to_string(),
+            valid: !issues.iter().any(|issue| issue.level == "ERROR"),
+            issues,
+            duration_ms: 0,
+        }
+    }
+
+    /// D12-1／D12-2：ERROR→errors、WARNING→warnings、只有 archive 拒絕的 INFO 進
+    /// warnings；delta 檔的訊息加 `specs/<path>: `。
+    #[test]
+    fn oracle_item_buckets_levels_and_prefixes_delta_file_messages() {
+        let mut delta_info = Issue::info(
+            "cap/spec.md".to_string(),
+            "Archive would refuse this delta: cap MODIFIED failed".to_string(),
+        );
+        delta_info.delta_file = true;
+        let mut stray = Issue::info("cap/spec.md".to_string(), "Header ignored".to_string());
+        stray.delta_file = true;
+        let mut delta_error = Issue::error("cap/spec.md".to_string(), "bad".to_string());
+        delta_error.delta_file = true;
+        let got = oracle_item(&item(
+            "change",
+            vec![
+                delta_info,
+                stray,
+                Issue::info("file".to_string(), "skip_specs accepted".to_string()),
+                delta_error,
+                Issue::warning("tasks.md".to_string(), "dup".to_string()).at_line(3),
+            ],
+        ));
+        assert_eq!(got.errors, ["specs/cap/spec.md: bad"]);
+        assert_eq!(
+            got.warnings,
+            [
+                "specs/cap/spec.md: Archive would refuse this delta: cap MODIFIED failed",
+                "dup"
+            ]
+        );
+        assert!(!got.valid);
+    }
+
+    #[test]
+    fn oracle_item_serializes_alphabetical_keys_for_both_types() {
+        let change = serde_json::to_string(&oracle_item(&item("change", vec![]))).unwrap();
+        assert_eq!(
+            change,
+            r#"{"change":"x","errors":[],"valid":true,"warnings":[]}"#
+        );
+        let spec = serde_json::to_string(&oracle_item(&item("spec", vec![]))).unwrap();
+        assert_eq!(
+            spec,
+            r#"{"errors":[],"spec":"x","valid":true,"warnings":[]}"#
+        );
+    }
+
+    /// delta 檔以外的 change finding（`file`、task 檔）不標 delta_file。
+    #[test]
+    fn validate_change_marks_only_delta_file_findings() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(
+            &c,
+            "feat",
+            "auth",
+            "## ADDED Requirements\n\n### Requirement: Login\n\nUsers log in.\n\n\
+             #### Scenario: ok\n\n- **WHEN** x\n",
+        );
+        fs::write(
+            c.changes_dir().join("feat/tasks.md"),
+            "## 1. Group\n- [ ] 1.1 a\n- [ ] 1.1 b\n",
+        )
+        .unwrap();
+        let result = validate_change(&c, "feat", false).unwrap();
+        let flags: Vec<(&str, bool)> = result
+            .issues
+            .iter()
+            .map(|issue| (issue.path.as_str(), issue.delta_file))
+            .collect();
+        assert!(flags.contains(&("auth/spec.md", true)), "{flags:?}");
+        assert!(flags.contains(&("tasks.md", false)), "{flags:?}");
     }
 
     fn write_canonical_spec(cfg: &Config, capability: &str, content: &str) {

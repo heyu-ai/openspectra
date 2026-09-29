@@ -703,7 +703,14 @@ fn validate_accepts_a_well_formed_nested_capability_delta() {
     .unwrap();
 
     let out = spectra()
-        .args(["validate", "--changes", "--strict", "--json"])
+        .args([
+            "validate",
+            "--changes",
+            "--strict",
+            "--json",
+            "--format",
+            "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -739,7 +746,9 @@ fn validate_strict_fails_and_exits_nonzero_on_a_bad_delta() {
     .unwrap();
 
     let out = spectra()
-        .args(["validate", "feat", "--strict", "--json"])
+        .args([
+            "validate", "feat", "--strict", "--json", "--format", "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -779,7 +788,7 @@ fn validate_nonstrict_reports_keyword_guidance_without_failing() {
     .unwrap();
 
     let out = spectra()
-        .args(["validate", "feat", "--json"])
+        .args(["validate", "feat", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -815,7 +824,9 @@ fn validate_rejects_a_modified_requirement_that_drops_a_current_scenario() {
     .unwrap();
 
     let out = spectra()
-        .args(["validate", "feat", "--strict", "--json"])
+        .args([
+            "validate", "feat", "--strict", "--json", "--format", "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1028,7 +1039,7 @@ fn validate_errors_when_change_has_no_delta() {
     // `new change` creates metadata only, so there are no specs/ deltas.
 
     let out = spectra()
-        .args(["validate", "feat", "--json"])
+        .args(["validate", "feat", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1051,7 +1062,9 @@ fn skip_specs_validates_and_archives_a_behavior_neutral_change() {
     .unwrap();
 
     let validated = spectra()
-        .args(["validate", "feat", "--strict", "--json"])
+        .args([
+            "validate", "feat", "--strict", "--json", "--format", "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1081,7 +1094,7 @@ fn skip_specs_conflicts_with_delta_files() {
     std::fs::write(&delta, "## ADDED Requirements\n\n### Requirement: Login\n").unwrap();
 
     let validated = spectra()
-        .args(["validate", "feat", "--json"])
+        .args(["validate", "feat", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1113,14 +1126,18 @@ fn strict_spec_validation_rejects_an_archived_purpose_placeholder() {
     .unwrap();
 
     let normal = spectra()
-        .args(["validate", "auth", "--type", "spec", "--json"])
+        .args([
+            "validate", "auth", "--type", "spec", "--json", "--format", "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
     assert!(normal.status.success(), "{normal:?}");
 
     let strict = spectra()
-        .args(["validate", "auth", "--type", "spec", "--strict", "--json"])
+        .args([
+            "validate", "auth", "--type", "spec", "--strict", "--json", "--format", "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1157,13 +1174,14 @@ fn validation_bulk_scopes_emit_versioned_additive_reports() {
     .unwrap();
 
     let all = spectra()
-        .args(["validate", "--all", "--json"])
+        .args(["validate", "--all", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
     assert!(all.status.success(), "{all:?}");
     let report: serde_json::Value = serde_json::from_slice(&all.stdout).unwrap();
-    assert_eq!(report["version"], "2.0");
+    assert_eq!(report["version"], "1.0");
+    assert_eq!(report["root"]["source"], "nearest");
     assert_eq!(report["summary"]["totals"]["failed"], 0);
     assert_eq!(report["summary"]["totals"]["items"], 2);
     assert_eq!(report["summary"]["byType"]["change"]["items"], 1);
@@ -1176,7 +1194,9 @@ fn validation_bulk_scopes_emit_versioned_additive_reports() {
         .any(|item| item["type"] == "spec"));
 
     let findings = spectra()
-        .args(["validate", "--all", "--report", "findings", "--json"])
+        .args([
+            "validate", "--all", "--report", "findings", "--json", "--format", "openspec",
+        ])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1204,7 +1224,7 @@ fn validate_archived_fails_on_incomplete_tasks() {
     assert!(archived.status.success(), "{archived:?}");
 
     let validated = spectra()
-        .args(["validate", "--archived", "--json"])
+        .args(["validate", "--archived", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1236,7 +1256,7 @@ fn validate_archived_counts_star_plus_and_non_x_markers_as_incomplete() {
     assert!(archived.status.success(), "{archived:?}");
 
     let validated = spectra()
-        .args(["validate", "--archived", "--json"])
+        .args(["validate", "--archived", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1816,7 +1836,7 @@ fn validate_reports_a_modified_requirement_missing_from_the_canonical_spec_as_in
     .unwrap();
 
     let out = spectra()
-        .args(["validate", "feat", "--json"])
+        .args(["validate", "feat", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1864,7 +1884,7 @@ fn validate_follows_a_transitive_rename_chain_when_checking_scenario_loss() {
     .unwrap();
 
     let out = spectra()
-        .args(["validate", "feat", "--json"])
+        .args(["validate", "feat", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -1930,7 +1950,7 @@ fn validate_reports_archive_retirement_preflight_failures_as_findings() {
     std::fs::write(delta, "## REMOVED Requirements\n\n### Requirement: Login\n").unwrap();
 
     let out = spectra()
-        .args(["validate", "feat", "--json"])
+        .args(["validate", "feat", "--json", "--format", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
@@ -2157,14 +2177,21 @@ fn validate_human_output_prints_warning_findings_for_a_valid_item() {
 
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("feat"), "{stdout}");
-    assert!(stdout.contains("OK"), "{stdout}");
-    assert!(stdout.contains("WARNING auth/spec.md:"), "{stdout}");
-    assert!(stdout.contains("SHALL or MUST"), "{stdout}");
+    // oracle 格式（W9a，D12）：delta 檔的 WARNING 以 `warn: specs/<cap>/spec.md: ` 列出。
+    assert!(stdout.starts_with("✓ feat — valid\n"), "{stdout}");
+    assert!(
+        stdout.contains(
+            "  warn: specs/auth/spec.md: ADDED \"Login\" should contain SHALL or MUST \
+             (RFC 2119 best practice for English specs)\n"
+        ),
+        "{stdout}"
+    );
 }
 
+/// D12-1：oracle 格式只顯示「Archive would refuse this delta」這類 INFO；
+/// skip_specs 被接受的 INFO 不顯示。
 #[test]
-fn validate_human_output_prints_info_findings_for_a_valid_item() {
+fn validate_human_output_hides_other_info_findings_for_a_valid_item() {
     let tmp = TempDir::new("validate-human-info");
     init_project_with_change(&tmp, "feat");
     std::fs::write(
@@ -2181,14 +2208,7 @@ fn validate_human_output_prints_info_findings_for_a_valid_item() {
 
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("OK"), "{stdout}");
-    assert!(
-        stdout.contains(
-            "INFO file: skip_specs is set in .openspec.yaml: change declares no spec-level \
-             behavior changes, zero deltas accepted"
-        ),
-        "{stdout}"
-    );
+    assert_eq!(stdout, "✓ feat — valid\n");
 }
 
 #[cfg(unix)]
@@ -2243,7 +2263,7 @@ fn show_diff_and_validation_propagate_unreadable_canonical_spec_errors() {
     assert_eq!(validation.status.code(), Some(1), "{validation:?}");
     let stdout = String::from_utf8(validation.stdout).unwrap();
     assert!(
-        stdout.contains("ERROR auth/spec.md: Could not read ")
+        stdout.contains("  error: specs/auth/spec.md: Could not read ")
             && stdout.contains("openspec/specs/auth/spec.md to check the MODIFIED requirements against it (EACCES)"),
         "{stdout}"
     );

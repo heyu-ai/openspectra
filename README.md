@@ -36,8 +36,9 @@ starting with the `drift` command.
 > [`templates.md`](docs/reverse-engineering/templates.md),
 > [`update.md`](docs/reverse-engineering/update.md),
 > and [`validate.md`](docs/reverse-engineering/validate.md).
-> `validate` is **not** oracle-verified: it matches the OSS `openspec validate`
-> contract, not the macOS binary — see the validate write-up.
+> `validate`'s **rules** are not oracle-verified: they follow the OSS
+> `openspec validate` 1.13.2, not the macOS binary; only its default output
+> shape follows the binary — see the validate write-up.
 
 ## Why
 
@@ -69,7 +70,7 @@ severity, so a CI gate keys on a JSON field — use the **FilePath** entries of
 ```sh
 spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/config.yaml + <spec_dir>/{changes/archive,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
-spectra validate [ITEM] [--type change|spec] [--changes|--specs|--all|--archived] [--strict] [--report full|findings] [--json]  # OpenSpec structural/content gate
+spectra validate [ITEM] [--type change|spec] [--changes] [--specs] [--all] [--archived] [--strict] [--report full|findings] [--json [--format oracle|openspec]]  # OpenSpec 1.13.2 rules; no argument = every active change; output in the oracle shape unless --format openspec
 spectra list  [--json]            # lists active changes
 spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
 spectra list  --specs [--json]    # lists capability specs instead of changes
@@ -112,11 +113,13 @@ a gate (see [CI gate example](#ci-gate-example)).
 
 `validate` is the deliberate exception: it is a pass/fail gate, so it exits
 `0` when every selected change/spec/archive check is valid and `1` when any is
-invalid (also `1` on operational errors). The additive v2 JSON retains
-`summary.totals.failed` for existing gates and adds item types, severities,
-grounded lines, per-type totals, root metadata, bulk scopes, and findings-only
-reports. See [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md);
-this contract follows OSS OpenSpec 1.12 rather than the macOS Spectra binary.
+invalid (also `1` on operational errors). Its rules follow OpenSpec 1.13.2;
+its output follows the reference binary by default — `✓ <name> — valid` /
+`✗ <name> — invalid` with `error:`/`warn:` lines, and `--json` prints the
+`[{change|spec, errors, valid, warnings}]` array. `--json --format openspec`
+prints OpenSpec 1.13.2's own report instead (`items`, `summary.totals.failed`,
+`byType`, `root`, `--report findings`), field for field. See
+[`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md).
 
 `spectra drift`'s human-readable conclusion line is colored by severity
 (green/yellow/red) when stdout is a terminal; `--no-color` or the

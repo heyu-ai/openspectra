@@ -96,11 +96,8 @@ fn list_and_validate_keep_their_probed_empty_outputs() {
             &["list", "--json"],
             b"{\n  \"changes\": []\n}\n",
         ),
-        (
-            "validate",
-            &["validate"],
-            b"\n0 passed, 0 failed (0 total).\n",
-        ),
+        // oracle 3.0.0：沒有 change 時什麼都不印（W9 RE 規格 A2，p09 實測）。
+        ("validate", &["validate"], b""),
     ];
 
     for &(label, args, expected_stdout) in cases {
@@ -120,10 +117,7 @@ fn list_and_validate_keep_their_probed_empty_outputs() {
         Some(0),
         "validate --json 應結束於狀態碼 0"
     );
-    let report: serde_json::Value =
-        serde_json::from_slice(&json_out.stdout).expect("validate --json 應回傳合法 JSON");
-    assert_eq!(report["version"], "2.0");
-    assert_eq!(report["items"], serde_json::json!([]));
-    assert_eq!(report["summary"]["totals"]["passed"], 0);
-    assert_eq!(report["summary"]["totals"]["failed"], 0);
+    // oracle 格式（預設）：空陣列。
+    assert_eq!(json_out.stdout, b"[]\n");
+    assert!(json_out.stderr.is_empty());
 }

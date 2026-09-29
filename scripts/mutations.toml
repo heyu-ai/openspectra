@@ -976,8 +976,12 @@ test = "metadata_lines_supply_text_only_when_ordinary_prose_is_absent"
 id = "44-validate-typo-as-change"
 issue = "mob review"
 file = "crates/spectra-cli/src/main.rs"
-find = '''            None => anyhow::bail!("Change '{item}' not found."),'''
-replace = '''            None => spectra_core::validate::validate_change(cfg, item, strict)?,'''
+find = '''                anyhow::bail!("Change '{item}' not found.")
+            }
+        };'''
+replace = '''                true
+            }
+        };'''
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "validate_errors_change_not_found_for_a_nonexistent_explicit_name"
@@ -2171,3 +2175,368 @@ replace = '''                    "{} Forked '{}' \u{2192} '{}'",
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "schema_validate_and_fork_color_only_the_check_mark_on_a_terminal"
+
+# ---------------------------------------------------------------- W9a：validate 輸出格式
+# oracle 格式（預設）依決策 D12 呈現 OpenSpec 規則的結果；`--format openspec --json`
+# 逐欄等於 OpenSpec 1.13.2。每個 case 還原一個行為。
+
+# D12-1：所有 INFO 都進 warnings（應該只有 archive 拒絕）
+
+[[case]]
+id = "w9a-every-info-shown"
+issue = "W9a / D12-1"
+file = "crates/spectra-core/src/validate.rs"
+find = '''            _ if issue.message.starts_with(ARCHIVE_REFUSAL_PREFIX) => &mut warnings,'''
+replace = '''            _ => &mut warnings,'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_drops_every_other_info_finding"
+
+# D12-1：archive 拒絕的 INFO 也丟掉
+
+[[case]]
+id = "w9a-archive-refusal-dropped"
+issue = "W9a / D12-1"
+file = "crates/spectra-core/src/validate.rs"
+find = '''            _ if issue.message.starts_with(ARCHIVE_REFUSAL_PREFIX) => &mut warnings,'''
+replace = '''            _ if false => &mut warnings,'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_valid_item_carries_the_archive_refusal_as_a_warning"
+
+# D12-2：delta 檔的訊息沒有 `specs/<path>: ` 前綴
+
+[[case]]
+id = "w9a-delta-prefix-missing"
+issue = "W9a / D12-2"
+file = "crates/spectra-core/src/validate.rs"
+find = '''            format!("specs/{}: {}", issue.path, issue.message)'''
+replace = '''            issue.message.clone()'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_prefixes_only_delta_file_messages"
+
+# D12-2：change 層級與 task 檔的訊息也加前綴
+
+[[case]]
+id = "w9a-prefix-every-message"
+issue = "W9a / D12-2"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        bucket.push(if issue.delta_file {'''
+replace = '''        bucket.push(if !issue.path.is_empty() {'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_prefixes_only_delta_file_messages"
+
+# D12-2：specs/ 根目錄的 spec.md 不算 delta 檔
+
+[[case]]
+id = "w9a-root-spec-not-delta"
+issue = "W9a / D12-2"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        .chain(has_root_level_spec.then_some("spec.md"))'''
+replace = '''        .chain(None)'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_prefixes_only_delta_file_messages"
+
+# D12-2：非 spec.md 的 delta 檔不算 delta 檔
+
+[[case]]
+id = "w9a-unread-delta-not-delta"
+issue = "W9a / D12-2"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        .chain(unread_delta_files.iter().map(|(path, _)| path.as_str()))'''
+replace = '''        .chain(unread_delta_files.iter().map(|_| "").take(0))'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_prefixes_only_delta_file_messages"
+
+# D12-3：oracle 的 `--all` 只驗 changes
+
+[[case]]
+id = "w9a-all-changes-only"
+issue = "W9a / D12-3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        let want_specs = all || specs;'''
+replace = '''        let want_specs = specs;'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "scopes_follow_openspec_and_a_bare_validate_takes_every_change"
+
+# D12-3：oracle 的 `--changes --specs` 只驗 specs
+
+[[case]]
+id = "w9a-changes-specs-specs-only"
+issue = "W9a / D12-3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        let want_changes = all || changes || !bulk;'''
+replace = '''        let want_changes = all || (changes && !specs) || !bulk;'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "scopes_follow_openspec_and_a_bare_validate_takes_every_change"
+
+# D12-5：不帶參數的 validate 什麼都不驗
+
+[[case]]
+id = "w9a-bare-validate-empty"
+issue = "W9a / D12-5"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        let want_changes = all || changes || !bulk;'''
+replace = '''        let want_changes = all || changes;'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "scopes_follow_openspec_and_a_bare_validate_takes_every_change"
+
+# D12-4：validate <item> 不接受 spec 名稱（oracle 3.0.0 的行為）
+
+[[case]]
+id = "w9a-spec-name-rejected"
+issue = "W9a / D12-4"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            None if is_spec => false,'''
+replace = '''            None if is_spec && false => false,'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_accepts_a_spec_name"
+
+# oracle 格式的 change 順序改成名稱順序（oracle 是 `list --json` 的 mtime 順序）
+
+[[case]]
+id = "w9a-oracle-change-order-by-name"
+issue = "W9a / A1"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            change::list_active_sorted(cfg, change::SortKey::Modified)'''
+replace = '''            change::list_active(cfg)'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "oracle_order_is_list_order_for_changes_and_byte_order_for_specs"
+
+# human：warn 行先於 error 行
+
+[[case]]
+id = "w9a-warnings-before-errors"
+issue = "W9a / A2"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        for error in &item.errors {
+            out.push_str(&format!(
+                "  {} {error}\n",
+                colorize("error:", "31", use_color)
+            ));
+        }
+        for warning in &item.warnings {
+            out.push_str(&format!(
+                "  {} {warning}\n",
+                colorize("warn:", "33", use_color)
+            ));
+        }'''
+replace = '''        for warning in &item.warnings {
+            out.push_str(&format!(
+                "  {} {warning}\n",
+                colorize("warn:", "33", use_color)
+            ));
+        }
+        for error in &item.errors {
+            out.push_str(&format!(
+                "  {} {error}\n",
+                colorize("error:", "31", use_color)
+            ));
+        }'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_lists_errors_before_the_archive_refusal_warning"
+
+# human：有 invalid item 時 stderr 沒有 `Error: Validation failed.`
+
+[[case]]
+id = "w9a-no-validation-failed-line"
+issue = "W9a / A2"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        eprintln!("Error: Validation failed.");'''
+replace = '''        eprint!("");'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_lists_errors_before_the_archive_refusal_warning"
+
+# human：valid 的 ✓ 在 TTY 上是紅色
+
+[[case]]
+id = "w9a-valid-glyph-red"
+issue = "W9a / A2"
+file = "crates/spectra-cli/src/main.rs"
+find = '''                colorize("✓", "32", use_color),'''
+replace = '''                colorize("✓", "31", use_color),'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "human_colors_only_the_glyph_and_the_label_on_a_terminal"
+
+# oracle 格式的 findings report 只看 errors（只有 warn 的 item 被濾掉）
+
+[[case]]
+id = "w9a-findings-ignore-warnings"
+issue = "W9a"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        oracle_items.retain(|item| !item.errors.is_empty() || !item.warnings.is_empty());'''
+replace = '''        oracle_items.retain(|item| !item.errors.is_empty());'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "findings_report_keeps_only_items_with_oracle_messages"
+
+# `--format` 不需要 `--json`
+
+[[case]]
+id = "w9a-format-without-json"
+issue = "W9a / D3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        #[arg(long, value_name = "FORMAT", requires = "json")]'''
+replace = '''        #[arg(long, value_name = "FORMAT")]'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "format_requires_json"
+
+# openspec 格式：item 依 byte 順序（OpenSpec 是 localeCompare）
+
+[[case]]
+id = "w9a-openspec-byte-order"
+issue = "W9a / D3"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    sorted.sort_by(|left, right| locale_compare(&left.id, &right.id));'''
+replace = '''    sorted.sort_by(|left, right| left.id.cmp(&right.id));'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# localeCompare：大小寫不當 tie-break（"a" 與 "A" 視為相等）
+
+[[case]]
+id = "w9a-locale-case-tiebreak"
+issue = "W9a / D3"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        .then_with(|| left.chars().map(tertiary).cmp(right.chars().map(tertiary)))'''
+replace = '''        .then_with(|| left.chars().map(tertiary).cmp(left.chars().map(tertiary)))'''
+package = "spectra-core"
+test = "locale_compare_matches_node_for_ascii_ids"
+
+# openspec 格式：沒有 spec 時不列 byType.spec（OpenSpec 列出每個要求的 type）
+
+[[case]]
+id = "w9a-bytype-present-only"
+issue = "W9a / D3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        if want_specs {
+            requested.push("spec");'''
+replace = '''        if want_specs && !spec_names.is_empty() {
+            requested.push("spec");'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# openspec 格式：totals 的 key 順序（OpenSpec 是 items, passed, failed）
+
+[[case]]
+id = "w9a-totals-key-order"
+issue = "W9a / D3"
+file = "crates/spectra-core/src/validate.rs"
+find = '''pub struct Totals {
+    pub items: usize,
+    pub passed: usize,
+    pub failed: usize,
+}'''
+replace = '''pub struct Totals {
+    pub passed: usize,
+    pub failed: usize,
+    pub items: usize,
+}'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# openspec 格式：issue 的 `line` 排在 `message` 之後（OpenSpec 在之前）
+
+[[case]]
+id = "w9a-issue-line-after-message"
+issue = "W9a / D3"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    pub message: String,'''
+replace = '''    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# openspec 格式：`--changes --specs --report findings` 的 scope 不是 all
+
+[[case]]
+id = "w9a-findings-scope-both-flags"
+issue = "W9a / D3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            } else if all || (changes && specs) {'''
+replace = '''            } else if all {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# openspec 格式：unknown item 的建議取前 3 個（OpenSpec 是 5 個）
+
+[[case]]
+id = "w9a-suggestion-count"
+issue = "W9a / D3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''                    let suggestions = validate::nearest_matches(item, &candidates, 5);'''
+replace = '''                    let suggestions = validate::nearest_matches(item, &candidates, 3);'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# owner 裁決 W9a-1：oracle 格式遇到同名 change／spec 回 ambiguous（應取 change）
+
+[[case]]
+id = "w9a-oracle-collision-ambiguous"
+issue = "W9a-1"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            None if is_change && is_spec && openspec_json => {'''
+replace = '''            None if is_change && is_spec => {'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "a_name_shared_by_a_change_and_a_spec_is_the_change_in_the_oracle_shape"
+
+# owner 裁決 W9a-1：openspec 格式遇到同名時也取 change（OpenSpec 1.13.2 回 ambiguous）
+
+[[case]]
+id = "w9a-openspec-collision-takes-change"
+issue = "W9a-1"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            None if is_change && is_spec && openspec_json => {'''
+replace = '''            None if is_change && is_spec && false => {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# owner 裁決 W9a-3：`validate <item> --all` 沒有忽略 `--all`（改成驗全部）
+
+[[case]]
+id = "w9a-item-all-not-ignored"
+issue = "W9a-3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    let all = all && item.is_none();'''
+replace = '''    let all = all;'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "an_item_with_all_validates_only_the_item"
+
+# owner 裁決 W9a-3：`validate <item> --all` 被 clap 拒絕
+
+[[case]]
+id = "w9a-item-all-rejected"
+issue = "W9a-3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        #[arg(long, conflicts_with_all = ["archived"])]
+        all: bool,'''
+replace = '''        #[arg(long, conflicts_with_all = ["item", "archived"])]
+        all: bool,'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "an_item_with_all_validates_only_the_item"

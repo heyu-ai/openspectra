@@ -67,10 +67,15 @@ this file is agent-facing operational context.
   `crates/spectra-cli/tests/fixtures/validate_openspec` (`--changes`/`--specs`,
   normal and `--strict`) and compares with
   `docs/reverse-engineering/golden/validate-openspec-1.13.2.json`, which
-  `validate_openspec_integration.rs` replays field for field. Drift exits
-  non-zero keeping the sandbox; `--write` regenerates and re-verifies. When a
-  validate rule changes, add a fixture case and recapture — never hand-edit
-  the golden.
+  `validate_openspec_integration.rs` replays field for field. It also pins the
+  whole `validate --json --format openspec` envelope (W9a, ruling D3):
+  `ENVELOPES` runs a list of invocations on the `validate_openspec_envelope`
+  and `validate_openspec_empty` fixtures and keeps each stdout as text (key
+  order matters), normalizing `durationMs` to 0, the sandbox path to `<ROOT>`,
+  and a same-id change/spec tie to change-first (OpenSpec orders it by async
+  completion). Drift exits non-zero keeping the sandbox; `--write` regenerates
+  and re-verifies. When a validate rule or the envelope changes, add a fixture
+  case and recapture — never hand-edit the golden.
 - `scripts/capture-analyze.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0, `--spectra-bin`/`SPECTRA_BIN` override). Builds each
   `analyze` scenario (plus the `conNumericClaimMismatch` cases in
