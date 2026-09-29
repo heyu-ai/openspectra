@@ -131,6 +131,58 @@ constants in `schema.rs`. Listing project schemas is part of #126:
 | `description` | `Default OpenSpec workflow - proposal → specs → design → tasks` |
 | `artifacts` | `["proposal", "specs", "design", "tasks"]` |
 
+### Schemas that fail to load (#226, oracle 3.0.0)
+
+`schemas` never validates a project or user schema. Probed on 2026-09-29 with
+each of the 77 `schema validate` fixtures
+(`crates/spectra-cli/tests/fixtures/schema_validate/<case>/`) as the only
+project schema, plus a `schema.yaml` directory and hand-written YAML shapes, in fresh `$TMPDIR` jails (one
+command per jail, `schemas --no-color` and `schemas --json`):
+
+- **A directory is listed whenever `<dir>/schema.yaml` exists** — including a
+  schema without `version`, broken YAML, duplicate keys, a BOM, a cycle,
+  unknown `requires`, and `schema.yaml` being a *directory*. A dangling
+  `schema.yaml` symlink is not listed, and neither is a directory with only
+  `schema.yml`. stdout keeps the normal shape, stderr is empty, exit 0.
+- **`artifacts` is read leniently**: the file is parsed as a plain YAML value;
+  from the top-level `artifacts` sequence, each mapping entry contributes its
+  `id` when that is a string, in file order, duplicates kept (`dup-id` →
+  `["a", "b", "a"]`). Non-string ids (`1`, `true`, `null`, `1.5`, a list),
+  non-mapping entries and entries without `id` are skipped (`'01'` is kept).
+  Anything else — unreadable file (directory, non-UTF-8), a parse error
+  (syntax, duplicate key, BOM, several documents), a non-mapping top level, or
+  `artifacts` that is absent, `null`, a string or a mapping — gives `[]`.
+  Aliases are resolved (`- *x` contributes the anchored entry's `id`).
+- The user level (`~/Library/Application Support/openspec/schemas/`, probed by
+  pointing `HOME` at the jail) behaves the same: a user schema with broken
+  YAML or a `schema.yaml` directory is listed with `[]`, and one without
+  `version` with its `artifacts`. (A broken project schema shadowing a
+  same-named user schema was not probed against a user level the oracle
+  actually reads; see the `XDG_DATA_HOME` item below.)
+
+OpenSpectra matches all 156 outputs of those 78 cases and the hand-written shapes
+(`schema::listed_artifact_ids`). Before #226 it loaded each schema strictly and
+skipped any that failed, so after #224 made `version` required, a schema
+without it silently vanished from the list.
+
+Divergences that remain:
+
+- **Order.** The oracle lists project schemas in `readdir` order (APFS gave
+  `valid, no-version, broken-yaml, odd-entries, yaml-is-dir` for a directory
+  created in the order `no-version, broken-yaml, odd-entries, valid,
+  yaml-is-dir`); OpenSpectra sorts by name.
+- **A project schema named after a built-in** (`spec-driven`, `no-spec`). The
+  oracle loads it strictly: a valid one replaces the built-in *in place* and
+  keeps `source: "package"` with the file's `description` and `artifacts`; a
+  broken one (missing `version`, bad YAML, `schema.yaml` directory) makes the
+  whole command fail with `Error: Schema parse error: …` on stderr, exit 1,
+  empty stdout (both modes). OpenSpectra lists a valid one as `(project)`
+  after the built-ins and, for a broken one, keeps showing the built-in. Not
+  changed by #226.
+- **`XDG_DATA_HOME` on macOS.** The oracle ignored `XDG_DATA_HOME` for the
+  user level (a schema there was not listed); OpenSpectra's
+  `user_schemas_dir` reads it first. Not changed by #226.
+
 ### Artifact order caveat
 
 The `artifacts` list — and the `→`-separated tail of `description` — is

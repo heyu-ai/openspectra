@@ -2606,3 +2606,26 @@ replace = '''        if name == "archive" || name.starts_with('.') || ARCHIVED_P
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "drift_auto_selects_a_lone_date_prefixed_active_change_like_the_oracle"
+
+# #226：schemas 列出載入失敗的專案／使用者層 schema，不再靜默略過
+
+[[case]]
+id = "226-schemas-skip-unloadable"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            if [SCHEMA_NAME, NO_SPEC_SCHEMA_NAME].contains(&name.as_str())
+                && ResolvedSchema::load(&schema_dir, &name).is_err()'''
+replace = '''            if ResolvedSchema::load(&schema_dir, &name).is_err()'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_lists_project_schemas_that_fail_to_load"
+
+[[case]]
+id = "226-schemas-require-schema-yaml-file"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''schema_directory_names(dir, std::path::Path::exists)'''
+replace = '''schema_directory_names(dir, std::path::Path::is_file)'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_lists_project_schemas_that_fail_to_load"
