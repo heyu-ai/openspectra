@@ -555,7 +555,7 @@ this holds for changes created through `spectra` and not for hand-made ones.
 | Exit codes (0 on success regardless of severity; 1 on errors) | ✅ exact — probed across the severity space |
 | `commits_since_created`, git commands | ✅ exact |
 | Symbol extraction | ✅ matched on the recovered and probed axes — `.rodata` regex, over-cap sampling (#8/#51), and a 63-entry stop-list (42 from `.rodata`, `JSON` from #51, and 20 from the 2026-08-06 #133 sweep; see below) |
-| Tasks positive-case predicates | ⚠️ uncalibrated (no positive sample); detection gated off |
+| Tasks positive-case predicates | ✅ matched — oracle 3.0.0 has positive samples on the corpus; rules in "3. Tasks" above, detection always on (W7d, #212; the PR records the model replaying the oracle 733/733). Positive samples are not stored as golden files: the integration fixtures were run on the oracle and `scripts/parity-probe.py` compares `drift --json` on the corpus |
 
 ### Solved: the "Symbol narrowing filter" was the over-cap sampling (#8/#51)
 

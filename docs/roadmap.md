@@ -21,7 +21,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 - ~~#8 Symbol-anchor 縮窄過濾~~ **已解**（#119）：不是語意 filter，就是 over-cap 的
   per-category 抽樣。實測 30 個 Symbol 候選全留、83 個留 `floor(i*83/12)` 的 12 個；
   「12 of ~83」就是 `ANCHOR_SAMPLE_PER_CATEGORY` of 83，不需反組譯
-- #9 Tasks 碰撞偵測（無 positive oracle 樣本，偵測整個 gated off）
+- ~~#9 Tasks 碰撞偵測~~ **已解**（W7d，#212）：依 oracle 3.0.0 實作 `tasks_blocked_external`／`tasks_maybe_resolved`，規則見 `docs/reverse-engineering/drift.md`「3. Tasks」，偵測恆開
 - ~~#10 Time 維度日數邊界~~ **已解**：`scripts/calibrate-time.py` 已釘死 7、22、61 天三個轉換點，`abandoned` 分數為 4，未來日期歸零
 - #11 CliFlag 永遠 broken：忠實重現 vs 可設定目標 CLI（設計決策）
 - ~~#12 逐 anchor fork `git grep`~~ **已解**：Function／Symbol needles 已由 `git::grep_existing` 以單次 `git grep` 批次解析，44-anchor 回歸測試固定結果
@@ -33,7 +33,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 **尚存缺口（對應後續 Phase）**：
 
 - 無 `unarchive`（快照/還原；已知限制，見 [`docs/reverse-engineering/archive.md`](reverse-engineering/archive.md)）
-- oracle 校準未收尾（Phase 4，[#28](https://github.com/howie/openspectra/issues/28)；尚待 #9 Tasks positive case、drift output fixture 接線與完整輸入快照）
+- oracle 校準未收尾（Phase 4，[#28](https://github.com/howie/openspectra/issues/28)；尚待 drift output fixture 接線與完整輸入快照）
 - CliFlag resolution 決策待定（Phase 5，[#11](https://github.com/howie/openspectra/issues/11)）
 
 ### 計畫假設
@@ -97,15 +97,14 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 **驗證**：打 `v0.1.0-rc` tag 走一次完整 release；在乾淨的 x86_64 與 aarch64 容器裡下載 binary 跑 e2e smoke（`init → new change → drift`）。
 
-## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）（追蹤 [#28](https://github.com/howie/openspectra/issues/28)；#8／#10 已解，#9 尚待 positive case）
+## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）（追蹤 [#28](https://github.com/howie/openspectra/issues/28)；#8／#9／#10 已解）
 
 目標：把「猜的常數」變成「量測的常數」。工作模式：本專案產生校準腳本 → 操作者在 macOS 跑 → golden 結果帶回來實作。每項改動必須同步更新 `docs/reverse-engineering/drift.md`（CLAUDE.md 規範）。
 
 依 ROI 排序：
 
-1. **#9 Tasks 碰撞 positive 樣本**
+1. ~~**#9 Tasks 碰撞 positive 樣本**~~ **已解**
    - 已由 W7d 完成：oracle 3.0.0 在 corpus 上有正樣本，碰撞規則與分數見 `docs/reverse-engineering/drift.md` 的「3. Tasks」，`tasks::analyze` 已實作（2026-09-28）
-   - 若 oracle 掃遍情境仍全零：結論記入 drift.md（「偵測極可能是 dead feature」），gate 保持關閉，issue 關閉
 2. ~~**#10 Time 邊界**~~ **已解**
    - `scripts/calibrate-time.py --mode boundaries` 已掃出 7、22、61 天三個精確轉換點，並確認 `abandoned` 分數為 4、未來日期歸零
    - `calibration.rs::time_bucket` 與單元測試已固定上述邊界
@@ -122,7 +121,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 4. **golden 回歸自動化**
    - 先直接載入 `docs/reverse-engineering/golden/drift-*.json`，把其中的輸出值餵進 scoring 函式，取代 `calibration.rs` 手抄的四組分數；若要重播 extraction／resolution／完整 report，仍須依 #132 補抓輸入 repo 與 `design.md` 快照
 
-**無 oracle 降級**：尚未完成的 #9 維持偵測關閉並在文件標註無 positive sample；需要新 oracle 輸入快照的 golden 回歸工作則保留為 blocked。
+**無 oracle 降級**：需要新 oracle 輸入快照的 golden 回歸工作保留為 blocked（#132）。
 
 ## Phase 5 — 品質、效能與改進（忠實期之後）（追蹤 [#29](https://github.com/howie/openspectra/issues/29)；#12 已解，#11 待決策）
 
@@ -161,7 +160,7 @@ Phase 1+2 完成即可發 `v0.1.0`（可用、可 adopt OpenSpec 專案）；Pha
 | Phase 1 — 基礎修補與可用性 | [#30](https://github.com/howie/openspectra/issues/30) | ✅ 完成（PR #23） | — |
 | Phase 2 — OpenSpec 生態相容性 | [#26](https://github.com/howie/openspectra/issues/26) | ✅ 完成（PR #32） | 格式差異、`init --adopt`、archive MODIFIED/REMOVED/RENAMED delta |
 | Phase 3 — Linux 發佈工程 | [#27](https://github.com/howie/openspectra/issues/27) | ✅ 完成（v0.2.1） | release workflow、crates.io publish、Docker/GHCR image |
-| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | ~~#10 Time 邊界~~（已解）、#9 Tasks 碰撞、~~#8 Symbol 過濾~~（已解）、golden 輸入快照與回歸接線 |
+| Phase 4 — Oracle 校準收尾 | [#28](https://github.com/howie/openspectra/issues/28) | open | ~~#10 Time 邊界~~（已解）、~~#9 Tasks 碰撞~~（已解）、~~#8 Symbol 過濾~~（已解）、golden 輸入快照與回歸接線 |
 | Phase 5 — 品質/效能/改進 | [#29](https://github.com/howie/openspectra/issues/29) | open | ~~#12 批次 git grep~~（已解）、#11 CliFlag 決策 |
 
-（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8／#10／#12 已解，#9／#11 仍為後續追蹤項。）
+（#7 已關閉、確認 apply/ingest 為 slash-command skill 而非 CLI 缺口，無需重開；#8／#9／#10／#12 已解，#11 仍為後續追蹤項。）
