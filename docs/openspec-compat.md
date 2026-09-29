@@ -104,11 +104,11 @@ writes under `.spectra/` (git-ignored, invisible to OpenSpec tooling).
   `openspec` already exists as a *file* (not a directory), adoption fails with a
   clear message instead of a generic downstream `create_dir_all` error.
 - Write `.spectra.yaml` — the one file OpenSpectra needs and an OpenSpec
-  project doesn't have. Since the oracle-parity realignment (issue #94) this is
-  the full commented template (32 newline-terminated lines; an editor shows a
-  33rd empty display line after the final `\n`): `spec_dir` stays a commented
-  `# spec_dir: docs/specs` line when the resolved value equals the default
-  `openspec`, and is written explicitly only for a non-default directory.
+  project doesn't have. Since W14 this is the v3.0.0 commented template (19
+  newline-terminated lines, see `docs/reverse-engineering/init.md`) with
+  `spec_dir: openspec` written explicitly on line 7. Adoption keeps
+  `openspec`; only a fresh plain `init` uses the `docs/openspec` default
+  (owner ruling D9).
 - Ensure `.spectra/` is in `.gitignore` (same as plain `init`).
 - **Non-destructive:** create `openspec/{changes/archive,specs}/` and
   `<spec_dir>/config.yaml` only when missing (idempotent), and never

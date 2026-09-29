@@ -76,7 +76,11 @@ fn schemas_lists_project_schemas_alongside_the_builtin() {
     common::git(&root, &["init", "-q"]);
     common::git(&root, &["config", "user.name", "Test"]);
     common::git(&root, &["config", "user.email", "test@test.com"]);
-    let init = spectra().arg("init").current_dir(&*root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
 
     let schema_dir = root.join("openspec/schemas/mycustom");
@@ -114,7 +118,11 @@ fn schemas_json_lists_project_schemas_with_null_description() {
     common::git(&root, &["init", "-q"]);
     common::git(&root, &["config", "user.name", "Test"]);
     common::git(&root, &["config", "user.email", "test@test.com"]);
-    let init = spectra().arg("init").current_dir(&*root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
 
     let schema_dir = root.join("openspec/schemas/mycustom");

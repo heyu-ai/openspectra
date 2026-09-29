@@ -8,7 +8,11 @@ use common::{spectra, TempDir};
 use spectra_core::schema::{ResolvedSchema, SchemaSource};
 
 fn init_project(root: &Path) {
-    let output = spectra().arg("init").current_dir(root).output().unwrap();
+    let output = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "初始化失敗：{}",

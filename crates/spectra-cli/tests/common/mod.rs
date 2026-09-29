@@ -62,7 +62,11 @@ pub fn init_project_with_change(root: &Path, name: &str) {
     git(root, &["config", "user.name", "Howie"]);
     git(root, &["config", "user.email", "howie@example.com"]);
 
-    let init = spectra().arg("init").current_dir(root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     let new_change = spectra()
         .args(["new", "change", name])

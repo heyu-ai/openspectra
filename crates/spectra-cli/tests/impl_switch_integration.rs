@@ -34,7 +34,11 @@ fn calls(dir: &Path) -> String {
 /// 專案（`spectra init` 後沒有 change），外加獨立的 state／config 目錄。
 fn project(label: &str) -> TempDir {
     let dir = TempDir::new(label);
-    let init = spectra().arg("init").current_dir(&*dir).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*dir)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "{init:?}");
     dir
 }

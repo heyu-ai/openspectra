@@ -197,7 +197,7 @@ fn new_change_stamps_the_configured_schema_so_the_gate_stays_reachable() {
     git(&tmp, &["config", "user.name", "Howie"]);
     git(&tmp, &["config", "user.email", "howie@example.com"]);
     assert!(spectra()
-        .arg("init")
+        .args(["init", "--dir", "openspec"])
         .current_dir(&*tmp)
         .output()
         .unwrap()

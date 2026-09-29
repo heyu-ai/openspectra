@@ -59,14 +59,18 @@ fn init_then_new_change_then_drift_runs_end_to_end() {
     git(&root, &["config", "user.name", "t"]);
 
     let outcome = init::init(&root).unwrap();
-    assert_eq!(outcome.spec_dir, "openspec");
-    assert!(root.join("openspec/changes").is_dir());
-    assert!(root.join("openspec/specs").is_dir());
+    // D9：新專案預設 `docs/openspec`。
+    assert_eq!(outcome.spec_dir, "docs/openspec");
+    assert!(root.join("docs/openspec/changes").is_dir());
+    assert!(root.join("docs/openspec/specs").is_dir());
     assert!(root.join(".gitignore").is_file());
 
     let cfg = Config::load(&root).unwrap();
     let ch = change::create(&cfg, "add-search-filter").unwrap();
     assert_eq!(ch.name, "add-search-filter");
+    assert!(root
+        .join("docs/openspec/changes/add-search-filter/.openspec.yaml")
+        .is_file());
 
     git(&root, &["add", "-A"]);
     git(&root, &["commit", "-qm", "init"]);

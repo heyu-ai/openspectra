@@ -23,7 +23,11 @@ fn init_project_with_custom_schema(root: &Path) {
     git(root, &["config", "user.name", "Howie"]);
     git(root, &["config", "user.email", "howie@example.com"]);
 
-    let init = spectra().arg("init").current_dir(root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
 
     std::fs::write(
@@ -209,7 +213,11 @@ fn status_exits_nonzero_when_custom_schema_dir_is_missing() {
     git(&root, &["config", "user.name", "Howie"]);
     git(&root, &["config", "user.email", "howie@example.com"]);
 
-    let init = spectra().arg("init").current_dir(&*root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     std::fs::write(
         root.join("openspec").join("config.yaml"),
@@ -270,7 +278,11 @@ fn explicit_schema_flag_overrides_config_yaml() {
 /// d←x,a；`apply` 沒有 instruction。
 fn init_project_with_order_schema(root: &Path) {
     git(root, &["init", "-q"]);
-    let init = spectra().arg("init").current_dir(root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     let schema_dir = root.join("openspec").join("schemas").join("ord");
     std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
@@ -373,7 +385,11 @@ fn apply_instruction_is_optional() {
 /// 自訂 schema `tr`：`plan` → `todo`，apply 需要 `todo`；`apply_block` 決定有沒有 tracks。
 fn init_project_with_tracks_schema(root: &Path, apply_block: &str) {
     git(root, &["init", "-q"]);
-    let init = spectra().arg("init").current_dir(root).output().unwrap();
+    let init = spectra()
+        .args(["init", "--dir", "openspec"])
+        .current_dir(root)
+        .output()
+        .unwrap();
     assert!(init.status.success(), "init failed: {init:?}");
     let schema_dir = root.join("openspec").join("schemas").join("tr");
     std::fs::create_dir_all(schema_dir.join("templates")).unwrap();

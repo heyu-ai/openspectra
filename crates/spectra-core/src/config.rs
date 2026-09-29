@@ -4,8 +4,10 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// The directory (relative to project root) that holds `changes/` and `specs/`.
-/// `spectra init` defaults this to `openspec`.
+/// The directory (relative to project root) that holds `changes/` and `specs/`
+/// when `.spectra.yaml` omits `spec_dir` (or is absent), and the name of the
+/// project-root marker. A fresh `spectra init` uses
+/// [`crate::init::NEW_PROJECT_SPEC_DIR`] instead (owner ruling D9).
 pub const DEFAULT_SPEC_DIR: &str = "openspec";
 
 #[derive(Debug, Clone, Deserialize, Default)]
