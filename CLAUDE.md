@@ -84,6 +84,14 @@ this file is agent-facing operational context.
   byte-sorted order. Drift exits non-zero keeping the scratch projects;
   `--write` captures twice and writes only when both agree. Never hand-edit
   the golden.
+- `scripts/capture-demo.py` — same constraints (macOS + reference binary,
+  version-pinned to 3.0.0). Runs `demo` 600 times inside `sandbox-exec` (no
+  network, writes only in its temp project; it refuses to run when an ancestor
+  holds an `openspec`/`.spectra.yaml` marker, since the oracle would write the
+  change there) and verifies the stdout shape, each theme's byte-identical
+  files, the observed name/theme sets against `demo.rs`, and
+  `crates/spectra-core/assets/demo/`. `--write` regenerates and re-verifies.
+  Never hand-edit the assets.
 - `scripts/parity-probe.py` — same constraints (macOS + reference binary,
   version-pinned to 3.0.0). Measures migration acceptance A1 (every oracle
   subcommand/flag is accepted) and A3 (read-only commands agree on exit code,

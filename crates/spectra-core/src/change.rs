@@ -578,7 +578,7 @@ pub enum SortKey {
 
 /// change 目錄內所有一般檔案（遞迴）的最新 mtime，以整秒計；目錄本身的 mtime
 /// 不算（oracle 3.0.0 的 `modified` 排序）。沒有檔案時為 `None`（排最後）。
-fn latest_file_mtime(dir: &Path) -> Option<u64> {
+pub(crate) fn latest_file_mtime(dir: &Path) -> Option<u64> {
     let mut latest: Option<u64> = None;
     let mut stack = vec![dir.to_path_buf()];
     while let Some(current) = stack.pop() {
