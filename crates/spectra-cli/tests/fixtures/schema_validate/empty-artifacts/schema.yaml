@@ -1,0 +1,8 @@
+name: m
+version: 1
+description: d
+artifacts: []
+apply:
+  requires: []
+  tracks: t.md
+  instruction: go

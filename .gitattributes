@@ -1,3 +1,4 @@
 crates/spectra-core/assets/skills/*.md -text
 crates/spectra-core/assets/update/* -text
 docs/reverse-engineering/golden/* -text
+crates/spectra-cli/tests/fixtures/schema_validate/** -text

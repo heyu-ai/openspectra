@@ -132,6 +132,29 @@ changes.
 - `spectra show` without an item name now fails at run time with
   `Error: Please specify an item name.` (exit 1) instead of a clap usage
   error (exit 2), matching the oracle.
+- **`schema validate` and `schema fork` follow v3.0.0** (W7g, owner ruling
+  D11; `docs/reverse-engineering/schema.md`). `schema validate` without a name
+  validates `spec-driven` (not the configured schema, not every project
+  schema); success prints `✓ Schema '<name>' is valid (<n> artifacts)` or
+  `{artifactCount, name, valid}`; failure prints nothing on stdout (or
+  `{error, name, valid: false}` with `--json`) and
+  `Error: Schema validation failed: <ERR>` on stderr; `--verbose` is inert.
+  Every command that loads a project schema (`status`, `instructions`,
+  `schema fork`, …) reports the v3.0.0 errors — `Schema parse error: <serde
+  message>` or `Invalid schema: …` — in the v3.0.0 check order. `version` is
+  now required; `apply` and artifact `instruction` are optional (without
+  `apply`, the apply phase requires every artifact). Forks of `spec-driven`
+  list artifacts as proposal, specs, design, tasks. On a terminal the `✓` of
+  both commands is green.
+- `instructions` omits the `Instruction:` section (and the JSON
+  `instruction` key) when the artifact has none, and the `Template:` section
+  when the template file is missing or empty, as v3.0.0 does.
+- Deliberate divergences from v3.0.0 (D11): template and `generates` paths
+  that are absolute or contain `..` are still rejected; a missing or empty
+  template is accepted but warned about on stderr (`Warning: Template …`);
+  fork targets must be one directory under `schemas/` (`""` and `.` are now
+  rejected too); `--force` still replaces the target atomically; a project
+  schema is still forked as a verbatim copy with only `name:` rewritten.
 - `drift` Structure: a FilePath anchor resolves only when the file is in the git
   index (untracked files, and every path outside a repository, are broken; a
   tracked file deleted only on disk still resolves), and broken anchors are
@@ -283,6 +306,9 @@ changes.
 
 ### Fixed
 
+- `schema fork <source> ""` no longer leaves a `schemas/..stage-*` directory
+  behind (which `schemas` then listed), and `schema fork --force` onto a
+  regular file no longer leaks `schemas/.<target>.backup-*`.
 - `instructions` renders the configured `spec_dir` in the proposal and specs
   instruction/template text instead of a hard-coded `openspec/specs/`.
   `new artifact` keeps writing the unrendered `{{SPEC_DIR}}` placeholder, as

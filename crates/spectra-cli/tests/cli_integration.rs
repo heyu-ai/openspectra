@@ -1965,29 +1965,175 @@ fn validate_type_requires_an_item_and_conflicts_with_bulk_scopes() {
     }
 }
 
+/// oracle 3.0.0（W7g 探測 p02 B／D、D11-6）：不帶名稱的 `schema validate` 固定驗
+/// `spec-driven`，不看 config.yaml 的 `schema:`、也不看 change 的 `.openspec.yaml`，
+/// 所以設定指向的壞 schema 不影響結果。
 #[test]
-fn schema_validate_without_a_name_includes_malformed_project_schemas() {
-    let tmp = TempDir::new("schema-validate-malformed-bulk");
+fn schema_validate_without_a_name_validates_spec_driven_only() {
+    let tmp = TempDir::new("schema-validate-default");
     init_project_with_change(&tmp, "feat");
     let schema = tmp.join("openspec/schemas/broken/schema.yaml");
     std::fs::create_dir_all(schema.parent().unwrap()).unwrap();
     std::fs::write(schema, "name: [unclosed\n").unwrap();
+    std::fs::write(tmp.join("openspec/config.yaml"), "schema: broken\n").unwrap();
+    std::fs::write(
+        tmp.join("openspec/changes/feat/.openspec.yaml"),
+        "schema: broken\ncreated: 2026-09-01\n",
+    )
+    .unwrap();
 
-    let out = spectra()
+    let human = spectra()
+        .args(["schema", "validate"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(human.status.code(), Some(0), "{human:?}");
+    assert_eq!(
+        String::from_utf8(human.stdout).unwrap(),
+        "\u{2713} Schema 'spec-driven' is valid (4 artifacts)\n"
+    );
+    assert!(human.stderr.is_empty(), "{:?}", human.stderr);
+
+    let json = spectra()
         .args(["schema", "validate", "--json"])
         .current_dir(&*tmp)
         .output()
         .unwrap();
+    assert_eq!(json.status.code(), Some(0), "{json:?}");
+    assert_eq!(
+        String::from_utf8(json.stdout).unwrap(),
+        "{\n  \"artifactCount\": 4,\n  \"name\": \"spec-driven\",\n  \"valid\": true\n}\n"
+    );
+}
 
+/// oracle 3.0.0（W7g 探測 q02）：內建 `no-spec` 有三個 artifact。
+#[test]
+fn schema_validate_reports_the_builtin_no_spec_artifact_count() {
+    let tmp = TempDir::new("schema-validate-no-spec");
+    init_project_with_change(&tmp, "feat");
+
+    let out = spectra()
+        .args(["schema", "validate", "no-spec"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "\u{2713} Schema 'no-spec' is valid (3 artifacts)\n"
+    );
+}
+
+/// oracle 3.0.0（W7g 探測 p03 C）：專案裡的 `spec-driven` 完全取代內建，壞掉時不會
+/// 退回內建版本；不帶名稱時同樣失敗。
+#[test]
+fn schema_validate_uses_a_project_spec_driven_that_shadows_the_builtin() {
+    let tmp = TempDir::new("schema-validate-shadow");
+    init_project_with_change(&tmp, "feat");
+    let dir = tmp.join("openspec/schemas/spec-driven");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("schema.yaml"),
+        "name: spec-driven\nversion: 1\nartifacts:\n  - id: a\n    generates: a.md\n    description: A\n    template: a.md\n    requires: [zzz]\n",
+    )
+    .unwrap();
+
+    let out = spectra()
+        .args(["schema", "validate"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1), "{out:?}");
-    let checks: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let broken = checks
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|check| check["name"] == "broken")
-        .expect("malformed on-disk schema must remain enumerable");
-    assert_eq!(broken["valid"], false);
+    assert!(out.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(out.stderr).unwrap(),
+        "Schema 'spec-driven' is invalid: Invalid schema: Artifact 'a' requires unknown artifact 'zzz'\n\
+         Error: Schema validation failed: Invalid schema: Artifact 'a' requires unknown artifact 'zzz'\n"
+    );
+}
+
+/// oracle 3.0.0（W7g 探測 p03）：找不到的 schema，human 與 `--json` 各自的串流分工。
+#[test]
+fn schema_validate_reports_a_missing_schema_on_the_oracle_streams() {
+    let tmp = TempDir::new("schema-validate-missing");
+    init_project_with_change(&tmp, "feat");
+    let error =
+        "Schema not found: Schema 'nosuch' not found in project, user, or built-in locations";
+
+    let human = spectra()
+        .args(["schema", "validate", "nosuch"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(human.status.code(), Some(1));
+    assert!(human.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(human.stderr).unwrap(),
+        format!("Schema 'nosuch' is invalid: {error}\nError: Schema validation failed: {error}\n")
+    );
+
+    let json = spectra()
+        .args(["schema", "validate", "nosuch", "--json"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(json.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(json.stdout).unwrap(),
+        format!("{{\n  \"error\": \"{error}\",\n  \"name\": \"nosuch\",\n  \"valid\": false\n}}\n")
+    );
+    assert_eq!(
+        String::from_utf8(json.stderr).unwrap(),
+        format!("Error: Schema validation failed: {error}\n")
+    );
+}
+
+/// oracle 3.0.0（W7g 探測 q02、PR #211）：沒有 `.spectra.yaml` 時往上找到 `openspec/`
+/// 就是專案根目錄。
+#[test]
+fn schema_validate_runs_in_a_project_marked_only_by_openspec_dir() {
+    let tmp = TempDir::new("schema-validate-bare");
+    std::fs::create_dir_all(tmp.join("openspec/schemas")).unwrap();
+
+    let out = spectra()
+        .args(["schema", "validate"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        "\u{2713} Schema 'spec-driven' is valid (4 artifacts)\n"
+    );
+}
+
+/// oracle 3.0.0（W7g 探測 p07）：終端機上只有 `✓` 是綠色；失敗行沒有顏色。
+#[test]
+fn schema_validate_and_fork_color_only_the_check_mark_on_a_terminal() {
+    let tmp = TempDir::new("schema-validate-tty");
+    init_project_with_change(&tmp, "feat");
+
+    let (out, output) = run_on_terminal(&tmp, &["schema", "validate", "no-spec"], b"");
+    assert!(out.status.success(), "{output}");
+    assert!(
+        output.contains("\x1b[32m\u{2713}\x1b[0m Schema 'no-spec' is valid (3 artifacts)"),
+        "{output:?}"
+    );
+
+    let (out, output) = run_on_terminal(&tmp, &["schema", "fork", "no-spec", "zz"], b"");
+    assert!(out.status.success(), "{output}");
+    assert!(
+        output.contains("\x1b[32m\u{2713}\x1b[0m Forked 'no-spec' \u{2192} 'zz'"),
+        "{output:?}"
+    );
+
+    let (out, output) = run_on_terminal(&tmp, &["schema", "validate", "nosuch"], b"");
+    assert!(!out.status.success(), "{output}");
+    assert!(
+        output.contains("Schema 'nosuch' is invalid: Schema not found"),
+        "{output:?}"
+    );
+    assert!(!output.contains('\x1b'), "{output:?}");
 }
 
 #[test]
@@ -2116,8 +2262,10 @@ fn run_on_terminal(tmp: &TempDir, args: &[&str], stdin: &[u8]) -> (std::process:
     }
     #[cfg(not(target_os = "macos"))]
     let script_command = format!("{} {}", env!("CARGO_BIN_EXE_spectra"), args.join(" "));
+    // util-linux 的 `script` 預設回傳自己的 exit status（0），`-e` 才會傳回子程序的；
+    // macOS 版本預設就傳回子程序的，所以只有這一支需要。
     #[cfg(not(target_os = "macos"))]
-    command.args(["-q", "-c", &script_command, "/dev/null"]);
+    command.args(["-q", "-e", "-c", &script_command, "/dev/null"]);
 
     let mut child = command
         .current_dir(&**tmp)

@@ -1,0 +1,7 @@
+name: m
+version: 1
+artifacts:
+  - {id: a, generates: a.md, description: A, template: a.md}
+  - {generates: b.md, description: B, template: b.md}
+apply:
+  requires: []

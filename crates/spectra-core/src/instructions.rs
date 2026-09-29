@@ -88,7 +88,10 @@ pub struct ArtifactInstructions {
     pub change_dir: String,
     pub output_path: String,
     pub description: String,
-    pub instruction: String,
+    /// schema 沒有這個 artifact 的 instruction 時整個 key 省略（oracle 3.0.0，W7g 探測
+    /// q03 的原始 bytes；p06 用 `dict.get` 看到的 `None` 分不出 null 與缺席）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     /// 3.0.0 新增：`fnv1a64:<16 位 hex>:<byte 長度>`，對 trim 後的 `context` 計算；
@@ -806,7 +809,10 @@ pub fn artifact_instructions(
         change_dir: change_dir.to_string_lossy().into_owned(),
         output_path: artifact.output_path.clone(),
         description: artifact.description.clone(),
-        instruction: render_spec_dir(&artifact.instruction, &cfg.spec_dir),
+        instruction: artifact
+            .instruction
+            .as_deref()
+            .map(|instruction| render_spec_dir(instruction, &cfg.spec_dir)),
         context,
         context_ref,
         rules,
@@ -1222,13 +1228,15 @@ mod tests {
         let proposal = artifact_instructions(&cfg, &change, "proposal", &schema).unwrap();
         assert!(proposal
             .instruction
+            .as_deref()
+            .unwrap()
             .contains("Check `docs/spectra/specs/` for existing spec names."));
         assert!(proposal
             .template
             .contains("Use existing spec names from docs/spectra/specs/."));
         assert!(!proposal.template.contains("{{SPEC_DIR}}"));
         let specs = artifact_instructions(&cfg, &change, "specs", &schema).unwrap();
-        assert!(specs.instruction.contains(
+        assert!(specs.instruction.as_deref().unwrap().contains(
             "Locate the existing requirement in docs/spectra/specs/<capability>/spec.md"
         ));
     }

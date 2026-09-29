@@ -1,0 +1,32 @@
+name: m
+version: 1
+description: d
+artifacts:
+  - id: b
+    generates: b.md
+    description: B
+    template: a.md
+    instruction: do b
+    requires: [c]
+  - id: c
+    generates: c.md
+    description: C
+    template: a.md
+    instruction: do c
+    requires: [b]
+  - id: a
+    generates: a.md
+    description: A
+    template: a.md
+    instruction: do a
+    requires: []
+  - id: a
+    generates: a.md
+    description: A
+    template: a.md
+    instruction: do a
+    requires: []
+apply:
+  requires: []
+  tracks: t.md
+  instruction: go

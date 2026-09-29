@@ -605,7 +605,8 @@ pub struct ResolvedArtifact {
     pub output_path: String,
     pub description: String,
     pub deps: Vec<String>,
-    pub instruction: String,
+    /// schema.yaml 可省略（oracle 3.0.0 接受，`instructions --json` 輸出 `null`）。
+    pub instruction: Option<String>,
     pub template: String,
     pub template_name: String,
 }
@@ -649,7 +650,7 @@ impl ResolvedSchema {
                     output_path: a.output_path.to_string(),
                     description: a.description.to_string(),
                     deps: a.deps.iter().map(|d| d.to_string()).collect(),
-                    instruction: a.instruction.to_string(),
+                    instruction: Some(a.instruction.to_string()),
                     template: a.template.to_string(),
                     template_name: match a.id {
                         "specs" => "spec.md".to_string(),
@@ -711,7 +712,7 @@ impl CapturedSchema {
                     output_path: a.output_path,
                     description: a.description,
                     deps: a.deps,
-                    instruction: a.instruction,
+                    instruction: Some(a.instruction),
                     template: a.template,
                 })
                 .collect(),
@@ -741,16 +742,21 @@ impl ResolvedSchema {
 }
 
 fn reject_path_traversal(path: &str, field: &str) -> anyhow::Result<()> {
-    let p = std::path::Path::new(path);
-    if p.is_absolute() {
-        anyhow::bail!("schema {field} '{path}' must be a relative path");
-    }
-    for component in p.components() {
-        if matches!(component, std::path::Component::ParentDir) {
-            anyhow::bail!("schema {field} '{path}' must not contain '..'");
-        }
+    if let Some(problem) = path_escape_problem(path) {
+        anyhow::bail!("schema {field} '{path}' {problem}");
     }
     Ok(())
+}
+
+/// 路徑會離開它所屬的目錄時回傳原因（絕對路徑或含 `..`）。
+fn path_escape_problem(path: &str) -> Option<&'static str> {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return Some("must be a relative path");
+    }
+    p.components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+        .then_some("must not contain '..'")
 }
 fn artifact_dependency_cycle(artifacts: &[ResolvedArtifact]) -> Option<Vec<String>> {
     fn visit(
@@ -816,81 +822,102 @@ impl ResolvedSchema {
     /// directory name used to locate `schema_dir`) but is not itself read —
     /// the schema's display `name` comes from the YAML's own `name:` field,
     /// which need not match the directory name.
+    ///
+    /// 錯誤訊息與檢查順序對齊 oracle 3.0.0（`docs/reverse-engineering/schema.md`）：
+    /// 讀檔或反序列化失敗 → `Schema parse error: …`（serde_yaml 原文）；之後依序
+    /// 重複 id、未知 `requires`、未知 `apply.requires`、循環依賴 → `Invalid schema: …`，
+    /// 只回報第一個問題。oracle 沒有的路徑檢查（template／generates 離開所屬目錄）
+    /// 排在最後，所以 oracle 會拒絕的 schema 一律得到與 oracle 相同的訊息。
     pub fn load(schema_dir: &std::path::Path, _dir_name: &str) -> anyhow::Result<Self> {
         let yaml_path = schema_dir.join("schema.yaml");
-        let yaml_text = std::fs::read_to_string(&yaml_path)
-            .with_context(|| format!("reading {}", yaml_path.display()))?;
+        let yaml_text = std::fs::read_to_string(&yaml_path).map_err(|error| {
+            anyhow::anyhow!(
+                "Schema parse error: Failed to read {}: {error}",
+                yaml_path.display()
+            )
+        })?;
         let raw: SchemaYaml = serde_yaml::from_str(&yaml_text)
-            .with_context(|| format!("parsing {}", yaml_path.display()))?;
+            .map_err(|error| anyhow::anyhow!("Schema parse error: {error}"))?;
+
         let mut seen_artifact_ids = std::collections::HashSet::new();
+        if !raw
+            .artifacts
+            .iter()
+            .all(|artifact| seen_artifact_ids.insert(artifact.id.as_str()))
+        {
+            anyhow::bail!("Invalid schema: Duplicate artifact IDs");
+        }
         for artifact in &raw.artifacts {
-            if !seen_artifact_ids.insert(artifact.id.as_str()) {
+            if let Some(dep) = artifact
+                .requires
+                .iter()
+                .find(|dep| !seen_artifact_ids.contains(dep.as_str()))
+            {
                 anyhow::bail!(
-                    "Schema '{}': duplicate artifact ID '{}'",
-                    yaml_path.display(),
+                    "Invalid schema: Artifact '{}' requires unknown artifact '{dep}'",
                     artifact.id
                 );
             }
         }
+        if let Some(apply) = &raw.apply {
+            if let Some(req) = apply
+                .requires
+                .iter()
+                .find(|req| !seen_artifact_ids.contains(req.as_str()))
+            {
+                anyhow::bail!("Invalid schema: Apply phase requires unknown artifact '{req}'");
+            }
+        }
 
-        let templates_dir = schema_dir.join("templates");
-        let artifacts = raw
+        let mut artifacts = raw
             .artifacts
             .into_iter()
-            .map(|a| {
-                reject_path_traversal(&a.template, "template")?;
-                reject_path_traversal(&a.generates, "generates")?;
-                let template_path = templates_dir.join(&a.template);
-                let template_content = if template_path.is_file() {
-                    std::fs::read_to_string(&template_path)
-                        .with_context(|| format!("reading template {}", template_path.display()))?
-                } else {
-                    String::new()
-                };
-                Ok(ResolvedArtifact {
-                    id: a.id,
-                    output_path: a.generates,
-                    description: a.description,
-                    deps: a.requires,
-                    instruction: a.instruction,
-                    template: template_content,
-                    template_name: a.template,
-                })
+            .map(|a| ResolvedArtifact {
+                id: a.id,
+                output_path: a.generates,
+                description: a.description,
+                deps: a.requires,
+                instruction: a.instruction,
+                template: String::new(),
+                template_name: a.template,
             })
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .collect::<Vec<_>>();
+        if artifact_dependency_cycle(&artifacts).is_some() {
+            anyhow::bail!("Invalid schema: Schema contains circular dependencies");
+        }
 
-        let artifact_ids: std::collections::HashSet<&str> =
-            artifacts.iter().map(|a| a.id.as_str()).collect();
+        // 刻意分歧（owner 裁決 D11-1、D11-7）：oracle 接受並讀寫 schema 目錄外的
+        // template，generates 也原樣帶進 change 目錄外；兩者都以安全為由拒絕。
         for artifact in &artifacts {
-            for dep in &artifact.deps {
-                if !artifact_ids.contains(dep.as_str()) {
+            for (field, path) in [
+                ("template", &artifact.template_name),
+                ("generates", &artifact.output_path),
+            ] {
+                if let Some(problem) = path_escape_problem(path) {
                     anyhow::bail!(
-                        "Schema '{}': artifact '{}' requires '{}' which is not defined in this schema",
-                        yaml_path.display(),
-                        artifact.id,
-                        dep
+                        "Invalid schema: Artifact '{}' {field} '{path}' {problem}",
+                        artifact.id
                     );
                 }
             }
         }
-        if let Some(cycle) = artifact_dependency_cycle(&artifacts) {
-            anyhow::bail!(
-                "Schema '{}': artifact dependency cycle: {}",
-                yaml_path.display(),
-                cycle.join(" -> ")
-            );
-        }
-        for req in &raw.apply.requires {
-            if !artifact_ids.contains(req.as_str()) {
-                anyhow::bail!(
-                    "Schema '{}': apply.requires references '{}' which is not defined in this schema",
-                    yaml_path.display(),
-                    req
-                );
+
+        let templates_dir = schema_dir.join("templates");
+        for artifact in &mut artifacts {
+            let template_path = templates_dir.join(&artifact.template_name);
+            if template_path.is_file() {
+                artifact.template = std::fs::read_to_string(&template_path)
+                    .with_context(|| format!("reading template {}", template_path.display()))?;
             }
         }
 
         let artifact_order = artifacts.iter().map(|a| a.id.clone()).collect();
+        // oracle 3.0.0：沒有 `apply` 時 apply 階段要求全部 artifact（探測 q01：
+        // `instructions apply` 列出 a、b 兩個 missing artifact），且沒有 tracks／instruction。
+        let (apply_requires, apply_tracks, apply_instruction) = match raw.apply {
+            Some(apply) => (apply.requires, apply.tracks, apply.instruction),
+            None => (artifacts.iter().map(|a| a.id.clone()).collect(), None, None),
+        };
 
         Ok(Self {
             name: raw.name,
@@ -898,25 +925,26 @@ impl ResolvedSchema {
             description: raw.description.unwrap_or_default(),
             artifacts,
             artifact_order,
-            apply_requires: raw.apply.requires,
-            apply_instruction: raw.apply.instruction,
-            apply_tracks: raw.apply.tracks,
+            apply_requires,
+            apply_instruction,
+            apply_tracks,
         })
     }
 }
 
-/// `<spec_dir>/schemas/<name>/schema.yaml` 的序列化與反序列化結構。
-/// `version` 目前只供往返序列化使用，尚未用來切換行為。
+/// `<spec_dir>/schemas/<name>/schema.yaml` 的序列化與反序列化結構，與 oracle 3.0.0
+/// 的模型相同（SPEC §2.8）：`version` 必填（只檢查型別），`description`、artifact 的
+/// `instruction`、整個 `apply` 可省略，未知欄位忽略。欄位宣告順序就是 serde 回報
+/// 「第一個缺少的欄位」的順序，也是內建 schema fork 時寫出的順序。
 #[derive(serde::Deserialize, serde::Serialize)]
 struct SchemaYaml {
     name: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    version: Option<u32>,
+    version: u32,
     #[serde(default)]
     description: Option<String>,
     artifacts: Vec<SchemaYamlArtifact>,
-    apply: SchemaYamlApply,
+    #[serde(default)]
+    apply: Option<SchemaYamlApply>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -925,7 +953,8 @@ struct SchemaYamlArtifact {
     generates: String,
     description: String,
     template: String,
-    instruction: String,
+    #[serde(default)]
+    instruction: Option<String>,
     #[serde(default)]
     requires: Vec<String>,
 }
@@ -1021,6 +1050,25 @@ pub fn which_sources(cfg: Option<&crate::Config>, name: &str) -> SchemaWhich {
     }
 }
 
+/// 名稱對應的專案或使用者層 schema 目錄與來源（專案優先）；兩處都沒有時為 `None`。
+///
+/// oracle 3.0.0：目錄裡只要有名為 `schema.yaml` 的項目就算找到，即使它是目錄——
+/// 之後讀檔才失敗（`Schema parse error: Failed to read …: Is a directory`，探測 p05）。
+fn custom_schema_dir(
+    cfg: &crate::Config,
+    name: &str,
+) -> Option<(std::path::PathBuf, SchemaSource)> {
+    let project_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(name);
+    if project_dir.join("schema.yaml").exists() {
+        return Some((project_dir, SchemaSource::Project));
+    }
+    let user_dir = user_schemas_dir()?.join(name);
+    user_dir
+        .join("schema.yaml")
+        .exists()
+        .then_some((user_dir, SchemaSource::User))
+}
+
 pub fn resolve_schema(
     cfg: &crate::Config,
     explicit: Option<&str>,
@@ -1037,16 +1085,10 @@ pub fn resolve_schema(
         ));
     }
 
-    let project_dir = cfg.root.join(&cfg.spec_dir).join("schemas").join(&name);
-    if project_dir.join("schema.yaml").is_file() {
-        return ResolvedSchema::load(&project_dir, &name);
-    }
-    if let Some(user_dir) = user_schemas_dir().map(|root| root.join(&name)) {
-        if user_dir.join("schema.yaml").is_file() {
-            let mut schema = ResolvedSchema::load(&user_dir, &name)?;
-            schema.source = SchemaSource::User;
-            return Ok(schema);
-        }
+    if let Some((dir, source)) = custom_schema_dir(cfg, &name) {
+        let mut schema = ResolvedSchema::load(&dir, &name)?;
+        schema.source = source;
+        return Ok(schema);
     }
     if let Some(schema) = ResolvedSchema::builtin_named(&name) {
         return Ok(schema);
@@ -1056,75 +1098,53 @@ pub fn resolve_schema(
     ))
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SchemaResolutionInfo {
+/// `schema validate` 成功時的結果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaValidation {
+    /// 名稱參數（目錄名），不是 YAML 的 `name:`（oracle 3.0.0，探測 p04 name-mismatch）。
     pub name: String,
-    pub source: String,
-    pub path: String,
+    pub artifact_count: usize,
+    /// 缺檔或空檔的 template（刻意分歧 D11-2：oracle 無聲接受，這裡照樣接受但警告）。
+    pub warnings: Vec<String>,
 }
 
-pub fn which(cfg: &crate::Config, name: &str) -> anyhow::Result<SchemaResolutionInfo> {
+/// 驗證一個 schema，解析方式與其他指令相同（專案 → 使用者 → 內建）。失敗時的錯誤
+/// 訊息就是 oracle 的 `<ERR>`：`Schema not found: …`、`Schema parse error: …` 或
+/// `Invalid schema: …`，只回報第一個問題。
+pub fn validate_schema(cfg: &crate::Config, name: &str) -> anyhow::Result<SchemaValidation> {
     let schema = resolve_schema(cfg, Some(name), None)?;
-    let path = match schema.source {
-        SchemaSource::Project => cfg
-            .root
-            .join(&cfg.spec_dir)
-            .join("schemas")
-            .join(name)
-            .display()
-            .to_string(),
-        SchemaSource::User => user_schemas_dir()
-            .expect("a user schema resolved, so its root exists")
-            .join(name)
-            .display()
-            .to_string(),
-        SchemaSource::Package => format!("embedded://schemas/{name}"),
+    let warnings = match custom_schema_dir(cfg, name) {
+        Some((dir, _)) => template_warnings(&dir, &schema),
+        None => Vec::new(),
     };
-    Ok(SchemaResolutionInfo {
+    Ok(SchemaValidation {
         name: name.to_string(),
-        source: schema.source.to_string(),
-        path,
+        artifact_count: schema.artifacts.len(),
+        warnings,
     })
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct SchemaValidation {
-    pub name: String,
-    pub valid: bool,
-    pub path: String,
-    pub issues: Vec<String>,
-}
-
-pub fn validate_schema(cfg: &crate::Config, name: &str) -> SchemaValidation {
-    match which(cfg, name).and_then(|resolution| {
-        resolve_schema(cfg, Some(name), None).map(|schema| (resolution, schema))
-    }) {
-        Ok((resolution, schema)) => {
-            let issues = schema
-                .artifacts
-                .iter()
-                .filter(|artifact| artifact.template.is_empty())
-                .map(|artifact| {
-                    format!(
-                        "Template '{}' is missing or empty for artifact '{}'",
-                        artifact.template_name, artifact.id
-                    )
-                })
-                .collect::<Vec<_>>();
-            SchemaValidation {
-                name: name.to_string(),
-                valid: issues.is_empty(),
-                path: resolution.path,
-                issues,
-            }
-        }
-        Err(error) => SchemaValidation {
-            name: name.to_string(),
-            valid: false,
-            path: String::new(),
-            issues: vec![error.to_string()],
-        },
-    }
+/// 每個 template 檔不存在或為 0 byte 時的警告，依 artifact 順序；同一個檔案只報一次。
+fn template_warnings(schema_dir: &std::path::Path, schema: &ResolvedSchema) -> Vec<String> {
+    let templates_dir = schema_dir.join("templates");
+    let mut seen = std::collections::HashSet::new();
+    schema
+        .artifacts
+        .iter()
+        .filter(|artifact| seen.insert(artifact.template_name.as_str()))
+        .filter_map(|artifact| {
+            let path = templates_dir.join(&artifact.template_name);
+            let state = match std::fs::metadata(&path) {
+                Ok(metadata) if metadata.is_file() && metadata.len() == 0 => "empty",
+                Ok(metadata) if metadata.is_file() => return None,
+                _ => "missing",
+            };
+            Some(format!(
+                "Template '{}' for artifact '{}' is {state}",
+                artifact.template_name, artifact.id
+            ))
+        })
+        .collect()
 }
 
 pub fn init_schema(
@@ -1181,12 +1201,14 @@ pub fn init_schema(
                         .requires
                         .retain(|dependency| requested.contains(dependency));
                 }
-                raw.apply
-                    .requires
-                    .retain(|required| requested.contains(required));
-                if raw.apply.requires.is_empty() {
-                    if let Some(last) = raw.artifacts.last() {
-                        raw.apply.requires.push(last.id.clone());
+                if let Some(apply) = raw.apply.as_mut() {
+                    apply
+                        .requires
+                        .retain(|required| requested.contains(required));
+                    if apply.requires.is_empty() {
+                        if let Some(last) = raw.artifacts.last() {
+                            apply.requires.push(last.id.clone());
+                        }
                     }
                 }
             }
@@ -1217,13 +1239,14 @@ pub fn init_schema(
         }
     }
     if had_target {
-        let _ = std::fs::remove_dir_all(&backup);
+        remove_backup(&backup)?;
     }
 
     Ok(ForkOutcome {
         source: SCHEMA_NAME.to_string(),
         target: name.to_string(),
         target_dir,
+        warnings: Vec::new(),
     })
 }
 
@@ -1263,6 +1286,8 @@ pub struct ForkOutcome {
     pub source: String,
     pub target: String,
     pub target_dir: std::path::PathBuf,
+    /// 來源 schema 缺檔或空檔的 template（D11-2：照樣 fork，缺檔略過，但警告）。
+    pub warnings: Vec<String>,
 }
 
 /// 將既有 schema 複製成專案內可自訂的 schema。
@@ -1276,6 +1301,11 @@ pub fn fork(
     let target = target_name
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("{source_name}-custom"));
+    // 刻意分歧（D11-3）：oracle 不檢查目標名稱，`../x` 會寫到 schemas/ 外、`""` 會
+    // 寫進 schemas/ 本身；這裡只接受 schemas/ 底下的一層目錄名稱。
+    if target.is_empty() || target == "." {
+        anyhow::bail!("schema fork target '{target}' must name a directory inside schemas/");
+    }
     reject_path_traversal(&target, "fork target")?;
     if target.contains(std::path::MAIN_SEPARATOR) || target.contains('/') {
         anyhow::bail!("schema fork target '{target}' must not contain path separators");
@@ -1296,14 +1326,32 @@ pub fn fork(
 
     let had_target = install_prepared_schema(&stage, &target_dir, &backup)?;
     if had_target {
-        let _ = std::fs::remove_dir_all(&backup);
+        remove_backup(&backup)?;
     }
 
+    let warnings = match custom_schema_dir(cfg, source_name) {
+        Some((dir, _)) => template_warnings(&dir, &schema),
+        None => Vec::new(),
+    };
     Ok(ForkOutcome {
         source: source_name.to_string(),
         target,
         target_dir,
+        warnings,
     })
+}
+
+/// 刪掉 `--force` 換下來的舊目標。舊目標可能是一般檔案（oracle 3.0.0 在這種情況回
+/// `File exists (os error 17)`；這裡依 D11-4 照樣替換），所以依型別選刪除方式，
+/// 失敗時回報而不是留下 `.<target>.backup-*`。
+fn remove_backup(backup: &std::path::Path) -> anyhow::Result<()> {
+    let metadata = std::fs::symlink_metadata(backup)?;
+    if metadata.is_dir() {
+        std::fs::remove_dir_all(backup)
+    } else {
+        std::fs::remove_file(backup)
+    }
+    .with_context(|| format!("removing replaced schema {}", backup.display()))
 }
 
 fn ensure_replace_allowed(
@@ -1354,11 +1402,11 @@ fn prepare_fork_stage(
         std::fs::create_dir_all(&templates_dir)?;
         let raw = SchemaYaml {
             name: target.to_string(),
-            version: Some(1),
+            version: 1,
             description: Some(schema.description.clone()),
-            artifacts: schema
-                .artifacts
-                .iter()
+            // oracle 3.0.0 依內建 schema 的宣告順序寫出（spec-driven：proposal、specs、
+            // design、tasks，探測 p08），也就是 `artifact_order`，不是依賴定義順序。
+            artifacts: ordered_artifacts(schema)
                 .map(|artifact| SchemaYamlArtifact {
                     id: artifact.id.clone(),
                     generates: artifact.output_path.clone(),
@@ -1368,14 +1416,14 @@ fn prepare_fork_stage(
                     requires: artifact.deps.clone(),
                 })
                 .collect(),
-            apply: SchemaYamlApply {
+            apply: Some(SchemaYamlApply {
                 requires: schema.apply_requires.clone(),
                 tracks: schema.apply_tracks.clone(),
                 instruction: schema.apply_instruction.clone(),
-            },
+            }),
         };
         std::fs::write(stage.join("schema.yaml"), serde_yaml::to_string(&raw)?)?;
-        for artifact in &schema.artifacts {
+        for artifact in ordered_artifacts(schema) {
             reject_path_traversal(&artifact.template_name, "template")?;
             let template_path = templates_dir.join(&artifact.template_name);
             if let Some(parent) = template_path.parent() {
@@ -1392,18 +1440,18 @@ fn validate_prepared_schema(stage: &std::path::Path, target: &str) -> anyhow::Re
     if loaded.name != target {
         anyhow::bail!("forked schema identity did not update to '{target}'");
     }
-    if let Some(artifact) = loaded
-        .artifacts
-        .iter()
-        .find(|artifact| artifact.template.is_empty())
-    {
-        anyhow::bail!(
-            "Template '{}' is missing or empty for artifact '{}'",
-            artifact.template_name,
-            artifact.id
-        );
-    }
     Ok(())
+}
+
+/// artifact 依 `artifact_order` 排列（每個 artifact 恰好出現一次）。
+fn ordered_artifacts(schema: &ResolvedSchema) -> impl Iterator<Item = &ResolvedArtifact> {
+    schema.artifact_order.iter().map(|id| {
+        schema
+            .artifacts
+            .iter()
+            .find(|artifact| &artifact.id == id)
+            .expect("artifact_order lists only known artifacts")
+    })
 }
 
 fn install_prepared_schema(
@@ -2056,7 +2104,7 @@ mod tests {
             output_path: format!("{id}.md"),
             description: String::new(),
             deps: deps.iter().map(|d| d.to_string()).collect(),
-            instruction: String::new(),
+            instruction: None,
             template: String::new(),
             template_name: format!("{id}.md"),
         };
@@ -2147,7 +2195,7 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: mycustom\nartifacts: []\napply:\n  requires: []\n  instruction: do it\n",
+            "name: mycustom\nversion: 1\nartifacts: []\napply:\n  requires: []\n  instruction: do it\n",
         )
         .unwrap();
 
@@ -2328,7 +2376,7 @@ mod tests {
         std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: Display Name\ndescription: This is deliberately hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+            "name: Display Name\nversion: 1\ndescription: This is deliberately hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
         )
         .unwrap();
         std::fs::write(schema_dir.join("templates/proposal.md"), "# Template\n").unwrap();
@@ -2355,7 +2403,7 @@ mod tests {
         std::fs::create_dir_all(schema_dir.join("templates")).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: Display Name\ndescription: This should be hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
+            "name: Display Name\nversion: 1\ndescription: This should be hidden\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: A proposal\n  template: proposal.md\n  instruction: Write it.\n  requires: []\napply:\n  requires: [proposal]\n  instruction: Do it.\n",
         )
         .unwrap();
 
@@ -2454,9 +2502,13 @@ mod tests {
             Some(crate::instructions::APPLY_INSTRUCTION),
             "probed: no-spec apply differs from spec-driven only in schemaName"
         );
-        assert!(schema.artifacts[0].instruction.starts_with(
-            "Create the proposal document that establishes WHY this no-spec change is needed."
-        ));
+        assert!(schema.artifacts[0]
+            .instruction
+            .as_deref()
+            .unwrap()
+            .starts_with(
+                "Create the proposal document that establishes WHY this no-spec change is needed."
+            ));
         assert!(ResolvedSchema::builtin_named("bogus").is_none());
     }
 
@@ -2562,7 +2614,7 @@ mod tests {
                 .iter()
                 .map(|dependency| (*dependency).to_string())
                 .collect(),
-            instruction: String::new(),
+            instruction: None,
             template: String::new(),
             template_name: output_path.to_string(),
         };
@@ -2599,7 +2651,7 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: custom\nartifacts:\n- id: delta-specifications\n  generates: specs/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [delta-specifications]\n  instruction: apply\n",
+            "name: custom\nversion: 1\nartifacts:\n- id: delta-specifications\n  generates: specs/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [delta-specifications]\n  instruction: apply\n",
         )
         .unwrap();
         let change_dir = cfg.root.join("openspec/changes/demo");
@@ -2625,7 +2677,7 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: custom\nartifacts:\n- id: specs\n  generates: requirements/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [specs]\n  instruction: apply\n",
+            "name: custom\nversion: 1\nartifacts:\n- id: specs\n  generates: requirements/**/*.md\n  description: specs\n  template: spec.md\n  instruction: write specs\n  requires: []\napply:\n  requires: [specs]\n  instruction: apply\n",
         )
         .unwrap();
         let change_dir = cfg.root.join("openspec/changes/demo");
@@ -2747,7 +2799,7 @@ mod tests {
                 "design".to_string(),
                 "specs".to_string(),
             ],
-            instruction: String::new(),
+            instruction: None,
             template: String::new(),
             template_name: "example.md".to_string(),
         };
@@ -2828,7 +2880,10 @@ mod tests {
             assert_eq!(resolved.id, static_def.id);
             assert_eq!(resolved.output_path, static_def.output_path);
             assert_eq!(resolved.description, static_def.description);
-            assert_eq!(resolved.instruction, static_def.instruction);
+            assert_eq!(
+                resolved.instruction.as_deref(),
+                Some(static_def.instruction)
+            );
             assert_eq!(resolved.template, static_def.template);
             assert_eq!(resolved.deps, static_def.deps);
         }
@@ -2862,7 +2917,10 @@ mod tests {
         // trailing newline is stripped per YAML scalar-folding rules --
         // unlike a `template:` file read straight off disk, which keeps
         // whatever trailing bytes the file itself has.
-        assert_eq!(schema.artifacts[0].instruction, "Write it.");
+        assert_eq!(
+            schema.artifacts[0].instruction.as_deref(),
+            Some("Write it.")
+        );
         assert_eq!(schema.apply_requires, vec!["proposal"]);
         assert_eq!(schema.apply_instruction.as_deref(), Some("Do the work."));
     }
@@ -2874,14 +2932,14 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: [nonexistent]\napply:\n  requires: [proposal]\n  instruction: y\n",
+            "name: bad\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: [nonexistent]\napply:\n  requires: [proposal]\n  instruction: y\n",
         )
         .unwrap();
 
         let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
-        assert!(
-            err.to_string().contains("requires 'nonexistent'"),
-            "expected a requires-validation error, got: {err}"
+        assert_eq!(
+            err.to_string(),
+            "Invalid schema: Artifact 'proposal' requires unknown artifact 'nonexistent'"
         );
     }
 
@@ -2892,38 +2950,31 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: bad\nartifacts:\n- id: proposal\n  generates: first.md\n  description: first\n  template: first.md\n  instruction: first\n  requires: []\n- id: proposal\n  generates: second.md\n  description: second\n  template: second.md\n  instruction: second\n  requires: []\napply:\n  requires: [proposal]\n  instruction: apply\n",
+            "name: bad\nversion: 1\nartifacts:\n- id: proposal\n  generates: first.md\n  description: first\n  template: first.md\n  instruction: first\n  requires: []\n- id: proposal\n  generates: second.md\n  description: second\n  template: second.md\n  instruction: second\n  requires: []\napply:\n  requires: [proposal]\n  instruction: apply\n",
         )
         .unwrap();
 
         let error = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains("duplicate artifact ID 'proposal'"),
-            "unexpected error: {error}"
-        );
+        assert_eq!(error.to_string(), "Invalid schema: Duplicate artifact IDs");
     }
 
     #[test]
-    fn resolved_load_rejects_dependency_cycles_with_the_cycle_path() {
+    fn resolved_load_rejects_dependency_cycles() {
         let tmp = TempDir::new("load-dependency-cycle");
         let schema_dir = tmp.join("schemas/bad");
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: proposal\n  template: proposal.md\n  instruction: proposal\n  requires: [tasks]\n- id: tasks\n  generates: tasks.md\n  description: tasks\n  template: tasks.md\n  instruction: tasks\n  requires: [proposal]\napply:\n  requires: [tasks]\n  instruction: apply\n",
+            "name: bad\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: proposal\n  template: proposal.md\n  instruction: proposal\n  requires: [tasks]\n- id: tasks\n  generates: tasks.md\n  description: tasks\n  template: tasks.md\n  instruction: tasks\n  requires: [proposal]\napply:\n  requires: [tasks]\n  instruction: apply\n",
         )
         .unwrap();
 
         let error = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains("artifact dependency cycle: proposal -> tasks -> proposal"),
-            "unexpected error: {error}"
+        assert_eq!(
+            error.to_string(),
+            "Invalid schema: Schema contains circular dependencies"
         );
     }
 
@@ -2934,15 +2985,14 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: bad\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [ghost]\n  instruction: y\n",
+            "name: bad\nversion: 1\nartifacts:\n- id: proposal\n  generates: proposal.md\n  description: p\n  template: proposal.md\n  instruction: x\n  requires: []\napply:\n  requires: [ghost]\n  instruction: y\n",
         )
         .unwrap();
 
         let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("apply.requires references 'ghost'"),
-            "expected an apply.requires-validation error, got: {err}"
+        assert_eq!(
+            err.to_string(),
+            "Invalid schema: Apply phase requires unknown artifact 'ghost'"
         );
     }
 
@@ -2953,14 +3003,15 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: bad\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: /etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
+            "name: bad\nversion: 1\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: /etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
         )
         .unwrap();
 
         let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
-        assert!(
-            err.to_string().contains("must be a relative path"),
-            "expected path-traversal rejection, got: {err}"
+        // 刻意分歧（D11-1）：oracle 接受並讀取 schema 目錄外的檔案。
+        assert_eq!(
+            err.to_string(),
+            "Invalid schema: Artifact 'p' template '/etc/passwd' must be a relative path"
         );
     }
 
@@ -2971,15 +3022,50 @@ mod tests {
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(
             schema_dir.join("schema.yaml"),
-            "name: bad\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: ../../../etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
+            "name: bad\nversion: 1\nartifacts:\n- id: p\n  generates: p.md\n  description: p\n  template: ../../../etc/passwd\n  instruction: x\n  requires: []\napply:\n  requires: [p]\n  instruction: y\n",
         )
         .unwrap();
 
         let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
-        assert!(
-            err.to_string().contains("must not contain '..'"),
-            "expected path-traversal rejection, got: {err}"
+        assert_eq!(
+            err.to_string(),
+            "Invalid schema: Artifact 'p' template '../../../etc/passwd' must not contain '..'"
         );
+    }
+
+    /// oracle 3.0.0（W7g 探測 p04 no-version）：`version` 必填。
+    #[test]
+    fn resolved_load_requires_version() {
+        let tmp = TempDir::new("load-no-version");
+        let schema_dir = tmp.join("schemas/bad");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(schema_dir.join("schema.yaml"), "name: bad\nartifacts: []\n").unwrap();
+
+        let err = ResolvedSchema::load(&schema_dir, "bad").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Schema parse error: missing field `version`"
+        );
+    }
+
+    /// oracle 3.0.0（W7g 探測 p04 no-apply／art-no-instruction、q01）：`apply` 與
+    /// artifact 的 `instruction` 可省略；沒有 `apply` 時 apply 階段要求全部 artifact。
+    #[test]
+    fn resolved_load_accepts_a_schema_without_apply_or_instructions() {
+        let tmp = TempDir::new("load-minimal");
+        let schema_dir = tmp.join("schemas/m");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(
+            schema_dir.join("schema.yaml"),
+            "name: m\nversion: 1\nartifacts:\n- id: a\n  generates: a.md\n  description: A\n  template: a.md\n- id: b\n  generates: b.md\n  description: B\n  template: b.md\n  requires: [a]\n",
+        )
+        .unwrap();
+
+        let schema = ResolvedSchema::load(&schema_dir, "m").unwrap();
+        assert_eq!(schema.artifacts[0].instruction, None);
+        assert_eq!(schema.apply_requires, vec!["a", "b"]);
+        assert_eq!(schema.apply_tracks, None);
+        assert_eq!(schema.apply_instruction, None);
     }
 
     #[test]
