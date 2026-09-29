@@ -821,13 +821,7 @@ fn validate_rejects_a_modified_requirement_that_drops_a_current_scenario() {
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(report["items"][0]["issues"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|issue| issue["message"]
-            .as_str()
-            .is_some_and(|message| message.contains("Locked account"))));
+    assert_single_scenario_loss(&report, "Login");
     let archived = spectra()
         .args(["archive", "feat", "--yes"])
         .current_dir(&*tmp)
@@ -1877,13 +1871,39 @@ fn validate_follows_a_transitive_rename_chain_when_checking_scenario_loss() {
 
     assert_eq!(out.status.code(), Some(1), "{out:?}");
     let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert!(report["items"][0]["issues"]
-        .as_array()
-        .unwrap()
+    assert_single_scenario_loss(&report, "Final login");
+}
+
+/// #183：scenario loss 只回報一則，由 validate 自己的檢查產生（OpenSpec 1.13.2 的形狀：
+/// path 相對於 change 的 `specs/`、ERROR），archive 相容性檢查不得再以
+/// `capability '…'` 或 `Archive would refuse` 的措辭重報一次。
+fn assert_single_scenario_loss(report: &serde_json::Value, requirement: &str) {
+    let issues = report["items"][0]["issues"].as_array().unwrap();
+    let loss: Vec<_> = issues
         .iter()
-        .any(|issue| issue["message"]
+        .filter(|issue| {
+            issue["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("omits scenario"))
+        })
+        .collect();
+    assert_eq!(loss.len(), 1, "issues: {issues:#?}");
+    let issue = loss[0];
+    assert_eq!(issue["level"], "ERROR", "{issue:#?}");
+    assert_eq!(issue["path"], "auth/spec.md", "{issue:#?}");
+    let message = issue["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(&format!(
+            "MODIFIED \"{requirement}\" omits scenario(s) the current spec still has: \"Locked account\"."
+        )),
+        "{message}"
+    );
+    assert!(
+        !issues.iter().any(|i| i["message"]
             .as_str()
-            .is_some_and(|message| message.contains("Locked account"))));
+            .is_some_and(|m| m.starts_with("Archive would refuse"))),
+        "issues: {issues:#?}"
+    );
 }
 
 #[test]
