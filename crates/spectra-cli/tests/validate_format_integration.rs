@@ -40,6 +40,70 @@ fn rules() -> TempDir {
     dir
 }
 
+/// envelope fixture（`tests/fixtures/validate_openspec_envelope`）的一份複本：
+/// change `only` 與 spec `only` 同名。
+fn envelope() -> TempDir {
+    let dir = TempDir::new("validate-format-envelope");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/validate_openspec_envelope"),
+        &dir,
+    );
+    dir
+}
+
+/// owner 裁決 W9a-1：oracle 格式遇到同名的 change 與 spec 時跟 oracle 3.0.0 取 change
+/// （p09 實測 `validate only` 印 change 的結果），要驗 spec 用 `--type spec`。
+/// openspec 格式照 OpenSpec 1.13.2 回 ambiguous（golden envelope 固定）。
+#[test]
+fn a_name_shared_by_a_change_and_a_spec_is_the_change_in_the_oracle_shape() {
+    let root = envelope();
+    assert_eq!(
+        run(&root, &["only"]),
+        (Some(0), "✓ only — valid\n".to_string(), String::new())
+    );
+    assert_eq!(
+        run(&root, &["only", "--json"]),
+        (
+            Some(0),
+            "[\n  {\n    \"change\": \"only\",\n    \"errors\": [],\n    \"valid\": true,\n    \
+             \"warnings\": []\n  }\n]\n"
+                .to_string(),
+            String::new()
+        )
+    );
+    assert_eq!(
+        run(&root, &["only", "--type", "spec", "--json"]),
+        (
+            Some(0),
+            "[\n  {\n    \"errors\": [],\n    \"spec\": \"only\",\n    \"valid\": true,\n    \
+             \"warnings\": []\n  }\n]\n"
+                .to_string(),
+            String::new()
+        )
+    );
+    let (rc, stdout, _) = run(&root, &["only", "--json", "--format", "openspec"]);
+    assert_eq!(rc, Some(1));
+    assert!(stdout.contains("\"code\": \"ambiguous_item\""), "{stdout}");
+}
+
+/// owner 裁決 W9a-3：`validate <item> --all` 跟 oracle，接受並忽略 `--all`。
+#[test]
+fn an_item_with_all_validates_only_the_item() {
+    let root = rules();
+    assert_eq!(
+        run(&root, &["d23-mixed", "--all"]),
+        run(&root, &["d23-mixed"])
+    );
+    assert_eq!(
+        run(&root, &["d23-mixed", "--all", "--json"]),
+        run(&root, &["d23-mixed", "--json"])
+    );
+    assert_eq!(
+        run(&root, &["s01-good", "--all"]),
+        (Some(0), "✓ s01-good — valid\n".to_string(), String::new())
+    );
+}
+
 fn run(root: &Path, args: &[&str]) -> (Option<i32>, String, String) {
     let output = spectra()
         .arg("validate")

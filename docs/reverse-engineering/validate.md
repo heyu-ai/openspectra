@@ -19,7 +19,7 @@ spectra validate --archived [--report full|findings] [--json [--format …]]
 names. `--archived` checks task completion only; archived deltas have already
 been applied. `--format` requires `--json`.
 
-Scopes (rulings D12-3, D12-5):
+Scopes (rulings D12-3, D12-5, W9a-1, W9a-3):
 
 | invocation | validates | oracle 3.0.0 |
 |---|---|---|
@@ -29,14 +29,25 @@ Scopes (rulings D12-3, D12-5):
 | `validate --all` | every change **and** every spec | changes only (deliberate divergence) |
 | `validate --changes --specs` | every change and every spec | specs only (deliberate divergence) |
 | `validate ITEM` | ITEM as a change or a spec | change only (`Error: Change 'x' not found.` for a spec) |
-| `validate ITEM` naming both a change and a spec | error `Ambiguous item …; pass --type change\|spec` | validates the change |
-| `validate ITEM --all` | clap error (rc 2) | ITEM only |
+| `validate ITEM` naming both a change and a spec | the change (`--type spec` for the spec); with `--json --format openspec`, OpenSpec's `ambiguous_item` status (exit 1) | validates the change |
+| `validate ITEM --all` | ITEM only (`--all` ignored) | same |
 
 The oracle's `--all`/`--changes --specs` behavior reads as a bug and no
 consumer relies on it (the embedded skills only call `spectra validate
 "<name>"`), so OpenSpec's meaning was ruled in (D12-3). A bare `validate`
 follows the oracle rather than OpenSpec (which prints a hint and exits 1 when
 not interactive; D12-5).
+
+A name shared by a change and a spec (owner ruling W9a-1, 2026-09-29): the
+oracle 3.0.0 validates the change (p09: `validate only` printed the change's
+result), OpenSpec 1.13.2 refuses it as ambiguous (pinned by the `only`
+envelope in `golden/validate-openspec-1.13.2.json`, human output likewise in
+p10). Each format follows its own authority: the default oracle format (human
+and `--json`) takes the change, so the embedded skills' `spectra validate
+"<name>"` never fails on a collision; `--json --format openspec` prints
+OpenSpec's `ambiguous_item` status. `ITEM --all` ignores `--all` in both
+formats, as the oracle does (W9a-3; OpenSpec would instead run the bulk scope
+and ignore ITEM — not followed).
 
 ## Rule authority (owner ruling D1)
 
@@ -247,7 +258,10 @@ The verdict is the item's own, so under `--strict` an item with only
 warnings is `✗ … — invalid` (the oracle has no `--strict`).
 
 `--report findings` in the oracle shape keeps the items that print at least
-one `error:`/`warn:` line; the exit code still reflects the whole run.
+one `error:`/`warn:` line; the exit code still reflects the whole run. This
+is an OpenSpectra design (owner ruling W9a-2, 2026-09-29): the oracle has no
+`--report`, and OpenSpec's findings report (which also keeps INFO-only items)
+exists only in the OpenSpec shape.
 
 ### OpenSpec shape (`--json --format openspec`)
 
@@ -291,13 +305,19 @@ fixture) and replayed by `validate_openspec_integration.rs`:
   distance over UTF-16 units, active changes (by name) then specs, ties in
   that order. An ambiguous item prints the `ambiguous_item` status with
   `"fix": "Pass --type change|spec."`.
-- Not reproduced: `durationMs` is OpenSpectra's own timing; `--type change`
-  on a name that is not a change is still `Error: Change 'x' not found.` on
-  stderr (OpenSpec validates the missing directory and reports "no deltas");
-  a bare `validate` validates every change instead of printing OpenSpec's
-  hint (D12-5); the `--archived` message wording is OpenSpectra's
-  (`N incomplete archived task(s)`, OpenSpec says `N incomplete tasks (c/t
-  completed)`).
+- Deliberately not followed (rulings): a bare `validate` validates every
+  change instead of printing OpenSpec's hint (D12-5); `ITEM --all` validates
+  ITEM instead of the bulk scope (W9a-3). `durationMs` is OpenSpectra's own
+  timing.
+- **Known gaps** (owner ruling W9a-4: not fixed in W9a, tracked separately):
+  1. `--type change|spec` on a name that is not of that type is still
+     `Error: Change 'x' not found.` (or `Spec`) on stderr; OpenSpec validates
+     the missing path anyway and reports its findings.
+  2. The `--archived` message wording is OpenSpectra's
+     (`N incomplete archived task(s)`); OpenSpec says `N incomplete tasks
+     (c/t completed)` and counts tasks differently (see "Archived changes").
+  3. Item order is exact only for printable-ASCII ids; non-ASCII ids use the
+     approximation above instead of ICU collation.
 
 The previous OpenSpectra v2 JSON (`version: "2.0"`, `totals.total`,
 `root.spec_dir`) is gone; `summary.totals.failed` and the item fields a gate

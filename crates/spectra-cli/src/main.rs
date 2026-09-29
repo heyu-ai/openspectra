@@ -171,8 +171,9 @@ enum Command {
         /// Validate every canonical spec (with --changes: changes and specs).
         #[arg(long, conflicts_with_all = ["item", "archived"])]
         specs: bool,
-        /// Validate all active changes and canonical specs.
-        #[arg(long, conflicts_with_all = ["item", "archived"])]
+        /// Validate all active changes and canonical specs (ignored with ITEM,
+        /// as the oracle does).
+        #[arg(long, conflicts_with_all = ["archived"])]
         all: bool,
         /// Validate that archived changes have no incomplete tasks.
         #[arg(long, conflicts_with_all = ["item", "changes", "specs", "all"])]
@@ -785,6 +786,8 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
         as_json,
         format,
     } = options;
+    // owner 裁決 W9a-3：`validate <item> --all` 跟 oracle 3.0.0，忽略 `--all`。
+    let all = all && item.is_none();
     let bulk = changes || specs || all || archived;
     if report_kind.is_some() && !bulk {
         anyhow::bail!("--report requires --changes, --specs, --all, or --archived");
@@ -801,17 +804,15 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
             Some(ValidationItemType::Spec) if is_spec => false,
             Some(ValidationItemType::Change) => anyhow::bail!("Change '{item}' not found."),
             Some(ValidationItemType::Spec) => anyhow::bail!("Spec '{item}' not found."),
-            None if is_change && is_spec => {
-                if openspec_json {
-                    return print_openspec_status(
-                        "ambiguous_item",
-                        format!("Ambiguous item '{item}' matches both a change and a spec."),
-                        Some("Pass --type change|spec."),
-                    );
-                }
-                anyhow::bail!(
-                    "Ambiguous item '{item}' matches both a change and a spec; pass --type change|spec"
-                )
+            // 同名時 OpenSpec 1.13.2 回 ambiguous（golden envelope 實測）；oracle 3.0.0
+            // 直接取 change（p09），oracle 格式照 oracle（owner 裁決 W9a-1：skill 的
+            // `spectra validate "<name>"` 不能因撞名而失敗）。
+            None if is_change && is_spec && openspec_json => {
+                return print_openspec_status(
+                    "ambiguous_item",
+                    format!("Ambiguous item '{item}' matches both a change and a spec."),
+                    Some("Pass --type change|spec."),
+                );
             }
             None if is_change => true,
             None if is_spec => false,

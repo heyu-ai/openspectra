@@ -238,8 +238,14 @@ changes.
     pick the single active change and error when there were several). In the
     oracle shape changes come in `list --json` order, then specs by id.
   - `validate <item>` still accepts a spec name (the oracle only takes
-    changes) and still reports a name shared by a change and a spec as
-    ambiguous (the oracle silently takes the change).
+    changes). A name shared by a change and a spec now validates the change,
+    as the oracle does (`--type spec` selects the spec; it used to be an
+    "Ambiguous item" error); only `--json --format openspec` keeps OpenSpec's
+    `ambiguous_item` status. `validate <item> --all` is accepted and validates
+    only the item, as the oracle does (it used to be a usage error).
+  - `--report findings` in the oracle shape keeps the items with at least one
+    error or warning line (an OpenSpectra design; the oracle has no
+    `--report`).
 - `drift` detects task collisions like v3.0.0 (detection used to be off):
   `tasks_blocked_external` when a commit since `created` touched a path the task
   names, `tasks_maybe_resolved` when a commit subject contains the task's verb

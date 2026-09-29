@@ -2490,3 +2490,53 @@ replace = '''                    let suggestions = validate::nearest_matches(ite
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# owner 裁決 W9a-1：oracle 格式遇到同名 change／spec 回 ambiguous（應取 change）
+
+[[case]]
+id = "w9a-oracle-collision-ambiguous"
+issue = "W9a-1"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            None if is_change && is_spec && openspec_json => {'''
+replace = '''            None if is_change && is_spec => {'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "a_name_shared_by_a_change_and_a_spec_is_the_change_in_the_oracle_shape"
+
+# owner 裁決 W9a-1：openspec 格式遇到同名時也取 change（OpenSpec 1.13.2 回 ambiguous）
+
+[[case]]
+id = "w9a-openspec-collision-takes-change"
+issue = "W9a-1"
+file = "crates/spectra-cli/src/main.rs"
+find = '''            None if is_change && is_spec && openspec_json => {'''
+replace = '''            None if is_change && is_spec && false => {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# owner 裁決 W9a-3：`validate <item> --all` 沒有忽略 `--all`（改成驗全部）
+
+[[case]]
+id = "w9a-item-all-not-ignored"
+issue = "W9a-3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    let all = all && item.is_none();'''
+replace = '''    let all = all;'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "an_item_with_all_validates_only_the_item"
+
+# owner 裁決 W9a-3：`validate <item> --all` 被 clap 拒絕
+
+[[case]]
+id = "w9a-item-all-rejected"
+issue = "W9a-3"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        #[arg(long, conflicts_with_all = ["archived"])]
+        all: bool,'''
+replace = '''        #[arg(long, conflicts_with_all = ["item", "archived"])]
+        all: bool,'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "an_item_with_all_validates_only_the_item"
