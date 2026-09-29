@@ -24,7 +24,7 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   `ITEM --all` 忽略 `--all`）再加 4 個（4/4 KILLED），`44-validate-typo-as-change` 的 anchor 改指向新的 item 解析；
   它與 W9b 那一輪的其他 21 個 case 在 W9a 分支上重跑，22/22 KILLED。
   另有 6 個 case 的 anchor 在 origin/main 上就已找不到（`155-created-sort-*`、
-  `52a`／`52b`、`53a`／`53b`），不是 W9a 造成的，尚未處理
+  `52a`／`52b`、`53a`／`53b`），不是 W9a 造成的，由 #229 處理（見下一項）
 - W14（2026-09-28，owner 裁決 D9／D10）：新增 `w14-d9-new-project-default`（新專案預設
   改回 `openspec`）與 `w14-d10-openspec-only-keeps-openspec`（只有 `openspec/` 的專案改用
   新專案預設），實測 2/2 KILLED；其餘 case 未在這一輪重跑
@@ -37,6 +37,11 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   `226-shadow-load-failure-skipped`、`226-shadow-appended-after-builtins`、
   `226-shadow-description-dropped`，`226-schemas-skip-unloadable` 的 anchor 改指向新的
   內建名稱判斷；五個 #226 case 逐一 `--only` 重跑 5/5 KILLED
+- #229（2026-09-29，base `fcbce2b`）：修復失效的 case——退役 3 個（`155-created-sort-*`、
+  `53a`，理由見文末「已退役的 case」），改指向新寫法 5 個（`51`、`52a`、`52b`、`53b`、
+  `39-show-single-component-id`），並為 `30-follow-dir-symlinks` 補一個 archive 測試。
+  `scripts/mutate-check.py --check-anchors` 可在不 build 的情況下檢查所有 anchor。
+  **完整執行全部 206 個 case，206/206 KILLED**
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -266,12 +271,12 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 50 | #117 | `new change` 寫死 `schema: spec-driven`，讓上面那道 gate 永遠碰不到 | `50-new-change-hardcodes-spec-driven` |
 | 51 | #126 / PR #150 | 自訂 schema 的 `schema.yaml` 從來沒有被載入 | `51-custom-schema-yaml-never-loaded` |
 | 52 | #127 / PR #136 | `instructions --json` 缺少 config.yaml 的 `context` 與 `rules` | `52a-instructions-json-drops-context`<br>`52b-instructions-json-drops-rules` |
-| 53 | #88 / PR #154 | `list --json` 多了 `summary` 欄位；人類可讀格式和 oracle 的 `Changes:` 加 bullet 不同 | `53a-list-json-readds-summary`<br>`53b-list-human-drops-bullets` |
+| 53 | #88 / PR #154 | `list --json` 多了 `summary` 欄位；人類可讀格式和 oracle 的 `Changes:` 加 bullet 不同 | `53b-list-human-drops-bullets`<br>（`53a-list-json-readds-summary` 已退役，見下方「已退役的 case」） |
 | 54 | #3 / PR #13 | `list --specs` 是沒有作用的旗標 | `54-list-specs-flag-inert` |
 | 55 | #4 / PR #14 | `list --parked` 是沒有作用的旗標 | `55-list-parked-flag-inert` |
 | 56 | #6 / PR #16 | 全域 `--no-color` 是沒有作用的旗標 | `56-no-color-flag-inert` |
 | 57 | #155-2 | archive 在 TTY 下的確認：接受（`y`）的路徑沒有測試 | `155-tty-capital-y-rejected`<br>`155-tty-n-accepted`<br>`57-archive-tty-lowercase-y-rejected` |
-| 58 | #155-1 | `--sort created` 在沒有 birthtime 的檔案系統上退回 mtime | `155-created-sort-no-mtime-fallback`<br>`155-created-sort-prefers-mtime` |
+| 58 | #155-1 | `--sort created` 在沒有 birthtime 的檔案系統上退回 mtime | —（`155-created-sort-*` 已退役，見下方「已退役的 case」） |
 | 59 | #90 | init 的原子寫入用 `fs::write` 建立暫存檔，會跟隨預先放好的 symlink（`.spectra.yaml.tmp-<pid>-0`） | `59a-temp-file-follows-symlink`<br>`59b-init-gitignore-plain-write` |
 | 60 | PR #87 R2 | completion 的暫存檔穿過 symlink 寫入 | `60-completion-temp-follows-symlink` |
 | 61 | PR #87 | `XDG_*`/`HOME` 為空或是相對路徑時，把 completion 寫到 cwd | `61a-completion-accepts-empty-relative-xdg-unit` |
@@ -291,3 +296,34 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 75 | #159（開放中） | oracle 的 archive 在 `.claude/worktrees/` 裡有同名 change 副本時拒絕執行 | 無產品碼可突變；守護測試 `archive_ignores_same_named_change_copies_inside_worktrees` |
 | 76 | W10 | `analyze` 與 oracle 3.0.0 不一致：少了 Localization 維度與三種新 finding、specs 判定吃進巢狀檔、capability／task／design topic／具體資料的比對規則是 2.3.1 版，findings 沒有依種類分組 | `w10-specs-presence-one-level`<br>`w10-concrete-data-given`<br>`w10-scenario-block-ends-at-h4`<br>`w10-no-scenario-skips-removed`<br>`w10-requirement-block-to-next-requirement`<br>`w10-weak-language-skips-headings`<br>`w10-design-topic-token-coverage`<br>`w10-design-topic-numbering-prefix`<br>`w10-goals-overlap-forty-percent`<br>`w10-capability-token-without-spaces`<br>`w10-capability-every-section-line`<br>`w10-missing-task-task-lines-only`<br>`w10-missing-task-skips-removed`<br>`w10-renamed-from-name-checked`<br>`w10-repeated-section-replaces`<br>`w10-purpose-placeholder-case-sensitive`<br>`w10-new-capability-empty-purpose`<br>`w10-localization-letter-floor`<br>`w10-localization-findings-first`<br>`w10-numeric-same-number-index`<br>`w10-numeric-equal-values-first`<br>`w10-numeric-transition-source-structural`<br>`w10-analyze-multi-change-wording`<br>`w10-analyze-colors-on-a-terminal` |
 | 77 | #219（W12-3） | 日期開頭的使用中 change（`changes/2026-05-05-foo/`）被 `list_active` 當成封存 change 濾掉：`list`、`validate`、`status --all` 看不到它，不指定 change 的指令也不會自動選到它 | `219-dated-active-filtered`<br>`219-dated-active-not-auto-selected` |
+
+## 已退役的 case
+
+退役是指 case 守護的前提已不存在：不是「修正被拿掉」，而是 oracle 對齊之後，
+原本的錯誤形狀變成了正確行為，或相關程式碼整段移除。退役的 case 從
+`scripts/mutations.toml` 刪除，並在該檔原位置留下註解指回這裡。
+
+| case | 原本守的 bug | 退役依據 |
+|---|---|---|
+| `155-created-sort-no-mtime-fallback`<br>`155-created-sort-prefers-mtime` | 列 58：`--sort created` 在沒有 birthtime 的檔案系統上退回 mtime | #202（W7a）對 oracle 3.0.0 實測：`--sort created` 依 `.openspec.yaml` 的原始 `created` 字串比較，不看檔案 birth time（`docs/reverse-engineering/list-show.md` 的 `list` 一節）。birthtime／mtime 的選擇函式與它的測試 `created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable` 都已移除，#155 也據此關閉。#229 發現 anchor 失效後退役。 |
+| `53a-list-json-readds-summary` | 列 53 前半：`list --json` 多了 oracle 沒有的 `summary` 欄位 | #88 比對的是 oracle 2.3.1。#202（W7a）的 oracle 3.0.0 比對矩陣（29 個呼叫，逐位元組相同）顯示 3.0.0 的 `list --json` 會輸出 `summary`，取不到時省略這個 key（`list-show.md`）。原本的錯誤形狀現在就是 oracle 行為，所以不再是回歸。取不到時「省略而非 `null`」由 `list_changes_flag_output_is_byte_identical_to_the_default` 的 `item.get("summary").is_none()` 斷言守著，但目前沒有對應的 mutation case。列 53 後半（人類格式的 bullet）仍由 `53b-list-human-drops-bullets` 守護。#229 發現 anchor 失效後退役。 |
+
+同一輪（#229）完整重跑時另有兩個 case 的 anchor 還在、mutant 卻存活——重構讓
+mutant 或測試離開了 bug 實際發生的路徑，anchor 檢查看不出來，只有完整執行抓得到：
+
+- `30-follow-dir-symlinks`（列 30）：validate 在 W9b（#214）後不再走
+  `fsutil::collect_delta_specs`；archive 則先把 change 搬進 staging 再走訪，
+  `archive_does_not_follow_a_symlink_cycle_under_specs` 的 symlink 指向絕對路徑，
+  搬移後指向已不存在的原位置，cycle 不成立。新增
+  `archive_with_a_relative_loop_does_not_follow_a_symlink_cycle_under_specs`
+  （`loop -> .`，staging 後仍是 cycle），實測在 mutant 下因 `reading …/loop/loop/…`
+  失敗、還原後通過；case 的測試過濾器不變，現在會選中這個新測試。
+- `39-show-single-component-id`（列 39）：#202 起 `show` 改走 `show::spec_view`，
+  不再經過 `spec::is_valid_capability_id`，原本在 spec.rs 的 mutant 對 `show` 無作用。
+  case 改指向 `spec_view`，mutant 拒絕含 `/` 的 id（#160-5 的原始形狀）。
+  spec.rs 的 `split('/')` 現在只有 `validate` 的 spec 載入用得到，沒有 mutation case。
+
+同一輪（#229）改指向新寫法、實測仍 KILLED 的 case：`51-custom-schema-yaml-never-loaded`
+（#224 把 `is_file()` 改成 `exists()`，oracle 3.0.0 只看項目存在）、
+`52a`／`52b`（#208 把 `locale` 改成 `display_locale(...)`，`context`／`rules` 的修正不變）、
+`53b-list-human-drops-bullets`（#202 把人類輸出抽成 `list_line`）。

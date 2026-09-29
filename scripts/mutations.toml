@@ -57,23 +57,10 @@ package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "archive_prompts_and_aborts_on_a_terminal"
 
-[[case]]
-id = "155-created-sort-no-mtime-fallback"
-issue = "#155-1"
-file = "crates/spectra-core/src/change.rs"
-find = "        created.or(modified).ok()"
-replace = "        created.ok()"
-package = "spectra-core"
-test = "created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable"
-
-[[case]]
-id = "155-created-sort-prefers-mtime"
-issue = "#155-1"
-file = "crates/spectra-core/src/change.rs"
-find = "        created.or(modified).ok()"
-replace = "        modified.or(created).ok()"
-package = "spectra-core"
-test = "created_sort_falls_back_to_mtime_only_when_birth_time_is_unavailable"
+# 155-created-sort-no-mtime-fallback、155-created-sort-prefers-mtime 已退役（#229）：
+# #202（W7a）依 oracle 3.0.0 把 `--sort created` 改成比較 `.openspec.yaml` 的
+# `created` 字串，birthtime／mtime fallback 的程式碼與測試都已移除。
+# 見 docs/testing/regression-catalog.md 列 58。
 
 [[case]]
 id = "160-4-identical-modified-counted"
@@ -898,13 +885,15 @@ target = ["--test", "cli_integration"]
 test = "list_and_show_support_nested_canonical_spec_ids"
 
 # show 的 spec id 只接受單一路徑元件，identity/auth 被拒
+# #202 起 `show` 改走 `show::spec_view`，不再經過 `spec::is_valid_capability_id`；
+# 原本指向 spec.rs 的 mutant 在 `show` 路徑上已無作用而存活（#229），改指向這裡。
 
 [[case]]
 id = "39-show-single-component-id"
 issue = "#160-5 / PR #161"
-file = "crates/spectra-core/src/spec.rs"
-find = '''    !id.is_empty() && !id.contains('\\') && id.split('/').all(is_valid_name)'''
-replace = '''    !id.is_empty() && !id.contains('\\') && is_valid_name(id)'''
+file = "crates/spectra-core/src/show.rs"
+find = '''    if item.is_empty() || !spec_dir.is_dir() {'''
+replace = '''    if item.is_empty() || item.contains('/') || !spec_dir.is_dir() {'''
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "list_and_show_support_nested_canonical_spec_ids"
@@ -1068,8 +1057,8 @@ test = "new_change_stamps_the_configured_schema_so_the_gate_stays_reachable"
 id = "51-custom-schema-yaml-never-loaded"
 issue = "#126 / PR #150"
 file = "crates/spectra-core/src/schema.rs"
-find = '''    if project_dir.join("schema.yaml").is_file() {'''
-replace = '''    if false && project_dir.join("schema.yaml").is_file() {'''
+find = '''    if project_dir.join("schema.yaml").exists() {'''
+replace = '''    if false && project_dir.join("schema.yaml").exists() {'''
 package = "spectra-core"
 test = "resolve_schema_loads_a_present_custom_schema_instead_of_rejecting_it"
 
@@ -1080,11 +1069,11 @@ file = "crates/spectra-core/src/instructions.rs"
 find = '''        context,
         context_ref,
         rules,
-        locale: LOCALE.to_string(),'''
+        locale: display_locale(cfg.locale.as_deref()),'''
 replace = '''        context: None,
         context_ref,
         rules,
-        locale: LOCALE.to_string(),'''
+        locale: display_locale(cfg.locale.as_deref()),'''
 package = "spectra-core"
 test = "artifact_context_is_trimmed_and_preserves_internal_newlines"
 
@@ -1095,33 +1084,24 @@ file = "crates/spectra-core/src/instructions.rs"
 find = '''        context,
         context_ref,
         rules,
-        locale: LOCALE.to_string(),'''
+        locale: display_locale(cfg.locale.as_deref()),'''
 replace = '''        context,
         context_ref,
         rules: None,
-        locale: LOCALE.to_string(),'''
+        locale: display_locale(cfg.locale.as_deref()),'''
 package = "spectra-core"
 test = "artifact_rules_are_flattened_for_the_matching_artifact"
 
-[[case]]
-id = "53a-list-json-readds-summary"
-issue = "#88 / PR #154"
-file = "crates/spectra-cli/src/main.rs"
-find = '''            "totalTasks": total,
-        }));'''
-replace = '''            "totalTasks": total,
-            "summary": first_line(&ch.proposal_md()),
-        }));'''
-package = "spectra-cli"
-target = ["--test", "cli_integration"]
-test = "list_changes_flag_output_is_byte_identical_to_the_default"
+# 53a-list-json-readds-summary 已退役（#229）：#88 比對的是 oracle 2.3.1，
+# oracle 3.0.0 的 `list --json` 會輸出 `summary`（取不到時省略），#202（W7a）
+# 據此加回。見 docs/testing/regression-catalog.md 列 53。
 
 [[case]]
 id = "53b-list-human-drops-bullets"
 issue = "#88 / PR #154"
 file = "crates/spectra-cli/src/main.rs"
-find = '''            println!("  • {}", it["name"].as_str().unwrap_or(""));'''
-replace = '''            println!("{}", it["name"].as_str().unwrap_or(""));'''
+find = '''    let mut line = format!("  • {}", item["name"].as_str().unwrap_or(""));'''
+replace = '''    let mut line = format!("{}", item["name"].as_str().unwrap_or(""));'''
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "list_changes_flag_output_is_byte_identical_to_the_default"
