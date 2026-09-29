@@ -2606,3 +2606,65 @@ replace = '''        if name == "archive" || name.starts_with('.') || ARCHIVED_P
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "drift_auto_selects_a_lone_date_prefixed_active_change_like_the_oracle"
+
+# #226：schemas 列出載入失敗的專案／使用者層 schema，不再靜默略過
+
+[[case]]
+id = "226-schemas-skip-unloadable"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            if BUILTIN_NAMES.contains(&name.as_str()) {'''
+replace = '''            if ResolvedSchema::load(&schema_dir, &name).is_err() {
+                continue;
+            }
+            if BUILTIN_NAMES.contains(&name.as_str()) {'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_lists_project_schemas_that_fail_to_load"
+
+[[case]]
+id = "226-schemas-require-schema-yaml-file"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''schema_directory_names(dir, std::path::Path::exists)'''
+replace = '''schema_directory_names(dir, std::path::Path::is_file)'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_lists_project_schemas_that_fail_to_load"
+
+# #226 owner 裁決（2026-09-29）：與內建同名的專案 schema 載入失敗時整個 schemas 失敗；
+# 合法時在內建位置原地取代
+
+[[case]]
+id = "226-shadow-load-failure-skipped"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''            let schema = ResolvedSchema::load(&schema_dir, name)?;'''
+replace = '''            let Ok(schema) = ResolvedSchema::load(&schema_dir, name) else {
+                continue;
+            };'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_fails_when_a_project_schema_named_after_a_builtin_is_missing_version"
+
+[[case]]
+id = "226-shadow-appended-after-builtins"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''        if let Some(listing) = overrides.remove(name) {
+            builtins.push(listing);'''
+replace = '''        if let Some(listing) = overrides.remove(name) {
+            listings.push(listing);'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_replaces_a_builtin_in_place_with_a_valid_same_named_project_schema"
+
+[[case]]
+id = "226-shadow-description-dropped"
+issue = "#226"
+file = "crates/spectra-core/src/schema.rs"
+find = '''                    description: listed_description(&schema_dir),'''
+replace = '''                    description: None,'''
+package = "spectra-cli"
+target = ["--test", "schemas_integration"]
+test = "schemas_replaces_a_builtin_in_place_with_a_valid_same_named_project_schema"

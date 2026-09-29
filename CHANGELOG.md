@@ -363,6 +363,22 @@ changes.
 
 ### Fixed
 
+- `schemas` lists a project or user schema whenever its `schema.yaml` exists,
+  even when the schema fails to load (missing `version`, broken YAML,
+  `schema.yaml` being a directory, failed semantic checks), like v3.0.0.
+  `artifacts` is then read leniently: the string `id` of each entry under a
+  top-level `artifacts` list, in file order, and `[]` when the file cannot be
+  read or parsed. Such schemas used to be skipped silently, so a schema
+  without `version` (required since #224) vanished from the list (#226).
+- A project schema named after a built-in (`spec-driven`, `no-spec`) is loaded
+  strictly by `schemas`, like v3.0.0 (owner ruling on #226): if it fails to
+  load, the command fails with that error (`Error: Schema parse error: …` or
+  `Error: Invalid schema: …`, exit 1, nothing on stdout, `spec-driven` checked
+  first); if it loads, it replaces the built-in in place, still tagged
+  `package`, with the file's `name` and `description`. It used to be skipped
+  silently when broken, and listed as `(project)` after the built-ins when
+  valid. Such a schema whose `template`/`generates` leaves its directory makes
+  `schemas` fail, where v3.0.0 lists it — the D11-1/D11-7 rejection applies.
 - `schema fork <source> ""` no longer leaves a `schemas/..stage-*` directory
   behind (which `schemas` then listed), and `schema fork --force` onto a
   regular file no longer leaks `schemas/.<target>.backup-*`.

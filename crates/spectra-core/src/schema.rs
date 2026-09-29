@@ -484,7 +484,15 @@ fn is_transient_schema_dir(name: &str) -> bool {
     })
 }
 
-fn schema_directory_names(dir: &std::path::Path) -> anyhow::Result<Vec<String>> {
+/// 列出 `dir` 底下含 `schema.yaml` 的 schema 目錄名稱（依名稱排序）。
+///
+/// `schema_yaml_present` 決定什麼算「有 `schema.yaml`」：validate 系列用
+/// `Path::is_file`；`schemas` 列表用 `Path::exists`，因為 oracle 3.0.0 連
+/// `schema.yaml` 是目錄的 schema 都列出（#226）。
+fn schema_directory_names(
+    dir: &std::path::Path,
+    schema_yaml_present: fn(&std::path::Path) -> bool,
+) -> anyhow::Result<Vec<String>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -498,7 +506,7 @@ fn schema_directory_names(dir: &std::path::Path) -> anyhow::Result<Vec<String>> 
         if is_transient_schema_dir(&name) || !entry.path().is_dir() {
             continue;
         }
-        if entry.path().join("schema.yaml").is_file() {
+        if schema_yaml_present(&entry.path().join("schema.yaml")) {
             names.push(name);
         }
     }
@@ -511,24 +519,61 @@ fn schema_directory_names(dir: &std::path::Path) -> anyhow::Result<Vec<String>> 
 /// Validation callers need malformed schemas too, so discovery is deliberately
 /// based only on the presence of `schema.yaml`.
 pub fn project_schema_names(cfg: &crate::Config) -> anyhow::Result<Vec<String>> {
-    schema_directory_names(&cfg.root.join(&cfg.spec_dir).join("schemas"))
+    schema_directory_names(
+        &cfg.root.join(&cfg.spec_dir).join("schemas"),
+        std::path::Path::is_file,
+    )
+}
+
+/// `schemas` 列表的 `artifacts`：oracle 3.0.0 不驗證 schema，只把 `schema.yaml`
+/// 讀成一般 YAML 值，取頂層 `artifacts` 序列中每個 mapping 的字串 `id`（依檔案順序，
+/// 重複照列）。非字串的 `id`、不是 mapping 的項目、沒有 `id` 的項目都略過；讀檔或
+/// 解析失敗（目錄、非 UTF-8、語法錯、多份文件、BOM）、頂層不是 mapping、`artifacts`
+/// 不是序列時一律是 `[]`。見 `docs/reverse-engineering/schemas.md`「Schemas that
+/// fail to load」（#226）。
+fn listed_artifact_ids(schema_dir: &std::path::Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(schema_dir.join("schema.yaml")) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&text) else {
+        return Vec::new();
+    };
+    value
+        .get("artifacts")
+        .and_then(serde_yaml::Value::as_sequence)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id")?.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `spectra schemas` 所列出的 schema。沒有專案設定時，僅回傳內建 schema。
-pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
+///
+/// 專案裡與內建同名（`spec-driven`／`no-spec`）的 schema 會嚴格載入：載入失敗時
+/// 整個列表失敗、回傳 `load` 的錯誤（依內建順序，先檢查 `spec-driven`）；合法時
+/// 在內建的位置原地取代，`source` 仍是 `package`，`name` 與 `description` 取自
+/// 檔案。與 oracle 3.0.0 相同（#226，owner 裁決 2026-09-29）。
+pub fn schemas(cfg: Option<&crate::Config>) -> anyhow::Result<Vec<SchemaListing>> {
+    const BUILTIN_NAMES: [&str; 2] = [SCHEMA_NAME, NO_SPEC_SCHEMA_NAME];
+
     fn from_dir(dir: &std::path::Path, source: SchemaSource) -> Vec<SchemaListing> {
         let mut listings = Vec::new();
-        for name in schema_directory_names(dir).unwrap_or_default() {
+        for name in schema_directory_names(dir, std::path::Path::exists).unwrap_or_default() {
             let schema_dir = dir.join(&name);
-            let Ok(schema) = ResolvedSchema::load(&schema_dir, &name) else {
-                continue;
-            };
+            if BUILTIN_NAMES.contains(&name.as_str()) {
+                // 專案層的同名 schema 由下方的內建迴圈處理。使用者層的同名 schema
+                // 未對 oracle 探測，維持原行為：能完整載入才列出並取代內建項目。
+                if source == SchemaSource::Project
+                    || ResolvedSchema::load(&schema_dir, &name).is_err()
+                {
+                    continue;
+                }
+            }
             listings.push(SchemaListing {
-                artifacts: schema
-                    .artifacts
-                    .into_iter()
-                    .map(|artifact| artifact.id)
-                    .collect(),
+                artifacts: listed_artifact_ids(&schema_dir),
                 description: None,
                 name,
                 source: source.to_string(),
@@ -539,11 +584,27 @@ pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
 
     let mut listings = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut overrides = std::collections::HashMap::new();
     if let Some(cfg) = cfg {
-        for listing in from_dir(
-            &cfg.root.join(&cfg.spec_dir).join("schemas"),
-            SchemaSource::Project,
-        ) {
+        let project_dir = cfg.root.join(&cfg.spec_dir).join("schemas");
+        for name in BUILTIN_NAMES {
+            let schema_dir = project_dir.join(name);
+            if !schema_dir.join("schema.yaml").exists() {
+                continue;
+            }
+            let schema = ResolvedSchema::load(&schema_dir, name)?;
+            seen.insert(name.to_string());
+            overrides.insert(
+                name,
+                SchemaListing {
+                    artifacts: listed_artifact_ids(&schema_dir),
+                    description: listed_description(&schema_dir),
+                    name: schema.name,
+                    source: SCHEMA_SOURCE.to_string(),
+                },
+            );
+        }
+        for listing in from_dir(&project_dir, SchemaSource::Project) {
             seen.insert(listing.name.clone());
             listings.push(listing);
         }
@@ -556,10 +617,13 @@ pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
         }
     }
     // 內建 schema 排在最前面、依 spec-driven、no-spec 的順序（oracle 3.0.0）；
-    // 專案或使用者層有同名 schema 時由它取代，不重複列出。
+    // 專案層的合法同名 schema 在原位取代；使用者層的同名 schema 則列在後面、
+    // 不重複列出內建項目。
     let mut builtins = Vec::new();
-    for name in [SCHEMA_NAME, NO_SPEC_SCHEMA_NAME] {
-        if seen.insert(name.to_string()) {
+    for name in BUILTIN_NAMES {
+        if let Some(listing) = overrides.remove(name) {
+            builtins.push(listing);
+        } else if seen.insert(name.to_string()) {
             let schema = ResolvedSchema::builtin_named(name).expect("known built-in");
             builtins.push(SchemaListing {
                 artifacts: schema.artifact_order,
@@ -570,7 +634,15 @@ pub fn schemas(cfg: Option<&crate::Config>) -> Vec<SchemaListing> {
         }
     }
     builtins.extend(listings);
-    builtins
+    Ok(builtins)
+}
+
+/// 合法的同名 schema 取代內建項目時的 `description`：檔案裡的字串原樣保留
+/// （`''` 仍是 `Some("")`），沒有或是 `null` 時為 `None`（oracle 3.0.0）。
+fn listed_description(schema_dir: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(schema_dir.join("schema.yaml")).ok()?;
+    let value = serde_yaml::from_str::<serde_yaml::Value>(&text).ok()?;
+    value.get("description")?.as_str().map(str::to_owned)
 }
 
 /// Where a [`ResolvedSchema`] came from: the built-in `spec-driven` workflow
@@ -2329,7 +2401,7 @@ mod tests {
 
     #[test]
     fn schemas_registry_matches_oracle_golden_shape() {
-        let listings = schemas(None);
+        let listings = schemas(None).unwrap();
         assert_eq!(listings.len(), 2);
         let schema = &listings[0];
         assert_eq!(schema.name, "spec-driven");
@@ -2361,7 +2433,7 @@ mod tests {
             .join("../../docs/reverse-engineering/golden/schemas-3.0.0.json");
         let golden = std::fs::read_to_string(&golden_path).unwrap();
 
-        let rendered = serde_json::to_string_pretty(&schemas(None)).unwrap();
+        let rendered = serde_json::to_string_pretty(&schemas(None).unwrap()).unwrap();
 
         // The golden captures the oracle's `--json` stdout, which ends in a
         // trailing newline the CLI adds via `println!`; the serializer itself
@@ -2381,7 +2453,7 @@ mod tests {
         .unwrap();
         std::fs::write(schema_dir.join("templates/proposal.md"), "# Template\n").unwrap();
 
-        let listings = schemas(Some(&cfg));
+        let listings = schemas(Some(&cfg)).unwrap();
 
         // 兩個內建 schema 在前，專案 schema 在後（oracle 3.0.0 順序）。
         assert_eq!(listings.len(), 3);
@@ -2407,7 +2479,7 @@ mod tests {
         )
         .unwrap();
 
-        let listings = schemas(Some(&cfg));
+        let listings = schemas(Some(&cfg)).unwrap();
         let json = serde_json::to_value(&listings).unwrap();
         let project_entry = &json.as_array().unwrap()[2];
         assert_eq!(project_entry["description"], serde_json::Value::Null);
@@ -2416,13 +2488,22 @@ mod tests {
     }
 
     #[test]
-    fn schemas_silently_skips_invalid_project_schemas() {
+    fn schemas_lists_invalid_project_schemas_instead_of_skipping_them() {
+        // #226：oracle 3.0.0 只要 `schema.yaml` 存在就列出，載入失敗也一樣。
         let (_tmp, cfg) = project("schemas-invalid-project");
         let schema_dir = cfg.root.join("openspec/schemas/broken");
         std::fs::create_dir_all(&schema_dir).unwrap();
         std::fs::write(schema_dir.join("schema.yaml"), "not: a valid schema").unwrap();
 
-        assert_eq!(schemas(Some(&cfg)).len(), 2, "only the two built-ins");
+        assert_eq!(
+            schemas(Some(&cfg)).unwrap()[2..],
+            [SchemaListing {
+                artifacts: vec![],
+                description: None,
+                name: "broken".to_string(),
+                source: "project".to_string(),
+            }]
+        );
     }
 
     #[test]
@@ -2436,7 +2517,13 @@ mod tests {
         }
 
         assert_eq!(project_schema_names(&cfg).unwrap(), vec!["broken"]);
-        assert_eq!(schemas(Some(&cfg)).len(), 2, "only the two built-ins");
+        let listed: Vec<_> = schemas(Some(&cfg))
+            .unwrap()
+            .into_iter()
+            .skip(2)
+            .map(|listing| listing.name)
+            .collect();
+        assert_eq!(listed, vec!["broken"], "transaction dirs stay hidden");
         assert!(resolve_schema(&cfg, Some(".team.stage-123-0"), None).is_err());
     }
 

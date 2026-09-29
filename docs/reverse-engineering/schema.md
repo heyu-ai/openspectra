@@ -170,7 +170,7 @@ Found by probe q03 against the same fixtures, not changed here:
   no apply instruction (or no `apply`); the oracle omits the key. The existing
   test `apply_instruction_is_optional` indexes `value["instruction"]`, which
   cannot tell the two apart.
-- `schemas` still skips a project schema that fails to load, while the oracle
-  lists it whenever `schema.yaml` exists [V p04]. Because `version` is now
-  required, a project schema without `version` — previously loaded — now
-  disappears from `schemas` (and fails in `status`, as it does in the oracle).
+- ~~`schemas` still skips a project schema that fails to load~~ — fixed in
+  #226: `schemas` now lists it whenever `schema.yaml` exists, with leniently
+  read `artifacts`, as the oracle does. See `schemas.md` "Schemas that fail to
+  load" for the probe and the divergences that remain.
