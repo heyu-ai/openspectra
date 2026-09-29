@@ -50,7 +50,9 @@ this file is agent-facing operational context.
   anchors, unviable mutants, empty test filters, and survivors all exit
   non-zero. It edits files in place (restoring and `touch`-ing afterwards), so
   never run it alongside another cargo process or while editing sources. When
-  you fix a bug, add its case in the same PR. See
+  you fix a bug, add its case in the same PR. `--check-anchors` checks only
+  that every anchor hits exactly once (no build, seconds) — run it after any
+  refactor, since moved code silently orphans anchors (#229). See
   `docs/testing/regression-catalog.md`.
 
 - `scripts/capture-schemas.py` — same constraints (macOS + reference binary,

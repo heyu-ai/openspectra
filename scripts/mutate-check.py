@@ -9,6 +9,7 @@ cargo-mutants 不會突變字串字面值與 git 參數這類「值」層級的�
 用法：
     scripts/mutate-check.py                 # 跑 scripts/mutations.toml 內所有 case
     scripts/mutate-check.py --only <id>     # 只跑一個 case
+    scripts/mutate-check.py --check-anchors # 只檢查 anchor，不 build（秒級）
 
 每個 case 的期望是 mutant 讓指定測試**失敗**（KILLED）。若測試仍通過
 （SURVIVED），代表那個回歸測試守不住它宣稱要守的 bug，整體 exit 1。
@@ -70,12 +71,58 @@ def run_case(case: dict) -> str:
         os.utime(path, None)
 
 
+def check_anchors(cases: list[dict]) -> int:
+    """不 build、不改檔：斷言每個 case 的目標檔存在、`find` 恰好命中一次、id 不重複。
+
+    重構移動或改寫程式碼時 anchor 會靜默失效（#229），完整跑 mutate-check
+    要很久，這個檢查讓失效在秒級就被發現。
+    """
+    failed = 0
+    seen: set[str] = set()
+    for case in cases:
+        cid = case.get("id", "<missing id>")
+        problems: list[str] = []
+        if cid in seen:
+            problems.append("id 重複")
+        seen.add(cid)
+        missing = [k for k in ("id", "file", "find", "replace", "package", "test") if k not in case]
+        if missing:
+            problems.append(f"缺少欄位 {missing}")
+        else:
+            if case["find"] == case["replace"]:
+                problems.append("find 與 replace 相同，mutant 沒有改任何東西")
+            path = ROOT / case["file"]
+            if not path.is_file():
+                problems.append(f"目標檔不存在: {case['file']}")
+            else:
+                count = path.read_text(encoding="utf-8").count(case["find"])
+                if count != 1:
+                    problems.append(f"anchor 在 {case['file']} 命中 {count} 次（必須恰好 1 次）")
+        for problem in problems:
+            print(f"[FAIL] {cid}: {problem}")
+        failed += bool(problems)
+    print(f"\n{len(cases) - failed}/{len(cases)} anchors ok")
+    return 1 if failed else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--only")
     parser.add_argument("--cases", type=Path, default=CASES)
+    parser.add_argument(
+        "--check-anchors",
+        action="store_true",
+        help="只檢查每個 case 的 anchor 恰好命中一次，不 build、不跑測試",
+    )
     args = parser.parse_args()
     cases = tomllib.loads(args.cases.read_text(encoding="utf-8"))["case"]
+    if args.check_anchors:
+        if args.only:
+            cases = [c for c in cases if c.get("id") == args.only]
+            if not cases:
+                print(f"[FAIL] 找不到 case {args.only!r}")
+                return 2
+        return check_anchors(cases)
     if args.only:
         cases = [c for c in cases if c["id"] == args.only]
         if not cases:

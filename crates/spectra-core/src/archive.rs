@@ -2493,6 +2493,34 @@ mod tests {
         assert_eq!(outcome.specs_applied[0].capability, "my-cap");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn archive_with_a_relative_loop_does_not_follow_a_symlink_cycle_under_specs() {
+        // #229：上一個測試的 symlink 指向絕對路徑，archive 先把 change 搬進
+        // staging 後，staged 副本的 `loop` 指向已不存在的原位置，cycle 就不成立，
+        // 走訪跟不跟 symlink 都一樣（mutation `30-follow-dir-symlinks` 因此存活）。
+        // 相對路徑 `loop -> .` 搬移後仍指回自己的 `specs/`，cycle 在 staging
+        // 裡依然存在，才真的走得到 PR #41 的守護。
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        change::create(&c, "my-feature").unwrap();
+        write(
+            &c.changes_dir()
+                .join("my-feature")
+                .join("specs")
+                .join("my-cap")
+                .join("spec.md"),
+            DELTA_TEMPLATE,
+        );
+        let specs_root = c.changes_dir().join("my-feature").join("specs");
+        std::os::unix::fs::symlink(".", specs_root.join("loop")).unwrap();
+
+        let outcome = archive(&c, "my-feature", false, false, false).unwrap();
+
+        assert_eq!(outcome.specs_applied.len(), 1);
+        assert_eq!(outcome.specs_applied[0].capability, "my-cap");
+    }
+
     #[test]
     fn archive_appends_to_an_existing_capability_spec_with_a_separator() {
         let tmp = TempDir::new();
