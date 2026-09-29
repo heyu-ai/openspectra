@@ -1,0 +1,392 @@
+{
+ "p40a": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n",
+  "design": null,
+  "tasks": "- [ ] 1.1 - The maximum request timeout budget is 40 ms\n"
+ },
+ "p40b": {
+  "proposal": null,
+  "design": "- The maximum request timeout budget is 30 ms\n",
+  "tasks": "- [ ] 1.1 - The maximum request timeout budget is 40 ms\n"
+ },
+ "p40c": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n",
+  "design": "- The maximum request timeout budget is 50 ms\n",
+  "tasks": "- [ ] 1.1 - The maximum request timeout budget is 40 ms\n"
+ },
+ "p40d": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n",
+  "design": "- The maximum request timeout budget is 50 ms\n",
+  "tasks": null
+ },
+ "p40e": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n",
+  "design": "- The maximum request timeout budget is 30 ms\n",
+  "tasks": "- [ ] 1.1 - The maximum request timeout budget is 40 ms\n"
+ },
+ "p40f": {
+  "proposal": null,
+  "design": "- The maximum request timeout budget is 30 ms\n- The maximum request timeout budget is 50 ms\n",
+  "tasks": null
+ },
+ "p40g": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n- The maximum request timeout budget is 50 ms\n",
+  "design": "- The maximum request timeout budget is 70 ms\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41a": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n- The maximum request timeout budget is 50 ms\n",
+  "design": "- The maximum request timeout budget is 50 ms\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41b": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n",
+  "design": "- The maximum request timeout budget is 30 ms\n- The maximum request timeout budget is 50 ms\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41c": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n",
+  "design": "- The maximum request timeout budget is 50 ms\n- The maximum request timeout budget is 70 ms\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41d": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta extra 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41e": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta extra more 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41f": {
+  "proposal": "alpha bravo charlie delta extra more 30\n",
+  "design": "alpha bravo charlie delta 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41g": {
+  "proposal": "alpha bravo charlie 30\n",
+  "design": "alpha bravo charlie 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41h": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "delta charlie bravo alpha 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41i": {
+  "proposal": "ALPHA Bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41j": {
+  "proposal": "alpha bravo charlie delta echo 30\n",
+  "design": "alpha bravo charlie delta foxt 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41k": {
+  "proposal": "alpha bravo charlie delta echo foxt golf hotl 30\n",
+  "design": "alpha bravo charlie delta echo foxt golf xxxx 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p41l": {
+  "proposal": "alpha bravo charlie delta echo 30\n",
+  "design": "alpha bravo charlie delta foxt golf 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p43a": {
+  "proposal": "aaaa1 aaaa2 aaaa3 aaaa4 1\nbbbb1 bbbb2 bbbb3 bbbb4 2\ncccc1 cccc2 cccc3 cccc4 3\n",
+  "design": "aaaa1 aaaa2 aaaa3 aaaa4 11\nbbbb1 bbbb2 bbbb3 bbbb4 12\ncccc1 cccc2 cccc3 cccc4 13\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p43b": {
+  "proposal": "cccc1 cccc2 cccc3 cccc4 3\nbbbb1 bbbb2 bbbb3 bbbb4 2\naaaa1 aaaa2 aaaa3 aaaa4 1\n",
+  "design": "aaaa1 aaaa2 aaaa3 aaaa4 11\nbbbb1 bbbb2 bbbb3 bbbb4 12\ncccc1 cccc2 cccc3 cccc4 13\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p43c": {
+  "proposal": "aaaa1 aaaa2 aaaa3 aaaa4 1\nbbbb1 bbbb2 bbbb3 bbbb4 2\ncccc1 cccc2 cccc3 cccc4 3\n",
+  "design": "cccc1 cccc2 cccc3 cccc4 13\nbbbb1 bbbb2 bbbb3 bbbb4 12\naaaa1 aaaa2 aaaa3 aaaa4 11\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p43d": {
+  "proposal": "- aaaa1 aaaa2 aaaa3 aaaa4 1\nbbbb1 bbbb2 bbbb3 bbbb4 2\n- cccc1 cccc2 cccc3 cccc4 3\n",
+  "design": "- aaaa1 aaaa2 aaaa3 aaaa4 11\nbbbb1 bbbb2 bbbb3 bbbb4 12\n- cccc1 cccc2 cccc3 cccc4 13\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p43e": {
+  "proposal": "aaaa1 aaaa2 aaaa3 aaaa4 1\nbbbb1 bbbb2 bbbb3 bbbb4 2 ms\ncccc1 cccc2 cccc3 cccc4 3\n",
+  "design": "aaaa1 aaaa2 aaaa3 aaaa4 11\nbbbb1 bbbb2 bbbb3 bbbb4 12 ms\ncccc1 cccc2 cccc3 cccc4 13\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p44a": {
+  "proposal": "- The maximum request timeout budget is 30 ms\n- Cache entries expire after roughly 10 minutes\n- Retry attempts before giving request 3\n",
+  "design": "- The maximum request timeout budget is 50 ms\n- Cache entries expire after roughly 20 minutes\n- Retry attempts before giving request 5\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p44b": {
+  "proposal": "- The maximum request timeout budget is 30\n- Cache entries expire after roughly 10\n- Retry attempts before giving request 3\n",
+  "design": "- The maximum request timeout budget is 50\n- Cache entries expire after roughly 20\n- Retry attempts before giving request 5\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p44c": {
+  "proposal": "- Cache entries expire after roughly 10\n- The maximum request timeout budget is 30\n- Retry attempts before giving request 3\n",
+  "design": "- Cache entries expire after roughly 20\n- The maximum request timeout budget is 50\n- Retry attempts before giving request 5\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p44d": {
+  "proposal": "zzzz1 zzzz2 zzzz3 zzzz4 30\nyyyy1 yyyy2 yyyy3 yyyy4 10\n",
+  "design": "zzzz1 zzzz2 zzzz3 zzzz4 50\nyyyy1 yyyy2 yyyy3 yyyy4 20\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p44e": {
+  "proposal": "alpha bravo charlie delta 30\nalpha bravo charlie delta echo 10\n",
+  "design": "alpha bravo charlie delta 50\nalpha bravo charlie delta echo 20\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p45a": {
+  "proposal": "yyy1 yyy2 yyy3 yyy4 1\nzzz1 zzz2 zzz3 zzz4 2\nxxx1 xxx2 xxx3 xxx4 xxx5 3\n",
+  "design": "yyy1 yyy2 yyy3 yyy4 11\nzzz1 zzz2 zzz3 zzz4 zzz5 12\nxxx1 xxx2 xxx3 xxx4 13\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p45b": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta 30\nalpha bravo charlie delta echo 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p45c": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta echo 50\nalpha bravo charlie delta 30\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p45d": {
+  "proposal": "alpha bravo charlie delta 30\nalpha bravo charlie delta 40\n",
+  "design": "alpha bravo charlie delta 50\nalpha bravo charlie delta 40\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p45e": {
+  "proposal": "alpha bravo charlie delta 30\nalpha bravo charlie delta echo 40\n",
+  "design": "alpha bravo charlie delta foxt 50\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p46a": {
+  "proposal": "zzz1 zzz2 zzz3 zzz4 2\n",
+  "design": "zzz1 zzz2 zzz3 zzz4 zzz5 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p46b": {
+  "proposal": "xxx1 xxx2 xxx3 xxx4 xxx5 3\n",
+  "design": "xxx1 xxx2 xxx3 xxx4 13\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p46c": {
+  "proposal": "zzz1 zzz2 zzz3 zzz4 2\n",
+  "design": "zzz1 zzz2 zzz3 zzz4 zzzq 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p46d": {
+  "proposal": "zzz1 zzz2 zzz3 zzz4 2\n",
+  "design": "zzz1 zzz2 zzz3 zzz4 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p46e": {
+  "proposal": "zzzz zzzy zzzx zzzw 2\n",
+  "design": "zzzz zzzy zzzx zzzw zzzv 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47a": {
+  "proposal": "alpha bravo charlie delta 2\n",
+  "design": "alpha bravo charlie delta echo5 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47b": {
+  "proposal": "alpha bravo charlie delta 2\n",
+  "design": "alpha bravo charlie delta ab5 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47c": {
+  "proposal": "alpha bravo charlie delta echo5 2\n",
+  "design": "alpha bravo charlie delta echo5 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47d": {
+  "proposal": "alpha bravo charlie delta 2\n",
+  "design": "alpha bravo charlie delta 5echo 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47e": {
+  "proposal": "alpha bravo charlie delta echo 2\n",
+  "design": "alpha bravo charlie delta echo 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47f": {
+  "proposal": "alpha bravo charlie delta v2 2\n",
+  "design": "alpha bravo charlie delta v2 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p47g": {
+  "proposal": " 2\n",
+  "design": " 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48a": {
+  "proposal": "alpha bravo charlie delta ab5 2\n",
+  "design": "alpha bravo charlie delta ab5 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48b": {
+  "proposal": "alpha bravo charlie delta ab5 2\n",
+  "design": "alpha bravo charlie delta 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48c": {
+  "proposal": "alpha bravo charlie delta echo5 2\n",
+  "design": "alpha bravo charlie delta 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48d": {
+  "proposal": "alpha bravo charlie delta echo 2\n",
+  "design": "alpha bravo charlie delta 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48e": {
+  "proposal": "alpha bravo charlie delta 2\n",
+  "design": "alpha bravo charlie delta echo 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48f": {
+  "proposal": "alpha bravo charlie delta 2\n",
+  "design": "alpha bravo charlie delta abc 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p48g": {
+  "proposal": "alpha bravo charlie delta 2\n",
+  "design": "alpha bravo charlie delta ab-5 12\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p49a": {
+  "proposal": "aaaa abbb accc addd 1.5 ms\nbaaa bbbb bccc bddd 1.0\ncaaa cbbb cccc cddd -5\ndaaa dbbb dccc dddd 50%\neaaa ebbb eccc eddd 10k\nfaaa fbbb fccc fddd 3-5 items\ngaaa gbbb gccc gddd 3 → 5\nhaaa hbbb hccc hddd 30ms\niaaa ibbb iccc iddd 30 ms\njaaa jbbb jccc jddd 30 ms\nkaaa kbbb kccc kddd 3 retries and 5 workers\nmaaa mbbb mccc mddd 1,000 rows\nnaaa nbbb nccc nddd 30 MS\noaaa obbb occc oddd 1.50\npaaa pbbb pccc pddd 3 retries and 5 workers\nqaaa qbbb qccc qddd (3)\nraaa rbbb rccc rddd $30\nsaaa sbbb sccc sddd x3\ntaaa tbbb tccc tddd 3x\nuaaa ubbb uccc uddd 3.\n",
+  "design": "aaaa abbb accc addd 2.5 ms\nbaaa bbbb bccc bddd 1\ncaaa cbbb cccc cddd -7\ndaaa dbbb dccc dddd 60%\neaaa ebbb eccc eddd 20k\nfaaa fbbb fccc fddd 4-6 items\ngaaa gbbb gccc gddd 4 → 6\nhaaa hbbb hccc hddd 50ms\niaaa ibbb iccc iddd 30 sec\njaaa jbbb jccc jddd 50 sec\nkaaa kbbb kccc kddd 4 retries and 5 workers\nmaaa mbbb mccc mddd 2,000 rows\nnaaa nbbb nccc nddd 30 ms\noaaa obbb occc oddd 1.5\npaaa pbbb pccc pddd 3 retries and 6 workers\nqaaa qbbb qccc qddd (4)\nraaa rbbb rccc rddd $40\nsaaa sbbb sccc sddd x4\ntaaa tbbb tccc tddd 4x\nuaaa ubbb uccc uddd 4.\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p50a": {
+  "proposal": "dmaa dmbb dmcc dmdd dmee 30\ncmaa cmbb cmcc cmdd is 40\n",
+  "design": "dmaa dmbb dmcc dmdd dmee dmff 31\ncmaa cmbb cmcc cmdd 41\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p50b": {
+  "proposal": "cmaa cmbb cmcc cmdd is 40\ndmaa dmbb dmcc dmdd dmee 30\n",
+  "design": "cmaa cmbb cmcc cmdd 41\ndmaa dmbb dmcc dmdd dmee dmff 31\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p50c": {
+  "proposal": "alpha bravo charlie delta 30 ms\n",
+  "design": "alpha bravo charlie delta 50 sec\nalpha bravo charlie delta 70 ms\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p50d": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta 50\nalpha bravo charlie delta echo 30\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p50e": {
+  "proposal": "alpha bravo charlie delta 30\n",
+  "design": "alpha bravo charlie delta echo 50\nalpha bravo charlie delta 70\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p50f": {
+  "proposal": "Alpha Bravo Charlie Delta 30\n",
+  "design": "alpha bravo charlie delta echo 50\nalpha bravo charlie delta 70\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p51a": {
+  "proposal": "alpha bravo charlie delta is 30\n",
+  "design": "alpha bravo charlie delta 50\nalpha bravo charlie delta is 70\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p51b": {
+  "proposal": "alpha bravo charlie delta 1,000\n",
+  "design": "alpha bravo charlie delta 1000\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p51c": {
+  "proposal": "aaaa abbb accc addd phase 3\nbaaa bbbb bccc bddd Phase 3\ncaaa cbbb cccc cddd step 3\ndaaa dbbb dccc dddd layer 3\neaaa ebbb eccc eddd stage 3\nfaaa fbbb fccc fddd version 3\ngaaa gbbb gccc gddd decision 3\nhaaa hbbb hccc hddd foo_bar 3\niaaa ibbb iccc iddd Foo_Bar9 3\njaaa jbbb jccc jddd 階段 3\nkaaa kbbb kccc kddd 第二階段 3\nmaaa mbbb mccc mddd 決策 3\nnaaa nbbb nccc nddd 步驟 3\noaaa obbb occc oddd 版本 3\npaaa pbbb pccc pddd 層 3\nqaaa qbbb qccc qddd steps 3\nraaa rbbb rccc rddd phases 3\nsaaa sbbb sccc sddd phase: 3\ntaaa tbbb tccc tddd (phase) 3\nuaaa ubbb uccc uddd a_b 3\nvaaa vbbb vccc vddd _x 3\nwaaa wbbb wccc wddd __ 3\n",
+  "design": "aaaa abbb accc addd phase 4\nbaaa bbbb bccc bddd Phase 4\ncaaa cbbb cccc cddd step 4\ndaaa dbbb dccc dddd layer 4\neaaa ebbb eccc eddd stage 4\nfaaa fbbb fccc fddd version 4\ngaaa gbbb gccc gddd decision 4\nhaaa hbbb hccc hddd foo_bar 4\niaaa ibbb iccc iddd Foo_Bar9 4\njaaa jbbb jccc jddd 階段 4\nkaaa kbbb kccc kddd 第二階段 4\nmaaa mbbb mccc mddd 決策 4\nnaaa nbbb nccc nddd 步驟 4\noaaa obbb occc oddd 版本 4\npaaa pbbb pccc pddd 層 4\nqaaa qbbb qccc qddd steps 4\nraaa rbbb rccc rddd phases 4\nsaaa sbbb sccc sddd phase: 4\ntaaa tbbb tccc tddd (phase) 4\nuaaa ubbb uccc uddd a_b 4\nvaaa vbbb vccc vddd _x 4\nwaaa wbbb wccc wddd __ 4\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p52a": {
+  "proposal": "xaaa xbbb xccc xddd 30\nyaaa ybbb yccc yddd yeee is 40\n",
+  "design": "xaaa xbbb xccc xddd 31\nyaaa ybbb yccc yddd yeee 41\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p52b": {
+  "proposal": "aaaa abbb accc addd framework 3 \nbaaa bbbb bccc bddd upgrading 3 \ncaaa cbbb cccc cddd  3 after migration\ndaaa dbbb dccc dddd dependencies 3 \neaaa ebbb eccc eddd  3 version\nfaaa fbbb fccc fddd release 3 \ngaaa gbbb gccc gddd runtime 3 \nhaaa hbbb hccc hddd library 3 \niaaa ibbb iccc iddd upgrade 3 \njaaa jbbb jccc jddd dependency 3 \nkaaa kbbb kccc kddd versions 3 \nmaaa mbbb mccc mddd upgraded 3 \nnaaa nbbb nccc nddd downgrade 3 \noaaa obbb occc oddd downgrading 3 \npaaa pbbb pccc pddd 版本 3 \nqaaa qbbb qccc qddd 升級 3 \nraaa rbbb rccc rddd 降級 3 \nsaaa sbbb sccc sddd 遷移 3 \ntaaa tbbb tccc tddd Framework 3 \nuaaa ubbb uccc uddd frameworks 3 \nvaaa vbbb vccc vddd migrations 3 \nwaaa wbbb wccc wddd MAX_RETRIES 3 \nxaaa xbbb xccc xddd  3 MAX_RETRIES\nyaaa ybbb yccc yddd v 3 \n",
+  "design": "aaaa abbb accc addd framework 4 \nbaaa bbbb bccc bddd upgrading 4 \ncaaa cbbb cccc cddd  4 after migration\ndaaa dbbb dccc dddd dependencies 4 \neaaa ebbb eccc eddd  4 version\nfaaa fbbb fccc fddd release 4 \ngaaa gbbb gccc gddd runtime 4 \nhaaa hbbb hccc hddd library 4 \niaaa ibbb iccc iddd upgrade 4 \njaaa jbbb jccc jddd dependency 4 \nkaaa kbbb kccc kddd versions 4 \nmaaa mbbb mccc mddd upgraded 4 \nnaaa nbbb nccc nddd downgrade 4 \noaaa obbb occc oddd downgrading 4 \npaaa pbbb pccc pddd 版本 4 \nqaaa qbbb qccc qddd 升級 4 \nraaa rbbb rccc rddd 降級 4 \nsaaa sbbb sccc sddd 遷移 4 \ntaaa tbbb tccc tddd Framework 4 \nuaaa ubbb uccc uddd frameworks 4 \nvaaa vbbb vccc vddd migrations 4 \nwaaa wbbb wccc wddd MAX_RETRIES 4 \nxaaa xbbb xccc xddd  4 MAX_RETRIES\nyaaa ybbb yccc yddd v 4 \n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p53a": {
+  "proposal": "aaaa abbb accc addd framework 3 → 5\nbaaa bbbb bccc bddd upgrade 3 → 5\ncaaa cbbb cccc cddd from 3 → 5\ndaaa dbbb dccc dddd 3→5\neaaa ebbb eccc eddd upgrade 3 -> 5\nfaaa fbbb fccc fddd upgrade 3.2\ngaaa gbbb gccc gddd version 3.2\nhaaa hbbb hccc hddd upgrade 3\niaaa ibbb iccc iddd migration 3 → 5 ms\njaaa jbbb jccc jddd 3 → 5 upgrade\nkaaa kbbb kccc kddd 版本 3 → 5\nmaaa mbbb mccc mddd 3 → 5 版本升級\n",
+  "design": "aaaa abbb accc addd framework 4 → 6\nbaaa bbbb bccc bddd upgrade 4 → 6\ncaaa cbbb cccc cddd from 4 → 6\ndaaa dbbb dccc dddd 4→6\neaaa ebbb eccc eddd upgrade 4 -> 6\nfaaa fbbb fccc fddd upgrade 3.3\ngaaa gbbb gccc gddd version 3.3\nhaaa hbbb hccc hddd upgrade 4\niaaa ibbb iccc iddd migration 4 → 6 ms\njaaa jbbb jccc jddd 4 → 6 upgrade\nkaaa kbbb kccc kddd 版本 4 → 6\nmaaa mbbb mccc mddd 4 → 6 版本升級\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p54a": {
+  "proposal": "aaaa abbb accc addd plain 3.2\nbaaa bbbb bccc bddd upgrade 3.2\ncaaa cbbb cccc cddd 3.2 upgrade\ndaaa dbbb dccc dddd upgrade 3\neaaa ebbb eccc eddd upgrade 3.2.1\nfaaa fbbb fccc fddd plain 3.2.1\ngaaa gbbb gccc gddd runtime 12\nhaaa hbbb hccc hddd library 1.5 ms\niaaa ibbb iccc iddd framework 10\njaaa jbbb jccc jddd 版本 3.2 說明\nkaaa kbbb kccc kddd 升級 3.2\nmaaa mbbb mccc mddd release notes 2.0\nnaaa nbbb nccc nddd upgraded 30\noaaa obbb occc oddd versions 30 total\npaaa pbbb pccc pddd Upgrade 3.2\nqaaa qbbb qccc qddd upgrades 3.2\nraaa rbbb rccc rddd reupgrade 3.2\n",
+  "design": "aaaa abbb accc addd plain 3.3\nbaaa bbbb bccc bddd upgrade 3.3\ncaaa cbbb cccc cddd 3.3 upgrade\ndaaa dbbb dccc dddd upgrade 4\neaaa ebbb eccc eddd upgrade 3.3.1\nfaaa fbbb fccc fddd plain 3.3.1\ngaaa gbbb gccc gddd runtime 13\nhaaa hbbb hccc hddd library 2.5 ms\niaaa ibbb iccc iddd framework 20\njaaa jbbb jccc jddd 版本 3.3 說明\nkaaa kbbb kccc kddd 升級 3.3\nmaaa mbbb mccc mddd release notes 3.0\nnaaa nbbb nccc nddd upgraded 40\noaaa obbb occc oddd versions 40 total\npaaa pbbb pccc pddd Upgrade 3.3\nqaaa qbbb qccc qddd upgrades 3.3\nraaa rbbb rccc rddd reupgrade 3.3\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p55a": {
+  "proposal": "aaaa abbb accc addd framework 3.2\nbaaa bbbb bccc bddd frameworks 3.2\ncaaa cbbb cccc cddd upgrading 3.2\ndaaa dbbb dccc dddd downgrading 3.2\neaaa ebbb eccc eddd downgraded 3.2\nfaaa fbbb fccc fddd migration 3.2\ngaaa gbbb gccc gddd migrations 3.2\nhaaa hbbb hccc hddd dependencies 3.2\niaaa ibbb iccc iddd version 3.2\njaaa jbbb jccc jddd release 3.2\nkaaa kbbb kccc kddd runtime 3.2\nlaaa lbbb lccc lddd library 3.2\nmaaa mbbb mccc mddd upgrade 3.2\nnaaa nbbb nccc nddd dependency 3.2\noaaa obbb occc oddd versions 3.2\npaaa pbbb pccc pddd upgraded 3.2\nqaaa qbbb qccc qddd downgrade 3.2\nraaa rbbb rccc rddd migrate 3.2\nsaaa sbbb sccc sddd 版本號 3.2\ntaaa tbbb tccc tddd 遷移中 3.2\nuaaa ubbb uccc uddd the-upgrade 3.2\nvaaa vbbb vccc vddd upgrade: 3.2\n",
+  "design": "aaaa abbb accc addd framework 3.3\nbaaa bbbb bccc bddd frameworks 3.3\ncaaa cbbb cccc cddd upgrading 3.3\ndaaa dbbb dccc dddd downgrading 3.3\neaaa ebbb eccc eddd downgraded 3.3\nfaaa fbbb fccc fddd migration 3.3\ngaaa gbbb gccc gddd migrations 3.3\nhaaa hbbb hccc hddd dependencies 3.3\niaaa ibbb iccc iddd version 3.3\njaaa jbbb jccc jddd release 3.3\nkaaa kbbb kccc kddd runtime 3.3\nlaaa lbbb lccc lddd library 3.3\nmaaa mbbb mccc mddd upgrade 3.3\nnaaa nbbb nccc nddd dependency 3.3\noaaa obbb occc oddd versions 3.3\npaaa pbbb pccc pddd upgraded 3.3\nqaaa qbbb qccc qddd downgrade 3.3\nraaa rbbb rccc rddd migrate 3.3\nsaaa sbbb sccc sddd 版本號 3.3\ntaaa tbbb tccc tddd 遷移中 3.3\nuaaa ubbb uccc uddd the-upgrade 3.3\nvaaa vbbb vccc vddd upgrade: 3.3\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p55b": {
+  "proposal": "aaaa abbb accc addd #3 x\nbaaa bbbb bccc bddd /3\ncaaa cbbb cccc cddd :3\ndaaa dbbb dccc dddd _3\neaaa ebbb eccc eddd 3/ x\nfaaa fbbb fccc fddd 3: x\ngaaa gbbb gccc gddd 3_x\nhaaa hbbb hccc hddd \\3\niaaa ibbb iccc iddd (3)\njaaa jbbb jccc jddd a-3\nkaaa kbbb kccc kddd  -3\nmaaa mbbb mccc mddd 10:30\nnaaa nbbb nccc nddd 2026/09\noaaa obbb occc oddd \"3\"\npaaa pbbb pccc pddd 3,\nqaaa qbbb qccc qddd ~3\nraaa rbbb rccc rddd 3 → 4\n",
+  "design": "aaaa abbb accc addd #4 x\nbaaa bbbb bccc bddd /4\ncaaa cbbb cccc cddd :4\ndaaa dbbb dccc dddd _4\neaaa ebbb eccc eddd 4/ x\nfaaa fbbb fccc fddd 4: x\ngaaa gbbb gccc gddd 4_x\nhaaa hbbb hccc hddd \\4\niaaa ibbb iccc iddd (4)\njaaa jbbb jccc jddd a-4\nkaaa kbbb kccc kddd  -4\nmaaa mbbb mccc mddd 11:30\nnaaa nbbb nccc nddd 2027/09\noaaa obbb occc oddd \"4\"\npaaa pbbb pccc pddd 4,\nqaaa qbbb qccc qddd ~4\nraaa rbbb rccc rddd 5 → 6\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p56a": {
+  "proposal": "## aaaa abbb accc addd 3\n1. baaa bbbb bccc bddd 3\n> caaa cbbb cccc cddd 3\n| daaa dbbb dccc dddd 3 |\n* eaaa ebbb eccc eddd 3\n+ faaa fbbb fccc fddd 3\n- [ ] gaaa gbbb gccc gddd 3\n  - haaa hbbb hccc hddd 3\n**iaaa ibbb iccc iddd ** 3\n`jaaa jbbb jccc jddd ` 3\nkaaa kbbb kccc kddd `3`\nmaaa mbbb mccc mddd `x 3`\n<!-- naaa nbbb nccc nddd 3 -->\n12. oaaa obbb occc oddd 3\n#### paaa pbbb pccc pddd 3\n```\nzaaa zbbb zccc zddd 3\n```\n",
+  "design": "## aaaa abbb accc addd 4\n1. baaa bbbb bccc bddd 4\n> caaa cbbb cccc cddd 4\n| daaa dbbb dccc dddd 4 |\n* eaaa ebbb eccc eddd 4\n+ faaa fbbb fccc fddd 4\n- [ ] gaaa gbbb gccc gddd 4\n  - haaa hbbb hccc hddd 4\n**iaaa ibbb iccc iddd ** 4\n`jaaa jbbb jccc jddd ` 4\nkaaa kbbb kccc kddd `4`\nmaaa mbbb mccc mddd `x 4`\n<!-- naaa nbbb nccc nddd 4 -->\n12. oaaa obbb occc oddd 4\n#### paaa pbbb pccc pddd 4\n```\nzaaa zbbb zccc zddd 4\n```\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p56b": {
+  "proposal": "<!--\nyaaa ybbb yccc yddd 3\n-->\n~~~\nxaaa xbbb xccc xddd 3\n~~~\n",
+  "design": "<!--\nyaaa ybbb yccc yddd 4\n-->\n~~~\nxaaa xbbb xccc xddd 4\n~~~\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p57a": {
+  "proposal": "aaaa abbb accc addd `x` 3\nbaaa bbbb bccc bddd 3 `x`\ncaaa cbbb cccc cddd `unclosed 3\ndaaa dbbb dccc dddd +3\neaaa ebbb eccc eddd -3\nfaaa fbbb fccc fddd 3\ngaaa gbbb gccc gddd 1,000\nhaaa hbbb hccc hddd 3 ms\n",
+  "design": "aaaa abbb accc addd `x` 4\nbaaa bbbb bccc bddd 4 `x`\ncaaa cbbb cccc cddd `unclosed 4\ndaaa dbbb dccc dddd 3\neaaa ebbb eccc eddd 3\nfaaa fbbb fccc fddd 3.0\ngaaa gbbb gccc gddd 1,0,0,0\nhaaa hbbb hccc hddd 3 MS\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p57b": {
+  "proposal": "`x` aaaa bbbb cccc dddd 3\n",
+  "design": "aaaa bbbb cccc dddd 4\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p57c": {
+  "proposal": "    ```\nzaaa zbbb zccc zddd 3\n    ```\n",
+  "design": "```js\nzaaa zbbb zccc zddd 4\n```\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p58a": {
+  "proposal": "unsaa unsbb unscc unsdd 3ns end\nuusaa uusbb uuscc uusdd 3us end\numsaa umsbb umscc umsdd 3ms end\nuhraa uhrbb uhrcc uhrdd 3hr end\nukbaa ukbbb ukbcc ukbdd 3kb end\numbaa umbbb umbcc umbdd 3mb end\nugbaa ugbbb ugbcc ugbdd 3gb end\nutbaa utbbb utbcc utbdd 3tb end\nuhzaa uhzbb uhzcc uhzdd 3hz end\nupxaa upxbb upxcc upxdd 3px end\nuptaa uptbb uptcc uptdd 3pt end\nuemaa uembb uemcc uemdd 3em end\nuvwaa uvwbb uvwcc uvwdd 3vw end\nuvhaa uvhbb uvhcc uvhdd 3vh end\nusecaa usecbb useccc usecdd 3sec end\numinaa uminbb umincc umindd 3min end\nuhrsaa uhrsbb uhrscc uhrsdd 3hrs end\nukibaa ukibbb ukibcc ukibdd 3kib end\numibaa umibbb umibcc umibdd 3mib end\nugibaa ugibbb ugibcc ugibdd 3gib end\nutibaa utibbb utibcc utibdd 3tib end\nubitaa ubitbb ubitcc ubitdd 3bit end\nukhzaa ukhzbb ukhzcc ukhzdd 3khz end\numhzaa umhzbb umhzcc umhzdd 3mhz end\nughzaa ughzbb ughzcc ughzdd 3ghz end\nufpsaa ufpsbb ufpscc ufpsdd 3fps end\nubpsaa ubpsbb ubpscc ubpsdd 3bps end\nuremaa urembb uremcc uremdd 3rem end\nusecsaa usecsbb usecscc usecsdd 3secs end\numinsaa uminsbb uminscc uminsdd 3mins end\nubitsaa ubitsbb ubitscc ubitsdd 3bits end\nubyteaa ubytebb ubytecc ubytedd 3byte end\nubytesaa ubytesbb ubytescc ubytesdd 3bytes end\nugbpsaa ugbpsbb ugbpscc ugbpsdd 3gbps end\numbpsaa umbpsbb umbpscc umbpsdd 3mbps end\nukbpsaa ukbpsbb ukbpscc ukbpsdd 3kbps end\nusaa usbb uscc usdd 3s end\nuhaa uhbb uhcc uhdd 3h end\numaa umbb umcc umdd 3m end\nukaa ukbb ukcc ukdd 3k end\nudaa udbb udcc uddd 3d end\nuxaa uxbb uxcc uxdd 3x end\nuns2aa uns2bb uns2cc uns2dd 3ns2 end\nuMSaa uMSbb uMScc uMSdd 3MS end\nuMsaa uMsbb uMscc uMsdd 3Ms end\nusecondsaa usecondsbb usecondscc usecondsdd 3seconds end\numinutesaa uminutesbb uminutescc uminutesdd 3minutes end\nuhoursaa uhoursbb uhourscc uhoursdd 3hours end\nudaysaa udaysbb udayscc udaysdd 3days end\nukbitaa ukbitbb ukbitcc ukbitdd 3kbit end\numsqaa umsqbb umsqcc umsqdd 3ms. end\numsqaa umsqbb umsqcc umsqdd 3ms, end\numssaa umssbb umsscc umssdd 3mss end\nurpsaa urpsbb urpscc urpsdd 3rps end\nuqpsaa uqpsbb uqpscc uqpsdd 3qps end\nutpsaa utpsbb utpscc utpsdd 3tps end\nuopsaa uopsbb uopscc uopsdd 3ops end\nugbqsaa ugbqsbb ugbqscc ugbqsdd 3gb/s end\n",
+  "design": "unsaa unsbb unscc unsdd 4ns end\nuusaa uusbb uuscc uusdd 4us end\numsaa umsbb umscc umsdd 4ms end\nuhraa uhrbb uhrcc uhrdd 4hr end\nukbaa ukbbb ukbcc ukbdd 4kb end\numbaa umbbb umbcc umbdd 4mb end\nugbaa ugbbb ugbcc ugbdd 4gb end\nutbaa utbbb utbcc utbdd 4tb end\nuhzaa uhzbb uhzcc uhzdd 4hz end\nupxaa upxbb upxcc upxdd 4px end\nuptaa uptbb uptcc uptdd 4pt end\nuemaa uembb uemcc uemdd 4em end\nuvwaa uvwbb uvwcc uvwdd 4vw end\nuvhaa uvhbb uvhcc uvhdd 4vh end\nusecaa usecbb useccc usecdd 4sec end\numinaa uminbb umincc umindd 4min end\nuhrsaa uhrsbb uhrscc uhrsdd 4hrs end\nukibaa ukibbb ukibcc ukibdd 4kib end\numibaa umibbb umibcc umibdd 4mib end\nugibaa ugibbb ugibcc ugibdd 4gib end\nutibaa utibbb utibcc utibdd 4tib end\nubitaa ubitbb ubitcc ubitdd 4bit end\nukhzaa ukhzbb ukhzcc ukhzdd 4khz end\numhzaa umhzbb umhzcc umhzdd 4mhz end\nughzaa ughzbb ughzcc ughzdd 4ghz end\nufpsaa ufpsbb ufpscc ufpsdd 4fps end\nubpsaa ubpsbb ubpscc ubpsdd 4bps end\nuremaa urembb uremcc uremdd 4rem end\nusecsaa usecsbb usecscc usecsdd 4secs end\numinsaa uminsbb uminscc uminsdd 4mins end\nubitsaa ubitsbb ubitscc ubitsdd 4bits end\nubyteaa ubytebb ubytecc ubytedd 4byte end\nubytesaa ubytesbb ubytescc ubytesdd 4bytes end\nugbpsaa ugbpsbb ugbpscc ugbpsdd 4gbps end\numbpsaa umbpsbb umbpscc umbpsdd 4mbps end\nukbpsaa ukbpsbb ukbpscc ukbpsdd 4kbps end\nusaa usbb uscc usdd 4s end\nuhaa uhbb uhcc uhdd 4h end\numaa umbb umcc umdd 4m end\nukaa ukbb ukcc ukdd 4k end\nudaa udbb udcc uddd 4d end\nuxaa uxbb uxcc uxdd 4x end\nuns2aa uns2bb uns2cc uns2dd 4ns2 end\nuMSaa uMSbb uMScc uMSdd 4MS end\nuMsaa uMsbb uMscc uMsdd 4Ms end\nusecondsaa usecondsbb usecondscc usecondsdd 4seconds end\numinutesaa uminutesbb uminutescc uminutesdd 4minutes end\nuhoursaa uhoursbb uhourscc uhoursdd 4hours end\nudaysaa udaysbb udayscc udaysdd 4days end\nukbitaa ukbitbb ukbitcc ukbitdd 4kbit end\numsqaa umsqbb umsqcc umsqdd 4ms. end\numsqaa umsqbb umsqcc umsqdd 4ms, end\numssaa umssbb umsscc umssdd 4mss end\nurpsaa urpsbb urpscc urpsdd 4rps end\nuqpsaa uqpsbb uqpscc uqpsdd 4qps end\nutpsaa utpsbb utpscc utpsdd 4tps end\nuopsaa uopsbb uopscc uopsdd 4ops end\nugbqsaa ugbqsbb ugbqscc ugbqsdd 4gb/s end\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p59a": {
+  "proposal": "alpha bravo charlie delta 30\nalpha bravo charlie delta 40\n",
+  "design": "alpha bravo charlie delta 50\nalpha bravo charlie delta 60\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p59b": {
+  "proposal": "alpha bravo charlie delta 30\nalpha bravo charlie delta 40\n",
+  "design": "alpha bravo charlie delta 60\nalpha bravo charlie delta 30\n",
+  "tasks": "- [ ] 1.1 x\n"
+ },
+ "p59c": {
+  "proposal": "wwww1 wxxx wyyy wzzz 3\n",
+  "design": "**Goals:**\n- alpha bravo charlie delta echoo foxtrot golf1 hotel\n\n**Non-Goals:**\n- alpha bravo charlie delta echoo foxtrot golf1 hotel\n\n### Zzzqq topic\n\nwwww1 wxxx wyyy wzzz 4\n",
+  "tasks": "- [ ] 1.1 x\n"
+ }
+}

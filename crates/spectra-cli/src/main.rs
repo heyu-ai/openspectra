@@ -651,15 +651,21 @@ fn cmd_drift(
     Ok(report.exit_code())
 }
 
-fn cmd_analyze(cfg: &Config, change_name: Option<&str>, as_json: bool) -> Result<i32> {
-    let Some(name) = resolve_read_change(cfg, change_name)? else {
+fn cmd_analyze(
+    cfg: &Config,
+    change_name: Option<&str>,
+    as_json: bool,
+    use_color: bool,
+) -> Result<i32> {
+    let Some(name) = change::resolve_for_analyze(cfg, change_name)? else {
+        println!("{}", change::NO_ACTIVE_CHANGES_MESSAGE);
         return Ok(0);
     };
     let report = analyze::analyze(cfg, &name)?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
-        print!("{}", analyze::format_human(&report));
+        print!("{}", analyze::format_human(&report, use_color));
     }
     Ok(0)
 }
@@ -2017,7 +2023,7 @@ fn run() -> Result<i32> {
         }
         Command::Analyze { change, json } => {
             let cfg = require_initialized(&root)?;
-            cmd_analyze(&cfg, change.as_deref(), *json)
+            cmd_analyze(&cfg, change.as_deref(), *json, use_color)
         }
         Command::Search { query, limit, json } => {
             let cfg = require_initialized(&root)?;

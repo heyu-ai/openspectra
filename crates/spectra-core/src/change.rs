@@ -729,6 +729,19 @@ pub fn resolve(cfg: &Config, explicit: Option<&str>) -> Result<String> {
     resolve_optional(cfg, explicit)?.ok_or_else(|| anyhow!(NO_ACTIVE_CHANGES_MESSAGE))
 }
 
+/// `analyze` 的 change 解析：多個 active change 時用 oracle 3.0.0 `analyze` 自己的
+/// 措辭 `Specify one:`（`status`／`instructions` 是 `Use --change to specify one:`，
+/// 見 W10 探測 p30）。沒有 active change 時回 `None`，由呼叫端印出提示並成功結束。
+pub fn resolve_for_analyze(cfg: &Config, explicit: Option<&str>) -> Result<Option<String>> {
+    if explicit.is_none() {
+        let active = list_active(cfg);
+        if active.len() > 1 {
+            anyhow::bail!("Multiple changes found. Specify one: {}", active.join(", "));
+        }
+    }
+    resolve_optional(cfg, explicit)
+}
+
 /// `task start`／`task done` 的 change 解析：多個 active change 時用 oracle 3.0.0 的
 /// 措辭 `Use --change to specify one:`（其他指令的共用措辭待 #50 裁決）。
 pub fn resolve_for_task(cfg: &Config, explicit: Option<&str>) -> Result<String> {

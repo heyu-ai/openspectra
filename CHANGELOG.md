@@ -82,6 +82,31 @@ changes.
   extension (`docs/reverse-engineering/artifact-workflow.md`) is now recorded
   as a deliberate divergence (owner ruling, 2026-09-28). No existing field
   differs, and `parity-known.tsv` already lists both as `oss-only`.
+- `analyze` follows v3.0.0 (W10; every rule pinned by
+  `docs/reverse-engineering/golden/analyze-3.0.0.json`, 240 oracle runs that
+  `scripts/capture-analyze.py` captures and the tests replay byte for byte):
+  a fifth **Localization** dimension (`locWrongLanguage` for proposal/design/
+  tasks written in English under locale `tw`/`cn`/`ja`, listed first among
+  the findings); new findings `gapNewCapabilityNoPurpose`,
+  `conGoalsNonGoalsOverlap`, `conNumericClaimMismatch` and the two
+  `covDeltaValidation` Purpose errors; specs count only as one-level
+  `specs/<dir>/spec.md`; Coverage runs with any two artifacts and Consistency
+  with design or with proposal plus tasks; capabilities come from the first
+  backtick token of every line in the Capabilities section and must name a
+  spec directory; `covMissingTask` searches task lines only, skips REMOVED and
+  checks RENAMED FROM names; design topics match by significant tokens (60%)
+  after a numbering prefix is stripped; `ambAbstractScenario` accepts
+  GIVEN/WHEN-with-data/table lines as concrete; `ambNoScenario` skips REMOVED
+  and RENAMED; weak language skips headings; findings are grouped per kind
+  within Coverage, Ambiguity and Gaps; a repeated delta section heading
+  replaces the earlier one. The multi-change error reads `Multiple changes
+  found. Specify one: …`, and the human report is coloured on a terminal
+  (unless `--no-color`/`NO_COLOR`). On the three-project corpus 29 of 31
+  changes are byte-identical; the other two differ only in finding order
+  because OpenSpectra visits spec directories in name order rather than
+  `readdir` order. Deliberate divergences (alphabetical `params` keys, name
+  order, conflict order within a section pair, no `CLICOLOR_FORCE`) are listed
+  in `docs/reverse-engineering/analyze.md`.
 - `drift` Structure: a FilePath anchor resolves only when the file is in the git
   index (untracked files, and every path outside a repository, are broken; a
   tracked file deleted only on disk still resolves), and broken anchors are

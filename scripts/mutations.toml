@@ -500,26 +500,36 @@ test = "dirty_files_reports_the_new_path_for_a_rename"
 [[case]]
 id = "23-weak-language-nine-words"
 issue = "PR #54"
-file = "crates/spectra-core/src/analyze.rs"
-find = '''        ("consider", "consider"),
-        ("possibly", "possibly"),
-        ("tbd", "TBD"),
-        ("todo", "TODO"),
-        ("???", "???"),
-        ("tktk", "TKTK"),'''
-replace = '''        ("tbd", "TBD"),
-        ("???", "???"),'''
+file = "crates/spectra-core/src/analyze/ambiguity.rs"
+find = '''const WEAK_WORDS: [(&str, &str); 9] = [
+    ("should", "should"),
+    ("may", "may"),
+    ("might", "might"),
+    ("consider", "consider"),
+    ("possibly", "possibly"),
+    ("tbd", "TBD"),
+    ("todo", "TODO"),
+    ("???", "???"),
+    ("tktk", "TKTK"),'''
+replace = '''const WEAK_WORDS: [(&str, &str); 5] = [
+    ("should", "should"),
+    ("may", "may"),
+    ("might", "might"),
+    ("tbd", "TBD"),
+    ("???", "???"),'''
 package = "spectra-core"
 test = "weak_language_is_case_insensitive_substring_priority_and_canonicalized"
 
-# 列 24：PR #54 之前掃 `specs/` 下所有 `*.md`（逐字還原）。
+# 列 24：PR #54 之前掃 `specs/` 下所有 `*.md`。W10 把 analyze 拆成模組並改成只讀
+# 一層的 `specs/<dir>/spec.md`，原本的程式碼已不存在；改以「讀 capability 目錄裡
+# 名稱最小的 `*.md`」重現讀到附檔的形狀（`notes.md` 排在 `spec.md` 前）。
 
 [[case]]
 id = "24-analyze-only-spec-md"
 issue = "PR #54"
-file = "crates/spectra-core/src/analyze.rs"
-find = '''        } else if file_type.is_file() && path.file_name().is_some_and(|name| name == "spec.md") {'''
-replace = '''        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "md") {'''
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''            let path = specs_dir.join(&capability).join("spec.md");'''
+replace = '''            let path = std::fs::read_dir(specs_dir.join(&capability))?.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "md")).min().unwrap();'''
 package = "spectra-cli"
 target = ["--test", "analyze_integration"]
 test = "analyze_ignores_markdown_sidecars_next_to_spec_md"
@@ -1668,3 +1678,246 @@ replace = '''        if false && already_reported.contains(entry_path) {
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "validate_rejects_a_modified_requirement_that_drops_a_current_scenario"
+
+# ------------------------------------------------ W10：analyze 對齊 oracle 3.0.0
+# 每個 case 把一條 3.0.0 規則還原成 W10 之前（或 RE 模型初版）的形狀。golden 重播
+# 測試的期望值取自 oracle 3.0.0 對同一 fixture 的實際輸出（scripts/capture-analyze.py）。
+
+[[case]]
+id = "w10-specs-presence-one-level"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/mod.rs"
+find = '''        specs: !spec_files.is_empty(),'''
+replace = '''        specs: change.dir.join("specs").is_dir(),'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-concrete-data-given"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''        if line.starts_with("##### Example:") || line.starts_with("- **GIVEN**") {'''
+replace = '''        if line.starts_with("##### Example:") {'''
+package = "spectra-core"
+test = "concrete_data_rules_are_case_sensitive_prefixes"
+
+[[case]]
+id = "w10-scenario-block-ends-at-h4"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''                    || trimmed.starts_with("#### ")'''
+replace = '''                    || trimmed.starts_with("#### Scenario:")'''
+package = "spectra-core"
+test = "scenario_blocks_end_at_level_two_to_four_headings"
+
+[[case]]
+id = "w10-no-scenario-skips-removed"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/ambiguity.rs"
+find = '''                Some(DeltaSection::Removed | DeltaSection::Renamed)'''
+replace = '''                Some(DeltaSection::Renamed)'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-requirement-block-to-next-requirement"
+issue = "W10（語料 yibi-mvp 0098）"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''            .take_while(|(index, _)| end.is_none_or(|end| *index < end))'''
+replace = '''            .take_while(|(_, line)| !(line.trim().starts_with("## ") || line.trim().starts_with("### ")))'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-weak-language-skips-headings"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/ambiguity.rs"
+find = '''    if line.trim_start().starts_with('#') {
+        return None;
+    }
+'''
+replace = ''''''
+package = "spectra-core"
+test = "weak_language_skips_headings_but_not_urls_or_code"
+
+[[case]]
+id = "w10-design-topic-token-coverage"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/consistency.rs"
+find = '''        if matched * 100 >= tokens.len() * 60 {'''
+replace = '''        if tasks_lowercase.contains(&keyword) {'''
+package = "spectra-core"
+test = "design_topics_are_flagged_below_sixty_percent_token_coverage"
+
+[[case]]
+id = "w10-design-topic-numbering-prefix"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/consistency.rs"
+find = '''        let keyword = strip_numbering_prefix(topic.trim()).to_lowercase();'''
+replace = '''        let keyword = topic.trim().to_lowercase();'''
+package = "spectra-core"
+test = "design_topics_are_flagged_below_sixty_percent_token_coverage"
+
+[[case]]
+id = "w10-goals-overlap-forty-percent"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/consistency.rs"
+find = '''            if shared < 8 || shared * 100 < 40 * smaller {'''
+replace = '''            if shared < 8 || shared * 100 < 50 * smaller {'''
+package = "spectra-core"
+test = "goals_overlap_needs_eight_shared_tokens_and_forty_percent"
+
+[[case]]
+id = "w10-capability-token-without-spaces"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''        if !token.is_empty() && !token.contains(' ') {'''
+replace = '''        if !token.is_empty() {'''
+package = "spectra-core"
+test = "capabilities_take_the_first_backtick_token_of_every_section_line"
+
+[[case]]
+id = "w10-capability-every-section-line"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''        let Some((_, rest)) = trimmed.split_once('`') else {'''
+replace = '''        let Some((_, rest)) = trimmed.strip_prefix('-').unwrap_or("").split_once('`') else {'''
+package = "spectra-core"
+test = "capabilities_take_the_first_backtick_token_of_every_section_line"
+
+[[case]]
+id = "w10-missing-task-task-lines-only"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/coverage.rs"
+find = '''        let task_lines = extract::task_lines(tasks);'''
+replace = '''        let task_lines = vec![tasks.to_lowercase()];'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-missing-task-skips-removed"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/coverage.rs"
+find = '''                if requirement.section == Some(DeltaSection::Removed) {'''
+replace = '''                if requirement.section == Some(DeltaSection::Removed) && requirement.renamed_from {'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-renamed-from-name-checked"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''            } else if section == Some(DeltaSection::Renamed) {'''
+replace = '''            } else if section == Some(DeltaSection::Renamed) && line.is_empty() {'''
+package = "spectra-core"
+test = "requirements_skip_fences_and_collect_renamed_from_names"
+
+[[case]]
+id = "w10-repeated-section-replaces"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''                    list.clear();'''
+replace = '''                    let _ = list;'''
+package = "spectra-core"
+test = "a_repeated_section_heading_replaces_the_earlier_section"
+
+[[case]]
+id = "w10-purpose-placeholder-case-sensitive"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/extract.rs"
+find = '''            } else if purpose.contains("TBD") || purpose.contains("TODO") {'''
+replace = '''            } else if purpose.to_uppercase().contains("TBD") || purpose.to_uppercase().contains("TODO") {'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-new-capability-empty-purpose"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/gaps.rs"
+find = '''            || delta.has_nonempty_purpose()'''
+replace = '''            || delta.purpose.is_some()'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-localization-letter-floor"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/localization.rs"
+find = '''    alpha >= 80 && (cjk as f64) / (alpha as f64) < 0.1'''
+replace = '''    alpha > 80 && (cjk as f64) / (alpha as f64) < 0.1'''
+package = "spectra-core"
+test = "thresholds_match_the_oracle_boundaries"
+
+[[case]]
+id = "w10-localization-findings-first"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/mod.rs"
+find = '''    let findings = localization
+        .into_iter()
+        .chain(coverage)'''
+replace = '''    let findings = coverage
+        .into_iter()
+        .chain(localization)'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-numeric-same-number-index"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/numeric.rs"
+find = '''            if lclaim.index != rclaim.index {
+                continue;
+            }
+'''
+replace = ''''''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-numeric-equal-values-first"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/numeric.rs"
+find = '''                    Reverse(shared),
+                    !equal,'''
+replace = '''                    Reverse(shared),
+                    false,'''
+package = "spectra-core"
+test = "greedy_pairing_prefers_exact_labels_then_equal_values"
+
+[[case]]
+id = "w10-numeric-transition-source-structural"
+issue = "W10"
+file = "crates/spectra-core/src/analyze/numeric.rs"
+find = '''    if let Some(before) = base.strip_suffix('→').or_else(|| base.strip_suffix("->")) {'''
+replace = '''    if let Some(before) = None::<&str> {'''
+package = "spectra-core"
+test = "transitions_yield_both_values_unless_the_source_is_structural"
+
+[[case]]
+id = "w10-analyze-multi-change-wording"
+issue = "W10"
+file = "crates/spectra-core/src/change.rs"
+find = '''            anyhow::bail!("Multiple changes found. Specify one: {}", active.join(", "));'''
+replace = '''            anyhow::bail!("Multiple changes found. Use a change name to specify one: {}", active.join(", "));'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
+
+[[case]]
+id = "w10-analyze-colors-on-a-terminal"
+issue = "W10"
+file = "crates/spectra-cli/src/main.rs"
+find = '''        print!("{}", analyze::format_human(&report, use_color));'''
+replace = '''        print!("{}", analyze::format_human(&report, false));'''
+package = "spectra-cli"
+target = ["--test", "analyze_golden_integration"]
+test = "analyze_replays_the_oracle_golden_byte_for_byte"
