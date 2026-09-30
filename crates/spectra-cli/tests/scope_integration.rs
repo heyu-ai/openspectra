@@ -32,10 +32,17 @@ fn env(cmd: &mut Command) -> &mut Command {
         .env("NO_COLOR", "1")
 }
 
+/// 夾具用的 git。`maintenance.auto=false`：`git commit` 預設會 spawn 分離的
+/// `git maintenance run --auto --detach`，它取得再釋放 `.git/objects/maintenance.lock`，
+/// 高負載下晚於 commit 回傳才跑，改到 `.git/objects` 的 mtime，讓唯讀測試誤判（#222）。
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = env(Command::new("git").arg("-C").arg(dir).args(args))
-        .output()
-        .expect("git runs");
+    let out = env(Command::new("git")
+        .args(["-c", "maintenance.auto=false"])
+        .arg("-C")
+        .arg(dir)
+        .args(args))
+    .output()
+    .expect("git runs");
     assert!(out.status.success(), "git {args:?} failed: {out:?}");
     String::from_utf8(out.stdout).unwrap()
 }
@@ -234,6 +241,52 @@ fn tree_state(root: &Path) -> Vec<(std::path::PathBuf, u64, std::time::SystemTim
     out
 }
 
+/// `tree_state` 前後不同時，列出每個有差異的路徑與變動的欄位（size／mtime／內容），
+/// 失敗訊息才分得出是 scope 寫了檔還是別的行程動了 `.git`（#222）。
+fn assert_tree_unchanged(
+    root: &Path,
+    before: &[(std::path::PathBuf, u64, std::time::SystemTime, Vec<u8>)],
+    what: &str,
+) {
+    let after = tree_state(root);
+    if before == after.as_slice() {
+        return;
+    }
+    let index = |s: &[(std::path::PathBuf, u64, std::time::SystemTime, Vec<u8>)]| {
+        s.iter()
+            .map(|(p, len, mtime, content)| (p.clone(), (*len, *mtime, content.clone())))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let (b, a) = (index(before), index(&after));
+    let mut diffs = Vec::new();
+    for path in b
+        .keys()
+        .chain(a.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let rel = path.strip_prefix(root).unwrap_or(path).display();
+        match (b.get(path), a.get(path)) {
+            (Some(_), None) => diffs.push(format!("{rel}: 被刪除")),
+            (None, Some(_)) => diffs.push(format!("{rel}: 新出現")),
+            (Some(x), Some(y)) if x != y => {
+                let mut fields = Vec::new();
+                if x.0 != y.0 {
+                    fields.push(format!("size {} -> {}", x.0, y.0));
+                }
+                if x.1 != y.1 {
+                    fields.push(format!("mtime {:?} -> {:?}", x.1, y.1));
+                }
+                if x.2 != y.2 {
+                    fields.push("內容".to_string());
+                }
+                diffs.push(format!("{rel}: {}", fields.join(", ")));
+            }
+            _ => {}
+        }
+    }
+    panic!("{what}：\n{}", diffs.join("\n"));
+}
+
 /// oracle 唯讀（p08a、p17g）。空 blob 已在 object DB 裡時，`git add -N` 會 freshen 它的
 /// mtime——untracked diff 的暫存 index 必須避開這個寫入。
 #[test]
@@ -252,7 +305,7 @@ fn scope_is_read_only_even_with_untracked_files() {
         let out = scope(&dir, args);
         assert!(out.status.success(), "{args:?}: {out:?}");
     }
-    assert!(before == tree_state(&dir), "scope 改動了工作樹或 .git");
+    assert_tree_unchanged(&dir, &before, "scope 改動了工作樹或 .git");
 }
 
 /// oracle p17g：index 的 stat 資料過期時，`git diff` 會無視 `GIT_OPTIONAL_LOCKS` 把刷新結果
@@ -282,10 +335,7 @@ fn stale_index_stat_is_not_written_back() {
         .unwrap()
         .to_string();
     assert!(scope(&dir, &["--check-snapshot", &id]).status.success());
-    assert!(
-        before == tree_state(&dir),
-        "scope 改寫了 .git/index 或工作樹"
-    );
+    assert_tree_unchanged(&dir, &before, "scope 改寫了 .git/index 或工作樹");
 }
 
 /// oracle p17f：dirty 路徑的上層目錄被換成 symlink 時直接失敗，不讀穿。
