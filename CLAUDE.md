@@ -52,7 +52,8 @@ this file is agent-facing operational context.
   never run it alongside another cargo process or while editing sources. When
   you fix a bug, add its case in the same PR. `--check-anchors` checks only
   that every anchor hits exactly once (no build, seconds) — run it after any
-  refactor, since moved code silently orphans anchors (#229). See
+  refactor, since moved code silently orphans anchors (#229); CI's `lint` job
+  runs it too, so a PR that moves guarded code must update the anchor. See
   `docs/testing/regression-catalog.md`.
 
 - `scripts/capture-schemas.py` — same constraints (macOS + reference binary,
@@ -141,7 +142,8 @@ cargo test --all
 ```
 
 `fmt` and `clippy` are hard gates in CI too (the `lint` job in `ci.yml`, no
-`continue-on-error`), so a local fmt/clippy failure will also fail the PR.
+`continue-on-error`), so a local fmt/clippy failure will also fail the PR. The
+same job first runs `python3 scripts/mutate-check.py --check-anchors`.
 `build` + `test` run on a `[ubuntu-latest, macos-latest]` matrix in the
 `build-and-test` job (macOS skips the `#[cfg(target_os = "linux")]`-gated
 tests, which is expected, not a failure). If a clippy

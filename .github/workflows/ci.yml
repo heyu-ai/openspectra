@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Mutation anchors
+        run: python3 scripts/mutate-check.py --check-anchors
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
