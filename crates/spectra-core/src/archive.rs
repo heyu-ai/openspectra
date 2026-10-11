@@ -892,10 +892,12 @@ fn prepare_spec_deltas(
             dry_run,
             retirement_declared,
         )?;
+        // Delta application is limited to the first Requirements section, but
+        // requirements in later sections still keep the capability alive (#184).
         let emptied = result.removed > 0
-            && content.as_deref().is_some_and(|rebuilt| {
-                crate::markdown::parse_main_requirements(rebuilt).is_empty()
-            });
+            && content
+                .as_deref()
+                .is_some_and(|rebuilt| crate::markdown::parse_all_requirements(rebuilt).is_empty());
         let retire = if emptied {
             let rebuilt = content.as_deref().expect("emptied content exists");
             if !can_retire_spec(rebuilt) {
@@ -2970,6 +2972,63 @@ mod tests {
         // sidecar 一併移除，capability 目錄才不會只剩一個 yaml。
         assert!(!retired_sidecar.exists());
         assert!(!retired_path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn archive_keeps_requirements_in_later_sections_after_removal() {
+        // #184: a surviving requirement prevents retirement even when the
+        // first Requirements section is empty and retirement was declared.
+        for (section, no_validate) in [("Requirements", false), ("ADDED Requirements", true)] {
+            let tmp = TempDir::new();
+            let c = cfg(&tmp);
+            let spec_path = c.specs_dir().join("my-cap/spec.md");
+            let kept = format!(
+                "## {section}\n\n### Requirement: Second\nThe system SHALL stay.\n\n\
+                 #### Scenario: Kept\n- **WHEN** used\n- **THEN** it remains\n"
+            );
+            write(
+                &spec_path,
+                &format!(
+                    "# my-cap Specification\n\n{}\n\n## Purpose\n\nP.\n\n\
+                     ## Requirements\n\n### Requirement: First\nThe system SHALL go.\n\n{kept}",
+                    crate::trace::POINTER
+                ),
+            );
+            let sidecar_path = c.specs_dir().join("my-cap/spec.trace.yaml");
+            write(
+                &sidecar_path,
+                "version: 1\ntraces:\n- source: seed\n  updated: 2026-01-01\n  added:\n  - First\n  - Second\n  code: []\n",
+            );
+            let history = read_trace(&c, "my-cap");
+            change::create(&c, "remove-first").unwrap();
+            let change_dir = c.changes_dir().join("remove-first");
+            write(
+                &change_dir.join(".openspec.yaml"),
+                "schema: spec-driven\nretire_capabilities: true\n",
+            );
+            write(
+                &change_dir.join("specs/my-cap/spec.md"),
+                "## REMOVED Requirements\n\n### Requirement: First\n",
+            );
+
+            let outcome = archive(&c, "remove-first", false, false, no_validate).unwrap();
+
+            let spec = fs::read_to_string(&spec_path).unwrap();
+            assert!(!spec.contains("### Requirement: First"));
+            assert!(spec.ends_with(&kept), "{spec}");
+            let trace = read_trace(&c, "my-cap");
+            assert_eq!(trace.traces[0], history.traces[0]);
+            assert_eq!(trace.traces[1].source, "remove-first");
+            assert_eq!(trace.traces[1].removed, ["First"]);
+            assert_eq!(outcome.specs_applied[0].removed, 1);
+            assert!(!change_dir.exists());
+            assert!(c
+                .changes_dir()
+                .join("archive")
+                .join(&outcome.archived_name)
+                .join("specs/my-cap/spec.md")
+                .is_file());
+        }
     }
 
     #[test]

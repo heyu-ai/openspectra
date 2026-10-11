@@ -468,6 +468,56 @@ failure comes before any canonical file is written, and the frozen change is
 restored. The trace entry and the sidecar pointer are produced only while
 preparing the exact bytes that will be committed.
 
+### Retirement with requirements in later sections (#184)
+
+Probed on 2026-10-11 against `spectra 3.0.0 (Apple Silicon)` and a clean
+release build of OpenSpectra v0.14.0 at `bebe983`. Each invocation used its own
+committed scratch git repo, with network access denied and writes confined
+to that repo by `sandbox-exec`.
+
+Inputs for reproduction:
+
+- `.spectra.yaml`: `spec_dir: openspec`, `worktree: false`.
+- `specs/my-cap/spec.md` under that spec dir: a title, the sidecar pointer,
+  Purpose, then `## Requirements` containing `First`. A second section,
+  either `## Requirements` or `## ADDED Requirements`, contains `Second`.
+  Both requirements have normative text and a scenario.
+- A valid version-1 `spec.trace.yaml` records the seed's `added: [First, Second]`.
+- Change `remove-first` has a proposal, completed tasks, and metadata
+  `schema: spec-driven`, `created: 2026-10-11`. Its delta is
+  `## REMOVED Requirements` followed by `### Requirement: First`.
+- Independently vary `retire_capabilities: true` versus no such metadata,
+  and `--no-validate` versus normal validation. Run
+  `spectra archive remove-first --yes --no-color` once per repo, using the
+  absolute oracle binary or the release binary with `OPENSPECTRA_IMPL=oss`.
+  A positive retirement control omits the second section and `Second` from
+  the sidecar.
+
+For all eight multi-section combinations, the oracle exits 0, archives the
+change, removes `First`, preserves the complete `Second` block, and leaves
+the sidecar byte-identical. Before #184, OpenSpectra exits 1 with
+`capability 'my-cap' cannot be retired because its spec contains content outside Purpose and Requirements`.
+Its spec, sidecar, and active change are byte-identical to their inputs:
+**this is a false archive refusal, not the suspected silent deletion**.
+The first-section-only emptiness check selects retirement, but
+`can_retire_spec` rejects the later requirement header before deletion.
+
+The owner chose to fix the refusal rather than preserve it as a divergence
+(2026-10-11). Retirement now checks requirements across all level-two
+sections; delta application itself remains limited to the first
+`## Requirements`. All eight multi-section CLI probes succeed after the fix,
+preserve `Second`, and retain the sidecar while adding the removal trace.
+The core regression
+`archive_keeps_requirements_in_later_sections_after_removal` covers the
+second Requirements section through validation and the leftover ADDED
+section through `--no-validate`, retaining prior trace history in both.
+
+The four genuinely empty controls are unchanged: OpenSpectra deletes the
+spec and sidecar only when retirement is declared and validation enabled;
+otherwise it refuses and preserves the original files. The oracle archives
+all four controls but retains the now-empty spec and unchanged sidecar.
+That existing retirement divergence is not changed by #184.
+
 ## Known limitations
 
 Deferred, matching the project's existing "conservative implementation,

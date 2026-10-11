@@ -409,8 +409,9 @@ OpenSpectra 不會讀這個檔）、`openab-projects/openab-workspace`（沒有 
      OpenSpectra 會走訪巢狀 `specs/<Epic>/<Feature>/spec.md`，這正是 yibi-mvp 的格式。
      改完之後就不用再裝 Node 版 openspec 1.5.0。
    - `ci.yml:1586-1594` 那兩個繞過 oracle bug 的 gate 先保留。OpenSpectra 的 archive 已經能歸屬
-     任何 `##` 區段裡的 footer（#179／PR #180），但 retire 判斷仍只看第一個 `## Requirements`（#184 open）。
-     要等 #184 修好，並用 yibi-mvp #982 的案例實測過，才能移除。
+     任何 `##` 區段裡的 footer（#179／PR #180）；#184 已將 retirement 的清空判斷改成查看所有區段，
+     delta 套用仍只看第一個 `## Requirements`。2026-10-11 的獨立 probe 證實原問題是誤拒絕 archive，
+     並非靜默刪除；合成案例已對照 oracle 3.0.0，但仍須用 yibi-mvp #982 的真實案例實測，才能移除 gate。
 2. **yibi-mvp 本機**：照 runbook 操作，並加做：自訂 schema `spec-driven-yibi` 的 `schema which`／
    `schema validate`、`locale: tw` 的輸出語言、`claude_effort` 與 `parallel_tasks` 等設定值
    是否被 `update` 正確帶入 skill frontmatter。
