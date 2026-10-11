@@ -138,6 +138,13 @@ Every other archive failure is left to the OpenSpec INFO above. The dry run
 stops at the first failure, so a merge conflict earlier in the same run can
 hide one of these refusals (as before W9b).
 
+The retirement emptiness check counts requirements across all level-two
+sections (#184). Removing the last requirement from the first Requirements
+section no longer produces a retirement ERROR when another section still
+contains a requirement. Independent C1 structural archive-simulation INFO
+findings are unchanged. See `archive.md`'s #184 section for the baseline,
+fixed-CLI, and oracle probes.
+
 Not ported: OpenSpec's invalid-`.openspec.yaml` marker error
 (`CHANGE_SKIP_SPECS_INVALID_METADATA`; OpenSpectra fails to load such a change
 instead), nested-change detection, and glob `apply.tracks` patterns (a literal

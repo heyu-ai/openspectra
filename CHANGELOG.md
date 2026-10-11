@@ -10,6 +10,17 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- `archive` no longer mistakes an emptied first `## Requirements` section
+  for an empty capability when other sections still contain requirements
+  (#184). It now archives the change and preserves those requirements and
+  their trace history, matching the probed oracle 3.0.0 behavior. `validate`
+  shares this check and no longer reports the false retirement error;
+  independent structural archive-simulation findings remain. Delta
+  application still targets only the first section; the explicit-retirement
+  and `--no-validate` rules for genuinely empty capabilities are unchanged.
+
 ## [0.14.0] - 2026-09-30
 
 ### Added

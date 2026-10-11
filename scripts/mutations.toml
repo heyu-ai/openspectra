@@ -2648,3 +2648,25 @@ replace = '''                    description: None,'''
 package = "spectra-cli"
 target = ["--test", "schemas_integration"]
 test = "schemas_replaces_a_builtin_in_place_with_a_valid_same_named_project_schema"
+
+# #184：第一個 Requirements 區段清空，不代表整個 capability 已清空。
+
+[[case]]
+id = "184-retirement-first-section-only"
+issue = "#184"
+file = "crates/spectra-core/src/archive.rs"
+find = 'crate::markdown::parse_all_requirements(rebuilt).is_empty()'
+replace = 'crate::markdown::parse_main_requirements(rebuilt).is_empty()'
+package = "spectra-core"
+test = "archive_keeps_requirements_in_later_sections_after_removal"
+
+# PR #240 AC-3：--no-validate 不得授權清空 capability 後刪除 spec／sidecar。
+
+[[case]]
+id = "184-retirement-ignores-no-validate"
+issue = "#184 / PR #240 AC-3"
+file = "crates/spectra-core/src/archive.rs"
+find = '                retirement_declared && !no_validate,'
+replace = '                retirement_declared,'
+package = "spectra-core"
+test = "capability_retirement_requires_marker_and_deletes_the_spec_when_declared"

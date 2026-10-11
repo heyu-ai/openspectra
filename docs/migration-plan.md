@@ -84,7 +84,7 @@
    `github.com/howie/openspectra/releases/...` 下載 `OPENSPECTRA_VERSION` 指定的版本（目前 `v0.8.0`）。
    這個舊 URL 目前還能靠 GitHub 轉址下載（實測 200），但 repo 已經搬到 `heyu-ai/`，應改成新網址。
    `ci.yml:1586-1594` 另有兩個 gate，是為了繞過 oracle archive「只掃第一個 `## Requirements`」
-   的 bug（yibi-mvp #982）而寫的；對應到本 repo 的 #184。
+   的 bug（yibi-mvp #982）而寫的；與本 repo #184 的多區段輸入有關，但不是同一個 retirement 誤判。
 
 ## 相容性實測：在 yibi-mvp 副本上比對兩個 binary
 
@@ -409,8 +409,10 @@ OpenSpectra 不會讀這個檔）、`openab-projects/openab-workspace`（沒有 
      OpenSpectra 會走訪巢狀 `specs/<Epic>/<Feature>/spec.md`，這正是 yibi-mvp 的格式。
      改完之後就不用再裝 Node 版 openspec 1.5.0。
    - `ci.yml:1586-1594` 那兩個繞過 oracle bug 的 gate 先保留。OpenSpectra 的 archive 已經能歸屬
-     任何 `##` 區段裡的 footer（#179／PR #180），但 retire 判斷仍只看第一個 `## Requirements`（#184 open）。
-     要等 #184 修好，並用 yibi-mvp #982 的案例實測過，才能移除。
+     任何 `##` 區段裡的 footer（#179／PR #180）；#184 已將 retirement 的清空判斷改成查看所有區段，
+     delta 套用仍只看第一個 `## Requirements`。2026-10-11 的獨立 probe 證實 #184 在 OpenSpectra
+     端是誤拒絕 archive，並非靜默刪除；oracle 3.0.0 在相同合成案例正常 archive。
+     仍須用 yibi-mvp #982 的真實案例實測，才能移除 gate。
 2. **yibi-mvp 本機**：照 runbook 操作，並加做：自訂 schema `spec-driven-yibi` 的 `schema which`／
    `schema validate`、`locale: tw` 的輸出語言、`claude_effort` 與 `parallel_tasks` 等設定值
    是否被 `update` 正確帶入 skill frontmatter。
