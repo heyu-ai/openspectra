@@ -117,8 +117,8 @@ pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Spec>> {
 
 /// Load a spec by a possibly nested capability ID (e.g. `identity/auth`).
 /// Each `/`-separated component must pass `is_valid_name`; absolute paths
-/// and parent components are rejected. Errors if `spec.md` is missing or
-/// unreadable. `show` has its own directory lookup and lexical path guard.
+/// and parent components are rejected. `spec.md` must have readable metadata
+/// identifying a regular file; its contents are not opened. `show` has its own guard.
 pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
     if !is_valid_capability_id(name) {
         return Err(anyhow::anyhow!("invalid spec name '{name}'"));

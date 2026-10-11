@@ -123,8 +123,8 @@ fn change_view(cfg: &Config, item: &str) -> Result<Option<View>> {
 }
 
 fn spec_view(cfg: &Config, item: &str) -> Result<Option<View>> {
-    // Owner ruling #235: lexical path safety takes precedence over oracle parity.
-    // Nested relative IDs remain valid; this does not resolve symlink targets.
+    // owner 裁決（#235）：字面路徑安全優先於 oracle 一致性。
+    // 仍接受巢狀相對 ID；這裡不解析 symlink 目標。
     let item_path = Path::new(item);
     if item_path.is_absolute()
         || item_path
