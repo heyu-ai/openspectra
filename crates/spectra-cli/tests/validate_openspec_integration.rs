@@ -142,7 +142,7 @@ fn assert_scope_matches(scope: &str, (expected_items, expected_issues): (usize, 
 
 /// golden `envelopes` 的筆數；少了就是 golden 被截短（`capture-validate-openspec.py`
 /// 的 `ENVELOPES`）。
-const ENVELOPE_COUNT: usize = 19;
+const ENVELOPE_COUNT: usize = 31;
 
 fn copy_fixture(name: &str) -> TempDir {
     let dir = TempDir::new(&format!("validate-envelope-{name}"));
@@ -169,7 +169,8 @@ fn normalize_envelope(stdout: &str, root: &Path) -> String {
     }
     out.push_str(rest);
     let quoted = serde_json::to_string(root.to_str().unwrap()).unwrap();
-    out.replace(&quoted, "\"<ROOT>\"")
+    // Missing-spec ENOENT findings embed the root inside the message string.
+    out.replace(&quoted[1..quoted.len() - 1], "<ROOT>")
 }
 
 /// `--format openspec --json` 的整份輸出（含 key 順序、summary、byType、root、
@@ -198,6 +199,9 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
             .arg("validate")
             .args(&args)
             .args(["--json", "--format", "openspec"])
+            // #227: output uses the pinned en-US contract, not this host locale.
+            .env("LC_ALL", "sv_SE.UTF-8")
+            .env("LANG", "sv_SE.UTF-8")
             .current_dir(&**root)
             .output()
             .unwrap();

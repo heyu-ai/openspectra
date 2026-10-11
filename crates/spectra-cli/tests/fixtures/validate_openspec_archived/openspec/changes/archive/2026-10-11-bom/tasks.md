@@ -1,0 +1,1 @@
+﻿- [ ] BOM-prefixed pending task

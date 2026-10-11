@@ -53,6 +53,11 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
   `235-show-parent-component`，分別移除絕對路徑與 `..` 元件的守衛，實測 **2/2 KILLED**；
   既有 `39-show-single-component-id` 另行重跑 **1/1 KILLED**，確認巢狀 ID 仍受保護。
   全部 **217/217 anchors** 通過；其餘 mutation case 未在這輪重跑。
+- #227（2026-10-11，base `eb0c6de`）：新增 11 個 `227-*` case，涵蓋 typed missing
+  envelope／名稱守衛、archived 計數／措辭／排序、JS 空白／UTF-16 marker 寬度，
+  以及 Unicode fallback／locale／canonical equivalence，實測 **11/11 KILLED**。既有 `w9a-openspec-byte-order` 與重定錨至 ICU
+  strength 的 `w9a-locale-case-tiebreak` 另跑 **2/2 KILLED**；其餘 case 未在這輪重跑。
+  全部 **228/228 anchors** 通過；captured envelope 由 19 增至 31，沒有手改 golden。
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -309,6 +314,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 77 | #219（W12-3） | 日期開頭的使用中 change（`changes/2026-05-05-foo/`）被 `list_active` 當成封存 change 濾掉：`list`、`validate`、`status --all` 看不到它，不指定 change 的指令也不會自動選到它 | `219-dated-active-filtered`<br>`219-dated-active-not-auto-selected` |
 | 78 | #184 / PR #240 AC-3 | 第一個 Requirements 區段清空、後續區段仍有 requirement 時誤拒絕 archive；另鎖住 `--no-validate` 不得授權刪除真正清空的 capability | `184-retirement-first-section-only`<br>`184-retirement-ignores-no-validate` |
 | 79 | #235 / PR #242 | `show` 的 spec lookup 接受絕對路徑與 `..` 元件，可讀出 `specs/` 以外的 Markdown | `235-show-absolute-path`<br>`235-show-parent-component` |
+| 80 | #227 | typed missing item 未回 OpenSpec envelope；archived 計數／措辭／順序不同；非 ASCII 以 code point 排序 | `227-typed-change-membership-gate`<br>`227-typed-spec-membership-gate`<br>`227-typed-name-check-skipped`<br>`227-archived-oracle-task-parser`<br>`227-archived-message`<br>`227-archived-locale-order`<br>`227-non-ascii-byte-fallback`<br>`227-collation-wrong-locale`<br>`227-collation-breaks-canonical-ties`<br>`227-task-javascript-whitespace`<br>`227-task-utf16-marker-width` |
 
 ## 已退役的 case
 

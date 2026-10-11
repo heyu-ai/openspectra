@@ -798,11 +798,28 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
     let (items, requested_types) = if archived {
         (validate::validate_archived(cfg)?, vec!["change"])
     } else if let (Some(item), false) = (item, bulk) {
-        let is_change = change::try_load(cfg, item)?.is_some();
-        let is_spec = spec::try_load(cfg, item)?.is_some();
+        let typed_openspec = openspec_json && item_type.is_some();
+        if typed_openspec {
+            if let Some(problem) = validate::typed_item_name_problem(
+                item,
+                matches!(item_type, Some(ValidationItemType::Spec)),
+            ) {
+                return print_openspec_status("invalid_item", problem, None);
+            }
+        }
+        // Explicit OpenSpec types validate even missing paths; do not inspect
+        // metadata belonging to an unrelated same-named item of the other type.
+        let (is_change, is_spec) = if typed_openspec {
+            (false, false)
+        } else {
+            (
+                change::try_load(cfg, item)?.is_some(),
+                spec::try_load(cfg, item)?.is_some(),
+            )
+        };
         let as_change = match item_type {
-            Some(ValidationItemType::Change) if is_change => true,
-            Some(ValidationItemType::Spec) if is_spec => false,
+            Some(ValidationItemType::Change) if typed_openspec || is_change => true,
+            Some(ValidationItemType::Spec) if typed_openspec || is_spec => false,
             Some(ValidationItemType::Change) => anyhow::bail!("Change '{item}' not found."),
             Some(ValidationItemType::Spec) => anyhow::bail!("Spec '{item}' not found."),
             // 同名時 OpenSpec 1.13.2 回 ambiguous（golden envelope 實測）；oracle 3.0.0
@@ -879,7 +896,12 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
     let failed = items.iter().any(|item| !item.valid);
     let findings = matches!(report_kind, Some(ValidationReportKind::Findings));
     if openspec_json {
-        let report = validate::openspec_report(cfg, &items, &requested_types);
+        let order = if archived {
+            validate::ItemOrder::Utf16
+        } else {
+            validate::ItemOrder::Localized
+        };
+        let report = validate::openspec_report(cfg, &items, &requested_types, order);
         if findings {
             let scope = if archived {
                 "archived"
