@@ -2670,3 +2670,23 @@ find = '                retirement_declared && !no_validate,'
 replace = '                retirement_declared,'
 package = "spectra-core"
 test = "capability_retirement_requires_marker_and_deletes_the_spec_when_declared"
+
+# #235：show 的 spec fallback 與 --item-type spec 都必須拒絕危險的 lexical path。
+
+[[case]]
+id = "235-show-absolute-path"
+issue = "#235"
+file = "crates/spectra-core/src/show.rs"
+find = '    if item_path.is_absolute()'
+replace = '    if false'
+package = "spectra-core"
+test = "spec_lookup_rejects_absolute_and_parent_paths_but_keeps_nested_ids"
+
+[[case]]
+id = "235-show-parent-component"
+issue = "#235"
+file = "crates/spectra-core/src/show.rs"
+find = '.any(|part| matches!(part, std::path::Component::ParentDir))'
+replace = '.any(|_| false)'
+package = "spectra-core"
+test = "spec_lookup_rejects_absolute_and_parent_paths_but_keeps_nested_ids"

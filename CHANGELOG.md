@@ -12,6 +12,13 @@ changes.
 
 ### Fixed
 
+- `show` now rejects absolute spec paths and any `..` path component,
+  including `a/../b`, in both default lookup and `--item-type spec` (#235).
+  Nested IDs such as `a/b` remain supported. This is an owner-approved
+  security divergence from oracle 3.0.0, which accepts those paths;
+  it is a lexical input restriction, not a symlink sandbox. The old
+  `spec::load` comment no longer incorrectly claims to guard `show`.
+
 - `archive` no longer mistakes an emptied first `## Requirements` section
   for an empty capability when other sections still contain requirements
   (#184). It now archives the change and preserves those requirements and

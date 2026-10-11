@@ -123,7 +123,17 @@ fn change_view(cfg: &Config, item: &str) -> Result<Option<View>> {
 }
 
 fn spec_view(cfg: &Config, item: &str) -> Result<Option<View>> {
-    let spec_dir = cfg.specs_dir().join(item);
+    // Owner ruling #235: lexical path safety takes precedence over oracle parity.
+    // Nested relative IDs remain valid; this does not resolve symlink targets.
+    let item_path = Path::new(item);
+    if item_path.is_absolute()
+        || item_path
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        anyhow::bail!("invalid spec path '{item}': expected a relative path without '..'");
+    }
+    let spec_dir = cfg.specs_dir().join(item_path);
     if item.is_empty() || !spec_dir.is_dir() {
         return Ok(None);
     }
@@ -307,6 +317,38 @@ mod tests {
             resolve(&cfg, "nothing-here").err().unwrap().to_string(),
             "Item 'nothing-here' not found as a change or spec."
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn spec_lookup_rejects_absolute_and_parent_paths_but_keeps_nested_ids() {
+        let (root, cfg) = project("unsafe-spec-paths");
+        let absolute = root.join("outside");
+        write(&absolute.join("spec.md"), "outside specs\n");
+        write(&root.join("openspec/outside/spec.md"), "outside specs\n");
+        write(&root.join("openspec/specs/b/spec.md"), "normalized path\n");
+        write(&root.join("openspec/specs/a/b/spec.md"), "nested spec\n");
+
+        for item in ["../outside", absolute.to_str().unwrap(), "a/../b"] {
+            for item_type in [None, Some("spec")] {
+                assert!(
+                    resolve_typed(&cfg, item, item_type).is_err(),
+                    "must reject {item:?} with item_type={item_type:?}"
+                );
+            }
+        }
+        for item_type in [None, Some("spec")] {
+            let View::Spec(view) = resolve_typed(&cfg, "a/b", item_type).unwrap() else {
+                panic!("expected a nested spec");
+            };
+            assert_eq!(
+                view.files,
+                vec![SpecFile {
+                    content: "nested spec\n".to_string(),
+                    name: "spec.md".to_string(),
+                }]
+            );
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 

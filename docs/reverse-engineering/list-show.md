@@ -116,6 +116,72 @@ directory, recursively, sorted. Human: `Spec: <name>`, then
 OpenSpectra's `show --diff` is its own extension and unchanged; it ignores
 `--item-type` (the oracle rejects `--diff` outright).
 
+### Deliberate divergence: lexical spec paths (#235)
+
+Owner ruling (2026-10-11): reject absolute paths and **any** `..` component
+before joining a spec ID to `specs/`, including `a/../b` even though that
+path can resolve inside `specs/`. Keep nested relative IDs such as `a/b`.
+The guard applies both to the default spec fallback and to
+`--item-type spec`, for human and JSON output. Rejection exits 1 with no
+stdout. This is a lexical input policy, **not** symlink containment:
+symlink resolution and protection against filesystem races are unchanged.
+Other directory-name rules are unchanged; `show` still does not require
+`spec.md`.
+
+The bug entered in #202 (`6556411`): the CLI stopped using `spec::try_load`
+and began using `show`'s directory lookup, bypassing the old loader's name
+guard. `spec::load` still validates IDs for its own callers.
+
+#### Oracle evidence and reproduction
+
+Probed oracle `spectra 3.0.0 (Apple Silicon)` and a clean build of
+OpenSpectra `93d58699961de6f23b8a32607c9b1012a1d960aa` on macOS. Each invocation
+used its own scratch jail, isolated HOME/XDG directories, network denied,
+and writes restricted to that jail. No real user files were read.
+
+For each invocation, create this fresh fixture (`spec.md` files contain
+distinct sentinel text):
+
+```text
+<jail>/
+  outside-abs/spec.md
+  project/
+    .spectra.yaml                 # spec_dir: openspec
+    openspec/
+      changes/                   # empty
+      outside/spec.md
+      specs/
+        a/b/spec.md
+        b/spec.md
+```
+
+From `<jail>/project`, run `show <item> --json` or
+`show <item> --json --item-type spec` with each binary; set
+`OPENSPECTRA_IMPL=oss` when running OpenSpectra. Recreate the fixture for
+every invocation. The four inputs below yield 16 before-fix calls across
+the two binaries and two lookup modes.
+
+| Input | Oracle default | Oracle `--item-type spec` | OpenSpectra before fix | OpenSpectra after fix |
+|---|---|---|---|---|
+| `../outside` | change object, exit 0 | prints outside-spec sentinel, exit 0 | prints outside-spec sentinel in either mode, exit 0 | rejects in either mode, exit 1 |
+| `<jail>/outside-abs` (absolute) | change object, exit 0 | prints outside-project sentinel, exit 0 | prints outside-project sentinel in either mode, exit 0 | rejects in either mode, exit 1 |
+| `a/../b` | prints `b/spec.md`, exit 0 | same | same | rejects in either mode, exit 1 |
+| `a/b` | prints nested spec, exit 0 | same | same | unchanged in either mode, exit 0 |
+
+The oracle default's change objects had null proposal/design/tasks and
+empty deltaSpecs because the external fixture contained only `spec.md`.
+That precedence is not a traversal guard: explicit spec lookup reads the
+sentinel. All original fixture files remained byte-identical; the oracle
+added only `project/.git/spectra-app/.migrate.lock`.
+
+After the fix, the same four inputs in default/explicit-spec and
+human/JSON modes give 12 refusals with empty stdout and four successful
+nested-spec controls. The core regression
+`spec_lookup_rejects_absolute_and_parent_paths_but_keeps_nested_ids` protects
+both lookup modes; mutations `235-show-absolute-path` and
+`235-show-parent-component` independently remove each guard. The existing
+`39-show-single-component-id` mutation protects nested-ID support.
+
 ## `schema which [NAME]`
 
 JSON `{"name", "resolved", "sources": [{"path", "source"}]}`, exit 0 in every
