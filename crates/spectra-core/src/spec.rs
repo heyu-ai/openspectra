@@ -115,11 +115,10 @@ pub fn try_load(cfg: &Config, name: &str) -> Result<Option<Spec>> {
     load(cfg, name).map(Some)
 }
 
-/// Load a single spec by capability name. Errors if `spec.md` is missing (or
-/// unreadable for any other reason). `name` must be a single path component
-/// (no separators or `..`) — `spectra show <spec>` (spectra-cli) passes the
-/// raw CLI argument straight through, so this traversal guard is
-/// load-bearing, not defensive-for-a-hypothetical-future-caller.
+/// Load a spec by a possibly nested capability ID (e.g. `identity/auth`).
+/// Each `/`-separated component must pass `is_valid_name`; absolute paths
+/// and parent components are rejected. `spec.md` must have readable metadata
+/// identifying a regular file; its contents are not opened. `show` has its own guard.
 pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
     if !is_valid_capability_id(name) {
         return Err(anyhow::anyhow!("invalid spec name '{name}'"));
