@@ -290,8 +290,9 @@ traces:
   `## Requirements`: specs with a second `## Requirements` section or a
   leftover `## ADDED Requirements` section exist downstream, and attributing
   only within the first section silently dropped those names (#179). Delta
-  application itself still sees only the first section (not probed against
-  the oracle). A footer attributed to no requirement (outside every
+  application itself still sees only the first section (the #184 probe below
+  includes oracle rejection of a REMOVED target in a later Requirements
+  section). A footer attributed to no requirement (outside every
   requirement block) is still absorbed, with no name. After the delta is
   applied, archive strips once more, so footers that arrive inside the
   delta's own ADDED or MODIFIED blocks are absorbed too. This happens because
@@ -499,8 +500,9 @@ the sidecar byte-identical. Before #184, OpenSpectra exits 1 with
 `capability 'my-cap' cannot be retired because its spec contains content outside Purpose and Requirements`.
 Its spec, sidecar, and active change are byte-identical to their inputs:
 **this is a false archive refusal, not the suspected silent deletion**.
-The first-section-only emptiness check selects retirement, but
-`can_retire_spec` rejects the later requirement header before deletion.
+Before #184, the first-section-only emptiness check selected retirement,
+but `can_retire_spec` rejected either the second Requirements section's
+requirement header or the `## ADDED Requirements` heading itself before deletion.
 
 The owner chose to fix the refusal rather than preserve it as a divergence
 (2026-10-11). Retirement now checks requirements across all level-two
@@ -512,11 +514,26 @@ The core regression
 second Requirements section through validation and the leftover ADDED
 section through `--no-validate`, retaining prior trace history in both.
 
+`validate` shares this decision through `validate_archive_compatibility`.
+For both multi-section shapes, separate `validate remove-first --no-color`
+probes on clean baseline `bebe983` returned exit 1 with the retirement error;
+the fixed CLI returns exit 0 without that error and leaves the spec, sidecar,
+and change unchanged. Independent OpenSpec structural archive-simulation
+INFO findings remain (rendered as `warn` in the default output). Oracle
+3.0.0 returned exit 0 without diagnostics for both shapes.
+
 The four genuinely empty controls are unchanged: OpenSpectra deletes the
 spec and sidecar only when retirement is declared and validation enabled;
 otherwise it refuses and preserves the original files. The oracle archives
 all four controls but retains the now-empty spec and unchanged sidecar.
 That existing retirement divergence is not changed by #184.
+
+A separate oracle-only control targeted `Second` in the second
+`## Requirements` section instead of `First`. The oracle exited 1 with
+`Delta for my-cap declares 1 REMOVED operation(s) but 0 applied; the main spec does not hold the targeted requirement, or the requirement name does not match`
+and left the complete `openspec` tree unchanged. Preserving an untargeted
+later block does not imply that delta application can target it; this
+control supports retaining the first-section-only target selection.
 
 ## Known limitations
 

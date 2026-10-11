@@ -45,6 +45,10 @@ mutation case，由 `scripts/mutate-check.py` 實際執行驗證。
 - #184（2026-10-11，base `bebe983`）：新增 `184-retirement-first-section-only`，
   把 retirement 的全區段判斷改回只看第一區段，實測 **1/1 KILLED**；
   全部 **214/214 anchors** 通過，其他 mutation case 未在這輪重跑。
+- PR #240 review（同日）：修正回歸測試把 `no_validate` 傳到 `mark_tasks_complete` 的參數位置；
+  補齊真正清空時的四種 retirement／validation 組合。新 case
+  `184-retirement-ignores-no-validate` 在補測前對全部 archive 單元測試實測 SURVIVED，
+  補測後與 `184-retirement-first-section-only` 分別重跑，**2/2 KILLED**；其他 case 未重跑。
 - 來源：closed/open issue、merged PR 的 Review Contract 與 mob review 紀錄、
   `CHANGELOG.md` 的 Fixed 段、`git log` 的 fix commit、`docs/reverse-engineering/*.md`
 
@@ -299,7 +303,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 75 | #159（開放中） | oracle 的 archive 在 `.claude/worktrees/` 裡有同名 change 副本時拒絕執行 | 無產品碼可突變；守護測試 `archive_ignores_same_named_change_copies_inside_worktrees` |
 | 76 | W10 | `analyze` 與 oracle 3.0.0 不一致：少了 Localization 維度與三種新 finding、specs 判定吃進巢狀檔、capability／task／design topic／具體資料的比對規則是 2.3.1 版，findings 沒有依種類分組 | `w10-specs-presence-one-level`<br>`w10-concrete-data-given`<br>`w10-scenario-block-ends-at-h4`<br>`w10-no-scenario-skips-removed`<br>`w10-requirement-block-to-next-requirement`<br>`w10-weak-language-skips-headings`<br>`w10-design-topic-token-coverage`<br>`w10-design-topic-numbering-prefix`<br>`w10-goals-overlap-forty-percent`<br>`w10-capability-token-without-spaces`<br>`w10-capability-every-section-line`<br>`w10-missing-task-task-lines-only`<br>`w10-missing-task-skips-removed`<br>`w10-renamed-from-name-checked`<br>`w10-repeated-section-replaces`<br>`w10-purpose-placeholder-case-sensitive`<br>`w10-new-capability-empty-purpose`<br>`w10-localization-letter-floor`<br>`w10-localization-findings-first`<br>`w10-numeric-same-number-index`<br>`w10-numeric-equal-values-first`<br>`w10-numeric-transition-source-structural`<br>`w10-analyze-multi-change-wording`<br>`w10-analyze-colors-on-a-terminal` |
 | 77 | #219（W12-3） | 日期開頭的使用中 change（`changes/2026-05-05-foo/`）被 `list_active` 當成封存 change 濾掉：`list`、`validate`、`status --all` 看不到它，不指定 change 的指令也不會自動選到它 | `219-dated-active-filtered`<br>`219-dated-active-not-auto-selected` |
-| 78 | #184 | 第一個 Requirements 區段清空、後續區段仍有 requirement 時，archive 誤入 retirement 並拒絕；不是靜默刪除 | `184-retirement-first-section-only` |
+| 78 | #184 / PR #240 AC-3 | 第一個 Requirements 區段清空、後續區段仍有 requirement 時誤拒絕 archive；另鎖住 `--no-validate` 不得授權刪除真正清空的 capability | `184-retirement-first-section-only`<br>`184-retirement-ignores-no-validate` |
 
 ## 已退役的 case
 

@@ -893,7 +893,7 @@ fn prepare_spec_deltas(
             retirement_declared,
         )?;
         // Delta application is limited to the first Requirements section, but
-        // requirements in later sections still keep the capability alive (#184).
+        // requirements in any other ## section still keep the capability alive (#184).
         let emptied = result.removed > 0
             && content
                 .as_deref()
@@ -2959,19 +2959,38 @@ mod tests {
             (tmp, c, spec_path)
         };
 
-        let (_blocked_tmp, blocked_cfg, blocked_path) = make("blocked", false);
-        assert!(archive(&blocked_cfg, "blocked", false, false, false).is_err());
-        assert!(blocked_path.is_file());
-        assert!(blocked_cfg.changes_dir().join("blocked").is_dir());
+        for (declared, no_validate) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let (_tmp, c, spec_path) = make("retire", declared);
+            let sidecar = c.specs_dir().join("my-cap/spec.trace.yaml");
+            write(&sidecar, "version: 1\ntraces: []\n");
+            let change_dir = c.changes_dir().join("retire");
+            let delta = change_dir.join("specs/my-cap/spec.md");
+            let metadata = change_dir.join(".openspec.yaml");
+            let original_spec = fs::read(&spec_path).unwrap();
+            let original_sidecar = fs::read(&sidecar).unwrap();
+            let original_delta = fs::read(&delta).unwrap();
+            let original_metadata = fs::read(&metadata).unwrap();
 
-        let (_retired_tmp, retired_cfg, retired_path) = make("retired", true);
-        let retired_sidecar = crate::trace::sidecar_path(&retired_path);
-        write(&retired_sidecar, "version: 1\ntraces: []\n");
-        archive(&retired_cfg, "retired", false, false, false).unwrap();
-        assert!(!retired_path.exists());
-        // sidecar 一併移除，capability 目錄才不會只剩一個 yaml。
-        assert!(!retired_sidecar.exists());
-        assert!(!retired_path.parent().unwrap().exists());
+            let result = archive(&c, "retire", false, no_validate, false);
+
+            if declared && !no_validate {
+                result.unwrap();
+                assert!(!spec_path.exists());
+                // Retiring a capability also removes its trace history.
+                assert!(!sidecar.exists());
+                assert!(!spec_path.parent().unwrap().exists());
+            } else {
+                assert!(
+                    result.is_err(),
+                    "declared={declared}, no_validate={no_validate}"
+                );
+                assert_eq!(fs::read(&spec_path).unwrap(), original_spec);
+                assert_eq!(fs::read(&sidecar).unwrap(), original_sidecar);
+                assert_eq!(fs::read(&delta).unwrap(), original_delta);
+                assert_eq!(fs::read(&metadata).unwrap(), original_metadata);
+            }
+        }
     }
 
     #[test]
@@ -3011,7 +3030,7 @@ mod tests {
                 "## REMOVED Requirements\n\n### Requirement: First\n",
             );
 
-            let outcome = archive(&c, "remove-first", false, false, no_validate).unwrap();
+            let outcome = archive(&c, "remove-first", false, no_validate, false).unwrap();
 
             let spec = fs::read_to_string(&spec_path).unwrap();
             assert!(!spec.contains("### Requirement: First"));
