@@ -205,7 +205,7 @@ OpenSpectra 反而還留著。所以對舊 skill 來說，OpenSpectra 在這一�
    而且要納入版本控管（見 Phase 0 M1）。合約以外的差異，照本 repo 既有原則處理
    （忠實優先；刻意分歧要 opt-in、寫進 CHANGELOG）。
 2. **相容性的優先序：消費端合約 > oracle 3.0.0 > OpenSpec。** 三者衝突時先保住合約；oracle 與
-   OpenSpec 互相矛盾時（#189），由人裁決，不由 agent 自行決定（見 `CLAUDE.md` 的 Agent conduct）。
+   OpenSpec 互相矛盾時（#189），由人裁決，不由 agent 自行決定（見 `AGENTS.md` 的 Agent conduct）。
 3. **切換必須可以一鍵回退。** 由 OpenSpectra 內建的實作切換（`OPENSPECTRA_IMPL`）決定實際執行者，
    不靠逐台機器改 symlink（見 Phase 1）。
 4. **先 shadow 再切換。** 先讓 OpenSpectra 在背景跑唯讀指令並記錄差異，差異收斂之後才讓它成為主要實作。
@@ -292,7 +292,7 @@ Phase 0（openspectra repo：補阻擋項 + parity 基礎建設）
 - 輸入：一個或多個 corpus 專案路徑（先複製到暫存目錄，確保不會動到原檔）。
 - 對每個唯讀指令，同時比對 exit code、JSON 語意（key 排序後比較），以及「消費端合約欄位」清單。
 - 合約清單以 TSV 形式放在 `docs/reverse-engineering/golden/consumer-contract.tsv`。
-- 合約欄位出現分歧時 exit 非 0，並保留失敗的 sandbox 供檢查（依 `CLAUDE.md`：calibration
+- 合約欄位出現分歧時 exit 非 0，並保留失敗的 sandbox 供檢查（依 `AGENTS.md`：calibration
   腳本是驗證契約，不是印表機）。
 - 另外掃描 `update` 模板裡所有的 `spectra ...` 呼叫，逐一確認 OpenSpectra 的 clap 能不能解析
   （`--help` 比對，或實際以 `--help` 探測各子指令的 flag）。模板用到但 CLI 不支援的，一律列為失敗。

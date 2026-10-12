@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify or recapture OpenSpec 1.13.2 `validate` output on the rule fixture.
 
-This is a verification contract, not a printer (see CLAUDE.md). Owner ruling
+This is a verification contract, not a printer (see AGENTS.md). Owner ruling
 D1 makes OpenSpec 1.13.2 the authority for `spectra validate`'s rules, so the
 expected findings for every rule case come from OpenSpec itself, never from
 reading its source. The fixture project

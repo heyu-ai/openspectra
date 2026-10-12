@@ -84,7 +84,7 @@ scripts/mutate-check.py --cases <other.toml>
 狀況都判為失敗（exit 1），不會靜默略過：anchor 找不到或重複、mutant 無法編譯、
 測試過濾器沒選到任何測試、測試在 mutant 下仍通過（SURVIVED）、超過 900 秒。
 每個 case 結束後都會還原原檔並 `touch`，避免 cargo 以 mtime 判斷而沿用 mutant
-產物（見 `CLAUDE.md` 的 PR #84 事故）。harness 會直接改 worktree 內的檔案，
+產物（見 `AGENTS.md` 的 PR #84 事故）。harness 會直接改 worktree 內的檔案，
 **執行期間不要編輯原始碼或測試**，也不要與另一個 cargo 程序並行。
 
 harness 本身的負向對照（2026-09-27 實測）：選錯測試得到 SURVIVED、anchor 不存在

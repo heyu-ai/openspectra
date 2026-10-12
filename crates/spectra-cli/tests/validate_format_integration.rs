@@ -491,7 +491,7 @@ fn format_requires_json() {
 }
 
 /// 在 PTY 上跑 `spectra validate <args>`，回傳合併的輸出。stdin 撐到子程序結束才關
-/// （`script` 在 stdin EOF 時會對 PTY 送 ^D，見 CLAUDE.md 的 PTY 測試規則）。
+/// （`script` 在 stdin EOF 時會對 PTY 送 ^D，見 AGENTS.md 的 PTY 測試規則）。
 #[cfg(unix)]
 fn on_terminal(root: &Path, args: &[&str]) -> String {
     let mut command = std::process::Command::new("script");
