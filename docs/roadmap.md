@@ -99,7 +99,7 @@ OpenSpectra 是 closed-source `spectra` CLI 的 Rust 反組譯重實作。上游
 
 ## Phase 4 — Oracle 校準收尾（需 macOS + Spectra.app；無 oracle 則降級處理）（追蹤 [#28](https://github.com/howie/openspectra/issues/28)；#8／#9／#10 已解）
 
-目標：把「猜的常數」變成「量測的常數」。工作模式：本專案產生校準腳本 → 操作者在 macOS 跑 → golden 結果帶回來實作。每項改動必須同步更新 `docs/reverse-engineering/drift.md`（CLAUDE.md 規範）。
+目標：把「猜的常數」變成「量測的常數」。工作模式：本專案產生校準腳本 → 操作者在 macOS 跑 → golden 結果帶回來實作。每項改動必須同步更新 `docs/reverse-engineering/drift.md`（AGENTS.md 規範）。
 
 依 ROI 排序：
 
