@@ -23,12 +23,13 @@ It also pins the whole ``--json`` envelope for ``--format openspec`` (W9a,
 ruling D3): ``ENVELOPES`` runs a list of invocations on
 ``tests/fixtures/validate_openspec_envelope`` (mixed-case, punctuated and
 nested ids, a change and a spec sharing a name) and
-``tests/fixtures/validate_openspec_empty`` (nothing to validate), and on the
-rule fixture only the ``--all`` item order and summary. Each stdout is kept as
-text (key order matters), after three normalizations the replay applies too:
-``durationMs`` values become 0, the sandbox path becomes ``<ROOT>``, and a
-change and a spec with the same id are put change-first (OpenSpec orders such
-a tie by async completion, which is not deterministic).
+``tests/fixtures/validate_openspec_empty`` (nothing to validate), plus the
+archived-task and Unicode-id fixtures added for #227. On the rule fixture,
+only the ``--all`` item order and summary are captured. Each stdout is kept as
+text (key order matters), with the host locale pinned to en-US and these normalizations:
+``durationMs`` values become 0, the sandbox path becomes ``<ROOT>`` even
+inside diagnostic strings, and a change and spec with the same id are put
+change-first (OpenSpec orders such a tie by async completion).
 
 Requires Node.js and the OpenSpec 1.13.2 package. ``--openspec-js`` overrides
 ``OPENSPEC_JS``, which overrides the npx cache path this was captured with.
@@ -60,6 +61,9 @@ ENV = {
     "OPENSPEC_TELEMETRY": "0",
     "DO_NOT_TRACK": "1",
     "NO_COLOR": "1",
+    # #227 owner ruling: a reproducible en-US collation target, not host locale.
+    "LANG": "en_US.UTF-8",
+    "LC_ALL": "en_US.UTF-8",
 }
 # (fixture, validate 的參數)。每個都另加 `--json --no-interactive`；重播端改加
 # `--json --format openspec`。
@@ -78,6 +82,18 @@ ENVELOPES = [
     ("validate_openspec_envelope", ["only"]),
     ("validate_openspec_envelope", ["only", "--type", "spec"]),
     ("validate_openspec_envelope", ["nope"]),
+    ("validate_openspec_envelope", ["nope", "--type", "change"]),
+    ("validate_openspec_envelope", ["nope", "--type", "spec"]),
+    ("validate_openspec_envelope", ["aa", "--type", "change"]),
+    ("validate_openspec_envelope", ["alpha", "--type", "spec"]),
+    ("validate_openspec_envelope", ["a/b", "--type", "change"]),
+    ("validate_openspec_envelope", ["../outside", "--type", "spec"]),
+    ("validate_openspec_archived", ["--archived"]),
+    ("validate_openspec_archived", ["--archived", "--report", "findings"]),
+    ("validate_openspec_empty", ["--archived"]),
+    ("validate_openspec_unicode", ["--all"]),
+    ("validate_openspec_unicode", ["--specs"]),
+    ("validate_openspec_unicode", ["--all", "--report", "findings"]),
     # 帶 `line` 的 issue：key 順序是 level, path, line, message。
     ("validate_openspec", ["d13-strayh3"]),
     ("validate_openspec_empty", ["--all"]),
@@ -128,7 +144,8 @@ def normalize_envelope(stdout: str, project: Path) -> str:
     text = DURATION.sub('"durationMs": 0', text)
     roots = {str(project), str(project.resolve())}
     for root in sorted(roots, key=len, reverse=True):
-        text = text.replace(json.dumps(root), json.dumps("<ROOT>"))
+        # Missing-spec findings contain the root inside a longer JSON string.
+        text = text.replace(json.dumps(root, ensure_ascii=False)[1:-1], "<ROOT>")
     if "<ROOT>" not in text and '"root"' in text:
         fail(f"root path was not normalized in: {text[:300]!r}")
     return text

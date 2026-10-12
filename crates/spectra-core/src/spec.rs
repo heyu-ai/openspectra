@@ -133,10 +133,8 @@ pub fn load(cfg: &Config, name: &str) -> Result<Spec> {
             "spec '{name}' not found in {}: spec.md is not a file",
             cfg.specs_dir().display()
         )),
-        Err(e) if e.kind() == ErrorKind::NotFound => Err(anyhow::anyhow!(
-            "spec '{name}' not found in {}",
-            cfg.specs_dir().display()
-        )),
+        Err(e) if e.kind() == ErrorKind::NotFound => Err(e)
+            .with_context(|| format!("spec '{name}' not found in {}", cfg.specs_dir().display())),
         Err(e) => Err(e).with_context(|| format!("reading {}", dir.join("spec.md").display())),
     }
 }

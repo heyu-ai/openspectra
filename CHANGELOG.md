@@ -10,6 +10,25 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- `validate --json --format openspec` now validates missing explicitly typed
+  items into OpenSpec 1.13.2 finding envelopes instead of writing a not-found
+  error to stderr (#227). Typed identifiers are checked before path lookup;
+  existing drive-prefix/colon refusal is retained.
+- `validate --archived` uses OpenSpec checkbox counts, including ordered
+  lists, padded/empty markers, blank descriptions, and fenced examples.
+  Findings include the singular/plural task count and completed/total ratio;
+  hidden archive directories are excluded. Its OpenSpec report keeps UTF-16
+  item order, distinct from active-item collation. Other commands' task
+  parsing is unchanged.
+- Active-item ordering in OpenSpec validation reports uses ICU4X 2.1.1
+  (CLDR 48), including non-ASCII and canonically equivalent text. Per owner
+  ruling #227, the comparison baseline is fixed en-US, regardless of
+  `LANG`/`LC_ALL`; this deliberately does not follow OpenSpec's host-locale
+  variability. The capture tool pins the same locale, and the generated
+  envelope replay runs under a different host locale to guard that boundary.
+
 ## [0.14.1] - 2026-10-11
 
 ### Fixed

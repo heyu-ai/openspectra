@@ -34,6 +34,8 @@
   量測方式：`scripts/parity-probe.py` exit 0。刻意分歧必須登錄在 probe 的允許清單並寫進 CHANGELOG。
 - **A4 OpenSpec 相容**：`validate` 的判定與 `@fission-ai/openspec` 1.13.2 逐項一致；
   `--format openspec` 的 JSON 與 OpenSpec 逐欄位一致；預設的 oracle 格式在欄位上與 oracle 一致。
+  #227 owner 裁決（howie，2026-10-11）：排序比對基準固定為 Node/OpenSpec 的 en-US
+  collation，使用 ICU4X 2.1.1／CLDR 48；不跟隨宿主 `LANG`／`LC_ALL`，此邊界記為刻意分歧。
 - **A5 Linux**：CI 的 ubuntu job 跑 A2 與無 oracle 版本的整合測試全綠；release 有 Linux musl 產物。
 
 **不在範圍內**：刪除 Spectra.app。它是本 repo 所有 `scripts/capture-*.py` 校準腳本的 oracle，
@@ -505,6 +507,7 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | W9a-2 | oracle 格式的 `--report findings` 語意（D12 未涵蓋） | **只保留有 error 或 warning 的 item**（OpenSpectra 設計） | W9a |
 | W9a-3 | `validate <item> --all`（oracle 接受並忽略 `--all`） | **跟 oracle 接受並忽略** | W9a |
 | W9a-4 | `--format openspec` 仍未對齊 OpenSpec 的三處（`--type` 指到不存在 item、`--archived` 措辭、非 ASCII 排序） | **開 #227 追蹤**，W9a 先出 PR；A4 待補齊才算達成 | W9a、#227 |
+| #227 collation | 非 ASCII 排序的依賴與 locale 基準（2026-10-11） | howie 選擇 **ICU4X＋固定 en-US**；capture 同樣釘 locale，保留跨平台可重播性。`--archived` 依 OpenSpec 使用 UTF-16 順序，不套用 locale collation | A4、#227 |
 | W13-A3 | `status --json` 的 OpenSpectra 專屬欄位 `isPlanningComplete`、`artifacts[].requires` | **保留**，補進 CHANGELOG 記為刻意分歧 | A3 |
 | W10-1 | `CLICOLOR_FORCE` | **不支援**，維持 CLI 全域規則（TTY、`--no-color`、`NO_COLOR`），記為刻意分歧 | W10（#215） |
 | W10-2 | 同一對區段內多個衝突 requirement 的順序（oracle 為 HashSet 序、每次不同） | **前一個區段的文件順序** | W10（#215） |

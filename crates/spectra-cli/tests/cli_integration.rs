@@ -1368,41 +1368,6 @@ fn validate_archived_fails_on_incomplete_tasks() {
     assert_eq!(validated.status.code(), Some(1));
     let report: serde_json::Value = serde_json::from_slice(&validated.stdout).unwrap();
     assert_eq!(report["summary"]["totals"]["failed"], 1);
-    assert!(report["items"][0]["issues"][0]["message"]
-        .as_str()
-        .unwrap()
-        .contains("incomplete"));
-}
-
-#[test]
-fn validate_archived_counts_star_plus_and_non_x_markers_as_incomplete() {
-    // `[~]` survives `--mark-tasks-complete` (only `[ ]` flips), so it still
-    // counts as incomplete here; `*`/`+` bullets are tasks like `-` (#172).
-    let tmp = TempDir::new("validate-archived-markers");
-    init_project_with_change(&tmp, "feat");
-    std::fs::write(
-        tmp.join("openspec/changes/feat/tasks.md"),
-        "## 1. Work\n- [x] 1.1 done\n* [ ] 1.2 star\n+ [x] 1.3 plus done\n- [~] 1.4 tilde\n",
-    )
-    .unwrap();
-    let archived = spectra()
-        .args(["archive", "feat", "--yes", "--skip-specs"])
-        .current_dir(&*tmp)
-        .output()
-        .unwrap();
-    assert!(archived.status.success(), "{archived:?}");
-
-    let validated = spectra()
-        .args(["validate", "--archived", "--json", "--format", "openspec"])
-        .current_dir(&*tmp)
-        .output()
-        .unwrap();
-    assert_eq!(validated.status.code(), Some(1));
-    let report: serde_json::Value = serde_json::from_slice(&validated.stdout).unwrap();
-    assert_eq!(
-        report["items"][0]["issues"][0]["message"],
-        "2 incomplete archived task(s)"
-    );
 }
 
 fn write_ready_change(tmp: &Path, name: &str, tasks: &str) -> PathBuf {

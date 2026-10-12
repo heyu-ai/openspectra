@@ -149,7 +149,12 @@ pub struct FindingsMeta {
 /// Validates every active change, as the OpenSpec report.
 pub fn validate_all_active(cfg: &Config, strict: bool) -> Result<ValidateReport> {
     let items = validate_items(cfg, &change::list_active(cfg), &[], strict)?;
-    Ok(openspec_report(cfg, &items, &["change"]))
+    Ok(openspec_report(
+        cfg,
+        &items,
+        &["change"],
+        ItemOrder::Localized,
+    ))
 }
 
 /// Validates the named changes, then the named specs, in the given order.
@@ -169,16 +174,23 @@ pub fn validate_items(
     Ok(items)
 }
 
+/// OpenSpec uses locale collation for active items, but UTF-16 order for archives.
+#[derive(Clone, Copy)]
+pub enum ItemOrder {
+    Localized,
+    Utf16,
+}
+
 /// Builds the OpenSpec 1.13.2 report. `requested_types` are the scopes asked
 /// for (`change`, `spec`): each gets a `byType` entry even when empty. Items
-/// are ordered like OpenSpec's `results.sort((a, b) => a.id.localeCompare(b.id))`
-/// ([`locale_compare`]); the sort is stable, so a change and a spec sharing an
-/// id keep the input order (OpenSpec orders that tie by async completion,
-/// which is not deterministic).
+/// use the requested order: active items use fixed en-US [`locale_compare`],
+/// archived items use JavaScript's UTF-16 string order. Sorting is stable;
+/// a change and spec sharing an id retain their input order.
 pub fn openspec_report(
     cfg: &Config,
     items: &[ChangeValidation],
     requested_types: &[&str],
+    order: ItemOrder,
 ) -> ValidateReport {
     fn totals<'a>(items: impl Iterator<Item = &'a ChangeValidation>) -> Totals {
         let (mut passed, mut failed) = (0, 0);
@@ -197,7 +209,14 @@ pub fn openspec_report(
     }
 
     let mut sorted = items.to_vec();
-    sorted.sort_by(|left, right| locale_compare(&left.id, &right.id));
+    match order {
+        ItemOrder::Localized => {
+            sorted.sort_by(|left, right| locale_compare(&left.id, &right.id));
+        }
+        ItemOrder::Utf16 => {
+            sorted.sort_by(|left, right| left.id.encode_utf16().cmp(right.id.encode_utf16()));
+        }
+    }
     let by_type = requested_types
         .iter()
         .map(|item_type| {
@@ -306,30 +325,40 @@ pub fn oracle_item(item: &ChangeValidation) -> OracleItem {
     }
 }
 
-/// `String.prototype.localeCompare` as Node 22 (ICU 78, CLDR root collation,
-/// alternate = non-ignorable) orders the ids OpenSpec sorts: punctuation and
-/// symbols first in CLDR order, then digits, then letters compared
-/// case-insensitively; only when every primary weight ties does case decide,
-/// lowercase first. Exact for printable ASCII (checked against
-/// `node -e` over all 95 characters); any other character sorts after `z` by
-/// code point, which is an approximation (no corpus has non-ASCII ids).
+/// Node/OpenSpec collation pinned to en-US (owner ruling #227), independent
+/// of the process locale. The compiled CLDR 48 data is initialized once.
 pub fn locale_compare(left: &str, right: &str) -> std::cmp::Ordering {
-    const ASCII_ORDER: &str =
-        " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$0123456789abcdefghijklmnopqrstuvwxyz";
-    fn primary(ch: char) -> u32 {
-        let lower = ch.to_ascii_lowercase();
-        match ASCII_ORDER.find(lower) {
-            Some(index) if ch.is_ascii() => index as u32,
-            _ => 0x100 + ch as u32,
+    static COLLATOR: Lazy<icu_collator::CollatorBorrowed<'static>> = Lazy::new(|| {
+        let mut options = icu_collator::options::CollatorOptions::default();
+        options.strength = Some(icu_collator::options::Strength::Tertiary);
+        icu_collator::Collator::try_new(icu_locale_core::locale!("en-US").into(), options)
+            .expect("en-US collation data is compiled in")
+    });
+    COLLATOR.compare(left, right)
+}
+
+/// OpenSpec's typed lookup validates folder syntax before probing a missing path.
+/// Keep OpenSpectra's existing colon/drive-prefix refusal as well.
+pub fn typed_item_name_problem(id: &str, is_spec: bool) -> Option<String> {
+    fn component_problem(value: &str, label: &str) -> Option<String> {
+        if crate::names::is_valid_name(value) {
+            None
+        } else if value.is_empty() {
+            Some(format!("{label} must not be empty"))
+        } else if value == "." || value == ".." {
+            Some(format!("{label} must not be '{value}'"))
+        } else if value.contains(['/', '\\']) {
+            Some(format!("{label} must not contain path separators"))
+        } else {
+            Some(format!("{label} must not contain ':'"))
         }
     }
-    fn tertiary(ch: char) -> u8 {
-        u8::from(ch.is_ascii_uppercase())
+    if is_spec {
+        id.split('/')
+            .find_map(|segment| component_problem(segment, "Spec id"))
+    } else {
+        component_problem(id, "Change name")
     }
-    left.chars()
-        .map(primary)
-        .cmp(right.chars().map(primary))
-        .then_with(|| left.chars().map(tertiary).cmp(right.chars().map(tertiary)))
 }
 
 /// `nearestMatches` (`utils/match.js`): the `max` candidates with the
@@ -543,7 +572,30 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 /// 其他規則都不跑（S7、S8）；否則先報 Zod schema 的 ERROR，再跑 `applySpecRules`。
 pub fn validate_spec(cfg: &Config, id: &str, strict: bool) -> Result<ChangeValidation> {
     let started = std::time::Instant::now();
-    let spec = crate::spec::load(cfg, id)?;
+    let spec = match crate::spec::load(cfg, id) {
+        Ok(spec) => spec,
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            let path = cfg.specs_dir().join(id).join("spec.md");
+            return Ok(ChangeValidation {
+                id: id.to_string(),
+                item_type: "spec".to_string(),
+                valid: false,
+                issues: vec![Issue::error(
+                    "file".to_string(),
+                    format!(
+                        "ENOENT: no such file or directory, open '{}'",
+                        path.display()
+                    ),
+                )],
+                duration_ms: elapsed_ms(started),
+            });
+        }
+        Err(error) => return Err(error),
+    };
     let spec_path = spec.spec_md();
     let bytes =
         std::fs::read(&spec_path).with_context(|| format!("reading {}", spec_path.display()))?;
@@ -1454,9 +1506,13 @@ fn task_file_issues(
 
 /// `parseTaskLines` 的單行版本：
 /// `^\s*(?:[-*+]|\d{1,9}[.)])\s*\[(?:\s*([^\]\s]?)\s*\](?![([])|\s+\])\s*(.*)`。
-/// Rust `regex` 沒有前瞻，這裡手寫；回傳 description（已 trim）。
-fn task_line_description(line: &str) -> Option<String> {
-    let rest = line.trim_start();
+/// Rust `regex` 沒有前瞻，這裡手寫；回傳完成狀態與借用的 description（已 trim）。
+fn parse_validation_task_line(line: &str) -> Option<(bool, &str)> {
+    fn whitespace(ch: char) -> bool {
+        // ECMAScript \s 包含 BOM、不含 NEL；Rust 的 White_Space 剛好相反。
+        ch == '\u{feff}' || (ch.is_whitespace() && ch != '\u{85}')
+    }
+    let rest = line.trim_start_matches(whitespace);
     let rest = if let Some(rest) = rest.strip_prefix(['-', '*', '+']) {
         rest
     } else {
@@ -1466,25 +1522,31 @@ fn task_line_description(line: &str) -> Option<String> {
         }
         rest[digits..].strip_prefix(['.', ')'])?
     };
-    let inner = rest.trim_start().strip_prefix('[')?;
-    let after_ws = inner.trim_start();
+    let inner = rest.trim_start_matches(whitespace).strip_prefix('[')?;
+    let after_ws = inner.trim_start_matches(whitespace);
     let leading_ws = inner.len() - after_ws.len();
     // 第一種：`\s*([^\]\s]?)\s*\]`，後面不能緊接 `(` 或 `[`。
     let mut candidate = after_ws;
+    let mut done = false;
     if let Some(ch) = candidate.chars().next() {
-        if ch != ']' && !ch.is_whitespace() {
+        if ch != ']' && !whitespace(ch) {
+            // 上游 regex 沒有 u flag，marker 的寬度是單一 UTF-16 code unit。
+            if ch.len_utf16() != 1 {
+                return None;
+            }
+            done = ch == 'x' || ch == 'X';
             candidate = &candidate[ch.len_utf8()..];
         }
     }
-    if let Some(after) = candidate.trim_start().strip_prefix(']') {
+    if let Some(after) = candidate.trim_start_matches(whitespace).strip_prefix(']') {
         if !after.starts_with(['(', '[']) {
-            return Some(after.trim().to_string());
+            return Some((done, after.trim_matches(whitespace)));
         }
     }
     // 第二種：`\s+\]`，沒有前瞻限制。
     if leading_ws > 0 {
         if let Some(after) = after_ws.strip_prefix(']') {
-            return Some(after.trim().to_string());
+            return Some((false, after.trim_matches(whitespace)));
         }
     }
     None
@@ -1534,10 +1596,10 @@ fn task_numbering_issues(documents: &[(String, String)]) -> Vec<Issue> {
             let Some(current) = &group else {
                 continue;
             };
-            let Some(description) = task_line_description(line) else {
+            let Some((_, description)) = parse_validation_task_line(line) else {
                 continue;
             };
-            let Some(id) = TASK_ID.captures(&description).and_then(|captures| {
+            let Some(id) = TASK_ID.captures(description).and_then(|captures| {
                 let id = captures.get(1)?;
                 let next = description[id.end()..].chars().next();
                 next.is_none_or(char::is_whitespace)
@@ -1666,7 +1728,7 @@ fn missing_checkbox_issues(documents: &[(String, String)]) -> Vec<Issue> {
         || documents.iter().any(|(_, content)| {
             content
                 .split('\n')
-                .any(|line| task_line_description(line).is_some())
+                .any(|line| parse_validation_task_line(line).is_some())
         })
     {
         return Vec::new();
@@ -1711,16 +1773,25 @@ pub fn validate_archived(cfg: &Config) -> Result<Vec<ChangeValidation>> {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_string();
-        let tasks = read_optional(&dir.join("tasks.md"))?
-            .map(|content| crate::tasks::parse(&content))
-            .unwrap_or_default();
-        let incomplete = tasks.iter().filter(|task| !task.done).count();
+        if id.starts_with('.') {
+            continue;
+        }
+        let content = read_optional(&dir.join("tasks.md"))?.unwrap_or_default();
+        let (mut total, mut completed) = (0, 0);
+        for (done, _) in content.split('\n').filter_map(parse_validation_task_line) {
+            total += 1;
+            completed += usize::from(done);
+        }
+        let incomplete = total - completed;
         let issues = if incomplete == 0 {
             Vec::new()
         } else {
             vec![Issue::error(
                 "tasks.md".to_string(),
-                format!("{incomplete} incomplete archived task(s)"),
+                format!(
+                    "{incomplete} incomplete task{} ({completed}/{total} completed)",
+                    if incomplete == 1 { "" } else { "s" }
+                ),
             )]
         };
         items.push(ChangeValidation {
@@ -1988,7 +2059,7 @@ mod tests {
 
         let items =
             validate_items(&c, &["good".to_string(), "bad".to_string()], &[], true).unwrap();
-        let report = openspec_report(&c, &items, &["change", "spec"]);
+        let report = openspec_report(&c, &items, &["change", "spec"], ItemOrder::Localized);
         assert_eq!(report.summary.totals.items, 2);
         assert_eq!(report.summary.totals.passed, 1);
         assert_eq!(report.summary.totals.failed, 1);
@@ -2058,6 +2129,13 @@ mod tests {
                 "zeta",
             ]
         );
+    }
+
+    #[test]
+    fn locale_compare_preserves_canonical_equivalence() {
+        // Node 22 / ICU 78 en-US compares these NFC/NFD spellings as equal.
+        // They cannot be separate fixture directory names on macOS filesystems.
+        assert_eq!(locale_compare("é", "e\u{301}"), std::cmp::Ordering::Equal);
     }
 
     #[test]
@@ -2171,33 +2249,6 @@ mod tests {
             "got: {:?}",
             result.issues
         );
-    }
-
-    #[test]
-    fn report_json_shape_matches_the_downstream_gate_contract() {
-        let tmp = TempDir::new();
-        let c = cfg(&tmp);
-        let report = openspec_report(
-            &c,
-            &[ChangeValidation {
-                id: "feat".to_string(),
-                item_type: "change".to_string(),
-                valid: false,
-                issues: vec![Issue::error(
-                    "specs/auth/spec.md".to_string(),
-                    "boom".to_string(),
-                )],
-                duration_ms: 0,
-            }],
-            &["change"],
-        );
-        let value = serde_json::to_value(&report).unwrap();
-        assert_eq!(value["items"][0]["id"], "feat");
-        assert_eq!(value["items"][0]["valid"], false);
-        assert_eq!(value["items"][0]["issues"][0]["level"], "ERROR");
-        assert_eq!(value["items"][0]["issues"][0]["path"], "specs/auth/spec.md");
-        assert_eq!(value["items"][0]["issues"][0]["message"], "boom");
-        assert_eq!(value["summary"]["totals"]["failed"], 1);
     }
 
     fn item(item_type: &str, issues: Vec<Issue>) -> ChangeValidation {

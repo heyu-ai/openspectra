@@ -2392,8 +2392,8 @@ test = "validate_format_openspec_matches_the_openspec_envelopes"
 id = "w9a-locale-case-tiebreak"
 issue = "W9a / D3"
 file = "crates/spectra-core/src/validate.rs"
-find = '''        .then_with(|| left.chars().map(tertiary).cmp(right.chars().map(tertiary)))'''
-replace = '''        .then_with(|| left.chars().map(tertiary).cmp(left.chars().map(tertiary)))'''
+find = '''        options.strength = Some(icu_collator::options::Strength::Tertiary);'''
+replace = '''        options.strength = Some(icu_collator::options::Strength::Secondary);'''
 package = "spectra-core"
 test = "locale_compare_matches_node_for_ascii_ids"
 
@@ -2690,3 +2690,127 @@ find = '.any(|part| matches!(part, std::path::Component::ParentDir))'
 replace = '.any(|_| false)'
 package = "spectra-core"
 test = "spec_lookup_rejects_absolute_and_parent_paths_but_keeps_nested_ids"
+
+# #227：typed missing items、archived findings 與 Unicode collation 的 authority replay。
+
+[[case]]
+id = "227-typed-change-membership-gate"
+issue = "#227"
+file = "crates/spectra-cli/src/main.rs"
+find = 'Some(ValidationItemType::Change) if typed_openspec || is_change => true,'
+replace = 'Some(ValidationItemType::Change) if is_change => true,'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-typed-spec-membership-gate"
+issue = "#227"
+file = "crates/spectra-cli/src/main.rs"
+find = 'Some(ValidationItemType::Spec) if typed_openspec || is_spec => false,'
+replace = 'Some(ValidationItemType::Spec) if is_spec => false,'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-typed-name-check-skipped"
+issue = "#227"
+file = "crates/spectra-cli/src/main.rs"
+find = '        if typed_openspec {'
+replace = '        if false {'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-archived-oracle-task-parser"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        let (mut total, mut completed) = (0, 0);
+        for (done, _) in content.split('\n').filter_map(parse_validation_task_line) {
+            total += 1;
+            completed += usize::from(done);
+        }'''
+replace = '''        let tasks = crate::tasks::parse(&content);
+        let total = tasks.len();
+        let completed = tasks.iter().filter(|task| task.done).count();'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-archived-message"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = '''                format!(
+                    "{incomplete} incomplete task{} ({completed}/{total} completed)",
+                    if incomplete == 1 { "" } else { "s" }
+                ),'''
+replace = '''                format!("{incomplete} incomplete archived task(s)"),'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-archived-locale-order"
+issue = "#227"
+file = "crates/spectra-cli/src/main.rs"
+find = '            validate::ItemOrder::Utf16'
+replace = '            validate::ItemOrder::Localized'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-non-ascii-byte-fallback"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = '    COLLATOR.compare(left, right)'
+replace = '''    if left.is_ascii() && right.is_ascii() {
+        COLLATOR.compare(left, right)
+    } else {
+        left.cmp(right)
+    }'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-collation-wrong-locale"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = 'icu_locale_core::locale!("en-US")'
+replace = 'icu_locale_core::locale!("sv-SE")'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-collation-breaks-canonical-ties"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = '    COLLATOR.compare(left, right)'
+replace = '    COLLATOR.compare(left, right).then_with(|| left.cmp(right))'
+package = "spectra-core"
+test = "locale_compare_preserves_canonical_equivalence"
+
+[[case]]
+id = "227-task-javascript-whitespace"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = '''        ch == '\u{feff}' || (ch.is_whitespace() && ch != '\u{85}')'''
+replace = '        ch.is_whitespace()'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "227-task-utf16-marker-width"
+issue = "#227"
+file = "crates/spectra-core/src/validate.rs"
+find = '            if ch.len_utf16() != 1 {'
+replace = '            if false {'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"

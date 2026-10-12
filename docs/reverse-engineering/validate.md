@@ -198,15 +198,32 @@ from the oracle 3.0.0, which flags none of these specs; D1 accepts that.
 
 ## Archived changes
 
-`--archived` fails when an archived change still has pending tasks.
-"Pending" uses the shared task rule (`tasks::parse`, see `task.md`): any
-`-`/`*`/`+` checkbox with a non-blank description whose marker is not
-`x`/`X`, so `[~]`/`[-]` count as pending. `archive --mark-tasks-complete`
-leaves those markers in place, so such a change fails here after archive.
-The oracle rejects `--archived` (clap error, rc 2), so this is not
-oracle-verified. OpenSpec 1.13.1 (#1761) likewise counts unrecognized
-markers as incomplete, but also counts ordered-list checkboxes
-(`1. [ ]`), which the shared rule does not.
+`--archived` fails when an archived change's top-level `tasks.md` still has
+pending tasks. The validator uses OpenSpec 1.13.2's `parseTaskLines` grammar,
+not the shared oracle task parser: `-`/`*`/`+` and ordered `1.`/`1)` list
+markers (one to nine digits), a padded checkbox holding at most one
+non-whitespace UTF-16 code unit, and even a blank description. Only `x`/`X`
+means done. Whitespace follows ECMAScript: BOM is included, NEL is not;
+an astral marker such as `[🚧]` is too wide and is not a task. One-character
+Markdown links do not count, except whitespace-only boxes retain OpenSpec's
+permissive treatment. Lines inside fences still count.
+The same validation-only parser supplies active-change checkbox/numbering
+checks; `task done`, `list`, `instructions` and `archive` retain their own
+oracle task semantics.
+
+An incomplete item reports ERROR at `tasks.md`:
+`1 incomplete task (0/1 completed)` or `N incomplete tasks (c/t completed)`.
+No task file or an empty file contributes no finding. Hidden archive
+directories are ignored. OpenSpec's archived JSON uses UTF-16 code-unit
+id order, **not** locale collation; the findings projection preserves it.
+The `validate_openspec_archived` fixture pins counts, hidden directories,
+case ordering, supplementary-plane versus BMP ordering, BOM/NEL whitespace
+and the UTF-16 marker-width boundary.
+
+The oracle rejects `--archived` (clap error, rc 2); this surface follows
+OpenSpec, not the oracle. #227 changes the counter/report for the existing
+top-level `tasks.md` reader; it does not add OpenSpec's schema-selected task
+glob discovery or change the existing handling of task-file I/O failures.
 
 ## Output formats (rulings D3, D12; W9a)
 
@@ -274,7 +291,8 @@ exists only in the OpenSpec shape.
 
 Field for field OpenSpec 1.13.2 (`commands/validate.js`), pinned by the
 `envelopes` and `all_order` sections of `golden/validate-openspec-1.13.2.json`
-(fixtures `validate_openspec_envelope`, `validate_openspec_empty`, and the rule
+(fixtures `validate_openspec_envelope`, `validate_openspec_empty`,
+`validate_openspec_archived`, `validate_openspec_unicode`, and the rule
 fixture) and replayed by `validate_openspec_integration.rs`:
 
 ```json
@@ -294,37 +312,52 @@ fixture) and replayed by `validate_openspec_integration.rs`:
 - Issue keys `level, path, line, message` (`line` only when grounded).
 - `byType` has one entry per requested type, even with no items (`--all` on
   an empty project lists `change` and `spec` at zero).
-- Items are sorted like OpenSpec's `a.id.localeCompare(b.id)` under Node's ICU
-  (CLDR root, punctuation non-ignorable): punctuation, digits, then letters
-  case-insensitively, case breaking ties lowercase first — `a-b, a.b, a/b, aa,
-  alpha, B-upper, only, parentless/child, Upper_Case, zeta`. Exact for
-  printable ASCII; other characters sort after `z` by code point (an
-  approximation: no corpus has non-ASCII ids). A change and a spec with the
-  same id keep change-first; OpenSpec orders that tie by async completion,
-  so the golden normalizes it the same way.
+- Active items use ICU4X 2.1.1 with compiled CLDR 48 data and fixed en-US
+  tertiary collation (owner ruling #227, 2026-10-11). This replaces the
+  ASCII table/non-ASCII code-point approximation; accents, non-Latin scripts
+  and canonical equivalence are handled by the collator. A change and spec
+  sharing the same id retain change-first input order; OpenSpec's async tie
+  is normalized change-first in the capture. Other collation-equal strings
+  retain input order, without a byte-order tie-break.
+- **Deliberate locale boundary:** OpenSpec's bare `localeCompare` follows
+  the host locale. The measured Node 22.22.3 / ICU 78.2 / CLDR 48.0 baseline
+  was en-US; sv-SE moves `ä`/`å` after `z`, and zh-TW moves CJK before Latin.
+  Both capture and OpenSpectra pin en-US rather than varying across hosts.
+  The replay runs with `LC_ALL=sv_SE.UTF-8`; the release CLI was also checked
+  under zh-TW. The pinned dependency and authority golden are the guard
+  against future collation-data changes, not a claim about arbitrary ICU
+  versions. Archived items instead use UTF-16 order as described above.
 - `root.source` is always `nearest` (OpenSpectra has no store roots).
 - `--report findings` gives OpenSpec's `{report: {kind, version, scope,
   returnedItems, totalItems}, itemFindings, summary, root}`, items with any
   finding (INFO included); `--changes --specs` has scope `all`.
-- An unknown item prints `{"status": [{"severity": "error", "code":
+- An **untyped** unknown item prints `{"status": [{"severity": "error", "code":
   "unknown_item", "message": "Unknown item 'x'. Did you mean: …?"}]}` to
   stdout (exit 1); the suggestions are the five nearest ids by Levenshtein
   distance over UTF-16 units, active changes (by name) then specs, ties in
   that order. An ambiguous item prints the `ambiguous_item` status with
   `"fix": "Pass --type change|spec."`.
+- An explicit `--type` validates its target even when it is absent or only
+  exists as the other kind. Missing changes report the no-deltas finding;
+  missing specs report an ERROR/file ENOENT finding containing the spec
+  path. Both use the regular `items` envelope, empty stderr and exit 1.
+  Capture/replay normalize the root inside diagnostic strings as well as
+  the `root.path` field. Malformed typed names return `invalid_item` before
+  lookup; OpenSpectra retains its existing refusal of colons/drive prefixes.
+  Default oracle-format missing-item diagnostics remain unchanged.
 - Deliberately not followed (rulings): a bare `validate` validates every
   change instead of printing OpenSpec's hint (D12-5); `ITEM --all` validates
   ITEM instead of the bulk scope (W9a-3). `durationMs` is OpenSpectra's own
   timing.
-- **Known gaps** (owner ruling W9a-4: not fixed in W9a, tracked separately):
-  1. `--type change|spec` on a name that is not of that type is still
-     `Error: Change 'x' not found.` (or `Spec`) on stderr; OpenSpec validates
-     the missing path anyway and reports its findings.
-  2. The `--archived` message wording is OpenSpectra's
-     (`N incomplete archived task(s)`); OpenSpec says `N incomplete tasks
-     (c/t completed)` and counts tasks differently (see "Archived changes").
-  3. Item order is exact only for printable-ASCII ids; non-ASCII ids use the
-     approximation above instead of ICU collation.
+- **#227 verification boundary:** the three listed W9a-4 gaps are covered by
+  31 captured envelopes, including missing/wrong-kind typed items, unsafe
+  typed names, archived findings and Unicode full/findings reports. The
+  capture is run twice before accepting regenerated output; no golden data
+  is edited by hand. Capture: `python3 scripts/capture-validate-openspec.py
+  --write` with OpenSpec 1.13.2. Replay:
+  `cargo test -p spectra-cli --test validate_openspec_integration`.
+  This is evidence for those fixtures, not a new claim of exhaustive parity
+  for every schema, I/O condition, locale or Unicode-data version.
 
 The previous OpenSpectra v2 JSON (`version: "2.0"`, `totals.total`,
 `root.spec_dir`) is gone; `summary.totals.failed` and the item fields a gate
@@ -336,5 +369,5 @@ reads are in the OpenSpec shape too.
 - 1: at least one item is invalid, or an operational error occurred.
 
 Unlike `drift`, validation severity intentionally controls the exit status.
-Exact diagnostic wording is not a compatibility contract; consumers should use
-level, valid, path, line, and summary fields.
+Golden comparisons include diagnostic text; automation should still key on
+level, valid, path, line and summary fields rather than matching prose.
