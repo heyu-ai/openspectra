@@ -149,7 +149,8 @@ cargo test --all
 
 `fmt` and `clippy` are hard gates in CI too (the `lint` job in `ci.yml`, no
 `continue-on-error`), so a local fmt/clippy failure will also fail the PR. The
-same job first runs `python3 scripts/mutate-check.py --check-anchors`.
+same job first runs `python3 scripts/mutate-check.py --check-anchors` and
+`python3 -m unittest discover -s scripts -p "test_*.py" -v`.
 `build` + `test` run on a `[ubuntu-latest, macos-latest]` matrix in the
 `build-and-test` job (macOS skips the `#[cfg(target_os = "linux")]`-gated
 tests, which is expected, not a failure). If a clippy
