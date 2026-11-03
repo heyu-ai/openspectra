@@ -129,6 +129,12 @@ this file is agent-facing operational context.
   OpenSpectra". Any CLI integration test helper that spawns the binary must set
   `OPENSPECTRA_IMPL=oss`, or a developer's own switch setting would hand the
   test suite to the reference binary.
+- `scripts/verify-capture.py` + `scripts/workflow-check.py` +
+  `scripts/test_workflow_tools.py` — Phase 1 deterministic workflow capture and
+  gate tools (`verify-capture`, `workflow-check propose`, and
+  `workflow-check apply`), implemented in dependency-free Python 3 stdlib and
+  verified in CI (`lint` job). See `docs/research/skill-evaluation-2026-11.md`
+  and `docs/adr/0001-openspectra-quality-workflow-upgrade.md`.
 
 ## Build / verify (mirrors `.github/workflows/ci.yml`)
 
@@ -143,7 +149,8 @@ cargo test --all
 
 `fmt` and `clippy` are hard gates in CI too (the `lint` job in `ci.yml`, no
 `continue-on-error`), so a local fmt/clippy failure will also fail the PR. The
-same job first runs `python3 scripts/mutate-check.py --check-anchors`.
+same job first runs `python3 scripts/mutate-check.py --check-anchors` and
+`python3 -m unittest discover -s scripts -p "test_*.py" -v`.
 `build` + `test` run on a `[ubuntu-latest, macos-latest]` matrix in the
 `build-and-test` job (macOS skips the `#[cfg(target_os = "linux")]`-gated
 tests, which is expected, not a failure). If a clippy
