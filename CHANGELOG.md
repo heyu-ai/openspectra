@@ -10,6 +10,21 @@ changes.
 
 ## [Unreleased]
 
+### Added
+
+- Phase 1 deterministic workflow checking and capture tools under `scripts/`
+  (`scripts/verify-capture.py`, `scripts/workflow-check.py`, and
+  `scripts/test_workflow_tools.py`), together with
+  `docs/adr/0001-openspectra-quality-workflow-upgrade.md` and the 148-trial
+  empirical evaluation report in `docs/research/skill-evaluation-2026-11.md`.
+  `verify-capture.py` records command execution receipts (`stdout.txt`,
+  `stderr.txt`, `result.json` with SHA-256 digests) under
+  `$VERIFY_PROJECT_ROOT/.scratch/captures/` without shell interpolation or
+  symlink traversal; `workflow-check.py` provides `propose` (`.openspec.yaml`
+  `schema` preservation, `no-spec` vs `spec-driven` delta checks, and direct
+  binary `--` separator guards) and `apply` (behavioral RED-to-GREEN transcript
+  verification and nonexistent CLI subcommand guards).
+
 ### Fixed
 
 - `validate --json --format openspec` now validates missing explicitly typed
