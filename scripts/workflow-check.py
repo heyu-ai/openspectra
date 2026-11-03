@@ -139,7 +139,9 @@ def check_propose(change_dir: Path) -> list[str]:
 def check_apply(transcript_file: Path, final_md: Path, tasks_file: Path, config_file: Path | None = None) -> list[str]:
     errors: list[str] = []
 
-    if final_md.is_file():
+    if not final_md.is_file():
+        errors.append(f"Missing final report file: {final_md}")
+    else:
         final_text = final_md.read_text(encoding="utf-8")
         invented = sorted(set(INVENTED_SUBCMD_RE.findall(final_text)))
         if invented:
@@ -157,13 +159,17 @@ def check_apply(transcript_file: Path, final_md: Path, tasks_file: Path, config_
             pass
 
     tasks_completed = False
-    if tasks_file.is_file():
+    if not tasks_file.is_file():
+        errors.append(f"Missing tasks file: {tasks_file}")
+    else:
         tasks_completed = bool(COMPLETED_TASK_RE.search(tasks_file.read_text(encoding="utf-8")))
 
     if tdd_required and tasks_completed:
-        has_behavioral_red = False
-        has_green_after_red = False
-        if transcript_file.is_file():
+        if not transcript_file.is_file():
+            errors.append(f"Missing transcript file: {transcript_file}")
+        else:
+            has_behavioral_red = False
+            has_green_after_red = False
             calls_by_id: dict[str, dict[str, object]] = {}
             for line in transcript_file.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
@@ -193,17 +199,19 @@ def check_apply(transcript_file: Path, final_md: Path, tasks_file: Path, config_
                         raw = block.get("content", "")
                         out = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
                         if COMPILE_ERROR_RE.search(out) and not BEHAVIORAL_FAIL_RE.search(out):
+                            has_green_after_red = False
                             continue
                         if BEHAVIORAL_FAIL_RE.search(out):
                             has_behavioral_red = True
+                            has_green_after_red = False
                         elif PASS_RESULT_RE.search(out) and has_behavioral_red:
                             has_green_after_red = True
 
-        if not (has_behavioral_red and has_green_after_red):
-            errors.append(
-                f"TDD verification failed: did not observe behavioral RED followed by GREEN "
-                f"(behavioral_red={has_behavioral_red}, green_after_red={has_green_after_red})"
-            )
+            if not (has_behavioral_red and has_green_after_red):
+                errors.append(
+                    f"TDD verification failed: did not observe behavioral RED followed by GREEN "
+                    f"(behavioral_red={has_behavioral_red}, green_after_red={has_green_after_red})"
+                )
 
     return errors
 
