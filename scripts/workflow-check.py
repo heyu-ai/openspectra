@@ -31,7 +31,7 @@ DELTA_HEADER_RE = re.compile(
     r"^##\s+(?:ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\b",
     re.IGNORECASE | re.MULTILINE,
 )
-DIRECT_BIN_DASH_RE = re.compile(r"(?:\./\S+|target/(?:debug|release)/\S+)\s+--\s+(\S+)")
+DIRECT_BIN_DASH_RE = re.compile(r"(?:\./\S+|target/(?:debug|release)/\S+)\s+--\s+\S+")
 FLAG_CRATES_RE = re.compile(r"\b(?:clap|lexopt|argh|pico_args|getopts|structopt)\b")
 INVENTED_SUBCMD_RE = re.compile(r"(?<![/\w:-])spectra\s+(verify|review|apply|audit)\b")
 COMPLETED_TASK_RE = re.compile(r"^\s*[-*+]\s*\[[xX]\]\s+\S+", re.MULTILINE)
@@ -64,15 +64,35 @@ def parse_flat_yaml(text: str) -> dict[str, object]:
         if not key:
             raise ValueError(f"Empty YAML key in line: {raw_line!r}")
         if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
-            parsed: object = val[1:-1]
-        elif val.lower() == "true":
-            parsed = True
+            val = val[1:-1]
+        if val.lower() == "true":
+            parsed: object = True
         elif val.lower() == "false":
             parsed = False
         else:
             parsed = val
         data[key] = parsed
     return data
+
+
+def extract_tool_result_text(raw: object) -> str:
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        parts: list[str] = []
+        for item in raw:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") if isinstance(item.get("text"), str) else item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+                else:
+                    parts.append(json.dumps(item, ensure_ascii=False))
+            else:
+                parts.append(json.dumps(item, ensure_ascii=False))
+        return "\n".join(parts)
+    return json.dumps(raw, ensure_ascii=False)
 
 
 def find_project_main_rs(change_dir: Path) -> Path | None:
@@ -131,7 +151,9 @@ def check_propose(change_dir: Path) -> list[str]:
             for sf in spec_files:
                 body = sf.read_text(encoding="utf-8")
                 if not DELTA_HEADER_RE.search(body):
-                    errors.append(f"{sf.name} is missing OpenSpec delta header (## ADDED/MODIFIED/REMOVED/RENAMED Requirements)")
+                    errors.append(
+                        f"{sf.relative_to(change_dir)} is missing OpenSpec delta header (## ADDED/MODIFIED/REMOVED/RENAMED Requirements)"
+                    )
 
     return errors
 
@@ -150,13 +172,17 @@ def check_apply(transcript_file: Path, final_md: Path, tasks_file: Path, config_
             )
 
     tdd_required = True
-    if config_file is not None and config_file.is_file():
-        try:
-            cfg = parse_flat_yaml(config_file.read_text(encoding="utf-8"))
-            if "tdd" in cfg:
-                tdd_required = cfg["tdd"] is True
-        except Exception:
-            pass
+    if config_file is not None:
+        if not config_file.is_file():
+            errors.append(f"Missing config file: {config_file}")
+        else:
+            try:
+                cfg = parse_flat_yaml(config_file.read_text(encoding="utf-8"))
+            except Exception as exc:
+                errors.append(f"Invalid YAML in {config_file}: {exc}")
+            else:
+                if "tdd" in cfg:
+                    tdd_required = cfg["tdd"] is True
 
     tasks_completed = False
     if not tasks_file.is_file():
@@ -197,7 +223,7 @@ def check_apply(transcript_file: Path, final_md: Path, tasks_file: Path, config_
                         if not isinstance(cmd, str) or not re.search(r"\b(?:cargo\s+test|pytest|unittest)\b", cmd):
                             continue
                         raw = block.get("content", "")
-                        out = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
+                        out = extract_tool_result_text(raw)
                         if COMPILE_ERROR_RE.search(out) and not BEHAVIORAL_FAIL_RE.search(out):
                             has_green_after_red = False
                             continue

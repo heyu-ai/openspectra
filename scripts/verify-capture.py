@@ -88,7 +88,7 @@ def create_storage(capture_id: str) -> tuple[int, str]:
     if not configured_root:
         raise CaptureError("VERIFY_PROJECT_ROOT is required")
     root = os.path.realpath(configured_root)
-    cwd = os.getcwd()
+    cwd = os.path.realpath(os.getcwd())
     if os.path.commonpath((root, cwd)) != root:
         raise CaptureError("current working directory must be inside VERIFY_PROJECT_ROOT")
     root_fd = os.open(root, flags)
@@ -150,10 +150,11 @@ def replay(fd: int, target_fd: int, length: int) -> None:
 
 
 def stop_group(process: subprocess.Popen) -> None:
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    if process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
     process.wait()
 
 

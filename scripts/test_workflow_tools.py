@@ -17,10 +17,10 @@ Covers:
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
 import subprocess
@@ -67,10 +67,16 @@ class TestVerifyCapture(unittest.TestCase):
             err_bytes = (root / data["stderr"]["path"]).read_bytes()
             self.assertEqual(out_bytes, b"hello-out\n")
             self.assertEqual(err_bytes, b"hello-err\n")
-            self.assertEqual(data["stdout"]["bytes"], len(out_bytes))
-            self.assertEqual(data["stdout"]["sha256"], hashlib.sha256(out_bytes).hexdigest())
-            self.assertEqual(data["stderr"]["bytes"], len(err_bytes))
-            self.assertEqual(data["stderr"]["sha256"], hashlib.sha256(err_bytes).hexdigest())
+            self.assertEqual(data["stdout"]["bytes"], 10)
+            self.assertEqual(
+                data["stdout"]["sha256"],
+                "f1d5a778c0023c083bab42c96601d777354841c6299cbfa064532d804a70f323",
+            )
+            self.assertEqual(data["stderr"]["bytes"], 10)
+            self.assertEqual(
+                data["stderr"]["sha256"],
+                "52c3a85dee445aba5b0c0b190a2313693bb7e2b8bfd924049a26b1939307f6f3",
+            )
 
     def test_rejects_missing_root_outside_cwd_bad_label_and_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -118,16 +124,8 @@ class TestVerifyCapture(unittest.TestCase):
 
             # 4. Symlinked .scratch/captures rejected without touching target
             sh_dir = root / ".scratch"
-            sh_dir.mkdir(exist_ok=True)
-            for item in sh_dir.iterdir():
-                if item.is_dir():
-                    for sub in item.rglob("*"):
-                        if sub.is_file():
-                            sub.unlink()
-                    for sub in sorted(item.rglob("*"), reverse=True):
-                        if sub.is_dir():
-                            sub.rmdir()
-                    item.rmdir()
+            shutil.rmtree(sh_dir, ignore_errors=True)
+            sh_dir.mkdir()
             (sh_dir / "captures").symlink_to(outside, target_is_directory=True)
             p4 = subprocess.run(
                 [sys.executable, str(VERIFY_CAPTURE), "--", sys.executable, "-c", "print('escaped')"],
@@ -144,7 +142,11 @@ class TestVerifyCapture(unittest.TestCase):
             root = Path(td).resolve()
             env = dict(os.environ, VERIFY_PROJECT_ROOT=str(root))
 
-            # Timeout returns 124 and records outcome=timeout
+            # Timeout returns 124, terminates child process group, and records outcome=timeout
+            timeout_pid_file = root / "timeout_child.pid"
+            timeout_child_code = (
+                f"import os, time; open({repr(str(timeout_pid_file))}, 'w').write(str(os.getpid())); time.sleep(60)"
+            )
             p_timeout = subprocess.run(
                 [
                     sys.executable,
@@ -152,11 +154,11 @@ class TestVerifyCapture(unittest.TestCase):
                     "--label",
                     "slow-cmd",
                     "--timeout",
-                    "0.1",
+                    "0.3",
                     "--",
                     sys.executable,
                     "-c",
-                    "import time; time.sleep(10)",
+                    timeout_child_code,
                 ],
                 cwd=root,
                 env=env,
@@ -165,10 +167,14 @@ class TestVerifyCapture(unittest.TestCase):
                 timeout=20,
             )
             self.assertEqual(p_timeout.returncode, 124)
+            timeout_child_pid = int(timeout_pid_file.read_text(encoding="utf-8"))
+            with self.assertRaises(ProcessLookupError):
+                os.kill(timeout_child_pid, 0)
             receipts = [json.loads(p.read_text()) for p in (root / ".scratch" / "captures").glob("*/result.json")]
             self.assertTrue(any(r["label"] == "slow-cmd" and r["outcome"] == "timeout" for r in receipts))
 
             # SIGTERM cleans up child process group
+            (root / ".scratch").mkdir(exist_ok=True)
             sock_path = root / ".scratch" / "ready.sock"
             srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             srv.bind(str(sock_path))
@@ -231,9 +237,9 @@ class TestWorkflowCheck(unittest.TestCase):
             self.assertEqual(r2.returncode, 1)
             self.assertIn("schema", r2.stderr)
 
-            # 3. Valid no-spec passes
+            # 3. Valid no-spec passes (including quoted boolean literal)
             (ch / ".openspec.yaml").write_text(
-                "schema: no-spec\ncreated: 2026-11-03\ncreated_by: test\nskip_specs: true\n",
+                'schema: no-spec\ncreated: 2026-11-03\ncreated_by: test\nskip_specs: "true"\n',
                 encoding="utf-8",
             )
             r3 = subprocess.run(
@@ -243,10 +249,41 @@ class TestWorkflowCheck(unittest.TestCase):
             )
             self.assertEqual(r3.returncode, 0, r3.stderr)
 
-            # 4. Direct binary invocation with '--' on nth(1) parser fails
-            (ch / ".openspec.yaml").write_text("schema: spec-driven\ncreated: 2026-11-03\n", encoding="utf-8")
+            # 4. no-spec with delta spec files fails
             spec_file = ch / "specs" / "cap" / "spec.md"
             spec_file.parent.mkdir(parents=True)
+            spec_file.write_text("## ADDED Requirements\n", encoding="utf-8")
+            r3_contradict = subprocess.run(
+                [sys.executable, str(WORKFLOW_CHECK), "propose", str(ch)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r3_contradict.returncode, 1)
+            self.assertIn("no-spec", r3_contradict.stderr)
+            shutil.rmtree(ch / "specs")
+
+            # 5. spec-driven without skip_specs and without delta spec files fails
+            (ch / ".openspec.yaml").write_text("schema: spec-driven\ncreated: 2026-11-03\n", encoding="utf-8")
+            r4_missing_specs = subprocess.run(
+                [sys.executable, str(WORKFLOW_CHECK), "propose", str(ch)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r4_missing_specs.returncode, 1)
+            self.assertIn("no specs/<cap>/spec.md", r4_missing_specs.stderr)
+
+            # 6. spec-driven with spec.md missing OpenSpec delta header fails with relative path
+            spec_file.parent.mkdir(parents=True)
+            spec_file.write_text("# Capability\n\n### Requirement: R\nThe system SHALL work.\n", encoding="utf-8")
+            r4_bad_header = subprocess.run(
+                [sys.executable, str(WORKFLOW_CHECK), "propose", str(ch)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r4_bad_header.returncode, 1)
+            self.assertIn("specs/cap/spec.md is missing OpenSpec delta header", r4_bad_header.stderr)
+
+            # 7. Direct binary invocation with '--' on nth(1) parser fails and reports full invocation
             spec_file.write_text(
                 "## ADDED Requirements\n\n### Requirement: R\nThe system SHALL work.\n\n#### Scenario: S\n- **WHEN** x\n- **THEN** y\n",
                 encoding="utf-8",
@@ -259,8 +296,9 @@ class TestWorkflowCheck(unittest.TestCase):
             )
             self.assertEqual(r4.returncode, 1)
             self.assertIn("direct binary invocation", r4.stderr)
+            self.assertIn("./target/debug/app -- -1", r4.stderr)
 
-            # 5. Fixing command to cargo run -- -1 passes
+            # 8. Fixing command to cargo run -- -1 passes
             (ch / "tasks.md").write_text("- [ ] 1.1 Verify CLI with cargo run -- -1\n", encoding="utf-8")
             r5 = subprocess.run(
                 [sys.executable, str(WORKFLOW_CHECK), "propose", str(ch)],
@@ -275,6 +313,27 @@ class TestWorkflowCheck(unittest.TestCase):
             transcript = d / "transcript.jsonl"
             final_md = d / "final.md"
             tasks_md = d / "tasks.md"
+            bad_cfg = d / "bad.spectra.yaml"
+
+            # 0. Missing required input files fail instead of silently passing
+            r_missing = subprocess.run(
+                [
+                    sys.executable,
+                    str(WORKFLOW_CHECK),
+                    "apply",
+                    "--transcript",
+                    str(transcript),
+                    "--final",
+                    str(final_md),
+                    "--tasks",
+                    str(tasks_md),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r_missing.returncode, 1)
+            self.assertIn("Missing final report file", r_missing.stderr)
+            self.assertIn("Missing tasks file", r_missing.stderr)
 
             # 1. Invented CLI command 'spectra verify' fails
             final_md.write_text("Done! Run `spectra verify feat` next.\n", encoding="utf-8")
@@ -298,8 +357,48 @@ class TestWorkflowCheck(unittest.TestCase):
             self.assertEqual(r1.returncode, 1)
             self.assertIn("nonexistent CLI subcommands", r1.stderr)
 
-            # 2. Compile error followed by GREEN does NOT count as behavioral RED
-            final_md.write_text("Done! Run `/spectra:verify feat` next.\n", encoding="utf-8")
+            # 2. Pending tasks (- [ ]) with valid handoff pass without requiring TDD RED-GREEN
+            final_md.write_text("Blocked on premise conflict; run `/spectra:verify feat` after resolution.\n", encoding="utf-8")
+            r_pending = subprocess.run(
+                [
+                    sys.executable,
+                    str(WORKFLOW_CHECK),
+                    "apply",
+                    "--transcript",
+                    str(transcript),
+                    "--final",
+                    str(final_md),
+                    "--tasks",
+                    str(tasks_md),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r_pending.returncode, 0, r_pending.stderr)
+
+            # 3. Malformed --config YAML is reported as an error
+            bad_cfg.write_text("not_a_key_value_line\n", encoding="utf-8")
+            r_bad_cfg = subprocess.run(
+                [
+                    sys.executable,
+                    str(WORKFLOW_CHECK),
+                    "apply",
+                    "--transcript",
+                    str(transcript),
+                    "--final",
+                    str(final_md),
+                    "--tasks",
+                    str(tasks_md),
+                    "--config",
+                    str(bad_cfg),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r_bad_cfg.returncode, 1)
+            self.assertIn("Invalid YAML", r_bad_cfg.stderr)
+
+            # 4. Compile error followed by GREEN does NOT count as behavioral RED
             tasks_md.write_text("- [x] 1.1 Implemented feature\n", encoding="utf-8")
             events_compile_only = [
                 {"message": {"content": [{"type": "tool_use", "id": "u1", "input": {"command": "cargo test"}}]}},
@@ -342,25 +441,29 @@ class TestWorkflowCheck(unittest.TestCase):
             self.assertEqual(r2.returncode, 1)
             self.assertIn("TDD verification failed", r2.stderr)
 
-            # 3. Genuine behavioral RED (test assertion failure) followed by GREEN passes
+            # 5. Genuine behavioral RED followed by GREEN (including structured list content block with multiline ^OK) passes
             events_red_green = [
-                {"message": {"content": [{"type": "tool_use", "id": "u1", "input": {"command": "cargo test"}}]}},
+                {"message": {"content": [{"type": "tool_use", "id": "u1", "input": {"command": "python3 -m unittest"}}]}},
                 {
                     "message": {
                         "content": [
                             {
                                 "type": "tool_result",
                                 "tool_use_id": "u1",
-                                "content": "running 1 test\ntest boundary ... FAILED\nthread 'boundary' panicked at 'assertion `left == right` failed'\ntest result: FAILED. 0 passed; 1 failed",
+                                "content": "AssertionError: 1 != 2\nFAILED (failures=1)",
                             }
                         ]
                     }
                 },
-                {"message": {"content": [{"type": "tool_use", "id": "u2", "input": {"command": "cargo test"}}]}},
+                {"message": {"content": [{"type": "tool_use", "id": "u2", "input": {"command": "python3 -m unittest"}}]}},
                 {
                     "message": {
                         "content": [
-                            {"type": "tool_result", "tool_use_id": "u2", "content": "test result: ok. 2 passed; 0 failed"}
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "u2",
+                                "content": [{"type": "text", "text": "Ran 2 tests in 0.001s\n\nOK"}],
+                            }
                         ]
                     }
                 },
@@ -382,6 +485,94 @@ class TestWorkflowCheck(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(r3.returncode, 0, r3.stderr)
+
+            # 6. RED -> GREEN -> RED regression fails (has_green_after_red is reset on subsequent failure)
+            events_red_green_red = events_red_green + [
+                {"message": {"content": [{"type": "tool_use", "id": "u3", "input": {"command": "cargo test"}}]}},
+                {
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "u3",
+                                "content": "test result: FAILED. 1 passed; 1 failed",
+                            }
+                        ]
+                    }
+                },
+            ]
+            transcript.write_text("\n".join(json.dumps(e) for e in events_red_green_red) + "\n", encoding="utf-8")
+            r4 = subprocess.run(
+                [
+                    sys.executable,
+                    str(WORKFLOW_CHECK),
+                    "apply",
+                    "--transcript",
+                    str(transcript),
+                    "--final",
+                    str(final_md),
+                    "--tasks",
+                    str(tasks_md),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r4.returncode, 1)
+            self.assertIn("green_after_red=False", r4.stderr)
+
+            # 7. RED -> GREEN -> compile error also resets has_green_after_red
+            events_red_green_compile = events_red_green + [
+                {"message": {"content": [{"type": "tool_use", "id": "u4", "input": {"command": "cargo test"}}]}},
+                {
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "u4",
+                                "content": "error[E0425]: cannot find value `y`\nerror: could not compile `app`",
+                            }
+                        ]
+                    }
+                },
+            ]
+            transcript.write_text("\n".join(json.dumps(e) for e in events_red_green_compile) + "\n", encoding="utf-8")
+            r5 = subprocess.run(
+                [
+                    sys.executable,
+                    str(WORKFLOW_CHECK),
+                    "apply",
+                    "--transcript",
+                    str(transcript),
+                    "--final",
+                    str(final_md),
+                    "--tasks",
+                    str(tasks_md),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r5.returncode, 1)
+            self.assertIn("green_after_red=False", r5.stderr)
+
+            # 8. Missing transcript when TDD is active and tasks are completed fails
+            transcript.unlink()
+            r6 = subprocess.run(
+                [
+                    sys.executable,
+                    str(WORKFLOW_CHECK),
+                    "apply",
+                    "--transcript",
+                    str(transcript),
+                    "--final",
+                    str(final_md),
+                    "--tasks",
+                    str(tasks_md),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(r6.returncode, 1)
+            self.assertIn("Missing transcript file", r6.stderr)
 
 
 if __name__ == "__main__":
