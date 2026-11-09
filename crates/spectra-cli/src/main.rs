@@ -1,7 +1,8 @@
-//! OpenSpectra CLI: `init`, `drift`, `analyze`, `schemas`, `completion`,
-//! `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
-//! `in-progress add`, `new change`, `new artifact`, `task done`, `archive`,
-//! `update`, `config`, `search`, `templates`, `decisions`, `demo`.
+//! OpenSpectra CLI: `init`, `drift`, `analyze`, `search`, `completion`,
+//! `schemas`, `schema`, `templates`, `status`, `instructions`, `validate`,
+//! `list`, `show`, `decisions`, `demo`, `park`, `unpark`, `in-progress add`,
+//! `new change`, `new artifact`, `task start`, `task done`, `trace migrate`,
+//! `update`, `archive`, `scope`, `impl`, `config`.
 
 mod completion;
 #[cfg(test)]
@@ -38,17 +39,21 @@ struct Cli {
 enum Command {
     /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/config.yaml`,
     /// `<spec_dir>/{changes/archive,specs}/`, and a `.spectra/` entry in
-    /// `.gitignore`. Every other command requires this to have run first.
+    /// `.gitignore`.
     Init {
+        /// Project path (defaults to nearest project root or current directory).
         #[arg(value_name = "PATH")]
         path: Option<PathBuf>,
+        /// Overwrite existing files (preserving an existing spec_dir).
         #[arg(long)]
         force: bool,
         /// Custom openspec directory path (default: docs/openspec)
         #[arg(long, value_name = "DIR")]
         dir: Option<String>,
+        /// Adopt an existing OpenSpec directory layout.
         #[arg(long)]
         adopt: bool,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
         /// AI tools to generate files for (e.g., claude, cursor).
@@ -87,7 +92,7 @@ enum Command {
         #[command(subcommand)]
         target: CompletionTarget,
     },
-    /// List available workflow schemas (only `spec-driven` is built in).
+    /// List available workflow schemas (built-in `spec-driven` and `no-spec`, plus project and user schemas).
     Schemas {
         /// Output as JSON.
         #[arg(long)]
@@ -95,12 +100,10 @@ enum Command {
     },
     /// Show template paths.
     Templates {
-        /// Workflow schema name. Only `spec-driven` is built in -- any other
-        /// explicit name is an error rather than a silent fallback. Unlike
-        /// `status`/`instructions`, an *unset* flag does NOT fall back to a
-        /// change's or the project's configured schema: with no flag this
-        /// always reports the built-in schema's templates, since no other
-        /// schema's templates are ever loaded.
+        /// Workflow schema name (defaults to built-in `spec-driven` when omitted).
+        // Unlike `status`/`instructions`, an unset flag does not fall back to a
+        // change's or the project's configured schema: with no flag this always
+        // reports the built-in `spec-driven` templates.
         #[arg(long)]
         schema: Option<String>,
         /// Output as JSON.
@@ -116,9 +119,8 @@ enum Command {
         #[arg(long)]
         all: bool,
         /// Workflow schema name; overrides both the change's own
-        /// `.openspec.yaml` `schema:` and `<spec_dir>/config.yaml`'s. Only
-        /// `spec-driven` is built in — any other name is an error rather than
-        /// a silent fallback.
+        /// `.openspec.yaml` `schema:` and `<spec_dir>/config.yaml`'s
+        /// (built-in `spec-driven` and `no-spec`, plus project and user schemas).
         #[arg(long)]
         schema: Option<String>,
         /// Output as JSON.
@@ -133,9 +135,8 @@ enum Command {
         #[arg(long)]
         change: Option<String>,
         /// Workflow schema name; overrides both the change's own
-        /// `.openspec.yaml` `schema:` and `<spec_dir>/config.yaml`'s. Only
-        /// `spec-driven` is built in — any other name is an error rather than
-        /// a silent fallback.
+        /// `.openspec.yaml` `schema:` and `<spec_dir>/config.yaml`'s
+        /// (built-in `spec-driven` and `no-spec`, plus project and user schemas).
         #[arg(long)]
         schema: Option<String>,
         /// Output as JSON.
@@ -193,6 +194,7 @@ enum Command {
         /// Treat content-quality warnings as failures.
         #[arg(long)]
         strict: bool,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
         /// JSON shape: `oracle` (the Spectra 3.0.0 array, the default) or
@@ -212,6 +214,7 @@ enum Command {
         /// List parked changes instead of active ones.
         #[arg(long)]
         parked: bool,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
         /// Sort by: name, modified, created
@@ -222,6 +225,7 @@ enum Command {
     Show {
         /// Change or spec name to show.
         item: Option<String>,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
         /// Item type: change, spec
@@ -235,6 +239,7 @@ enum Command {
         // 同上：oracle 3.0.0 接受但不影響輸出。
         #[arg(short = 'r', long)]
         requirements: bool,
+        /// Isolate requirement-level change lines.
         #[arg(long)]
         diff: bool,
     },
@@ -252,6 +257,7 @@ enum Command {
     Park {
         /// Change name to park.
         change: String,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -259,6 +265,7 @@ enum Command {
     Unpark {
         /// Change name to unpark.
         change: String,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -272,7 +279,7 @@ enum Command {
         #[command(subcommand)]
         target: NewTarget,
     },
-    /// Task operations (currently the only `task` target).
+    /// Task operations (`start`, `done`).
     Task {
         #[command(subcommand)]
         target: TaskTarget,
@@ -291,7 +298,7 @@ enum Command {
         force: bool,
     },
     /// Archive a completed change (move it to `changes/archive/<date>-<name>`
-    /// and apply its added spec requirements, unless --skip-specs).
+    /// and apply its spec deltas to canonical specs, unless --skip-specs).
     Archive {
         /// Change to archive (auto-detects if only one active change exists).
         change: Option<String>,
@@ -301,8 +308,10 @@ enum Command {
         /// Mark all incomplete tasks as complete before archiving.
         #[arg(long)]
         mark_tasks_complete: bool,
+        /// Skip confirmation.
         #[arg(short = 'y', long = "yes")]
         yes: bool,
+        /// Skip validation before archiving.
         #[arg(long = "no-validate")]
         no_validate: bool,
         /// Preview archive effects without modifying files.
@@ -439,17 +448,24 @@ enum ConfigTarget {
 enum SchemaCommand {
     /// Create a project-local schema.
     Init {
+        /// Schema name
         name: String,
+        /// Description
         #[arg(long)]
         description: Option<String>,
+        /// Artifact IDs (comma-separated)
         #[arg(long, value_delimiter = ',')]
         artifacts: Vec<String>,
+        /// Set as default schema
         #[arg(long, conflicts_with = "no_default")]
         default: bool,
+        /// Do not set as default schema
         #[arg(long)]
         no_default: bool,
+        /// Overwrite if exists
         #[arg(long)]
         force: bool,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -466,9 +482,12 @@ enum SchemaCommand {
     },
     /// Show where a schema resolves from.
     Which {
+        /// Schema name
         name: Option<String>,
+        /// Show all resolution paths
         #[arg(long)]
         all: bool,
+        /// Output as JSON
         #[arg(long)]
         json: bool,
     },
@@ -495,6 +514,7 @@ enum NewTarget {
     Change {
         /// Name for the new change (kebab-case, e.g. 'add-search-filter').
         name: String,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
         /// Description (accepted for oracle compatibility; the oracle does not store it).
@@ -541,6 +561,7 @@ enum TraceTarget {
         /// sidecar (for CI/pre-commit).
         #[arg(long)]
         check: bool,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -555,6 +576,7 @@ enum TaskTarget {
         /// Change name (auto-detects if only one active change exists).
         #[arg(long)]
         change: Option<String>,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -565,6 +587,7 @@ enum TaskTarget {
         /// Change name (auto-detects if only one active change exists).
         #[arg(long)]
         change: Option<String>,
+        /// Output as JSON.
         #[arg(long)]
         json: bool,
         /// Record this path as touched by the task (repeatable).
@@ -581,12 +604,14 @@ enum CompletionTarget {
     /// Install a completion script in the shell's user completion directory.
     Install {
         shell: Option<clap_complete::Shell>,
+        /// Print installation details.
         #[arg(long)]
         verbose: bool,
     },
     /// Uninstall the shell's completion script.
     Uninstall {
         shell: Option<clap_complete::Shell>,
+        /// Skip confirmation.
         #[arg(short = 'y', long)]
         yes: bool,
     },
