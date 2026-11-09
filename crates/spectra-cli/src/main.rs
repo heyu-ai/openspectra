@@ -39,7 +39,7 @@ struct Cli {
 enum Command {
     /// Scaffold a fresh project: `.spectra.yaml`, `<spec_dir>/config.yaml`,
     /// `<spec_dir>/{changes/archive,specs}/`, and a `.spectra/` entry in
-    /// `.gitignore`. Every other command requires this to have run first.
+    /// `.gitignore`.
     Init {
         /// Project path (defaults to nearest project root or current directory).
         #[arg(value_name = "PATH")]
