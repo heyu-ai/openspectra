@@ -10,6 +10,14 @@ changes.
 
 ## [Unreleased]
 
+### Changed
+
+- Updated CLI `--help` descriptions (`archive`, `init`, `schemas`, `templates`,
+  `status`, `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
+  `task`, `schema`, `new change`, `trace migrate`, and `completion`),
+  `README.md` command surface / `archive` flags / `drift` Tasks collision
+  status / release tag examples, and `CHANGELOG.md` release comparison links.
+
 ## [0.14.2] - 2026-11-03
 
 ### Added
@@ -1083,10 +1091,21 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/howie/openspectra/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/howie/openspectra/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/howie/openspectra/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/howie/openspectra/releases/tag/v0.4.0
-[0.3.0]: https://github.com/howie/openspectra/releases/tag/v0.3.0
-[0.2.0]: https://github.com/howie/openspectra/releases/tag/v0.2.0
-[0.1.0]: https://github.com/howie/openspectra/releases/tag/v0.1.0
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...HEAD
+[0.14.2]: https://github.com/heyu-ai/openspectra/compare/v0.14.1...v0.14.2
+[0.14.1]: https://github.com/heyu-ai/openspectra/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/heyu-ai/openspectra/compare/v0.13.0...v0.14.0
+[0.13.0]: https://github.com/heyu-ai/openspectra/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/heyu-ai/openspectra/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/heyu-ai/openspectra/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/heyu-ai/openspectra/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/heyu-ai/openspectra/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/heyu-ai/openspectra/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/heyu-ai/openspectra/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/heyu-ai/openspectra/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/heyu-ai/openspectra/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/heyu-ai/openspectra/releases/tag/v0.4.0
+[0.3.0]: https://github.com/heyu-ai/openspectra/releases/tag/v0.3.0
+[0.2.1]: https://github.com/heyu-ai/openspectra/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/heyu-ai/openspectra/releases/tag/v0.2.0
+[0.1.0]: https://github.com/heyu-ai/openspectra/releases/tag/v0.1.0

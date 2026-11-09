@@ -4,31 +4,30 @@ An open-source, CI-friendly reimplementation of the [Spectra](https://github.com
 spec-driven development CLI — reverse-engineered from the closed-source binary,
 starting with the `drift` command.
 
-> **Status:** The Rust CLI ships 21 commands — `init`, `drift`, `analyze`,
+> **Status:** The Rust CLI ships 26 subcommands — `init`, `drift`, `analyze`,
 > `search`, `completion`, `schemas`, `schema`, `templates`, `status`,
-> `instructions`, `validate`, `list`, `show`, `park`, `unpark`,
-> `in-progress add`, `new change`, `new artifact`, `task done`, `update`,
-> `archive`, and `config` — covering the full SDD workflow. It runs on
-> Linux/macOS with no bundled runtime dependencies (`git` must be on `PATH`).
-> `demo` is ported as well. `feedback` is intentionally not ported (owner
-> ruling W12-1, option 2 of
+> `instructions`, `validate`, `list`, `show`, `decisions`, `demo`, `park`,
+> `unpark`, `in-progress`, `new` (`change`, `artifact`), `task` (`start`,
+> `done`), `trace` (`migrate`), `update`, `archive`, `scope`, `impl`, and
+> `config` — covering the full SDD workflow. It runs on Linux/macOS with no
+> bundled runtime dependencies (`git` must be on `PATH`). `feedback` is
+> intentionally not ported (owner ruling W12-1, option 2 of
 > [#64](https://github.com/heyu-ai/openspectra/issues/64)): the oracle's
 > version submits nothing and only points at the Spectra.app issue tracker,
-> so file OpenSpectra issues on this repository instead. Of the commands
-> oracle v3.0.0 added, `scope`
-> ([#165](https://github.com/heyu-ai/openspectra/issues/165)), `task start`
-> plus `task done --file`
-> ([#190](https://github.com/heyu-ai/openspectra/issues/190)) and `decisions`
-> ([#166](https://github.com/heyu-ai/openspectra/issues/166)) are ported. The reverse-engineering write-ups are in
-> [`docs/reverse-engineering/`](docs/reverse-engineering/):
+> so file OpenSpectra issues on this repository instead. The reverse-engineering
+> write-ups are in [`docs/reverse-engineering/`](docs/reverse-engineering/):
 > [`analyze.md`](docs/reverse-engineering/analyze.md),
 > [`archive.md`](docs/reverse-engineering/archive.md),
 > [`artifact-workflow.md`](docs/reverse-engineering/artifact-workflow.md),
 > [`config.md`](docs/reverse-engineering/config.md),
+> [`decisions.md`](docs/reverse-engineering/decisions.md),
+> [`demo-feedback.md`](docs/reverse-engineering/demo-feedback.md),
 > [`drift.md`](docs/reverse-engineering/drift.md),
 > [`in-progress.md`](docs/reverse-engineering/in-progress.md),
 > [`init.md`](docs/reverse-engineering/init.md),
+> [`list-show.md`](docs/reverse-engineering/list-show.md),
 > [`park.md`](docs/reverse-engineering/park.md),
+> [`schema.md`](docs/reverse-engineering/schema.md),
 > [`schemas.md`](docs/reverse-engineering/schemas.md),
 > [`scope.md`](docs/reverse-engineering/scope.md),
 > [`search.md`](docs/reverse-engineering/search.md),
@@ -56,8 +55,9 @@ dimensions and prints a single recommended next step:
 * **Time** — days since the change was created (fresh → aging → stale → abandoned).
 * **Structure** — design-doc anchors (file paths, functions, symbols, CLI flags)
   that no longer resolve against the codebase.
-* **Tasks** — pending tasks that collide with external work *(detection gated
-  off pending calibration — see the RE doc)*.
+* **Tasks** — pending tasks that collide with external commits
+  (`tasks_blocked_external` and `tasks_maybe_resolved`, calibrated against
+  oracle v3.0.0).
 * **Environment** — commit volume since creation (display only).
 
 It outputs a human-readable, conclusion-first report or `--json` for tooling.
@@ -68,13 +68,10 @@ severity, so a CI gate keys on a JSON field — use the **FilePath** entries of
 ## Usage
 
 ```sh
-spectra init  [--json]            # scaffolds .spectra.yaml + <spec_dir>/config.yaml + <spec_dir>/{changes/archive,specs}/ at the resolved project root (nearest ancestor with .spectra.yaml, else cwd)
+spectra init  [PATH] [--force] [--dir <DIR>] [--adopt] [--tools <TOOLS>] [--json]  # scaffolds .spectra.yaml + <spec_dir>/config.yaml + <spec_dir>/{changes/archive,specs}/ (default spec_dir: docs/openspec; --force preserves an existing spec_dir)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
 spectra validate [ITEM] [--type change|spec] [--changes] [--specs] [--all] [--archived] [--strict] [--report full|findings] [--json [--format oracle|openspec]]  # OpenSpec 1.13.2 rules; no argument = every active change; output in the oracle shape unless --format openspec
-spectra list  [--json]            # lists active changes
-spectra list  --changes [--json]  # same as above, explicitly (mutually exclusive with --specs/--parked)
-spectra list  --specs [--json]    # lists capability specs instead of changes
-spectra list  --parked [--json]   # lists parked changes instead of active ones
+spectra list  [--changes|--specs|--parked] [--sort name|modified|created] [--json]  # lists active changes (default), capability specs (--specs), or parked changes (--parked)
 spectra show  <CHANGE|SPEC> [--item-type change|spec] [--diff] [--json]  # change: proposal + delta spec list (JSON: all artifacts); spec: every .md file; --item-type picks one kind; --deltas-only/-r are accepted and inert, as in the reference; --diff isolates requirement-level change lines
 spectra decisions [KEYWORD] [--json]  # lists `### ` decisions under `## Decisions` in every design.md (active, then archived) with **Supersedes** resolution
 spectra demo                      # creates a sample change (random spx-<adjective>-<pokemon> name, one of eight themes)
@@ -83,18 +80,19 @@ spectra unpark <CHANGE> [--json]  # resumes a parked change
 spectra new change <NAME> [--schema S] [--agent A] [--description D] [--json]  # creates a change dir + .openspec.yaml only (kebab-case name; artifact files come later via `new artifact`)
 spectra new artifact <TYPE> [CAPABILITY] [--change <NAME>] [--stdin] [--force] [--json]  # creates one artifact (proposal|design|tasks|spec) from stdin or its built-in template, with per-type validation
 spectra schemas [--json]          # lists built-in (spec-driven, no-spec), project, and user workflow schemas
-spectra schema init <NAME> [--description TEXT] [--artifacts IDS] [--default] [--force] [--json]  # creates a project-local workflow schema
+spectra schema init <NAME> [--description TEXT] [--artifacts IDS] [--default|--no-default] [--force] [--json]  # creates a project-local workflow schema
 spectra schema fork <SOURCE> [NAME] [--force] [--json]  # copies a schema with target identity preserved
 spectra schema validate [NAME] [--verbose] [--json]     # validates schema structure, templates, and dependency graph
 spectra schema which [NAME] [--all] [--json]            # lists every source holding the schema (project → user → built-in); defaults to spec-driven, needs no project
 spectra status [--change <NAME>|--all] [--schema <NAME>] [--json]   # shows one or every artifact DAG with dependencies and skip state
-spectra instructions [ARTIFACT] [--change <NAME>] [--json]  # prints the artifact's authoring instruction + template; with all artifacts done, switches to apply mode (tasks progress + preflight)
+spectra instructions [ARTIFACT] [--change <NAME>] [--schema <NAME>] [--skill <SKILL>] [--agent <AGENT>] [--compact] [--summary] [--omit-context] [--type bug-fix|refactor] [--json]  # prints the artifact's authoring instruction + template (or embedded skill with --skill); with all artifacts done, switches to apply mode
 spectra analyze [CHANGE] [--json]   # 4-dimension artifact consistency report (Coverage/Consistency/Ambiguity/Gaps); always exits 0
 spectra task start <TASK_ID> [--change <NAME>] [--json]  # captures a per-task git baseline (task-baselines/), leaves tasks.md alone
 spectra task done <TASK_ID> [--change <NAME>] [--json] [--file PATH]...  # marks a tasks.md checkbox done; records files changed since task start, or the --file paths
 spectra scope [--change <NAME>] [--base <REV>] [--check-snapshot <ID>] [--json]  # read-only implementation scope: per-file git diffs (committed/staged/unstaged/untracked) with patches, limitations, and a snapshot id
-spectra archive [CHANGE] [--skip-specs] [--mark-tasks-complete] [--preview] [--json]  # transactional merge/move with rollback; honors skip_specs/retire_capabilities metadata; trace data goes to specs/<cap>/spec.trace.yaml
+spectra archive [CHANGE] [-y|--yes] [--skip-specs] [--mark-tasks-complete] [--no-validate] [--preview] [--json]  # transactional merge/move with rollback; honors skip_specs/retire_capabilities metadata; trace data goes to specs/<cap>/spec.trace.yaml
 spectra trace migrate [--dry-run] [--check] [--json]  # OpenSpectra-only: moves inline <!-- @trace --> footers into spec.trace.yaml sidecars (idempotent), reports stale trace names; --check is a CI gate
+spectra impl [--json]                                 # OpenSpectra-only: shows active implementation mode (oss|oracle|shadow), source, and paths
 spectra completion generate [SHELL]              # prints a shell completion script (bash|zsh|fish|elvish|powershell; detects $SHELL when omitted)
 spectra completion install   [SHELL] [--verbose]  # writes it to the shell's user completion dir (bash|zsh|fish; never edits your rc files)
 spectra completion uninstall [SHELL] [-y]         # removes that file
@@ -102,7 +100,7 @@ spectra in-progress add <NAME>    # records a write-only in-progress marker (no 
 spectra update [PATH] [--force]   # rewrites instruction files for every detected AI tool (.claude/, .cursor/, … 6 tools); oracle-verified byte-for-byte
 spectra config <path|list|get|set|unset|reset|edit>  # manages the global user config (~/Library/Application Support/openspec/config.yaml on macOS, ${XDG_CONFIG_HOME:-~/.config}/openspec/config.yaml elsewhere, absolute XDG paths only); needs no project
 spectra search <QUERY> [--limit N] [--json]  # searches Markdown artifacts using dependency-free lexical ranking
-spectra templates [--schema NAME] [--json]  # shows template paths for the workflow schema (only spec-driven is built in)
+spectra templates [--schema NAME] [--json]  # shows template paths for the workflow schema (defaults to spec-driven when --schema is omitted; resolves built-in, project, and user schemas when specified)
 ```
 
 Exit codes for `drift` (pinned against the reference binary): `0` on any
@@ -136,9 +134,9 @@ cargo install spectra-cli
 Release tarballs are attached to GitHub releases for Linux and macOS:
 
 ```sh
-curl -L https://github.com/heyu-ai/openspectra/releases/download/v0.8.0/spectra-v0.8.0-x86_64-unknown-linux-musl.tar.gz \
+curl -L https://github.com/heyu-ai/openspectra/releases/download/v0.14.2/spectra-v0.14.2-x86_64-unknown-linux-musl.tar.gz \
   | tar xz
-sudo mv spectra-v0.8.0-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
+sudo mv spectra-v0.14.2-x86_64-unknown-linux-musl/spectra /usr/local/bin/spectra
 ```
 
 Substitute the latest release tag from https://github.com/heyu-ai/openspectra/releases.
@@ -201,7 +199,7 @@ jobs:
       - name: Install spectra
         run: |
           # Pin to a release tag; see https://github.com/heyu-ai/openspectra/releases for the latest.
-          SPECTRA_VERSION=v0.8.0
+          SPECTRA_VERSION=v0.14.2
           curl -L "https://github.com/heyu-ai/openspectra/releases/download/${SPECTRA_VERSION}/spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             | tar xz
           sudo mv "spectra-${SPECTRA_VERSION}-x86_64-unknown-linux-musl/spectra" /usr/local/bin/spectra
@@ -366,7 +364,7 @@ jobs:
         # Pin to a release tag; :latest tracks the newest stable release.
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo \
-            ghcr.io/heyu-ai/openspectra:v0.8.0 validate --changes --strict
+            ghcr.io/heyu-ai/openspectra:v0.14.2 validate --changes --strict
 ```
 
 `spectra validate` gates on its own exit code, so no `jq` is needed. For the
@@ -407,7 +405,7 @@ oracle to calibrate constants (`crates/spectra-core/src/calibration.rs`).
 
 ```
 crates/spectra-core/   # change discovery, spec discovery, anchors, git, drift scoring (library)
-crates/spectra-cli/    # clap CLI: init / drift / analyze / search / completion / schemas / templates / status / instructions / validate / list / show / park / unpark / in-progress add / new change / new artifact / task done / update / archive / config
+crates/spectra-cli/    # clap CLI: init / drift / analyze / search / completion / schemas / schema / templates / status / instructions / validate / list / show / decisions / demo / park / unpark / in-progress add / new change / new artifact / task start / task done / trace migrate / update / archive / scope / impl / config
 crates/spectra-core/assets/update/   # instruction-file templates captured verbatim from the oracle (generated; see update.md)
 docs/reverse-engineering/   # how the original works (each doc separates probed from still-unverified behavior)
 scripts/               # oracle calibration probes + template capture (capture-update-templates.py)
