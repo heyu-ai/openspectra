@@ -2214,6 +2214,44 @@ mod tests {
         assert!(result.issues.is_empty(), "got: {:?}", result.issues);
     }
 
+    #[test]
+    fn task_numbering_recognizes_marker_variants_and_ordered_lists() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(&c, "feat", "auth", GOOD_ADDED);
+        fs::write(
+            c.changes_dir().join("feat/tasks.md"),
+            "## 1. Group\n\
+             + [ ] 2.1 plus bullet\n\
+             1. [x] 2.2 ordered dot\n\
+             2) [~] 2.3 ordered paren with tilde\n\
+             - [X] 1.4 upper x\n\
+             ## 2. Second Group\n\
+             * [ ] 2.1 star bullet duplicate\n",
+        )
+        .unwrap();
+
+        let strict = validate_change(&c, "feat", true).unwrap();
+        assert!(!strict.valid, "expected warnings in strict mode");
+        assert!(strict.issues.iter().all(|issue| issue.level == "WARNING"));
+        assert!(strict.issues.iter().any(|issue| issue.line == Some(2)
+            && issue.message.contains(
+                "Task \"2.1\" is under group 1, but its leading number points to group 2"
+            )));
+        assert!(strict.issues.iter().any(|issue| issue.line == Some(3)
+            && issue.message.contains(
+                "Task \"2.2\" is under group 1, but its leading number points to group 2"
+            )));
+        assert!(strict.issues.iter().any(|issue| issue.line == Some(4)
+            && issue.message.contains(
+                "Task \"2.3\" is under group 1, but its leading number points to group 2"
+            )));
+        assert!(strict.issues.iter().any(|issue| issue.line == Some(7)
+            && issue
+                .message
+                .contains("Task ID \"2.1\" is duplicated; it was first declared on line 2")));
+    }
+
     /// archive 先套 RENAMED 再套 MODIFIED：MODIFIED 用串接 rename 後的新名字時，
     /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:611-628）。
     #[test]

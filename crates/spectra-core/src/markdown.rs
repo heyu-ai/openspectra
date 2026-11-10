@@ -111,6 +111,7 @@ pub(crate) struct DeltaDocument {
     pub modified_present: bool,
     pub removed_present: bool,
     pub renamed_present: bool,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -129,6 +130,18 @@ struct SectionRange {
     end: usize,
 }
 
+fn strip_closing_hashes(s: &str) -> &str {
+    // CommonMark 4.2: closing hashes must be preceded by at least one space or tab.
+    let trimmed = s.trim_end();
+    let hashes_stripped = trimmed.trim_end_matches('#');
+    if hashes_stripped.len() < trimmed.len()
+        && (hashes_stripped.is_empty() || hashes_stripped.ends_with([' ', '\t']))
+    {
+        return hashes_stripped.trim_end_matches([' ', '\t']);
+    }
+    trimmed
+}
+
 fn heading_text(line: &str, level: usize) -> Option<&str> {
     let trimmed = line.trim_start();
     if line.len() - trimmed.len() > 3 {
@@ -142,7 +155,7 @@ fn heading_text(line: &str, level: usize) -> Option<&str> {
     if hashes != level || !trimmed[hashes..].starts_with([' ', '\t']) {
         return None;
     }
-    Some(trimmed[hashes..].trim().trim_end_matches('#').trim_end())
+    Some(strip_closing_hashes(trimmed[hashes..].trim_start()))
 }
 
 fn requirement_name(line: &str) -> Option<String> {
@@ -248,6 +261,7 @@ fn rename_pairs(
         let Some(item) = line
             .strip_prefix('-')
             .or_else(|| line.strip_prefix('*'))
+            .or_else(|| line.strip_prefix('+'))
             .map(str::trim_start)
         else {
             continue;
@@ -283,6 +297,20 @@ fn parse_rename_header(value: &str, field: &str) -> anyhow::Result<String> {
         .ok_or_else(|| anyhow::anyhow!("{field} is missing a closing backtick"))?;
     requirement_name(&rest[..end])
         .ok_or_else(|| anyhow::anyhow!("{field} must be a `### Requirement: <name>` header"))
+}
+
+fn parse_removed_requirement(line: &str) -> Option<String> {
+    if let Some(name) = requirement_name(line) {
+        return Some(name);
+    }
+    let trimmed = line.trim();
+    let item = trimmed.strip_prefix(['-', '*', '+'])?.trim_start();
+    let raw = if let Some(stripped) = item.strip_prefix('`') {
+        stripped.strip_suffix('`')?
+    } else {
+        item
+    };
+    requirement_name(raw)
 }
 
 pub(crate) fn normalize_name(name: &str) -> String {
@@ -446,9 +474,29 @@ pub(crate) fn parse_delta(content: &str) -> anyhow::Result<DeltaDocument> {
     }
 
     let mut parsed = DeltaDocument::default();
+    for index in 0..headers.first().map_or(lines.len(), |first| first.0) {
+        if !mask[index] {
+            if let Some(name) = requirement_name(lines[index]) {
+                parsed.warnings.push(format!(
+                    "line {}: requirement '{name}' outside delta sections will be ignored",
+                    index + 1
+                ));
+            }
+        }
+    }
     for section in sections {
         match section.kind {
             DeltaSection::Purpose => {
+                for index in section.start..section.end {
+                    if !mask[index] {
+                        if let Some(name) = requirement_name(lines[index]) {
+                            parsed.warnings.push(format!(
+                                "line {}: requirement '{name}' inside Purpose section will be ignored",
+                                index + 1
+                            ));
+                        }
+                    }
+                }
                 let purpose = lines[section.start..section.end]
                     .join("\n")
                     .trim()
@@ -478,10 +526,16 @@ pub(crate) fn parse_delta(content: &str) -> anyhow::Result<DeltaDocument> {
             }
             DeltaSection::Removed => {
                 parsed.removed_present = true;
-                parsed.removed = requirement_blocks(&lines, &mask, section.start, section.end)
-                    .into_iter()
-                    .map(|requirement| requirement.name)
-                    .collect();
+                let mut removed = Vec::new();
+                for index in section.start..section.end {
+                    if mask[index] {
+                        continue;
+                    }
+                    if let Some(name) = parse_removed_requirement(lines[index]) {
+                        removed.push(name);
+                    }
+                }
+                parsed.removed = removed;
                 if parsed.removed.is_empty() {
                     anyhow::bail!(
                         "delta `## REMOVED Requirements` section contains no recognizable entries"
@@ -497,7 +551,18 @@ pub(crate) fn parse_delta(content: &str) -> anyhow::Result<DeltaDocument> {
                     );
                 }
             }
-            DeltaSection::Other => {}
+            DeltaSection::Other => {
+                for index in section.start..section.end {
+                    if !mask[index] {
+                        if let Some(name) = requirement_name(lines[index]) {
+                            parsed.warnings.push(format!(
+                                "line {}: requirement '{name}' outside delta sections will be ignored",
+                                index + 1
+                            ));
+                        }
+                    }
+                }
+            }
         }
     }
     validate_delta_conflicts(&parsed)?;
@@ -807,5 +872,89 @@ mod tests {
                 "RENAMED {rename_side}/{operation} conflict should name '{name}', got: {error}"
             );
         }
+    }
+
+    #[test]
+    fn heading_text_preserves_c_sharp_and_strips_commonmark_closing_hashes() {
+        assert_eq!(
+            heading_text("### Requirement: Support C#", 3),
+            Some("Requirement: Support C#")
+        );
+        assert_eq!(
+            heading_text("### Requirement: Support C# ##", 3),
+            Some("Requirement: Support C#")
+        );
+        assert_eq!(
+            heading_text("### Requirement: Normal ##", 3),
+            Some("Requirement: Normal")
+        );
+
+        let delta = parse_delta(
+            "## ADDED Requirements\n\
+             ### Requirement: Support C#\n\
+             The system SHALL support C#.\n\
+             ### Requirement: Support C\n\
+             The system SHALL support C.\n",
+        )
+        .unwrap();
+        assert_eq!(delta.added.len(), 2);
+        assert_eq!(delta.added[0].name, "Support C#");
+        assert_eq!(delta.added[1].name, "Support C");
+    }
+
+    #[test]
+    fn removed_and_renamed_accept_bullet_formats() {
+        let delta = parse_delta(
+            "## REMOVED Requirements\n\
+             - ### Requirement: Bullet Hyphen\n\
+             * ### Requirement: Bullet Star\n\
+             + ### Requirement: Bullet Plus\n\
+             - `### Requirement: Backticked Hyphen`\n\
+             - `### Requirement: Backticked Hyphen Trailing`   \n\
+             * `### Requirement: Backticked Star Trailing`  \n\
+             + `### Requirement: Backticked Plus Trailing` \t \n\
+             ## RENAMED Requirements\n\
+             + FROM: `### Requirement: Alpha`\n\
+             + TO: `### Requirement: Beta`\n",
+        )
+        .unwrap();
+        assert_eq!(
+            delta.removed,
+            vec![
+                "Bullet Hyphen",
+                "Bullet Star",
+                "Bullet Plus",
+                "Backticked Hyphen",
+                "Backticked Hyphen Trailing",
+                "Backticked Star Trailing",
+                "Backticked Plus Trailing"
+            ]
+        );
+        assert_eq!(delta.renamed.len(), 1);
+        assert_eq!(delta.renamed[0].from, "Alpha");
+        assert_eq!(delta.renamed[0].to, "Beta");
+    }
+
+    #[test]
+    fn parse_delta_warns_on_requirements_outside_delta_sections() {
+        let delta = parse_delta(
+            "### Requirement: Orphan Above\n\
+             ## Purpose\n\
+             ### Requirement: Orphan In Purpose\n\
+             ## ADDED Requirements\n\
+             ### Requirement: Valid\n\
+             The system SHALL pass.\n\
+             ## Notes\n\
+             ### Requirement: Orphan Below\n",
+        )
+        .unwrap();
+        assert_eq!(delta.added.len(), 1);
+        assert_eq!(delta.warnings.len(), 3);
+        assert!(delta.warnings[0].contains("Orphan Above"));
+        assert!(delta.warnings.contains(
+            &"line 3: requirement 'Orphan In Purpose' inside Purpose section will be ignored"
+                .to_string()
+        ));
+        assert!(delta.warnings[2].contains("Orphan Below"));
     }
 }

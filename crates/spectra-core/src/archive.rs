@@ -1180,7 +1180,7 @@ fn merge_spec_delta(
     dry_run: bool,
     retirement_declared: bool,
 ) -> Result<(Option<String>, SpecApplyResult, SpecTraceDelta)> {
-    let parsed = parse_requirement_delta(capability, delta)?;
+    let parsed = parse_requirement_delta(capability, delta, dry_run)?;
     let planned =
         parsed.added.len() + parsed.modified.len() + parsed.removed.len() + parsed.renamed.len();
     let mut result = SpecApplyResult {
@@ -1453,9 +1453,18 @@ fn openspectra_only(error: anyhow::Error) -> anyhow::Error {
     anyhow::Error::new(OpenSpectraOnlyRefusal(error))
 }
 
-fn parse_requirement_delta(capability: &str, delta: &str) -> Result<RequirementDelta> {
+fn parse_requirement_delta(
+    capability: &str,
+    delta: &str,
+    dry_run: bool,
+) -> Result<RequirementDelta> {
     let parsed = crate::markdown::parse_delta(delta)
         .map_err(|error| anyhow!("capability '{capability}': parsing delta: {error:#}"))?;
+    if !dry_run {
+        for warning in &parsed.warnings {
+            eprintln!("warning: capability '{capability}': {warning}");
+        }
+    }
 
     for (present, count, kind) in [
         (parsed.modified_present, parsed.modified.len(), "MODIFIED"),

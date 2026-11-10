@@ -318,6 +318,8 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 81 | #225 | 自訂 schema 缺 `apply.instruction`（或無 `apply` 區塊）時，`instructions apply --json` 輸出 `"instruction": null` 而非照 oracle 3.0.0 省略該 key | `225-apply-instruction-key-omitted` |
 | 82 | #217 | `read_umask` 單元測試在共用的 test runner 行程內直接呼叫 `read_umask()` 與 `libc::umask(0o057)`，`0o777`／`0o057` 窗口讓並行建檔測試建出 `0000`（讀回 `PermissionDenied`）或 `0620` 權限檔 | `217-umask-probe-runs-in-parent-process` |
 | 83 | #243 | FilePath anchor 抽取正規表示式缺少 `.tsx` 等副檔名，導致 `story-lab/src/App.tsx` 被前綴截斷為不存在的 `story-lab/src/App.ts` 並回報 Broken | `243-filepath-regex-truncates-tsx` |
+| 84 | #188 | `heading_text` 剝除結尾 `#` 時無前導空白檢查，導致 `Support C#` 標題被截斷為 `Support C` 並造成同 delta 內重複碰撞 | `188-c-sharp-heading-truncated` |
+| 85 | #188 | REMOVED delta 解析只認 `### Requirement:` 標題行，拒絕 bullet 形式的 `- ### Requirement:` 或 ``- `### Requirement:` `` | `188-removed-bullet-unrecognized` |
 
 ## 已退役的 case
 
