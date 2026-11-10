@@ -2839,3 +2839,14 @@ replace = '''    pub locale: String,
 package = "spectra-cli"
 target = ["--test", "custom_schema_integration"]
 test = "apply_instruction_is_optional"
+
+# #217：read_umask 探測若在父行程直接執行，0o777／0o057 窗口會洩漏給並行建檔執行緒
+
+[[case]]
+id = "217-umask-probe-runs-in-parent-process"
+issue = "#217"
+file = "crates/spectra-core/src/fsutil.rs"
+find = '        if std::env::var_os(READ_UMASK_PROBE_CHILD_ENV).is_none() {'
+replace = '        if false {'
+package = "spectra-core"
+test = "read_umask_probe_does_not_leak_0o777_or_probe_mask_to_sibling_threads"

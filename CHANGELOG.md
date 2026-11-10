@@ -10,6 +10,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-11-10
+
+### Fixed
+
+- Isolated `fsutil::tests::read_umask_reports_the_mask_actually_in_effect_and_restores_it`
+  in a single-test subprocess so its transient `0o777` / `0o057` `umask`
+  windows cannot leak into sibling unit-test threads creating files in parallel
+  (#217).
+
 ## [0.14.3] - 2026-11-10
 
 ### Changed
@@ -1100,7 +1109,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...HEAD
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.4...HEAD
+[0.14.4]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/heyu-ai/openspectra/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/heyu-ai/openspectra/compare/v0.14.0...v0.14.1
