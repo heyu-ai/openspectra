@@ -515,15 +515,15 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    /// umask 是 process 全域而 `cargo test` 平行執行：所有「修改 umask」或
-    /// 「斷言由預設路徑新建之檔案 mode」的測試都必須先取得這把鎖。它曾是
-    /// probe 測試內的 function-local static —— 其他測試根本無法命名它，註解
-    /// 「日後的測試也要拿這把鎖」的指示因此不可執行（PR #100 mob review，
-    /// Gemini；Codex 同項）。
+    /// umask 是 process 全域而 `cargo test` 平行執行：模組內的建檔測試與探測邏輯
+    /// 以這把鎖序列化（PR #100 mob review）。注意：module 層級的鎖擋不住其他模組
+    /// （如 `change::tests`）在同一 test binary 內的並行建檔，因此實際修改 umask
+    /// 的探測必須在獨立子行程內執行（見 `READ_UMASK_PROBE_CHILD_ENV`，#217）。
     ///
     /// 前一個測試 panic 導致鎖中毒時取回內部值繼續：這裡保護的是全域 umask，
     /// 不是資料不變量，中毒不代表狀態不可用。
     static UMASK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    const READ_UMASK_PROBE_CHILD_ENV: &str = "SPECTRA_READ_UMASK_PROBE_CHILD";
 
     struct TempDir(PathBuf);
 
@@ -597,12 +597,36 @@ mod tests {
         // 一次，測試無從讓它重讀，所以只能拿快取值跟環境比 —— 正是上面那個空的
         // 比對。
         //
-        // umask 是 process 全域，`cargo test` 平行執行，所以拿 module 層級的
-        // UMASK_LOCK 序列化（見其 doc）。沒拿鎖的並行測試若恰好在探測窗口內
-        // 建檔，`read_umask` 的暫態值是 0o777，建出來的檔案只會更窄不會更寬
-        // —— fail-closed（PR #100 mob review，Codex R2）。
-        let _guard = UMASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // umask 是 process 全域，而 `cargo test` 在同一個 process 內以多執行緒平行跑所有
+        // 單元測試：即便拿了 `UMASK_LOCK`，其他模組（如 `change::tests`）在 `read_umask()`
+        // 的 `0o777` 窗口或下方的 `0o057` 探測窗口內呼叫 `fs::write`，仍會建出 mode 0000
+        // （讀回時 PermissionDenied，#217）或 0620 的檔案。因此父行程只負責以環境變數啟動
+        // 單一測試的獨立子行程，真正的 `libc::umask` 探測只在該子行程內執行。
+        if std::env::var_os(READ_UMASK_PROBE_CHILD_ENV).is_none() {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "fsutil::tests::read_umask_reports_the_mask_actually_in_effect_and_restores_it",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(READ_UMASK_PROBE_CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "read_umask probe child failed:\nstdout:\n{stdout}\nstderr:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                stdout.contains("1 passed"),
+                "the read_umask probe child test did not run -- filter broken?\n{stdout}"
+            );
+            return;
+        }
 
+        let _guard = UMASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // 先把 `process_umask` 的 OnceLock 釘在環境值上，再安裝探測 mask：
         // 否則某個建檔測試若在 0o057 窗口內首次觸發快取，整個 test binary
         // 之後的 create-mode 斷言都吃到 0o057（PR #100 mob review）。
@@ -632,6 +656,73 @@ mod tests {
             PROBE,
             "read_umask must leave the process mask exactly as it found it"
         );
+    }
+
+    #[test]
+    fn read_umask_probe_does_not_leak_0o777_or_probe_mask_to_sibling_threads() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+
+        let expected_mode = create_mode(process_umask());
+        let tmp = TempDir::new();
+        let stop = Arc::new(AtomicBool::new(false));
+        let finished_writers = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(5));
+
+        std::thread::scope(|s| {
+            let mut writers = Vec::new();
+            for worker in 0..4usize {
+                let dir = tmp.join(format!("w{worker}"));
+                fs::create_dir_all(&dir).unwrap();
+                let stop = Arc::clone(&stop);
+                let barrier = Arc::clone(&barrier);
+                let finished_writers = Arc::clone(&finished_writers);
+                writers.push(s.spawn(move || {
+                    barrier.wait();
+                    let mut i = 0usize;
+                    while !stop.load(Ordering::Acquire) && i < 200 {
+                        let path = dir.join(format!("f-{i}.txt"));
+                        fs::write(&path, "payload").unwrap();
+                        let content = fs::read_to_string(&path).unwrap_or_else(|e| {
+                            stop.store(true, Ordering::Release);
+                            let mode = fs::metadata(&path)
+                                .map(|m| m.permissions().mode() & 0o777)
+                                .unwrap_or(0o777);
+                            panic!(
+                                "sibling thread failed to read back freshly written file \
+                                 (mode {mode:04o}, expected {expected_mode:04o}): {e}"
+                            )
+                        });
+                        assert_eq!(content, "payload");
+                        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+                        if mode != expected_mode {
+                            stop.store(true, Ordering::Release);
+                            panic!(
+                                "sibling thread observed leaked umask on freshly created file: \
+                                 got mode {mode:04o}, expected {expected_mode:04o}"
+                            );
+                        }
+                        let _ = fs::remove_file(&path);
+                        i += 1;
+                    }
+                    finished_writers.fetch_add(1, Ordering::Release);
+                }));
+            }
+
+            barrier.wait();
+            for _ in 0..5_000 {
+                read_umask_reports_the_mask_actually_in_effect_and_restores_it();
+                if stop.load(Ordering::Acquire) || finished_writers.load(Ordering::Acquire) == 4 {
+                    break;
+                }
+            }
+            stop.store(true, Ordering::Release);
+
+            for writer in writers {
+                writer.join().unwrap();
+            }
+        });
     }
 
     #[test]

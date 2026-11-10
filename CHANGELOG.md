@@ -10,6 +10,13 @@ changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Isolated `fsutil::tests::read_umask_reports_the_mask_actually_in_effect_and_restores_it`
+  in a single-test subprocess so its transient `0o777` / `0o057` `umask`
+  windows cannot leak into sibling unit-test threads creating files in parallel
+  (#217).
+
 ## [0.14.3] - 2026-11-10
 
 ### Changed
