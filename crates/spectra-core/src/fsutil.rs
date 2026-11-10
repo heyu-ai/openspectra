@@ -623,9 +623,22 @@ mod tests {
                 stdout.contains("1 passed"),
                 "the read_umask probe child test did not run -- filter broken?\n{stdout}"
             );
+            let child_pid = stdout
+                .lines()
+                .find_map(|line| {
+                    line.split_once("PROBE_PID:")
+                        .and_then(|(_, rest)| rest.trim().parse::<u32>().ok())
+                })
+                .expect("probe child must emit PROBE_PID:<pid>");
+            assert_ne!(
+                child_pid,
+                std::process::id(),
+                "the probe must execute in an external child process"
+            );
             return;
         }
 
+        println!("PROBE_PID:{}", std::process::id());
         let _guard = UMASK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // 先把 `process_umask` 的 OnceLock 釘在環境值上，再安裝探測 mask：
         // 否則某個建檔測試若在 0o057 窗口內首次觸發快取，整個 test binary
@@ -681,7 +694,7 @@ mod tests {
                 writers.push(s.spawn(move || {
                     barrier.wait();
                     let mut i = 0usize;
-                    while !stop.load(Ordering::Acquire) && i < 200 {
+                    while (i < 50 || !stop.load(Ordering::Acquire)) && i < 200 {
                         let path = dir.join(format!("f-{i}.txt"));
                         fs::write(&path, "payload").unwrap();
                         let content = fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -706,6 +719,7 @@ mod tests {
                         let _ = fs::remove_file(&path);
                         i += 1;
                     }
+                    assert!(i >= 50, "writer performed fewer than 50 writes: {i}");
                     finished_writers.fetch_add(1, Ordering::Release);
                 }));
             }
