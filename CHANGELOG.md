@@ -9,6 +9,20 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+### Fixed
+
+- `archive` now preserves trailing `#` characters in requirement names that
+  are not preceded by whitespace (e.g. `Support C#`), aligning with CommonMark
+  and preventing false-positive duplicate collisions (#188).
+- `archive` delta parsing now accepts bullet-formatted REMOVED requirements
+  (`- ### Requirement:`, `* ### Requirement:`, `+ ### Requirement:`, and
+  backticked variants) and `+` bullet RENAMED pairs (#188).
+- `archive` delta parsing now emits warnings when requirements appear outside
+  delta sections (such as under `## Notes` or before the first section)
+  instead of silently discarding them (#188).
+- Documented in `update.md` that oracle 3.0.0 deletes unowned files under
+  `.claude/commands/spectra/`, while OpenSpectra intentionally leaves them
+  untouched (#188, #189 D5).
 
 ## [0.14.5] - 2026-11-10
 ### Fixed

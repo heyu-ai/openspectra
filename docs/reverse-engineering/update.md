@@ -111,7 +111,10 @@ file set on every run** (probed via mtime: all managed files get a fresh
 mtime even when content is unchanged; content is idempotent **except for the
 orphan-START shape** — see "Replacement region" below).
 Missing files are recreated; files the tool set doesn't own (e.g. a user's
-own `.claude/skills/my-own/`) are never touched or deleted.
+own `.claude/skills/my-own/`) are never touched or deleted in OpenSpectra (oracle
+3.0.0 deletes the whole `.claude/commands/spectra/` directory and
+`.cursor/commands/spectra-*`; OpenSpectra intentionally does not delete unowned
+files, recorded as a deliberate divergence in #189 D5).
 
 Three per-file strategies exist. **Every marker-shaped template's strategy is
 probed, not inferred**: `capture-update-templates.py` seeds a sandbox, appends a

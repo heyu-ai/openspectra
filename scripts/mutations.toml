@@ -2861,3 +2861,25 @@ find = '    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?
 replace = '    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")'
 package = "spectra-core"
 test = "file_paths_preserve_modern_web_extensions_without_truncation"
+
+# #188：heading_text 剝除結尾 # 時若未驗證前導空白，會把 C# 截斷為 C
+
+[[case]]
+id = "188-c-sharp-heading-truncated"
+issue = "#188"
+file = "crates/spectra-core/src/markdown.rs"
+find = '    Some(strip_closing_hashes(trimmed[hashes..].trim_start()))'
+replace = '    Some(trimmed[hashes..].trim().trim_end_matches("#").trim_end())'
+package = "spectra-core"
+test = "heading_text_preserves_c_sharp_and_strips_commonmark_closing_hashes"
+
+# #188：REMOVED delta 若未支援 bullet 格式，會拒絕 - ### 寫法
+
+[[case]]
+id = "188-removed-bullet-unrecognized"
+issue = "#188"
+file = "crates/spectra-core/src/markdown.rs"
+find = '                    if let Some(name) = parse_removed_requirement(lines[index]) {'
+replace = '                    if let Some(name) = requirement_name(lines[index]) {'
+package = "spectra-core"
+test = "removed_and_renamed_accept_bullet_formats"

@@ -2214,6 +2214,28 @@ mod tests {
         assert!(result.issues.is_empty(), "got: {:?}", result.issues);
     }
 
+    #[test]
+    fn task_numbering_recognizes_marker_variants_and_ordered_lists() {
+        let tmp = TempDir::new();
+        let c = cfg(&tmp);
+        write_delta(&c, "feat", "auth", GOOD_ADDED);
+        fs::write(
+            c.changes_dir().join("feat/tasks.md"),
+            "## 1. Group\n\
+             + [ ] 1.1 plus bullet\n\
+             1. [x] 1.2 ordered dot\n\
+             2) [~] 1.3 ordered paren with tilde\n\
+             - [X] 1.4 upper x\n\
+             ## 2. Second Group\n\
+             * [ ] 2.1 star bullet\n",
+        )
+        .unwrap();
+
+        let strict = validate_change(&c, "feat", true).unwrap();
+        assert!(strict.valid, "got: {:?}", strict.issues);
+        assert!(strict.issues.iter().all(|issue| issue.level != "ERROR"));
+    }
+
     /// archive 先套 RENAMED 再套 MODIFIED：MODIFIED 用串接 rename 後的新名字時，
     /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:611-628）。
     #[test]
