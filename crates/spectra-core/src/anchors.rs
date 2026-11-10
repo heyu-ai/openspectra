@@ -82,7 +82,7 @@ pub struct Resolution {
 /// this is a faithful port of an oracle defect, not a porting error. On the
 /// reporting corpus all six surviving broken anchors were this false positive.
 ///
-/// Three extraction corrections:
+/// Four extraction corrections:
 /// * the `(?:[\w.-]+/)*` head captures leading path segments, so a monorepo
 ///   sub-project path is reported verbatim;
 /// * `starts_at_path_boundary` rejects a match that begins mid-token, so
@@ -537,11 +537,17 @@ mod tests {
     /// must not be truncated to .ts or .js by prefix matching. In particular,
     /// `story-lab/src/App.tsx` must anchor as `story-lab/src/App.tsx`, not
     /// phantom `story-lab/src/App.ts` which fails resolution.
+    ///
+    /// The trailing `\b` word-boundary check must also prevent unlisted
+    /// extensions whose prefix matches a listed extension (e.g. `.json` starting
+    /// with `.js`, `.mdx` starting with `.md`) from producing truncated phantom
+    /// anchors like `src/config.js` or `docs/guide.md`.
     #[test]
     fn file_paths_preserve_modern_web_extensions_without_truncation() {
-        let d = "see `story-lab/src/App.tsx`, `frontend/src/Button.jsx`, `src/index.js`, `src/utils.mts`, and `src/common.cts`";
+        let d = "see `story-lab/src/App.tsx`, `frontend/src/Button.jsx`, `src/index.js`, `src/utils.mts`, and `src/common.cts`, plus unlisted `src/config.json` and `docs/guide.mdx`";
+        let fps = kinds(d, AnchorKind::FilePath);
         assert_eq!(
-            kinds(d, AnchorKind::FilePath),
+            fps,
             vec![
                 "frontend/src/Button.jsx",
                 "src/common.cts",
@@ -549,6 +555,14 @@ mod tests {
                 "src/utils.mts",
                 "story-lab/src/App.tsx",
             ]
+        );
+        assert!(
+            !fps.contains(&"src/config.js".to_string()),
+            "src/config.json must not be truncated to phantom src/config.js"
+        );
+        assert!(
+            !fps.contains(&"docs/guide.md".to_string()),
+            "docs/guide.mdx must not be truncated to phantom docs/guide.md"
         );
     }
 
@@ -812,6 +826,23 @@ mod tests {
             resolution.broken.is_empty(),
             "monorepo-relative path must resolve via the oracle truncation, got {:?}",
             resolution.broken
+        );
+
+        // #243: 現代副檔名（.tsx）在 path_candidates 透過 ORACLE_FILE_PATH_RE
+        // 生成截斷候選路徑 src/App.tsx 並成功解析。
+        let tracked_tsx: HashSet<String> = ["src/App.tsx".to_string()].into();
+        let resolver_tsx = Resolver {
+            root: &dir,
+            tracked: &tracked_tsx,
+            baseline_sha: None,
+        };
+
+        let res_tsx = resolver_tsx.resolve(&extract("see `story-lab/src/App.tsx`"));
+
+        assert!(
+            res_tsx.broken.is_empty(),
+            "monorepo-relative modern extension path must resolve via oracle truncation, got {:?}",
+            res_tsx.broken
         );
     }
 
