@@ -9,6 +9,8 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+
+## [0.14.5] - 2026-11-10
 ### Fixed
 
 - `spectra drift` now extracts FilePath anchors with full modern TS/JS
@@ -1116,7 +1118,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.4...HEAD
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.5...HEAD
+[0.14.5]: https://github.com/heyu-ai/openspectra/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/heyu-ai/openspectra/compare/v0.14.1...v0.14.2
