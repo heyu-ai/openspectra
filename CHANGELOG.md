@@ -10,6 +10,8 @@ changes.
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-11-10
+
 ### Changed
 
 - Updated CLI `--help` descriptions (`archive`, `init`, `schemas`, `templates`,
@@ -17,6 +19,13 @@ changes.
   `task`, `schema`, `new change`, `trace migrate`, and `completion`),
   `README.md` command surface / `archive` flags / `drift` Tasks collision
   status / release tag examples, and `CHANGELOG.md` release comparison links.
+
+### Fixed
+
+- `instructions apply --json` (including `--compact`) now omits the
+  `instruction` key when a custom schema has no `apply.instruction` (or no
+  `apply` section), matching the v3.0.0 oracle's raw JSON bytes instead of
+  serializing `"instruction": null` (#225).
 
 ## [0.14.2] - 2026-11-03
 
@@ -1091,7 +1100,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...HEAD
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...HEAD
+[0.14.3]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...v0.14.3
 [0.14.2]: https://github.com/heyu-ai/openspectra/compare/v0.14.1...v0.14.2
 [0.14.1]: https://github.com/heyu-ai/openspectra/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/heyu-ai/openspectra/compare/v0.13.0...v0.14.0

@@ -697,7 +697,7 @@ pub struct ResolvedSchema {
     pub artifacts: Vec<ResolvedArtifact>,
     pub artifact_order: Vec<String>,
     pub apply_requires: Vec<String>,
-    /// `apply.instruction`；schema.yaml 可省略（oracle 3.0.0 接受並輸出 `null`，探測 p33）。
+    /// `apply.instruction`；schema.yaml 可省略（oracle 3.0.0 接受並在 JSON 省略該 key，W7g 探測 q03／#225）。
     pub apply_instruction: Option<String>,
     /// `apply.tracks`：apply 模式讀 task 的檔案（相對 change 目錄）。沒有時 apply 不計 task、
     /// 只要 required artifact 齊全就是 `ready`（oracle 3.0.0，探測 p37／p38）。

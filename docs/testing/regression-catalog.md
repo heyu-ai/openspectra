@@ -315,6 +315,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 78 | #184 / PR #240 AC-3 | 第一個 Requirements 區段清空、後續區段仍有 requirement 時誤拒絕 archive；另鎖住 `--no-validate` 不得授權刪除真正清空的 capability | `184-retirement-first-section-only`<br>`184-retirement-ignores-no-validate` |
 | 79 | #235 / PR #242 | `show` 的 spec lookup 接受絕對路徑與 `..` 元件，可讀出 `specs/` 以外的 Markdown | `235-show-absolute-path`<br>`235-show-parent-component` |
 | 80 | #227 | typed missing item 未回 OpenSpec envelope；archived 計數／措辭／順序不同；非 ASCII 以 code point 排序 | `227-typed-change-membership-gate`<br>`227-typed-spec-membership-gate`<br>`227-typed-name-check-skipped`<br>`227-archived-oracle-task-parser`<br>`227-archived-message`<br>`227-archived-locale-order`<br>`227-non-ascii-byte-fallback`<br>`227-collation-wrong-locale`<br>`227-collation-breaks-canonical-ties`<br>`227-task-javascript-whitespace`<br>`227-task-utf16-marker-width` |
+| 81 | #225 | 自訂 schema 缺 `apply.instruction`（或無 `apply` 區塊）時，`instructions apply --json` 輸出 `"instruction": null` 而非照 oracle 3.0.0 省略該 key | `225-apply-instruction-key-omitted` |
 
 ## 已退役的 case
 

@@ -2005,9 +2005,15 @@ test = "apply_without_an_apply_section_requires_every_artifact"
 id = "w7g-instruction-key-omitted"
 issue = "W7g"
 file = "crates/spectra-core/src/instructions.rs"
-find = '''    #[serde(skip_serializing_if = "Option::is_none")]
+find = '''    pub description: String,
+    /// schema 沒有這個 artifact 的 instruction 時整個 key 省略（oracle 3.0.0，W7g 探測
+    /// q03 的原始 bytes；p06 用 `dict.get` 看到的 `None` 分不出 null 與缺席）。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,'''
-replace = '''    pub instruction: Option<String>,'''
+replace = '''    pub description: String,
+    /// schema 沒有這個 artifact 的 instruction 時整個 key 省略（oracle 3.0.0，W7g 探測
+    /// q03 的原始 bytes；p06 用 `dict.get` 看到的 `None` 分不出 null 與缺席）。
+    pub instruction: Option<String>,'''
 package = "spectra-cli"
 target = ["--test", "custom_schema_integration"]
 test = "instructions_omit_a_missing_artifact_instruction"
@@ -2814,3 +2820,22 @@ replace = '            if false {'
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+# #225：schema 沒有 apply instruction（或沒有 apply 區塊）時，instructions apply --json 省略 instruction key
+
+[[case]]
+id = "225-apply-instruction-key-omitted"
+issue = "#225"
+file = "crates/spectra-core/src/instructions.rs"
+find = '''    pub locale: String,
+    /// schema 沒有 apply instruction 時整個 key 省略（oracle 3.0.0，W7g 探測 q03 與 #225
+    /// 原始 bytes；p33 用 `dict.get` 看到的 `None` 分不出 null 與缺席）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,'''
+replace = '''    pub locale: String,
+    /// schema 沒有 apply instruction 時整個 key 省略（oracle 3.0.0，W7g 探測 q03 與 #225
+    /// 原始 bytes；p33 用 `dict.get` 看到的 `None` 分不出 null 與缺席）。
+    pub instruction: Option<String>,'''
+package = "spectra-cli"
+target = ["--test", "custom_schema_integration"]
+test = "apply_instruction_is_optional"
