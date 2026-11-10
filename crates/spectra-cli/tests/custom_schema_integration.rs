@@ -362,14 +362,25 @@ fn apply_instruction_is_optional() {
     let dir = TempDir::new("custom-schema-no-apply-instruction");
     init_project_with_order_schema(&dir);
     std::fs::write(dir.join("openspec/changes/c/a.md"), "# a\n").unwrap();
-    let json = spectra()
-        .args(["instructions", "apply", "--change", "c", "--json"])
-        .current_dir(&*dir)
-        .output()
-        .unwrap();
-    assert!(json.status.success(), "{json:?}");
-    let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert!(!v.as_object().unwrap().contains_key("instruction"), "{v}");
+    for args in [
+        &["instructions", "apply", "--change", "c", "--json"][..],
+        &[
+            "instructions",
+            "apply",
+            "--change",
+            "c",
+            "--compact",
+            "--json",
+        ][..],
+    ] {
+        let json = spectra().args(args).current_dir(&*dir).output().unwrap();
+        assert!(json.status.success(), "{args:?}: {json:?}");
+        let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+        assert!(
+            !v.as_object().unwrap().contains_key("instruction"),
+            "{args:?}: {v}"
+        );
+    }
 
     let human = spectra()
         .args(["instructions", "apply", "--change", "c"])
@@ -553,13 +564,21 @@ fn apply_without_an_apply_section_requires_every_artifact() {
         stdout_of(&root, &["instructions", "apply", "--change", "c1", "--no-color"]),
         "Change: c1\nSchema: m\nState: blocked\nProgress: 0/0 complete\n\nMissing artifacts:\n  - a\n  - b\n"
     );
-    let json: serde_json::Value = serde_json::from_str(&stdout_of(
-        &root,
-        &["instructions", "apply", "--change", "c1", "--json"],
-    ))
-    .unwrap();
-    assert!(
-        !json.as_object().unwrap().contains_key("instruction"),
-        "{json}"
-    );
+    for args in [
+        &["instructions", "apply", "--change", "c1", "--json"][..],
+        &[
+            "instructions",
+            "apply",
+            "--change",
+            "c1",
+            "--compact",
+            "--json",
+        ][..],
+    ] {
+        let v: serde_json::Value = serde_json::from_str(&stdout_of(&root, args)).unwrap();
+        assert!(
+            !v.as_object().unwrap().contains_key("instruction"),
+            "{args:?}: {v}"
+        );
+    }
 }
