@@ -541,6 +541,29 @@ be classified as a forward reference; `change::create` writes
 `.spectra/changes/<name>.started` whenever the project root is a git repo, so
 this holds for changes created through `spectra` and not for hand-made ones.
 
+### FilePath anchors preserve full extensions without truncation (#243 Shape B)
+
+The recovered `.rodata` FilePath regex specifies `\.(?:rs|ts|svelte|md|toml)`.
+Because it lacks modern JS/TS web extensions (`.tsx`, `.jsx`, `.mts`, `.cts`,
+`.js`), a design citing `story-lab/src/App.tsx` has its extension prefix-matched
+by `ts`, producing the anchor `story-lab/src/App.ts`. When `story-lab/src/App.tsx`
+exists on disk and `story-lab/src/App.ts` does not, `drift` reports
+`story-lab/src/App.ts (FilePath: file does not exist)` — a false positive for a
+file path string that appears nowhere in the design.
+
+**This defect is confirmed present in oracle 3.0.0** (probed 2026-11-10 on
+Apple Silicon, single jail: with `story-lab/src/App.tsx` tracked in git and cited
+in `design.md`, oracle 3.0.0 reports `src/App.ts (FilePath: file does not exist)`).
+As with #123, this is a defect in the oracle's extraction pattern rather than a
+porting error.
+
+Maintainer-approved direction (2026-11-10): deliberately diverge by widening the
+extension alternation to `(?:rs|tsx|ts|jsx|js|mts|cts|svelte|md|toml)\b`,
+placing longer extension forms before their shorter prefixes (`tsx` before `ts`,
+`jsx` before `js`) and appending a word-boundary check `\b`. This ensures
+`story-lab/src/App.tsx` is extracted verbatim as `story-lab/src/App.tsx` and
+resolves cleanly against the tracked file.
+
 ## What is verified vs. uncertain
 
 | Area | Status |
