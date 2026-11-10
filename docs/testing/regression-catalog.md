@@ -317,6 +317,7 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 80 | #227 | typed missing item 未回 OpenSpec envelope；archived 計數／措辭／順序不同；非 ASCII 以 code point 排序 | `227-typed-change-membership-gate`<br>`227-typed-spec-membership-gate`<br>`227-typed-name-check-skipped`<br>`227-archived-oracle-task-parser`<br>`227-archived-message`<br>`227-archived-locale-order`<br>`227-non-ascii-byte-fallback`<br>`227-collation-wrong-locale`<br>`227-collation-breaks-canonical-ties`<br>`227-task-javascript-whitespace`<br>`227-task-utf16-marker-width` |
 | 81 | #225 | 自訂 schema 缺 `apply.instruction`（或無 `apply` 區塊）時，`instructions apply --json` 輸出 `"instruction": null` 而非照 oracle 3.0.0 省略該 key | `225-apply-instruction-key-omitted` |
 | 82 | #217 | `read_umask` 單元測試在共用的 test runner 行程內直接呼叫 `read_umask()` 與 `libc::umask(0o057)`，`0o777`／`0o057` 窗口讓並行建檔測試建出 `0000`（讀回 `PermissionDenied`）或 `0620` 權限檔 | `217-umask-probe-runs-in-parent-process` |
+| 83 | #243 | FilePath anchor 抽取正規表示式缺少 `.tsx` 等副檔名，導致 `story-lab/src/App.tsx` 被前綴截斷為不存在的 `story-lab/src/App.ts` 並回報 Broken | `243-filepath-regex-truncates-tsx` |
 
 ## 已退役的 case
 

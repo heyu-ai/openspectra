@@ -71,7 +71,7 @@ pub struct Resolution {
 // --- recovered regexes -------------------------------------------------------
 /// FilePath candidates.
 ///
-/// DELIBERATE DIVERGENCE (#123). The recovered `.rodata` regex is the
+/// DELIBERATE DIVERGENCE (#123, #243 Shape B). The recovered `.rodata` regex is the
 /// `(?:src-tauri|src|crates|docs)/…` part alone, with no left boundary, so it
 /// matches from the middle of a longer path: the oracle turns
 /// `frontend/src/services/apiClient.ts` into the anchor
@@ -88,13 +88,17 @@ pub struct Resolution {
 /// * `starts_at_path_boundary` rejects a match that begins mid-token, so
 ///   `mysrc/foo.rs` yields no anchor instead of a phantom `src/foo.rs`;
 /// * `escapes_project_root` drops a path with a `..` segment, which the head
-///   would otherwise let resolve against a file outside the project.
+///   would otherwise let resolve against a file outside the project;
+/// * the extension alternation includes modern JS/TS extensions (`tsx`, `jsx`,
+///   `js`, `mts`, `cts`) with longer forms preceding shorter prefixes (`tsx` before
+///   `ts`, `jsx` before `js`) and a word-boundary check, preventing
+///   `story-lab/src/App.tsx` from being truncated to phantom `src/App.ts` (#243).
 ///
 /// Together they make every reported FilePath anchor greppable verbatim in the
 /// source design, which is what makes the finding actionable. Resolution is
 /// separately widened — see `path_candidates`.
 static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")
+    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|tsx|ts|jsx|js|mts|cts|svelte|md|toml)\b")
         .unwrap()
 });
 
@@ -104,7 +108,10 @@ static FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
 /// (see `path_candidates`), which is what stops the #123 divergence from
 /// regressing a project rooted at its own sub-project.
 static ORACLE_FILE_PATH_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)").unwrap()
+    Regex::new(
+        r"(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|tsx|ts|jsx|js|mts|cts|svelte|md|toml)\b",
+    )
+    .unwrap()
 });
 
 /// On-disk forms to try for a FilePath anchor: the path as written, plus the
@@ -524,6 +531,25 @@ mod tests {
             vec!["docs/a.md", "src-tauri/x.ts", "src/foo/bar.rs"]
         );
         // backend/x.py is NOT matched: the recovered regex is Rust/TS-stack only.
+    }
+
+    /// #243 Shape B: modern TS/JS extensions (.tsx, .jsx, .mts, .cts, .js)
+    /// must not be truncated to .ts or .js by prefix matching. In particular,
+    /// `story-lab/src/App.tsx` must anchor as `story-lab/src/App.tsx`, not
+    /// phantom `story-lab/src/App.ts` which fails resolution.
+    #[test]
+    fn file_paths_preserve_modern_web_extensions_without_truncation() {
+        let d = "see `story-lab/src/App.tsx`, `frontend/src/Button.jsx`, `src/index.js`, `src/utils.mts`, and `src/common.cts`";
+        assert_eq!(
+            kinds(d, AnchorKind::FilePath),
+            vec![
+                "frontend/src/Button.jsx",
+                "src/common.cts",
+                "src/index.js",
+                "src/utils.mts",
+                "story-lab/src/App.tsx",
+            ]
+        );
     }
 
     #[test]

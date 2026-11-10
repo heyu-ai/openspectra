@@ -9,6 +9,13 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+### Fixed
+
+- `spectra drift` now extracts FilePath anchors with full modern TS/JS
+  extensions (`.tsx`, `.jsx`, `.js`, `.mts`, `.cts`) and a word-boundary check,
+  preventing paths like `story-lab/src/App.tsx` from being truncated into
+  phantom `.ts` anchors that trigger false-positive Broken reports
+  (#243 Shape B).
 
 ## [0.14.4] - 2026-11-10
 

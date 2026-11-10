@@ -2850,3 +2850,14 @@ find = '        if std::env::var_os(READ_UMASK_PROBE_CHILD_ENV).is_none() {'
 replace = '        if false {'
 package = "spectra-core"
 test = "read_umask_probe_does_not_leak_0o777_or_probe_mask_to_sibling_threads"
+
+# #243 Shape B：FilePath 副檔名若未納入 .tsx，會被正規表示式截斷成 .ts
+
+[[case]]
+id = "243-filepath-regex-truncates-tsx"
+issue = "#243"
+file = "crates/spectra-core/src/anchors.rs"
+find = '    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|tsx|ts|jsx|js|mts|cts|svelte|md|toml)\b")'
+replace = '    Regex::new(r"(?:[\w.-]+/)*(?:src-tauri|src|crates|docs)/[\w./-]+\.(?:rs|ts|svelte|md|toml)")'
+package = "spectra-core"
+test = "file_paths_preserve_modern_web_extensions_without_truncation"
