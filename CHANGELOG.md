@@ -18,6 +18,13 @@ changes.
   `README.md` command surface / `archive` flags / `drift` Tasks collision
   status / release tag examples, and `CHANGELOG.md` release comparison links.
 
+### Fixed
+
+- `instructions apply --json` (including `--compact`) now omits the
+  `instruction` key when a custom schema has no `apply.instruction` (or no
+  `apply` section), matching the v3.0.0 oracle's raw JSON bytes instead of
+  serializing `"instruction": null` (#225).
+
 ## [0.14.2] - 2026-11-03
 
 ### Added

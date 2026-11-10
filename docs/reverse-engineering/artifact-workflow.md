@@ -202,14 +202,14 @@ loudly on non-force creates — not a real scenario for a git-hosted
 Two modes. **Artifact mode** (explicit artifact, or — with no argument —
 the first not-done artifact in schema order): pretty camelCase JSON
 `{changeName, artifactId, schemaName, changeDir, outputPath, description,
-instruction, context?, rules?, locale, template,
+instruction?, context?, rules?, locale, template,
 dependencies[{id,done,path,description}],
 unlocks}`. `unlocks` lists only direct dependents that are currently blocked
 on this artifact (both sides not-done). **Apply mode** (no argument with all
 four artifacts done, or the literal `apply`): `{changeName, changeDir,
 schemaName, contextFiles, progress{total,complete,remaining},
 tasks[{id,description,done,parallel}], state, missingArtifacts?, locale,
-instruction, preflight?}`.
+instruction?, preflight?}`.
 
 - Apply uses the loose checkbox parser `^\s*[-*+]\s*\[(.)\]\s*(.+)$`
   (shared with `task done`/`list`/`drift` since #172, see `task.md`):

@@ -355,8 +355,8 @@ fn status_orders_custom_artifacts_like_the_oracle() {
     );
 }
 
-/// oracle 3.0.0：`apply.instruction` 可省略——JSON 的 `instruction` 為 null，human 輸出在
-/// `Progress` 行後結束（探測 p33）。
+/// oracle 3.0.0：`apply.instruction` 可省略——JSON 省略 `instruction` key（W7g 探測 q03 原始
+/// bytes；p33 用 `dict.get` 看到的 `None` 分不出 null 與缺席），human 輸出在 `Progress` 行後結束。
 #[test]
 fn apply_instruction_is_optional() {
     let dir = TempDir::new("custom-schema-no-apply-instruction");
@@ -369,7 +369,7 @@ fn apply_instruction_is_optional() {
         .unwrap();
     assert!(json.status.success(), "{json:?}");
     let v: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
-    assert_eq!(v["instruction"], serde_json::Value::Null);
+    assert!(!v.as_object().unwrap().contains_key("instruction"), "{v}");
 
     let human = spectra()
         .args(["instructions", "apply", "--change", "c"])
@@ -552,5 +552,14 @@ fn apply_without_an_apply_section_requires_every_artifact() {
     assert_eq!(
         stdout_of(&root, &["instructions", "apply", "--change", "c1", "--no-color"]),
         "Change: c1\nSchema: m\nState: blocked\nProgress: 0/0 complete\n\nMissing artifacts:\n  - a\n  - b\n"
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout_of(
+        &root,
+        &["instructions", "apply", "--change", "c1", "--json"],
+    ))
+    .unwrap();
+    assert!(
+        !json.as_object().unwrap().contains_key("instruction"),
+        "{json}"
     );
 }

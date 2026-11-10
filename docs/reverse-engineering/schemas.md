@@ -365,10 +365,12 @@ instructions, and templates. The resolution order is unchanged:
 - `schemas/<name>/schema.yaml` exists → loaded and used (the `name:` field
   from the YAML becomes the schema name shown by `status`).
 
-`apply.instruction` is optional (oracle 3.0.0, probe p33): a schema without
-it passes `schema validate`, `instructions apply --json` reports
-`"instruction": null`, and the human output ends right after the `Progress:`
-line (no blank line, no `Instruction:` block). OpenSpectra used to reject such a
+`apply.instruction` is optional (oracle 3.0.0, probe p33; raw bytes confirmed
+by W7g probe q03 and #225): a schema without it passes `schema validate`,
+`instructions apply --json` omits the `instruction` key (p33's `dict.get`
+returned `None`, which could not tell `null` from an omitted key), and the
+human output ends right after the `Progress:` line (no blank line, no
+`Instruction:` block). OpenSpectra used to reject such a
 schema with a parse error on every command.
 
 **`apply.tracks` (oracle 3.0.0, W7f, probes p36–p39).** Apply mode reads its

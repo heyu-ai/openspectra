@@ -351,7 +351,9 @@ pub struct ApplyInstructions {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub missing_artifacts: Vec<String>,
     pub locale: String,
-    /// schema 沒有 apply instruction 時為 `null`（oracle 3.0.0，探測 p33）。
+    /// schema 沒有 apply instruction 時整個 key 省略（oracle 3.0.0，W7g 探測 q03 與 #225
+    /// 原始 bytes；p33 用 `dict.get` 看到的 `None` 分不出 null 與缺席）。
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub instruction: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preflight: Option<Preflight>,

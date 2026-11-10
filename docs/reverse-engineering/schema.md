@@ -166,10 +166,10 @@ Found by probe q03 against the same fixtures, not changed here:
 - `status --json` for a project schema adds `isPlanningComplete` and a
   `requires` array per artifact that the oracle does not print (every custom
   schema, including the valid control).
-- `instructions apply --json` prints `"instruction": null` when the schema has
-  no apply instruction (or no `apply`); the oracle omits the key. The existing
-  test `apply_instruction_is_optional` indexes `value["instruction"]`, which
-  cannot tell the two apart.
+- ~~`instructions apply --json` prints `"instruction": null` when the schema has
+  no apply instruction (or no `apply`); the oracle omits the key.~~ — fixed in
+  #225: `ApplyInstructions.instruction` now omits the key when `None`, and
+  `apply_instruction_is_optional` asserts key absence.
 - ~~`schemas` still skips a project schema that fails to load~~ — fixed in
   #226: `schemas` now lists it whenever `schema.yaml` exists, with leniently
   read `artifacts`, as the oracle does. See `schemas.md` "Schemas that fail to
