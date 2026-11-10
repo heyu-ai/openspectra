@@ -303,7 +303,7 @@ fn parse_removed_requirement(line: &str) -> Option<String> {
     if let Some(name) = requirement_name(line) {
         return Some(name);
     }
-    let trimmed = line.trim_start();
+    let trimmed = line.trim();
     let item = trimmed.strip_prefix(['-', '*', '+'])?.trim_start();
     let raw = if let Some(stripped) = item.strip_prefix('`') {
         stripped.strip_suffix('`')?
@@ -910,6 +910,9 @@ mod tests {
              * ### Requirement: Bullet Star\n\
              + ### Requirement: Bullet Plus\n\
              - `### Requirement: Backticked Hyphen`\n\
+             - `### Requirement: Backticked Hyphen Trailing`   \n\
+             * `### Requirement: Backticked Star Trailing`  \n\
+             + `### Requirement: Backticked Plus Trailing` \t \n\
              ## RENAMED Requirements\n\
              + FROM: `### Requirement: Alpha`\n\
              + TO: `### Requirement: Beta`\n",
@@ -921,7 +924,10 @@ mod tests {
                 "Bullet Hyphen",
                 "Bullet Star",
                 "Bullet Plus",
-                "Backticked Hyphen"
+                "Backticked Hyphen",
+                "Backticked Hyphen Trailing",
+                "Backticked Star Trailing",
+                "Backticked Plus Trailing"
             ]
         );
         assert_eq!(delta.renamed.len(), 1);
@@ -933,6 +939,8 @@ mod tests {
     fn parse_delta_warns_on_requirements_outside_delta_sections() {
         let delta = parse_delta(
             "### Requirement: Orphan Above\n\
+             ## Purpose\n\
+             ### Requirement: Orphan In Purpose\n\
              ## ADDED Requirements\n\
              ### Requirement: Valid\n\
              The system SHALL pass.\n\
@@ -941,8 +949,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(delta.added.len(), 1);
-        assert_eq!(delta.warnings.len(), 2);
+        assert_eq!(delta.warnings.len(), 3);
         assert!(delta.warnings[0].contains("Orphan Above"));
-        assert!(delta.warnings[1].contains("Orphan Below"));
+        assert!(delta.warnings.contains(
+            &"line 3: requirement 'Orphan In Purpose' inside Purpose section will be ignored"
+                .to_string()
+        ));
+        assert!(delta.warnings[2].contains("Orphan Below"));
     }
 }
