@@ -9,6 +9,8 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+
+## [0.14.6] - 2026-11-11
 ### Fixed
 
 - `archive` now preserves trailing `#` characters in requirement names that
@@ -1146,7 +1148,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.5...HEAD
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.6...HEAD
+[0.14.6]: https://github.com/heyu-ai/openspectra/compare/v0.14.5...v0.14.6
 [0.14.5]: https://github.com/heyu-ai/openspectra/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...v0.14.3
