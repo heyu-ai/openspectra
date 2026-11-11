@@ -550,10 +550,20 @@ Tasks-collision detection.
   archiving isn't its own commit).
 
 - **`code` trace provenance.** OpenSpectra fills `code` from
-  `.spectra/touched/<name>.json`; v3.0.0 demonstrably does not (see "Trace
-  data"), and how v3.0.0 derives its list is not reverse-engineered yet. Nor
-  are v3.0.0's `task start` and `task done --file`, which feed its per-task
-  baseline; OpenSpectra implements neither.
+  `.spectra/touched/<name>.json` (populated by `task start` / `task done` under
+  D7 / #190; when `.spectra/touched/<name>.json` is absent `code` is empty, and
+  when it exists but cannot be read or parsed as JSON, `archive` emits a
+  warning on stderr and continues with an empty `code` list, #179); v3.0.0
+  demonstrably does not read `.spectra/touched/` during `archive` (see "Trace
+  data"), and instead derives its inline footer list from the dirty git working
+  tree.
+- **Reusing a previously removed requirement name across multiple renames (#179).**
+  `TraceFile::record` bounds rename propagation at the last `removed` entry for
+  the `from` name (`rposition`), so in the sequence `add Alpha, Beta → remove
+  Alpha → rename Beta to Alpha → rename Alpha to Gamma`, the third step merges
+  both earlier records into `"Alpha"` and the fourth step leaves the first
+  record at `"Alpha"` instead of `"Gamma"`. Accepted as a known limitation
+  (owner ruling on #179; `## RENAMED` is unused in the target corpus).
 - **MODIFIED drops the block's `---` separator.** A requirement block's range
   includes the `---` line before the next requirement, and MODIFIED keeps only
   the replaced block's trailing whitespace, so the separator after a modified

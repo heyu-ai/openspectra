@@ -197,9 +197,13 @@ Divergences that remain:
 - **A user-level schema named after a built-in** was not probed; OpenSpectra
   keeps listing a loadable one as `(user)` after the built-ins and skips a
   broken one.
-- **`XDG_DATA_HOME` on macOS.** The oracle ignored `XDG_DATA_HOME` for the
-  user level (a schema there was not listed); OpenSpectra's
-  `user_schemas_dir` reads it first. Not changed by #226.
+- **`XDG_DATA_HOME` on macOS (#232).** Probed against oracle 3.0.0: on macOS the
+  oracle ignores `XDG_DATA_HOME` for the user level (a schema there is neither
+  listed by `schemas` nor found by `schema which`) and always reads
+  `$HOME/Library/Application Support/openspec/schemas`. OpenSpectra's
+  `user_schemas_dir` matches that on macOS (same rule as `global_config.rs`),
+  and honors an absolute `XDG_DATA_HOME` (falling back to
+  `$HOME/.local/share/openspec/schemas`) on other platforms.
 
 ### Artifact order caveat
 

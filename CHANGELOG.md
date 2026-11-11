@@ -23,6 +23,20 @@ changes.
 - Documented in `update.md` that oracle 3.0.0 deletes unowned files under
   `.claude/commands/spectra/`, while OpenSpectra intentionally leaves them
   untouched (#188, #189 D5).
+- `new change` now emits the oracle 3.0.0 error messages for invalid
+  non-kebab-case names (`Invalid change name '<name>'. Must be kebab-case
+  (e.g., 'add-feature').`) and `YYYY-MM-DD-` date-prefixed names (`Invalid
+  change name '<name>'. The YYYY-MM-DD- date prefix is reserved for archived
+  changes. Use '<rest>' instead.`) (#108).
+- On macOS, user-level schema resolution (`user_schemas_dir`) now always reads
+  `$HOME/Library/Application Support/openspec/schemas` and ignores
+  `XDG_DATA_HOME`, matching oracle 3.0.0 and `global_config` (#232).
+- `archive` now emits a warning on stderr when `.spectra/touched/<name>.json`
+  exists but cannot be read or parsed as JSON, instead of silently swallowing
+  the error; `trace migrate` now records per-capability read/UTF-8 errors
+  without aborting the rest of the migration batch; and `archive.md` /
+  `openspec-compat.md` document the requirement-rename reuse limitation and
+  v3.0.0 `RENAMED` probe findings (#179, #262).
 
 ## [0.14.5] - 2026-11-10
 ### Fixed

@@ -647,6 +647,29 @@ fn new_change_text_output_and_flags_match_the_oracle() {
         String::from_utf8(status.stdout).unwrap(),
         "Change: demo\nSchema: no-spec\n\n  ○ proposal (proposal.md)\n  ✗ design (design.md)\n    blocked by: proposal\n  ✗ tasks (tasks.md)\n    blocked by: proposal\n\n"
     );
+
+    // #108：oracle 3.0.0 的非法名稱與日期前綴錯誤訊息。
+    let bad_kebab = spectra()
+        .args(["new", "change", "Bad_Name"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(bad_kebab.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(bad_kebab.stderr).unwrap(),
+        "Error: Invalid change name 'Bad_Name'. Must be kebab-case (e.g., 'add-feature').\n"
+    );
+
+    let dated = spectra()
+        .args(["new", "change", "2026-01-01-foo"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert_eq!(dated.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(dated.stderr).unwrap(),
+        "Error: Invalid change name '2026-01-01-foo'. The YYYY-MM-DD- date prefix is reserved for archived changes. Use 'foo' instead.\n"
+    );
 }
 
 #[test]
@@ -726,6 +749,146 @@ fn archive_preview_and_json_match_the_oracle_shapes() {
     assert_eq!(value["applied_specs"], serde_json::json!(["billing"]));
     assert_eq!(value["snapshot_created"], false);
     assert_eq!(value["total_added"], 1);
+}
+
+#[test]
+fn archive_emits_orphan_requirement_warnings_to_stderr_only_when_not_dry_run() {
+    // #262 / #188：delta 含區段外的孤兒 requirement 時，`validate` 與 `archive --preview`
+    // 不從 `archive::parse_requirement_delta` 印出 stderr warning；實際 `archive` 才印。
+    let tmp = TempDir::new("archive-orphan-warning");
+    init_project_with_change(&tmp, "demo");
+    let change = tmp.join("openspec/changes/demo");
+    std::fs::write(
+        change.join("proposal.md"),
+        "# Proposal\n\n## Why\nBecause.\n\n## What Changes\n- billing\n",
+    )
+    .unwrap();
+    std::fs::write(change.join("tasks.md"), "- [x] 1.1 done\n").unwrap();
+    std::fs::create_dir_all(change.join("specs/billing")).unwrap();
+    std::fs::write(
+        change.join("specs/billing/spec.md"),
+        "### Requirement: Before Any Section\nIgnored.\n\n## Purpose\n\nBilling.\n\n### Requirement: In Purpose\nIgnored.\n\n## ADDED Requirements\n\n### Requirement: Invoice\nThe system SHALL invoice.\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n\n## Notes\n\n### Requirement: In Notes\nIgnored.\n",
+    )
+    .unwrap();
+
+    let preview = spectra()
+        .args(["archive", "demo", "--preview"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(preview.status.success(), "{preview:?}");
+    assert_eq!(
+        String::from_utf8(preview.stderr).unwrap(),
+        "",
+        "archive --preview (dry_run) must not emit orphan requirement stderr warnings"
+    );
+
+    let validate = spectra()
+        .args(["validate", "demo", "--no-color"])
+        .current_dir(&*tmp)
+        .output()
+        .unwrap();
+    assert!(validate.status.success(), "{validate:?}");
+    assert_eq!(
+        String::from_utf8(validate.stderr).unwrap(),
+        "",
+        "validate (dry_run archive simulation) must not emit archive's raw stderr warning"
+    );
+
+    let run = spectra()
+        .args(["archive", "demo", "--yes", "--no-color"])
+        .current_dir(&*tmp)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{run:?}");
+    assert_eq!(
+        String::from_utf8(run.stderr).unwrap(),
+        concat!(
+            "warning: capability 'billing': line 1: requirement 'Before Any Section' outside delta sections will be ignored\n",
+            "warning: capability 'billing': line 8: requirement 'In Purpose' inside Purpose section will be ignored\n",
+            "warning: capability 'billing': line 22: requirement 'In Notes' outside delta sections will be ignored\n",
+        )
+    );
+}
+
+#[test]
+fn archive_warns_on_stderr_when_touched_tracking_is_corrupt_or_unreadable() {
+    // #179：`.spectra/touched/<name>.json` 不存在時保持安靜；存在但 JSON 損壞或
+    // 無法讀取時，向 stderr 印出 warning 並以 `code: []` 繼續歸檔。
+    let tmp = TempDir::new("archive-corrupt-touched");
+    init_project_with_change(&tmp, "demo");
+    let change = tmp.join("openspec/changes/demo");
+    std::fs::write(
+        change.join("proposal.md"),
+        "# Proposal\n\n## Why\nBecause.\n\n## What Changes\n- billing\n",
+    )
+    .unwrap();
+    std::fs::write(change.join("tasks.md"), "- [x] 1.1 done\n").unwrap();
+    std::fs::create_dir_all(change.join("specs/billing")).unwrap();
+    std::fs::write(
+        change.join("specs/billing/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Invoice\nThe system SHALL invoice.\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n",
+    )
+    .unwrap();
+    let touched_dir = tmp.join(".spectra/touched");
+    std::fs::create_dir_all(&touched_dir).unwrap();
+    std::fs::write(touched_dir.join("demo.json"), "{corrupt json").unwrap();
+
+    let run = spectra()
+        .args(["archive", "demo", "--yes", "--no-color"])
+        .current_dir(&*tmp)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(run.status.success(), "{run:?}");
+    let stderr = String::from_utf8(run.stderr).unwrap();
+    assert!(
+        stderr.contains("warning: couldn't parse touched tracking")
+            && stderr.contains("demo.json")
+            && stderr.contains("archiving with an empty trace code list"),
+        "expected corrupt touched warning on stderr, got: {stderr:?}"
+    );
+    let sidecar =
+        std::fs::read_to_string(tmp.join("openspec/specs/billing/spec.trace.yaml")).unwrap();
+    assert!(
+        sidecar.contains("code: []"),
+        "expected empty code list, got:\n{sidecar}"
+    );
+
+    // 當 `.spectra/touched/<name>.json` 為目錄（觸發 I/O read 失敗而非 NotFound）時，
+    // 同樣印出 couldn't read 警告並完成歸檔。
+    let tmp_io = TempDir::new("archive-unreadable-touched");
+    init_project_with_change(&tmp_io, "demo");
+    let change_io = tmp_io.join("openspec/changes/demo");
+    std::fs::write(
+        change_io.join("proposal.md"),
+        "# Proposal\n\n## Why\nBecause.\n\n## What Changes\n- billing\n",
+    )
+    .unwrap();
+    std::fs::write(change_io.join("tasks.md"), "- [x] 1.1 done\n").unwrap();
+    std::fs::create_dir_all(change_io.join("specs/billing")).unwrap();
+    std::fs::write(
+        change_io.join("specs/billing/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Invoice\nThe system SHALL invoice.\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp_io.join(".spectra/touched/demo.json")).unwrap();
+
+    let run_io = spectra()
+        .args(["archive", "demo", "--yes", "--no-color"])
+        .current_dir(&*tmp_io)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(run_io.status.success(), "{run_io:?}");
+    let stderr_io = String::from_utf8(run_io.stderr).unwrap();
+    assert!(
+        stderr_io.contains("warning: couldn't read touched tracking")
+            && stderr_io.contains("demo.json")
+            && stderr_io.contains("archiving with an empty trace code list"),
+        "expected unreadable touched warning on stderr, got: {stderr_io:?}"
+    );
 }
 
 #[test]

@@ -2883,3 +2883,147 @@ find = '                    if let Some(name) = parse_removed_requirement(lines[
 replace = '                    if let Some(name) = requirement_name(lines[index]) {'
 package = "spectra-core"
 test = "removed_and_renamed_accept_bullet_formats"
+
+# #108：new change 非法名稱錯誤訊息對齊 oracle 3.0.0，且日期前綴給出專屬提示
+
+[[case]]
+id = "108-new-change-invalid-name-old-wording"
+issue = "#108"
+file = "crates/spectra-core/src/change.rs"
+find = '''        return Err(anyhow!(
+            "Invalid change name '{name}'. Must be kebab-case (e.g., 'add-feature')."
+        ));'''
+replace = '''        return Err(anyhow!(
+            "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
+        ));'''
+package = "spectra-core"
+test = "create_rejects_non_kebab_case_names"
+
+[[case]]
+id = "108-new-change-date-prefix-generic-error"
+issue = "#108"
+file = "crates/spectra-core/src/change.rs"
+find = '    if !CHANGE_NAME_RE.is_match(name) || name == "archive" {'
+replace = '    if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {'
+package = "spectra-core"
+test = "create_rejects_archived_prefixed_names"
+
+# #232：macOS 上 user_schemas_dir 對齊 oracle 3.0.0 與 global_config.rs，忽略 XDG_DATA_HOME
+
+[[case]]
+id = "232-macos-user-schemas-reads-xdg-data-home"
+issue = "#232"
+file = "crates/spectra-core/src/schema.rs"
+find = '    let data_dir = if macos_layout {'
+replace = '    let data_dir = if false && macos_layout {'
+package = "spectra-core"
+test = "resolve_user_schemas_dir_ignores_xdg_data_home_on_macos_and_honors_it_elsewhere"
+
+# #179：touched 讀取失敗／JSON 損壞警告、非 UTF-8 spec 不中止整批 migrate，以及 #180 資料保存回歸
+
+[[case]]
+id = "179-touched-corrupt-silent"
+issue = "#179"
+file = "crates/spectra-core/src/touched.rs"
+find = '''    match serde_json::from_str::<TouchedTracking>(&text) {
+        Ok(t) => t.touched.into_iter().flat_map(|e| e.files).collect(),
+        Err(e) => {
+            eprintln!(
+                "warning: couldn't parse touched tracking {} ({e}); archiving with an empty trace code list",
+                path.display()
+            );
+            HashSet::new()
+        }
+    }'''
+replace = '''    serde_json::from_str::<TouchedTracking>(&text)
+        .ok()
+        .map(|t| t.touched.into_iter().flat_map(|e| e.files).collect())
+        .unwrap_or_default()'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_warns_on_stderr_when_touched_tracking_is_corrupt_or_unreadable"
+
+[[case]]
+id = "179-touched-unreadable-silent"
+issue = "#179"
+file = "crates/spectra-core/src/touched.rs"
+find = '        Err(e) if is_gone(&e) => return HashSet::new(),'
+replace = '        Err(_) => return HashSet::new(),'
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_warns_on_stderr_when_touched_tracking_is_corrupt_or_unreadable"
+
+[[case]]
+id = "179-migrate-non-utf8-aborts-batch"
+issue = "#179"
+file = "crates/spectra-core/src/trace.rs"
+find = '    for (capability, raw) in crate::fsutil::collect_delta_spec_results(&specs_root)? {'
+replace = '    for (capability, raw) in crate::fsutil::collect_delta_specs(&specs_root)?.into_iter().map(|(c, r)| (c, Ok::<_, anyhow::Error>(r))) {'
+package = "spectra-cli"
+target = ["--test", "trace_migrate_integration"]
+test = "trace_migrate_reports_non_utf8_spec_and_still_migrates_other_specs"
+
+[[case]]
+id = "179-migrate-write-order-spec-before-sidecar"
+issue = "#179 / #180"
+file = "crates/spectra-core/src/trace.rs"
+find = '''            write(&sidecar, &yaml).with_context(|| format!("writing {}", sidecar.display()))?;
+            write(&spec_path, &content)
+                .with_context(|| format!("writing {}", spec_path.display()))?;'''
+replace = '''            write(&spec_path, &content)
+                .with_context(|| format!("writing {}", spec_path.display()))?;
+            write(&sidecar, &yaml).with_context(|| format!("writing {}", sidecar.display()))?;'''
+package = "spectra-core"
+test = "migrate_leaves_spec_md_untouched_when_the_sidecar_write_fails"
+
+[[case]]
+id = "179-retire-sidecar-not-rolled-back"
+issue = "#179 / #180"
+file = "crates/spectra-core/src/archive.rs"
+find = '''    for spec in prepared.iter().rev() {
+        if spec.retire {'''
+replace = '''    for spec in prepared.iter().rev() {
+        if spec.retire && !spec.path.ends_with(crate::trace::SIDECAR_FILE) {'''
+package = "spectra-core"
+test = "archive_rolls_back_the_sidecar_of_a_retired_capability"
+
+[[case]]
+id = "179-commit-skips-sidecar-conflict-check"
+issue = "#179 / #180"
+file = "crates/spectra-core/src/archive.rs"
+find = '        if read_optional_bytes(&spec.path)? != spec.original {'
+replace = '        if !spec.path.ends_with(crate::trace::SIDECAR_FILE) && read_optional_bytes(&spec.path)? != spec.original {'
+package = "spectra-core"
+test = "commit_refuses_a_sidecar_changed_since_it_was_prepared"
+
+[[case]]
+id = "179-absorb-grouping-ignores-code-updated-tests"
+issue = "#179 / #180"
+file = "crates/spectra-core/src/trace.rs"
+find = '''                entry.source == footer.source
+                    && entry.updated == footer.updated
+                    && entry.code == footer.code
+                    && entry.tests == footer.tests'''
+replace = '''                entry.source == footer.source'''
+package = "spectra-core"
+test = "absorb_keeps_footers_apart_when_code_updated_or_tests_differ"
+
+# #262：archive 孤兒 requirement stderr 警告僅在非 dry_run 時輸出
+
+[[case]]
+id = "262-archive-orphan-warning-emitted-on-dry-run"
+issue = "#262"
+file = "crates/spectra-core/src/archive.rs"
+find = '''    if !dry_run {
+        for warning in &parsed.warnings {
+            eprintln!("warning: capability '{capability}': {warning}");
+        }
+    }'''
+replace = '''    if true {
+        for warning in &parsed.warnings {
+            eprintln!("warning: capability '{capability}': {warning}");
+        }
+    }'''
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_emits_orphan_requirement_warnings_to_stderr_only_when_not_dry_run"

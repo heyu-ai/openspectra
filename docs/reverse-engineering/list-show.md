@@ -22,7 +22,8 @@ directories without `.openspec.yaml`, and names that start with a
 change, and every command that walks active changes (`status`, `drift`,
 `analyze`, `validate --changes`, `instructions apply`, and their auto-selection
 of a lone change) treats it the same way (#219 probe). The date prefix is only
-reserved when *creating* a change: `new change 2026-06-06-x` is rejected.
+reserved when *creating* a change: `new change 2026-06-06-x` is rejected with
+`Error: Invalid change name '2026-06-06-x'. The YYYY-MM-DD- date prefix is reserved for archived changes. Use 'x' instead.`.
 OpenSpectra also skips hidden directories (its own archive staging
 directories). Before this, OpenSpectra silently dropped non-kebab-case names,
 and until #219 it dropped date-prefixed names as well.
@@ -190,8 +191,9 @@ holding `<name>/schema.yaml` (validity is not checked), in precedence order:
 
 1. project — `<root>/<spec_dir>/schemas/<name>/schema.yaml`
 2. user — `$HOME/Library/Application Support/openspec/schemas/<name>/schema.yaml`
-   on macOS (OpenSpectra uses `$XDG_DATA_HOME/openspec/schemas` when that is
-   set, and `~/.local/share/openspec/schemas` on other platforms)
+   on macOS (`XDG_DATA_HOME` is ignored on macOS, matching the oracle; on other
+   platforms OpenSpectra uses `$XDG_DATA_HOME/openspec/schemas` when set to an
+   absolute path, and `~/.local/share/openspec/schemas` otherwise; #232)
 3. built-in — `{"path": "(embedded in binary)", "source": "built-in"}`, only
    for `spec-driven`; the oracle reports `no-spec` with `resolved: null` and
    no sources, and OpenSpectra reproduces that quirk.

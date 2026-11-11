@@ -68,7 +68,8 @@ struct Outcome {
 fn run(root: &Path, args: &[String]) -> Outcome {
     let output = spectra()
         .args(args)
-        // 使用者層 schema 不能影響重播。
+        // 使用者層 schema 不能影響重播（macOS 看 HOME，其他平台看 XDG_DATA_HOME）。
+        .env("HOME", root.join("no-user-home"))
         .env("XDG_DATA_HOME", root.join("no-user-data"))
         .current_dir(root)
         .output()

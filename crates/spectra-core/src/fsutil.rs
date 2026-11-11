@@ -64,6 +64,15 @@ pub(crate) fn read_dir_optional(path: &Path) -> Result<Option<std::fs::ReadDir>>
 /// asymmetry that let a nested delta validate cleanly yet archive silently
 /// (issue #39).
 pub(crate) fn collect_delta_specs(specs_root: &Path) -> Result<Vec<(String, String)>> {
+    collect_delta_spec_results(specs_root)?
+        .into_iter()
+        .map(|(cap, res)| Ok((cap, res?)))
+        .collect()
+}
+
+pub(crate) fn collect_delta_spec_results(
+    specs_root: &Path,
+) -> Result<Vec<(String, Result<String>)>> {
     let mut out = Vec::new();
     collect_delta_specs_into(specs_root, specs_root, &mut out)?;
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -73,7 +82,7 @@ pub(crate) fn collect_delta_specs(specs_root: &Path) -> Result<Vec<(String, Stri
 fn collect_delta_specs_into(
     specs_root: &Path,
     dir: &Path,
-    out: &mut Vec<(String, String)>,
+    out: &mut Vec<(String, Result<String>)>,
 ) -> Result<()> {
     let Some(entries) = read_dir_optional(dir)? else {
         return Ok(());
@@ -82,8 +91,10 @@ fn collect_delta_specs_into(
     // A `spec.md` directly at this level is one capability's delta. Record it
     // whether or not the dir also has subdirectories, so mixed flat/nested
     // layouts (a capability spec alongside sub-capability dirs) are all seen.
-    if let Some(content) = read_optional(&dir.join("spec.md"))? {
-        out.push((capability_id(specs_root, dir)?, content));
+    match read_optional(&dir.join("spec.md")) {
+        Ok(Some(content)) => out.push((capability_id(specs_root, dir)?, Ok(content))),
+        Ok(None) => {}
+        Err(err) => out.push((capability_id(specs_root, dir)?, Err(err))),
     }
 
     for entry in entries {

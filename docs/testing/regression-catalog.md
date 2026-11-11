@@ -320,6 +320,10 @@ CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=2 cargo mutants --package spectra-core \
 | 83 | #243 | FilePath anchor 抽取正規表示式缺少 `.tsx` 等副檔名，導致 `story-lab/src/App.tsx` 被前綴截斷為不存在的 `story-lab/src/App.ts` 並回報 Broken | `243-filepath-regex-truncates-tsx` |
 | 84 | #188 | `heading_text` 剝除結尾 `#` 時無前導空白檢查，導致 `Support C#` 標題被截斷為 `Support C` 並造成同 delta 內重複碰撞 | `188-c-sharp-heading-truncated` |
 | 85 | #188 | REMOVED delta 解析只認 `### Requirement:` 標題行，拒絕 bullet 形式的 `- ### Requirement:` 或 ``- `### Requirement:` `` | `188-removed-bullet-unrecognized` |
+| 86 | #108 | `new change` 對非 kebab-case 與 `YYYY-MM-DD-` 日期前綴名稱回傳舊版通用錯誤措辭，未對齊 oracle 3.0.0 的兩類專屬錯誤訊息 | `108-new-change-invalid-name-old-wording`<br>`108-new-change-date-prefix-generic-error` |
+| 87 | #232 | macOS 上 `user_schemas_dir` 先讀 `XDG_DATA_HOME` 再退回 `~/Library/Application Support`，與忽略 `XDG_DATA_HOME` 的 oracle 3.0.0 及 `global_config.rs` 不一致 | `232-macos-user-schemas-reads-xdg-data-home` |
+| 88 | #179 / #180 | `archive` 在 `.spectra/touched/<name>.json` 損壞或無法讀取時靜默吞掉錯誤；單一非 UTF-8 `spec.md` 使 `trace migrate` 整批中止；以及 sidecar 寫入順序、retire rollback、commit 衝突檢查與 absorb 分組鍵保護 | `179-touched-corrupt-silent`<br>`179-touched-unreadable-silent`<br>`179-migrate-non-utf8-aborts-batch`<br>`179-migrate-write-order-spec-before-sidecar`<br>`179-retire-sidecar-not-rolled-back`<br>`179-commit-skips-sidecar-conflict-check`<br>`179-absorb-grouping-ignores-code-updated-tests` |
+| 89 | #262 | `archive` 孤兒 requirement 的 stderr 警告與 `!dry_run` 閘門缺少 CLI 端對端整合測試守護 | `262-archive-orphan-warning-emitted-on-dry-run` |
 
 ## 已退役的 case
 

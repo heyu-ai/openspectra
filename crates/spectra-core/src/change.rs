@@ -396,9 +396,15 @@ pub struct CreateOptions<'a> {
 }
 
 pub fn create_with(cfg: &Config, name: &str, options: CreateOptions<'_>) -> Result<Change> {
-    if !CHANGE_NAME_RE.is_match(name) || ARCHIVED_PREFIX_RE.is_match(name) || name == "archive" {
+    if !CHANGE_NAME_RE.is_match(name) || name == "archive" {
         return Err(anyhow!(
-            "'{name}' is not a valid change name (expected kebab-case, e.g. 'add-search-filter')"
+            "Invalid change name '{name}'. Must be kebab-case (e.g., 'add-feature')."
+        ));
+    }
+    if let Some(m) = ARCHIVED_PREFIX_RE.find(name) {
+        let rest = &name[m.end()..];
+        return Err(anyhow!(
+            "Invalid change name '{name}'. The YYYY-MM-DD- date prefix is reserved for archived changes. Use '{rest}' instead."
         ));
     }
     let dir = cfg.changes_dir().join(name);
@@ -1740,8 +1746,18 @@ mod tests {
             claude_slash_commands: false,
         };
 
-        assert!(create(&cfg, "Not_Kebab_Case").is_err());
-        assert!(create(&cfg, "").is_err());
+        assert_eq!(
+            create(&cfg, "Not_Kebab_Case").unwrap_err().to_string(),
+            "Invalid change name 'Not_Kebab_Case'. Must be kebab-case (e.g., 'add-feature')."
+        );
+        assert_eq!(
+            create(&cfg, "").unwrap_err().to_string(),
+            "Invalid change name ''. Must be kebab-case (e.g., 'add-feature')."
+        );
+        assert_eq!(
+            create(&cfg, "2026-01-01-").unwrap_err().to_string(),
+            "Invalid change name '2026-01-01-'. Must be kebab-case (e.g., 'add-feature')."
+        );
     }
 
     #[test]
@@ -1754,7 +1770,12 @@ mod tests {
             claude_slash_commands: false,
         };
 
-        assert!(create(&cfg, "2026-01-01-old-change").is_err());
+        assert_eq!(
+            create(&cfg, "2026-01-01-old-change")
+                .unwrap_err()
+                .to_string(),
+            "Invalid change name '2026-01-01-old-change'. The YYYY-MM-DD- date prefix is reserved for archived changes. Use 'old-change' instead."
+        );
     }
 
     #[test]

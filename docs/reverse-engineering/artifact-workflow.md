@@ -84,8 +84,15 @@ denied) propagates instead of being silently misreported as "not done".
 > the configured schema (or `spec-driven`) is written, as before. The
 > oracle has no `--json` for this command; OpenSpectra keeps its own.
 > 3.0.0 also writes **no** `.spectra/` state at creation. OpenSpectra still
-> writes `.started` and the touched baseline here; the 3.0.0 per-task
-> baseline model is W4 in `docs/migration-plan.md` (#190).
+> writes `.started` here; the 3.0.0 per-task baseline model is W4 in
+> `docs/migration-plan.md` (#190).
+>
+> Name validation (oracle 3.0.0, #108): non-kebab-case names fail first with
+> `Error: Invalid change name '<name>'. Must be kebab-case (e.g., 'add-feature').`
+> (exit 1); valid kebab-case names starting with `YYYY-MM-DD-` fail with
+> `Error: Invalid change name '<name>'. The YYYY-MM-DD- date prefix is reserved for archived changes. Use '<rest>' instead.`
+> (exit 1). OpenSpectra also rejects the literal name `archive` so a change
+> cannot collide with `<spec_dir>/changes/archive/`.
 
 The oracle creates only the change dir plus `.openspec.yaml`
 (`schema`/`created`/`created_by`), **no artifact files** — otherwise `status`
