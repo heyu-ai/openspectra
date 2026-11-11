@@ -558,12 +558,14 @@ Tasks-collision detection.
   data"), and instead derives its inline footer list from the dirty git working
   tree.
 - **Reusing a previously removed requirement name across multiple renames (#179).**
-  `TraceFile::record` bounds rename propagation at the last `removed` entry for
-  the `from` name (`rposition`), so in the sequence `add Alpha, Beta → remove
-  Alpha → rename Beta to Alpha → rename Alpha to Gamma`, the third step merges
-  both earlier records into `"Alpha"` and the fourth step leaves the first
-  record at `"Alpha"` instead of `"Gamma"`. Accepted as a known limitation
-  (owner ruling on #179; `## RENAMED` is unused in the target corpus).
+  `TraceFile::apply_renames` bounds rename propagation at the last `removed`
+  entry for the `from` name (`rposition`), so in the sequence `add Alpha, Beta →
+  remove Alpha → rename Beta to Alpha → rename Alpha to Gamma`, the third step
+  rewrites `Beta` in `traces[0].added` (`["Alpha", "Beta"]` → `["Alpha",
+  "Alpha"]`), and the fourth step skips `traces[0]` (`first = 1`), leaving
+  `traces[0].added` at `["Alpha", "Alpha"]` instead of `["Alpha", "Gamma"]`
+  (leaving `Beta`'s slot at `"Alpha"`). Accepted as a known limitation (owner
+  ruling on #179; `## RENAMED` is unused in the target corpus).
 - **MODIFIED drops the block's `---` separator.** A requirement block's range
   includes the `---` line before the next requirement, and MODIFIED keeps only
   the replaced block's trailing whitespace, so the separator after a modified

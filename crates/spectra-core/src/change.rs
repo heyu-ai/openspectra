@@ -1733,7 +1733,10 @@ mod tests {
             claude_slash_commands: false,
         };
 
-        assert!(create(&cfg, "archive").is_err());
+        assert_eq!(
+            create(&cfg, "archive").unwrap_err().to_string(),
+            "Invalid change name 'archive'. Must be kebab-case (e.g., 'add-feature')."
+        );
     }
 
     #[test]

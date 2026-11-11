@@ -889,6 +889,40 @@ fn archive_warns_on_stderr_when_touched_tracking_is_corrupt_or_unreadable() {
             && stderr_io.contains("archiving with an empty trace code list"),
         "expected unreadable touched warning on stderr, got: {stderr_io:?}"
     );
+
+    // 當 `.spectra/touched` 本身為一般檔案（讀取 `.spectra/touched/demo.json` 觸發
+    // `ErrorKind::NotADirectory`）時，`is_gone` 視為不存在、保持安靜並成功歸檔。
+    let tmp_nad = TempDir::new("archive-not-a-dir-touched");
+    init_project_with_change(&tmp_nad, "demo");
+    let change_nad = tmp_nad.join("openspec/changes/demo");
+    std::fs::write(
+        change_nad.join("proposal.md"),
+        "# Proposal\n\n## Why\nBecause.\n\n## What Changes\n- billing\n",
+    )
+    .unwrap();
+    std::fs::write(change_nad.join("tasks.md"), "- [x] 1.1 done\n").unwrap();
+    std::fs::create_dir_all(change_nad.join("specs/billing")).unwrap();
+    std::fs::write(
+        change_nad.join("specs/billing/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: Invoice\nThe system SHALL invoice.\n\n#### Scenario: s\n- **WHEN** a\n- **THEN** b\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(tmp_nad.join(".spectra")).unwrap();
+    std::fs::write(tmp_nad.join(".spectra/touched"), "not a directory").unwrap();
+
+    let run_nad = spectra()
+        .args(["archive", "demo", "--yes", "--no-color"])
+        .current_dir(&*tmp_nad)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(run_nad.status.success(), "{run_nad:?}");
+    let stderr_nad = String::from_utf8(run_nad.stderr).unwrap();
+    assert!(
+        !stderr_nad.contains("couldn't read touched tracking")
+            && !stderr_nad.contains("couldn't parse touched tracking"),
+        "expected no touched tracking warning on stderr when .spectra/touched is a file, got: {stderr_nad:?}"
+    );
 }
 
 #[test]

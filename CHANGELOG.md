@@ -19,7 +19,7 @@ changes.
   backticked variants) and `+` bullet RENAMED pairs (#188).
 - `archive` delta parsing now emits warnings when requirements appear outside
   delta sections (such as under `## Notes` or before the first section)
-  instead of silently discarding them (#188).
+  instead of silently discarding them (#188, #262).
 - Documented in `update.md` that oracle 3.0.0 deletes unowned files under
   `.claude/commands/spectra/`, while OpenSpectra intentionally leaves them
   untouched (#188, #189 D5).
@@ -36,7 +36,7 @@ changes.
   the error; `trace migrate` now records per-capability read/UTF-8 errors
   without aborting the rest of the migration batch; and `archive.md` /
   `openspec-compat.md` document the requirement-rename reuse limitation and
-  v3.0.0 `RENAMED` probe findings (#179, #262).
+  v3.0.0 `RENAMED` probe findings (#179).
 
 ## [0.14.5] - 2026-11-10
 ### Fixed

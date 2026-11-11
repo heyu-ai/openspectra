@@ -2954,6 +2954,16 @@ target = ["--test", "cli_integration"]
 test = "archive_warns_on_stderr_when_touched_tracking_is_corrupt_or_unreadable"
 
 [[case]]
+id = "179-touched-not-a-directory-warns"
+issue = "#179"
+file = "crates/spectra-core/src/touched.rs"
+find = '        Err(e) if is_gone(&e) => return HashSet::new(),'
+replace = '        Err(e) if e.kind() == ErrorKind::NotFound => return HashSet::new(),'
+package = "spectra-cli"
+target = ["--test", "cli_integration"]
+test = "archive_warns_on_stderr_when_touched_tracking_is_corrupt_or_unreadable"
+
+[[case]]
 id = "179-migrate-non-utf8-aborts-batch"
 issue = "#179"
 file = "crates/spectra-core/src/trace.rs"
