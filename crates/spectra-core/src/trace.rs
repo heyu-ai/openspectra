@@ -569,19 +569,22 @@ fn migrate_with(
 ) -> Result<Vec<MigratedSpec>> {
     let specs_root = cfg.specs_dir();
     let mut report = Vec::new();
-    for (capability, raw) in crate::fsutil::collect_delta_specs(&specs_root)? {
-        let normalized = crate::markdown::normalize_markdown(&raw);
-        let extracted = extract_inline(&normalized);
+    for (capability, raw) in crate::fsutil::collect_delta_spec_results(&specs_root)? {
         let spec_path = specs_root.join(&capability).join("spec.md");
         let sidecar = sidecar_path(&spec_path);
         let mut entry = MigratedSpec {
             capability: capability.clone(),
-            footers: extracted.footers.len(),
-            unparsed_lines: extracted.unparsed_lines.clone(),
+            footers: 0,
+            unparsed_lines: Vec::new(),
             stale_names: Vec::new(),
             error: None,
         };
         let outcome = (|| -> Result<()> {
+            let raw = raw?;
+            let normalized = crate::markdown::normalize_markdown(&raw);
+            let extracted = extract_inline(&normalized);
+            entry.footers = extracted.footers.len();
+            entry.unparsed_lines = extracted.unparsed_lines.clone();
             let existing = TraceFile::load(&sidecar)?;
             if existing.is_none() && has_pointer(&normalized) {
                 return Err(missing_sidecar_error(&sidecar));

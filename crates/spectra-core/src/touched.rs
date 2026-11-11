@@ -186,14 +186,31 @@ pub(crate) fn non_colliding_backup_path(path: &Path) -> PathBuf {
         .expect("infinite range")
 }
 
-/// 這個 change 所有條目記錄過的路徑。唯讀、容錯：讀不到或壞掉都當成空的，
-/// 供 archive 在可能回滾的交易中使用。
+/// 這個 change 所有條目記錄過的路徑。唯讀、容錯：不存在時回傳空集合；讀取失敗
+/// 或 JSON 損壞時向 stderr 印出警告並回傳空集合，供 archive 在可能回滾的交易中使用（#179）。
 pub fn already_recorded_readonly(cfg: &Config, name: &str) -> HashSet<String> {
-    std::fs::read_to_string(touched_path(cfg, name))
-        .ok()
-        .and_then(|s| serde_json::from_str::<TouchedTracking>(&s).ok())
-        .map(|t| t.touched.into_iter().flat_map(|e| e.files).collect())
-        .unwrap_or_default()
+    let path = touched_path(cfg, name);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if is_gone(&e) => return HashSet::new(),
+        Err(e) => {
+            eprintln!(
+                "warning: couldn't read touched tracking {} ({e}); archiving with an empty trace code list",
+                path.display()
+            );
+            return HashSet::new();
+        }
+    };
+    match serde_json::from_str::<TouchedTracking>(&text) {
+        Ok(t) => t.touched.into_iter().flat_map(|e| e.files).collect(),
+        Err(e) => {
+            eprintln!(
+                "warning: couldn't parse touched tracking {} ({e}); archiving with an empty trace code list",
+                path.display()
+            );
+            HashSet::new()
+        }
+    }
 }
 
 pub(crate) fn is_gone(e: &std::io::Error) -> bool {

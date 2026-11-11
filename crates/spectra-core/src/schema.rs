@@ -1050,22 +1050,37 @@ struct SchemaYamlApply {
 /// `schema:` > the built-in. See `require_supported`'s doc comment for the
 /// full probed rationale behind that order.
 pub fn user_schemas_dir() -> Option<std::path::PathBuf> {
-    if let Some(path) = std::env::var_os("XDG_DATA_HOME") {
-        let path = std::path::PathBuf::from(path);
-        if path.is_absolute() {
-            return Some(path.join("openspec/schemas"));
-        }
-    }
-    // macOS 與 oracle 3.0.0（及 OpenSpec 的 env-paths）相同，放在 Application Support；
-    // 其他平台用 XDG 的預設資料目錄。
-    let data_dir = if cfg!(target_os = "macos") {
-        "Library/Application Support"
+    resolve_user_schemas_dir(
+        cfg!(target_os = "macos"),
+        std::env::var_os("HOME").as_deref(),
+        std::env::var_os("XDG_DATA_HOME").as_deref(),
+    )
+}
+
+/// Pure resolver behind [`user_schemas_dir`], matching [`crate::global_config`]'s
+/// platform rules (#232, probed against oracle 3.0.0): on macOS the oracle
+/// always uses `$HOME/Library/Application Support/openspec/schemas` and ignores
+/// `XDG_DATA_HOME`; elsewhere an absolute `XDG_DATA_HOME` wins over the
+/// `$HOME/.local/share` fallback.
+fn resolve_user_schemas_dir(
+    macos_layout: bool,
+    home: Option<&std::ffi::OsStr>,
+    xdg_data_home: Option<&std::ffi::OsStr>,
+) -> Option<std::path::PathBuf> {
+    let home = home.filter(|h| !h.is_empty());
+    let data_dir = if macos_layout {
+        std::path::Path::new(home?).join("Library/Application Support")
     } else {
-        ".local/share"
+        match xdg_data_home
+            .filter(|x| !x.is_empty())
+            .map(std::path::Path::new)
+            .filter(|x| x.is_absolute())
+        {
+            Some(xdg) => xdg.to_path_buf(),
+            None => std::path::Path::new(home?).join(".local/share"),
+        }
     };
-    std::env::var_os("HOME")
-        .map(std::path::PathBuf::from)
-        .map(|home| home.join(data_dir).join("openspec/schemas"))
+    Some(data_dir.join("openspec/schemas"))
 }
 
 /// `schema which` 的結果（oracle 3.0.0）：依優先序列出這個 schema 存在的所有位置，
@@ -3183,5 +3198,57 @@ mod tests {
         let schema = resolve_schema(&cfg, None, None).unwrap();
         assert_eq!(schema.name, SCHEMA_NAME);
         assert_eq!(schema.source, SchemaSource::Package);
+    }
+
+    #[test]
+    fn resolve_user_schemas_dir_ignores_xdg_data_home_on_macos_and_honors_it_elsewhere() {
+        use std::ffi::OsStr;
+
+        // #232（oracle 3.0.0 實測）：macOS 固定走 ~/Library/Application Support，忽略 XDG_DATA_HOME。
+        assert_eq!(
+            resolve_user_schemas_dir(
+                true,
+                Some(OsStr::new("/Users/u")),
+                Some(OsStr::new("/custom/xdg"))
+            ),
+            Some(std::path::PathBuf::from(
+                "/Users/u/Library/Application Support/openspec/schemas"
+            ))
+        );
+        assert_eq!(
+            resolve_user_schemas_dir(true, None, Some(OsStr::new("/custom/xdg"))),
+            None
+        );
+        assert_eq!(
+            resolve_user_schemas_dir(true, Some(OsStr::new("")), Some(OsStr::new("/custom/xdg"))),
+            None
+        );
+
+        // 非 macOS：絕對路徑的 XDG_DATA_HOME 優先，相對路徑或空值退回 $HOME/.local/share。
+        assert_eq!(
+            resolve_user_schemas_dir(
+                false,
+                Some(OsStr::new("/home/u")),
+                Some(OsStr::new("/custom/xdg"))
+            ),
+            Some(std::path::PathBuf::from("/custom/xdg/openspec/schemas"))
+        );
+        assert_eq!(
+            resolve_user_schemas_dir(false, None, Some(OsStr::new("/custom/xdg"))),
+            Some(std::path::PathBuf::from("/custom/xdg/openspec/schemas"))
+        );
+        for ignored in [None, Some(OsStr::new("")), Some(OsStr::new("relative/xdg"))] {
+            assert_eq!(
+                resolve_user_schemas_dir(false, Some(OsStr::new("/home/u")), ignored),
+                Some(std::path::PathBuf::from(
+                    "/home/u/.local/share/openspec/schemas"
+                )),
+                "{ignored:?}"
+            );
+        }
+        assert_eq!(
+            resolve_user_schemas_dir(false, Some(OsStr::new("")), None),
+            None
+        );
     }
 }

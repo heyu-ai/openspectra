@@ -4278,7 +4278,11 @@ mod tests {
         let result = archive(&c, "retire", false, false, false);
         fs::set_permissions(&blocked, fs::Permissions::from_mode(0o755)).unwrap();
 
-        result.unwrap_err();
+        let error = result.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("z-last"),
+            "precondition: failure must come from z-last after retiring a-cap, got: {error:#}"
+        );
         assert_eq!(fs::read_to_string(&spec_path).unwrap(), spec);
         assert_eq!(fs::read_to_string(&sidecar).unwrap(), sidecar_content);
     }

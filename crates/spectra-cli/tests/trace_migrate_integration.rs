@@ -170,3 +170,31 @@ fn trace_migrate_exits_1_on_a_corrupt_sidecar_and_leaves_the_spec_alone() {
     );
     assert_eq!(std::fs::read_to_string(&spec).unwrap(), ORACLE_SPEC);
 }
+
+#[test]
+fn trace_migrate_reports_non_utf8_spec_and_still_migrates_other_specs() {
+    // #179：單一 spec.md 非 UTF-8 時，該 capability 記為 error、exit 1，
+    // 但同批次的其他合法 spec 仍要照常完成遷移，不能整批中止。
+    let (root, spec) = project();
+    let bad_dir = root.join("openspec/specs/bad");
+    std::fs::create_dir_all(&bad_dir).unwrap();
+    std::fs::write(bad_dir.join("spec.md"), [0xff, 0xfe, b'\n']).unwrap();
+
+    let output = migrate(&root, &[]);
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error: bad:") && stderr.contains("valid UTF-8"),
+        "{stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("cap: moved 2 inline trace footer(s) into spec.trace.yaml"),
+        "{stdout}"
+    );
+    let migrated = std::fs::read_to_string(&spec).unwrap();
+    assert!(!migrated.contains("<!-- @trace\n"), "{migrated}");
+    assert!(migrated.contains("<!-- @trace-sidecar: spec.trace.yaml -->"));
+    assert!(spec.with_file_name("spec.trace.yaml").is_file());
+}

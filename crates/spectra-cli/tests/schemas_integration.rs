@@ -240,15 +240,26 @@ fn schemas_lists_project_schemas_that_fail_to_load() {
     );
 }
 
-/// #226：使用者層 schema 同樣寬鬆列出（oracle 3.0.0 以 `HOME` 指向臨時目錄探測
-/// `~/Library/Application Support/openspec/schemas/u`；OpenSpectra 另外先看
-/// `XDG_DATA_HOME`，這裡用它讓 Linux 與 macOS 走同一條路徑）。
+/// #226 / #232：使用者層 schema 同樣寬鬆列出。macOS 與 oracle 3.0.0 一致，只讀
+/// `$HOME/Library/Application Support/openspec/schemas`（忽略 `XDG_DATA_HOME`）；
+/// 其他平台讀 `$XDG_DATA_HOME/openspec/schemas`（fallback `~/.local/share/openspec/schemas`）。
 #[test]
 fn schemas_lists_user_schemas_that_fail_to_load() {
     let root = TempDir::new("schemas-user-load-failure");
     let project = isolated_project(&root);
-    write_schema(&root.join("xdg/openspec/schemas/u"), "artifacts: [\n");
-
+    let user_schemas = if cfg!(target_os = "macos") {
+        root.join("home/Library/Application Support/openspec/schemas")
+    } else {
+        root.join("xdg/openspec/schemas")
+    };
+    write_schema(&user_schemas.join("u"), "artifacts: [\n");
+    if cfg!(target_os = "macos") {
+        // #232（oracle 3.0.0 實測）：macOS 忽略 XDG_DATA_HOME 的使用者層 schema。
+        write_schema(
+            &root.join("xdg/openspec/schemas/xdg-ignored"),
+            "artifacts: [\n",
+        );
+    }
     let json = schemas_isolated(&root, &project, &["schemas", "--json"]);
     assert!(json.status.success(), "schemas --json failed: {json:?}");
     let listed: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();

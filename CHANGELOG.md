@@ -9,6 +9,8 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+
+## [0.14.6] - 2026-11-11
 ### Fixed
 
 - `archive` now preserves trailing `#` characters in requirement names that
@@ -19,10 +21,24 @@ changes.
   backticked variants) and `+` bullet RENAMED pairs (#188).
 - `archive` delta parsing now emits warnings when requirements appear outside
   delta sections (such as under `## Notes` or before the first section)
-  instead of silently discarding them (#188).
+  instead of silently discarding them (#188, #262).
 - Documented in `update.md` that oracle 3.0.0 deletes unowned files under
   `.claude/commands/spectra/`, while OpenSpectra intentionally leaves them
   untouched (#188, #189 D5).
+- `new change` now emits the oracle 3.0.0 error messages for invalid
+  non-kebab-case names (`Invalid change name '<name>'. Must be kebab-case
+  (e.g., 'add-feature').`) and `YYYY-MM-DD-` date-prefixed names (`Invalid
+  change name '<name>'. The YYYY-MM-DD- date prefix is reserved for archived
+  changes. Use '<rest>' instead.`) (#108).
+- On macOS, user-level schema resolution (`user_schemas_dir`) now always reads
+  `$HOME/Library/Application Support/openspec/schemas` and ignores
+  `XDG_DATA_HOME`, matching oracle 3.0.0 and `global_config` (#232).
+- `archive` now emits a warning on stderr when `.spectra/touched/<name>.json`
+  exists but cannot be read or parsed as JSON, instead of silently swallowing
+  the error; `trace migrate` now records per-capability read/UTF-8 errors
+  without aborting the rest of the migration batch; and `archive.md` /
+  `openspec-compat.md` document the requirement-rename reuse limitation and
+  v3.0.0 `RENAMED` probe findings (#179).
 
 ## [0.14.5] - 2026-11-10
 ### Fixed
@@ -1132,7 +1148,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.5...HEAD
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.6...HEAD
+[0.14.6]: https://github.com/heyu-ai/openspectra/compare/v0.14.5...v0.14.6
 [0.14.5]: https://github.com/heyu-ai/openspectra/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...v0.14.4
 [0.14.3]: https://github.com/heyu-ai/openspectra/compare/v0.14.2...v0.14.3

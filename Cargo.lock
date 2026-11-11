@@ -686,7 +686,7 @@ checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
 name = "spectra-cli"
-version = "0.14.5"
+version = "0.14.6"
 dependencies = [
  "anyhow",
  "chrono",
@@ -700,7 +700,7 @@ dependencies = [
 
 [[package]]
 name = "spectra-core"
-version = "0.14.5"
+version = "0.14.6"
 dependencies = [
  "anyhow",
  "chrono",
