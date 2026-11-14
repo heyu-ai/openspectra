@@ -67,11 +67,11 @@ id = "160-4-identical-modified-counted"
 issue = "#160-4"
 file = "crates/spectra-core/src/archive.rs"
 find = """
-        if requirement_content_eq(&original, &modified.raw) {
+        if requirement_content_eq(&original, &modified_raw) {
             continue;
         }"""
 replace = """
-        if false && requirement_content_eq(&original, &modified.raw) {
+        if false && requirement_content_eq(&original, &modified_raw) {
             continue;
         }"""
 package = "spectra-cli"
@@ -708,8 +708,8 @@ test = "rejects_duplicate_normalized_rename_sources_and_targets"
 id = "33-modified-glue"
 issue = "review"
 file = "crates/spectra-core/src/archive.rs"
-find = '''            &format!("{}{trailing}", modified.raw),'''
-replace = '''            &format!("{}", modified.raw),'''
+find = '''&format!("{modified_raw}{trailing}")'''
+replace = '''&format!("{modified_raw}")'''
 package = "spectra-core"
 test = "archive_modify_on_a_spectra_produced_spec_keeps_following_headers_line_anchored"
 
@@ -3037,3 +3037,86 @@ replace = '''    if true {
 package = "spectra-cli"
 target = ["--test", "cli_integration"]
 test = "archive_emits_orphan_requirement_warnings_to_stderr_only_when_not_dry_run"
+
+[[case]]
+id = "d13-slug-uniqueness"
+issue = "D13（slug 只在兩邊各自唯一時才當身分）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = '|slug: &str| current_slugs.get(slug) == Some(&1) && incoming_slugs.get(slug) == Some(&1);'
+replace = '|slug: &str| current_slugs.contains_key(slug) && incoming_slugs.contains_key(slug);'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_duplicate_slug_does_not_hide_a_real_drop"
+
+[[case]]
+id = "d13-slug-identity-off"
+issue = "D13（同 slug 改標題不算刪除）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = '.filter(|slug| unique(slug))'
+replace = '.filter(|_| false)'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "retitling_a_scenario_with_the_same_slug_is_valid_and_archives"
+
+[[case]]
+id = "d13-marker-scope"
+issue = "D13（標記只豁免它點名的 scenario）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = '&& (marker.as_str() == name.trim() || Some(marker.as_str()) == slug_of(name))'
+replace = '&& !marker.is_empty()'
+package = "spectra-core"
+test = "marker_excuses_only_the_scenario_it_names"
+
+[[case]]
+id = "d13-archive-ignores-marker"
+issue = "D13（archive 與 validate 共用標記判定）"
+file = "crates/spectra-core/src/archive.rs"
+find = 'let markers = crate::scenario_identity::removed_markers(modified_raw);'
+replace = 'let markers: Vec<String> = Vec::new();'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_marker_drops_the_named_scenario_and_is_not_written_to_the_main_spec"
+
+[[case]]
+id = "d13-archive-keeps-marker"
+issue = "D13（標記不寫進 main spec）"
+file = "crates/spectra-core/src/archive.rs"
+find = 'let modified_raw = crate::scenario_identity::strip_removed_markers(&modified.raw);'
+replace = 'let modified_raw = modified.raw.clone();'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_marker_drops_the_named_scenario_and_is_not_written_to_the_main_spec"
+
+[[case]]
+id = "d13-unused-marker-silent"
+issue = "D13（沒用到的標記要報 INFO）"
+file = "crates/spectra-core/src/validate.rs"
+find = 'if !diff.unused_markers.is_empty() {'
+replace = 'if false && !diff.unused_markers.is_empty() {'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "an_unused_marker_is_info_only_and_strict_stays_valid"
+
+[[case]]
+id = "d13-slug-added-any-title"
+issue = "D13（補 slug 時標題必須相同）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = 'slug_of(o).is_some() && o.contains(" -- ") && title_of(o) == name.trim()'
+replace = 'slug_of(o).is_some() && o.contains(" -- ")'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "adding_a_slug_with_a_different_title_is_invalid_and_archive_refuses"
+
+[[case]]
+id = "d13-slug-added-off"
+issue = "D13（補 slug 且標題相同不算遺失）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = '''        if slug_of(name).is_some() {
+            continue;
+        }'''
+replace = '''        if slug_of(name).is_some() || true {
+            continue;
+        }'''
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "adding_a_slug_with_the_same_title_is_valid_and_archives"

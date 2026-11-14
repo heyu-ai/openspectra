@@ -42,6 +42,25 @@ Change directories may also carry a `.openspec.yaml` metadata file — it
 appears in real OpenSpec change dirs but is **optional** (not every change
 has one).
 
+## Deliberate divergence: MODIFIED scenario identity (D13)
+
+OpenSpec 1.13.2 identifies a scenario by its full heading text, so a MODIFIED
+block that retitles a scenario, or adds a slug to it, reports the scenario as
+dropped. OpenSpec also has no way to drop a scenario on purpose. OpenSpectra
+diverges here on purpose (D13 in `migration-plan.md`, ADR-0002):
+
+- A slug that occurs once in the current block and once in the MODIFIED block
+  matches, whatever the titles are. A duplicate slug falls back to full-text
+  matching, so it cannot hide a real drop.
+- A current scenario without a slug matches a MODIFIED scenario that adds a
+  slug and keeps the same title.
+- `<!-- removed-scenario: <slug or full name> -->` in the MODIFIED block
+  excuses the one scenario it names.
+
+The golden replay against OpenSpec 1.13.2 is unchanged: none of its fixtures
+contain these shapes. The oracle `spectra` 3.0.0 archive keeps the marker line
+in the main spec, where it has no effect; the OSS archive removes it.
+
 ## Difference matrix
 
 Legend: **✅ compatible** (works as-is), **🔧 adapt** (OpenSpectra needs a

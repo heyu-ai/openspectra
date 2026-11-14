@@ -1041,6 +1041,19 @@ fn scenario_loss_issues(
             continue;
         };
         let diff = openspec_md::diff_scenario_names(&base.raw, &block.raw);
+        // D13：沒用到的標記只報 INFO。oracle 的 archive 會把標記原樣寫進 main spec，下一個
+        // 從 main spec 抽出的 MODIFIED 會帶著它；報 WARNING 會讓 --strict 為此判失敗。
+        if !diff.unused_markers.is_empty() {
+            issues.push(Issue::info(
+                entry_path.to_string(),
+                format!(
+                    "MODIFIED \"{}\" has removed-scenario marker(s) that match no scenario \
+                     dropped from the current spec: {}. Delete the marker(s).",
+                    block.name,
+                    quoted_list(&diff.unused_markers)
+                ),
+            ));
+        }
         if diff.missing.is_empty() {
             continue;
         }

@@ -10,6 +10,24 @@ changes.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-14
+### Changed
+
+- **Deliberate divergence from OpenSpec 1.13.2 (D13, ADR-0002).**
+  `validate` (both the scenario-loss ERROR and the archive-refusal check) and
+  `archive` now share one scenario matcher for `## MODIFIED Requirements`.
+  A scenario keeps its identity when its title changes but its slug
+  (`#### Scenario: <slug> -- <title>`) stays the same, if that slug occurs
+  once on each side. A scenario without a slug also keeps its identity when
+  the MODIFIED block adds a slug and keeps the same title.
+- A MODIFIED block can drop a scenario on purpose with a
+  `<!-- removed-scenario: <slug or full name> -->` line. The marker excuses
+  only the scenario it names. A marker that matches no dropped scenario is
+  reported as INFO, so `--strict` does not fail on it. `archive` removes the
+  marker lines before it writes the main spec.
+- Messages for scenario loss keep their existing wording.
+
+
 ## [0.14.6] - 2026-11-11
 ### Fixed
 
@@ -1148,7 +1166,8 @@ work but not landed with it, each re-pinned against the v2.3.1 oracle:
   `ghcr.io/howie/openspectra` Docker image (linux/amd64), and crates.io
   publishing (`cargo install spectra-cli`).
 
-[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.14.6...HEAD
+[Unreleased]: https://github.com/heyu-ai/openspectra/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/heyu-ai/openspectra/compare/v0.14.6...v0.15.0
 [0.14.6]: https://github.com/heyu-ai/openspectra/compare/v0.14.5...v0.14.6
 [0.14.5]: https://github.com/heyu-ai/openspectra/compare/v0.14.4...v0.14.5
 [0.14.4]: https://github.com/heyu-ai/openspectra/compare/v0.14.3...v0.14.4

@@ -1328,7 +1328,7 @@ fn merge_spec_delta(
         let block = find_requirement_block(&content, name)
             .ok_or_else(|| missing_requirement_error(capability, "MODIFY", name, &spec_path))?;
         let original = block_text(&content, &block);
-        let missing = missing_scenarios_in_modified(&original, &modified.scenarios);
+        let missing = missing_scenarios_in_modified(&original, &modified.scenarios, &modified.raw);
         if !missing.is_empty() {
             anyhow::bail!(
                 "capability '{capability}': MODIFIED requirement '{name}' omits scenario(s) the current spec still has: {}",
@@ -1339,7 +1339,9 @@ fn merge_spec_delta(
                     .join(", ")
             );
         }
-        if requirement_content_eq(&original, &modified.raw) {
+        // D13：`removed-scenario` 標記只屬於 delta，不寫進 main spec。
+        let modified_raw = crate::scenario_identity::strip_removed_markers(&modified.raw);
+        if requirement_content_eq(&original, &modified_raw) {
             continue;
         }
         refuse_to_discard_unrecognized_footer(
@@ -1347,16 +1349,13 @@ fn merge_spec_delta(
             "MODIFY",
             &content,
             &block,
-            Some(&modified.raw),
+            Some(&modified_raw),
         )?;
         let trailing = {
             let original = &content[block.start..block.end];
             original[original.trim_end().len()..].to_string()
         };
-        content.replace_range(
-            block.start..block.end,
-            &format!("{}{trailing}", modified.raw),
-        );
+        content.replace_range(block.start..block.end, &format!("{modified_raw}{trailing}"));
         result.modified += 1;
         trace.modified.push(modified.name.clone());
     }
@@ -1535,23 +1534,21 @@ fn requirement_content_eq(left: &str, right: &str) -> bool {
     normalize(left) == normalize(right)
 }
 
-fn missing_scenarios_in_modified(current: &str, modified: &[String]) -> Vec<String> {
-    let mut proposed = modified.to_vec();
-    let mut missing = Vec::new();
+/// D13：與 validate 共用 [`crate::scenario_identity::match_scenarios`]，slug 身分與
+/// `removed-scenario` 標記的判定才會一致。
+fn missing_scenarios_in_modified(
+    current: &str,
+    modified: &[String],
+    modified_raw: &str,
+) -> Vec<String> {
     let current_scenarios =
         crate::markdown::parse_main_requirements(&format!("## Requirements\n{current}"))
             .into_iter()
             .next()
             .map(|requirement| requirement.scenarios)
             .unwrap_or_default();
-    for scenario in current_scenarios {
-        if let Some(index) = proposed.iter().position(|candidate| candidate == &scenario) {
-            proposed.remove(index);
-        } else {
-            missing.push(scenario);
-        }
-    }
-    missing
+    let markers = crate::scenario_identity::removed_markers(modified_raw);
+    crate::scenario_identity::match_scenarios(&current_scenarios, modified, &markers).missing
 }
 
 fn requirement_blocks(content: &str) -> Vec<RequirementBlock> {
