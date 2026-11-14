@@ -226,6 +226,20 @@ mod tests {
     }
 
     #[test]
+    fn adding_a_slug_with_a_different_title_is_a_different_scenario() {
+        let got = match_scenarios(
+            &names(&["Admin creates a new prompt template"]),
+            &names(&["admin-creates -- Admin creates a template with extended sections"]),
+            &[],
+        );
+        assert_eq!(got.missing, names(&["Admin creates a new prompt template"]));
+        assert_eq!(
+            got.added,
+            names(&["admin-creates -- Admin creates a template with extended sections"])
+        );
+    }
+
+    #[test]
     fn a_different_slug_is_a_different_scenario() {
         let got = match_scenarios(
             &names(&["old-slug -- same title"]),

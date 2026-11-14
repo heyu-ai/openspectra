@@ -168,6 +168,40 @@ fn a_duplicate_slug_does_not_hide_a_real_drop() {
     assert!(!run.status.success(), "{run:?}");
 }
 
+const UNSLUGGED_MAIN: &str = "# auth Specification\n\n## Purpose\n\nAuthentication of family accounts across every client.\n\n\
+## Requirements\n\n### Requirement: Login\nThe system SHALL authenticate users.\n\n\
+#### Scenario: Locked account is denied\n- **WHEN** an account is locked\n- **THEN** access is denied\n";
+
+#[test]
+fn adding_a_slug_with_the_same_title_is_valid_and_archives() {
+    let tmp = setup(
+        "slug-added",
+        UNSLUGGED_MAIN,
+        &delta("#### Scenario: locked-account -- Locked account is denied\n- **WHEN** an account is locked\n- **THEN** access is denied\n"),
+    );
+    let report = validate(&tmp);
+    assert!(is_valid(&report), "{:#?}", messages(&report));
+
+    let run = archive(&tmp);
+    assert!(run.status.success(), "{run:?}");
+    assert!(main_spec(&tmp).contains("locked-account -- Locked account is denied"));
+}
+
+#[test]
+fn adding_a_slug_with_a_different_title_is_invalid_and_archive_refuses() {
+    let tmp = setup(
+        "slug-added-retitled",
+        UNSLUGGED_MAIN,
+        &delta("#### Scenario: locked-account -- Locked or disabled account is denied\n- **WHEN** an account is locked\n- **THEN** access is denied\n"),
+    );
+    let report = validate(&tmp);
+    assert!(!is_valid(&report), "{:#?}", messages(&report));
+
+    let run = archive(&tmp);
+    assert!(!run.status.success(), "{run:?}");
+    assert!(main_spec(&tmp).contains("#### Scenario: Locked account is denied"));
+}
+
 #[test]
 fn an_unused_marker_is_info_only_and_strict_stays_valid() {
     let tmp = setup(

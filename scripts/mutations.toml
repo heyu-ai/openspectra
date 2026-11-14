@@ -3096,3 +3096,27 @@ replace = 'if false && !diff.unused_markers.is_empty() {'
 package = "spectra-cli"
 target = ["--test", "scenario_identity_integration"]
 test = "an_unused_marker_is_info_only_and_strict_stays_valid"
+
+[[case]]
+id = "d13-slug-added-any-title"
+issue = "D13（補 slug 時標題必須相同）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = 'slug_of(o).is_some() && o.contains(" -- ") && title_of(o) == name.trim()'
+replace = 'slug_of(o).is_some() && o.contains(" -- ")'
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "adding_a_slug_with_a_different_title_is_invalid_and_archive_refuses"
+
+[[case]]
+id = "d13-slug-added-off"
+issue = "D13（補 slug 且標題相同不算遺失）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = '''        if slug_of(name).is_some() {
+            continue;
+        }'''
+replace = '''        if slug_of(name).is_some() || true {
+            continue;
+        }'''
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "adding_a_slug_with_the_same_title_is_valid_and_archives"
