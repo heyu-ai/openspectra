@@ -47,7 +47,7 @@ has one).
 OpenSpec 1.13.2 identifies a scenario by its full heading text, so a MODIFIED
 block that retitles a scenario, or adds a slug to it, reports the scenario as
 dropped. OpenSpec also has no way to drop a scenario on purpose. OpenSpectra
-diverges here on purpose (D13 in `migration-plan.md`, ADR-0002 proposed):
+diverges here on purpose (D13 in `migration-plan.md`, ADR-0002):
 
 - A slug that occurs once in the current block and once in the MODIFIED block
   matches, whatever the titles are. A duplicate slug falls back to full-text

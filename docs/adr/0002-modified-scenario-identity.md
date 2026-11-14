@@ -1,11 +1,11 @@
 # ADR-0002：MODIFIED 區塊的 scenario 身分與刻意移除（刻意與 OpenSpec 1.13.2 分歧）
 
 - 日期：2026-11-14
-- 狀態：**Proposed**
-- 決策者：（待填）
+- 狀態：**Accepted**（2026-11-14）
+- 決策者：howie
 - 關係：修改 D1（`validate` 規則以 OpenSpec 1.13.2 為準）的適用範圍；裁決紀錄列為 D13（`docs/migration-plan.md`）。
 
-本 ADR 由 agent 起草。owner 在 yibi-mvp 的 session 中選定「讓 openspectra 與 OpenSpec 分歧、改用 slug 比對」這個方向（2026-11-14）。正式核准、填寫決策者與調整下列細節，留給 owner。
+本 ADR 由 agent 起草。owner 在 yibi-mvp 的 session 中選定「讓 openspectra 與 OpenSpec 分歧、改用 slug 比對」這個方向，並於同日核准本 ADR 與 PR #264（2026-11-14）。§3 列為「待確認」的細節（補 slug 時用標題比對、標記語法、標記位置）依 §2 的草案定案；日後要改，另開 ADR。
 
 ## 1. 問題
 
