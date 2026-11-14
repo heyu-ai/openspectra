@@ -9,6 +9,22 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+### Changed
+
+- **Deliberate divergence from OpenSpec 1.13.2 (D13, ADR-0002 proposed).**
+  `validate` (both the scenario-loss ERROR and the archive-refusal check) and
+  `archive` now share one scenario matcher for `## MODIFIED Requirements`.
+  A scenario keeps its identity when its title changes but its slug
+  (`#### Scenario: <slug> -- <title>`) stays the same, if that slug occurs
+  once on each side. A scenario without a slug also keeps its identity when
+  the MODIFIED block adds a slug and keeps the same title.
+- A MODIFIED block can drop a scenario on purpose with a
+  `<!-- removed-scenario: <slug or full name> -->` line. The marker excuses
+  only the scenario it names. A marker that matches no dropped scenario is
+  reported as INFO, so `--strict` does not fail on it. `archive` removes the
+  marker lines before it writes the main spec.
+- Messages for scenario loss keep their existing wording.
+
 
 ## [0.14.6] - 2026-11-11
 ### Fixed

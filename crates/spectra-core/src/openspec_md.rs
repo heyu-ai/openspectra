@@ -566,32 +566,22 @@ pub(crate) struct ScenarioDiff {
     pub added: Vec<String>,
     pub current_count: usize,
     pub incoming_count: usize,
+    /// 沒有對應到任何被移除 scenario 的 `removed-scenario` 標記（D13）。
+    pub unused_markers: Vec<String>,
 }
 
-/// `diffScenarioNames`（計入重複次數）。
+/// `diffScenarioNames`（計入重複次數），加上 D13 的 slug 身分與移除標記。
 pub(crate) fn diff_scenario_names(current_raw: &str, incoming_raw: &str) -> ScenarioDiff {
     let current = scenario_names(current_raw);
     let incoming = scenario_names(incoming_raw);
-    let unmatched = |names: &[String], against: &[String]| {
-        let mut remaining: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::new();
-        for name in against {
-            *remaining.entry(name).or_default() += 1;
-        }
-        let mut out = Vec::new();
-        for name in names {
-            match remaining.get_mut(name.as_str()) {
-                Some(left) if *left > 0 => *left -= 1,
-                _ => out.push(name.clone()),
-            }
-        }
-        out
-    };
+    let markers = crate::scenario_identity::removed_markers(&normalize(incoming_raw));
+    let matched = crate::scenario_identity::match_scenarios(&current, &incoming, &markers);
     ScenarioDiff {
-        missing: unmatched(&current, &incoming),
-        added: unmatched(&incoming, &current),
+        missing: matched.missing,
+        added: matched.added,
         current_count: current.len(),
         incoming_count: incoming.len(),
+        unused_markers: matched.unused_markers,
     }
 }
 

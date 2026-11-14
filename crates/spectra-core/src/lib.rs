@@ -22,6 +22,7 @@ pub mod instructions;
 mod markdown;
 mod names;
 mod openspec_md;
+mod scenario_identity;
 pub mod schema;
 pub mod scope;
 pub mod search;
