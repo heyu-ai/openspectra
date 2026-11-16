@@ -35,12 +35,13 @@ changes.
   limit (see `docs/reverse-engineering/validate.md`, "Corpus impact").
 - `validate --json --format openspec` exits 1 with an `unreadable_config` or
   `unparseable_config` status, without validating anything, when
-  `openspec/config.yaml` cannot be read or is not valid YAML (OpenSpec 2.0.0).
+  `<spec_dir>/config.yaml` cannot be read or is not valid YAML (OpenSpec 2.0.0,
+  which reads `openspec/config.yaml`).
 - **Deliberate divergences from OpenSpec 2.0.0 (#265):** `created_by`,
   `created_with`, `archived_by` and `archived_at`, which `spectra new change`
   and `archive` write, are not reported as unknown `.openspec.yaml` keys; and
-  the default (oracle) format keeps validating when `openspec/config.yaml` is
-  broken, as the oracle 3.0.0 does.
+  the default (oracle) format keeps validating when the config is broken, as
+  the oracle 3.0.0 does.
 
 ## [0.15.0] - 2026-11-14
 ### Changed

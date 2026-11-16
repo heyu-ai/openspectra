@@ -3416,3 +3416,33 @@ replace = '''    if false {
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "d1v2-config-path-ignores-spec-dir"
+issue = "#265（壞 config 的檢查讀 `<spec_dir>/config.yaml`）"
+file = "crates/spectra-core/src/validate.rs"
+find = "    let dir = cfg.root.join(&cfg.spec_dir);"
+replace = '    let dir = cfg.root.join("openspec");'
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "format_openspec_reads_the_config_under_spec_dir"
+
+[[case]]
+id = "d1v2-sanitize-no-truncation"
+issue = "#265 / OpenSpec 2.0.0（`sanitizeInline` 截在 100 個 UTF-16 code unit）"
+file = "crates/spectra-core/src/validate.rs"
+find = "    const MAX: usize = 100;"
+replace = "    const MAX: usize = 1000;"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-sanitize-keeps-control-chars"
+issue = "#265 / OpenSpec 2.0.0（`sanitizeInline` 把控制字元換成空白）"
+file = "crates/spectra-core/src/validate.rs"
+find = '    let flattened = UNSAFE.replace_all(value, " ");'
+replace = '    let flattened = UNSAFE.replace_all(value, "$0");'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"

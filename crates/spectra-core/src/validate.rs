@@ -840,13 +840,16 @@ pub struct ConfigParseError {
 }
 
 /// OpenSpec 2.0.0 的 `validate` 在這種情況下不跑任何檢查、直接 exit 1。owner 在 #265
-/// 裁決只有 `--format openspec` 照搬，所以由 CLI 決定要不要呼叫。路徑與 OpenSpec 相同，
-/// 固定是專案根目錄下的 `openspec/`，不是 `.spectra.yaml` 的 `spec_dir`。
+/// 裁決只有 `--format openspec` 照搬，所以由 CLI 決定要不要呼叫。OpenSpec 讀的是寫死的
+/// `<root>/openspec/config.yaml`；spectra 的對應位置是 `<spec_dir>/config.yaml`（`init` 建在
+/// 那裡），與 changes／specs 改讀 `spec_dir` 的方式相同。`spec_dir` 是預設的 `openspec`
+/// 時兩者是同一個檔案。
 ///
 /// 讀檔錯誤的說明仿 Node 的措辭（`EISDIR: ...`）；YAML 解析錯誤的說明來自不同的
-/// 解析器，不可能與 JS `yaml` 套件逐字相同（golden 重播只比括號外）。
+/// 解析器，不可能與 JS `yaml` 套件逐字相同（golden 重播只比括號外），兩個解析器對
+/// 邊界情況（YAML 1.1／1.2 的差異等）是否算解析失敗也可能不同。
 pub fn config_parse_error(cfg: &Config) -> Option<ConfigParseError> {
-    let dir = cfg.root.join("openspec");
+    let dir = cfg.root.join(&cfg.spec_dir);
     let path = [dir.join("config.yaml"), dir.join("config.yml")]
         .into_iter()
         .find(|path| path.exists())?;

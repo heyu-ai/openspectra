@@ -562,6 +562,41 @@ fn human_colors_only_the_glyph_and_the_label_on_a_terminal() {
 /// oracle 格式跟 oracle 3.0.0 走：實測 oracle 對讀不到或不合法的 `openspec/config.yaml`
 /// 照常驗證、exit 0（2026-11-16 probe，`validate --all --json` 與 human 都一樣）。
 #[test]
+fn format_openspec_reads_the_config_under_spec_dir() {
+    // OpenSpec 寫死 `<root>/openspec/config.yaml`；spectra 的 config 在
+    // `<spec_dir>/config.yaml`（D9 新專案預設 `docs/openspec`），壞 config 的檢查跟著
+    // spec_dir 走。根目錄另一個 `openspec/config.yaml` 與這個專案無關，不能擋下驗證。
+    let root = TempDir::new("validate-format-spec-dir-config");
+    write(&root.join(".spectra.yaml"), "spec_dir: docs/openspec\n");
+    write(
+        &root.join("docs/openspec/changes/c1/specs/x/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: C\n\nThe system SHALL c.\n\n\
+         #### Scenario: ok\n\n- **WHEN** x\n- **THEN** y\n",
+    );
+    write(&root.join("openspec/config.yaml"), "schema: [unclosed\n");
+    let args = ["--all", "--json", "--format", "openspec"];
+    let (rc, stdout, stderr) = run(&root, &args);
+    assert_eq!((rc, stderr.as_str()), (Some(0), ""), "{stdout}");
+    assert!(stdout.contains("\"id\": \"c1\""), "{stdout}");
+
+    write(
+        &root.join("docs/openspec/config.yaml"),
+        "schema: [unclosed\n",
+    );
+    let (rc, stdout, stderr) = run(&root, &args);
+    assert_eq!((rc, stderr.as_str()), (Some(1), ""), "{stdout}");
+    assert!(
+        stdout.contains("\"code\": \"unparseable_config\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("/docs/openspec/config.yaml ("),
+        "message names the spec_dir config: {stdout}"
+    );
+    assert!(!stdout.contains("\"items\""), "{stdout}");
+}
+
+#[test]
 fn a_broken_config_is_ignored_by_the_oracle_format() {
     for fixture in [
         "validate_openspec_badconfig",

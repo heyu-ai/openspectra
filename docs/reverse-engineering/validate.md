@@ -90,15 +90,21 @@ behavior fails the test until the entry is removed.
   list still matches OpenSpec. Fixture `d56-spectra-metadata`.
 - **A broken `openspec/config.yaml` stops validation only under `--json --format
   openspec`.** OpenSpec 2.0.0 (1.16.0, #1892) exits 1 with an
-  `unreadable_config`/`unparseable_config` status before checking anything. The
+  `unreadable_config`/`unparseable_config` status before checking anything; it
+  reads the hard-wired `<root>/openspec/config.yaml`, and OpenSpectra reads
+  `<spec_dir>/config.yaml` instead (where `init` puts it; the same file when
+  `spec_dir` is the default `openspec`), the way changes and specs follow
+  `spec_dir`. The
   oracle 3.0.0 ignores the file and validates normally (probed 2026-11-16, exit
   0 for `validate`, `validate c1`, `validate --all --json`), so the default
   oracle format keeps doing that (pinned by
   `a_broken_config_is_ignored_by_the_oracle_format`). Under `--format openspec`
   the parenthesised parser message cannot match: OpenSpec quotes the JS `yaml`
   package's error and OpenSpectra quotes `serde_yaml`'s, so the replay masks the
-  text inside the parentheses for `validate_openspec_badconfig`. Read errors
-  mimic Node's wording for `EISDIR` and `EACCES`.
+  text inside the parentheses for `validate_openspec_badconfig`. The two
+  parsers can also disagree on whether an edge-case file parses at all (YAML
+  1.1 versus 1.2 details); only the fixture's plainly broken file is pinned.
+  Read errors mimic Node's wording for `EISDIR` and `EACCES`.
 
 2.0.0's task-paragraph change (a wrapped task joins its continuation lines,
 #2227) does not reach `validate`: the archived-task check only counts tasks.
