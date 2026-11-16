@@ -9,6 +9,38 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+### Changed
+
+- **`validate` follows OpenSpec 2.0.0 (owner ruling D1, #265).** The rule
+  authority moves from OpenSpec 1.13.2 to 2.0.0, following every rule change
+  1.14.0–2.0.0 added. `validate` and `validate --format openspec` both get
+  the new findings:
+  - a requirement under an unrecognized `## ... Requirements` section
+    (`## DEPRECATED Requirements`, `## Requirements`) is an ERROR, not a
+    WARNING; a requirement inside an HTML comment is no longer reported as
+    misplaced;
+  - new WARNINGs: text in a delta that archive would not carry into the main
+    spec; a `#### Scenario:` with no WHEN/GIVEN step or no THEN step (delta and
+    main spec); an ADDED requirement over 500 characters; an unknown top-level
+    key in `.openspec.yaml`;
+  - a main-spec requirement over 500 characters is a WARNING (was INFO), so
+    `--strict` fails on it;
+  - headings with an ATX closing run (`## Purpose ##`, `## ADDED Requirements ##`)
+    read as their plain form, a line starting ```` ```npm test``` ```` no longer
+    opens a code fence, and `###Requirement:` without a space is checked by
+    the main-spec structure rules.
+
+  Measured on three real projects, plain `validate` verdicts did not change;
+  under `--strict` 100 more items fail, all of them on the 500-character
+  limit (see `docs/reverse-engineering/validate.md`, "Corpus impact").
+- `validate --json --format openspec` exits 1 with an `unreadable_config` or
+  `unparseable_config` status, without validating anything, when
+  `openspec/config.yaml` cannot be read or is not valid YAML (OpenSpec 2.0.0).
+- **Deliberate divergences from OpenSpec 2.0.0 (#265):** `created_by`,
+  `created_with`, `archived_by` and `archived_at`, which `spectra new change`
+  and `archive` write, are not reported as unknown `.openspec.yaml` keys; and
+  the default (oracle) format keeps validating when `openspec/config.yaml` is
+  broken, as the oracle 3.0.0 does.
 
 ## [0.15.0] - 2026-11-14
 ### Changed

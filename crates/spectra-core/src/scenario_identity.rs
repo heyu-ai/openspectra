@@ -1,4 +1,4 @@
-//! MODIFIED requirement 的 scenario 身分比對（決策 D13，刻意與 OpenSpec 1.13.2 分歧）。
+//! MODIFIED requirement 的 scenario 身分比對（決策 D13，刻意與 OpenSpec 分歧：1.13.2 與 2.0.0 都以完整標題比對）。
 //!
 //! OpenSpec 以 scenario 標頭整行（`#### Scenario:` 之後的文字）當身分，所以
 //! `slug -- 舊標題` 改成 `slug -- 新標題` 會被當成「刪掉一個、新增一個」，而 MODIFIED

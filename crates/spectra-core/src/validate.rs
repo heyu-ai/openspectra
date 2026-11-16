@@ -1,8 +1,8 @@
-//! `spectra validate` — validation gate whose rules follow OpenSpec 1.13.2.
+//! `spectra validate` — validation gate whose rules follow OpenSpec 2.0.0.
 //!
 //! Unlike `drift`, this command is not reverse-engineered from the closed
 //! Spectra binary. Owner ruling D1: which findings exist, their level, the
-//! per-item verdict, and the message wording follow OpenSpec 1.13.2
+//! per-item verdict, and the message wording follow OpenSpec 2.0.0
 //! (`@fission-ai/openspec`, `dist/core/validation/validator.js`); the Markdown
 //! reading it relies on is ported in [`crate::openspec_md`]. See
 //! `docs/reverse-engineering/validate.md`.
@@ -12,7 +12,7 @@
 //! fail only under `--strict`, and informational findings never fail.
 //!
 //! Two output shapes exist (ruling D3, W9a): the oracle 3.0.0 shape
-//! ([`oracle_item`], the default) and the OpenSpec 1.13.2 `--json` report
+//! ([`oracle_item`], the default) and the OpenSpec 2.0.0 `--json` report
 //! ([`openspec_report`], `--format openspec`). Both are built from the same
 //! [`ChangeValidation`] list; only the presentation differs.
 
@@ -83,7 +83,7 @@ pub struct ChangeValidation {
     pub duration_ms: u64,
 }
 
-/// OpenSpec 1.13.2's `{items, passed, failed}` counters, in that key order.
+/// OpenSpec 2.0.0's `{items, passed, failed}` counters, in that key order.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Totals {
     pub items: usize,
@@ -110,7 +110,7 @@ pub struct RootInfo {
     pub source: String,
 }
 
-/// The OpenSpec 1.13.2 `validate --json` report (`--format openspec`).
+/// The OpenSpec 2.0.0 `validate --json` report (`--format openspec`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ValidateReport {
     pub items: Vec<ChangeValidation>,
@@ -181,7 +181,7 @@ pub enum ItemOrder {
     Utf16,
 }
 
-/// Builds the OpenSpec 1.13.2 report. `requested_types` are the scopes asked
+/// Builds the OpenSpec 2.0.0 report. `requested_types` are the scopes asked
 /// for (`change`, `spec`): each gets a `byType` entry even when empty. Items
 /// use the requested order: active items use fixed en-US [`locale_compare`],
 /// archived items use JavaScript's UTF-16 string order. Sorting is stable;
@@ -395,7 +395,7 @@ pub fn nearest_matches(input: &str, candidates: &[String], max: usize) -> Vec<St
         .collect()
 }
 
-/// 驗證一個 change：逐條移植 OpenSpec 1.13.2 的
+/// 驗證一個 change：逐條移植 OpenSpec 2.0.0 的
 /// `Validator.validateChangeDeltaSpecs`（`dist/core/validation/validator.js`
 /// 123-455），連 issue 的順序、path、line 都照搬（決策 D1）。OpenSpec 沒有的
 /// 規則不報，唯一例外是 OpenSpectra 獨有的 archive 拒絕理由（trace footer、
@@ -2406,7 +2406,7 @@ mod tests {
             .any(|issue| issue.message.contains("duplicated") && issue.line == Some(3)));
     }
 
-    /// C18：OpenSpec 1.13.2 只對「內建」的 spec-driven schema 檢查 task 編號；專案
+    /// C18：OpenSpec（1.13.2 與 2.0.0）只對「內建」的 spec-driven schema 檢查 task 編號；專案
     /// 自己放一份同名的 `schemas/spec-driven/` 時不檢查（probe_c18b.sh 實測兩邊都
     /// 沒有 finding；改名為 custom-driven 的專案 schema 亦同，probe_c18.sh）。
     #[test]

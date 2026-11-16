@@ -1,9 +1,9 @@
-//! OpenSpec 1.13.2 `validate` 讀 Markdown 的方式，逐函式移植自
+//! OpenSpec 2.0.0 `validate` 讀 Markdown 的方式，逐函式移植自
 //! `@fission-ai/openspec` 的 `dist/core/parsers/`（`code-fence.js`、
 //! `requirement-blocks.js`、`requirement-text.js`、`markdown-parser.js`、
 //! `spec-structure.js`）與 `dist/core/validation/purpose-placeholder.js`。
 //!
-//! 決策 D1：`spectra validate` 的規則以 OpenSpec 1.13.2 為準。這裡刻意不共用
+//! 決策 D1：`spectra validate` 的規則以 OpenSpec 2.0.0 為準（#265 前是 1.13.2）。這裡刻意不共用
 //! [`crate::markdown`]：那是 archive 的解析器（oracle 行為），兩者對 stray
 //! `###`、重複的 `## ADDED Requirements`、`#####` scenario 等的解讀不同，而
 //! archive 的拒絕條件不能因為 validate 改規則而跟著變。

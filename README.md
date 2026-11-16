@@ -36,7 +36,7 @@ starting with the `drift` command.
 > [`update.md`](docs/reverse-engineering/update.md),
 > and [`validate.md`](docs/reverse-engineering/validate.md).
 > `validate`'s **rules** are not oracle-verified: they follow the OSS
-> `openspec validate` 1.13.2, not the macOS binary; only its default output
+> `openspec validate` 2.0.0, not the macOS binary; only its default output
 > shape follows the binary — see the validate write-up.
 
 ## Why
@@ -70,7 +70,7 @@ severity, so a CI gate keys on a JSON field — use the **FilePath** entries of
 ```sh
 spectra init  [PATH] [--force] [--dir <DIR>] [--adopt] [--tools <TOOLS>] [--json]  # scaffolds .spectra.yaml + <spec_dir>/config.yaml + <spec_dir>/{changes/archive,specs}/ (default spec_dir: docs/openspec; --force preserves an existing spec_dir)
 spectra drift [CHANGE] [--json]   # auto-detects if one active change
-spectra validate [ITEM] [--type change|spec] [--changes] [--specs] [--all] [--archived] [--strict] [--report full|findings] [--json [--format oracle|openspec]]  # OpenSpec 1.13.2 rules; no argument = every active change; output in the oracle shape unless --format openspec
+spectra validate [ITEM] [--type change|spec] [--changes] [--specs] [--all] [--archived] [--strict] [--report full|findings] [--json [--format oracle|openspec]]  # OpenSpec 2.0.0 rules; no argument = every active change; output in the oracle shape unless --format openspec
 spectra list  [--changes|--specs|--parked] [--sort name|modified|created] [--json]  # lists active changes (default), capability specs (--specs), or parked changes (--parked)
 spectra show  <CHANGE|SPEC> [--item-type change|spec] [--diff] [--json]  # change: proposal + delta spec list (JSON: all artifacts); spec: every .md file; --item-type picks one kind; --deltas-only/-r are accepted and inert, as in the reference; --diff isolates requirement-level change lines
 spectra decisions [KEYWORD] [--json]  # lists `### ` decisions under `## Decisions` in every design.md (active, then archived) with **Supersedes** resolution
@@ -111,11 +111,11 @@ a gate (see [CI gate example](#ci-gate-example)).
 
 `validate` is the deliberate exception: it is a pass/fail gate, so it exits
 `0` when every selected change/spec/archive check is valid and `1` when any is
-invalid (also `1` on operational errors). Its rules follow OpenSpec 1.13.2;
+invalid (also `1` on operational errors). Its rules follow OpenSpec 2.0.0;
 its output follows the reference binary by default — `✓ <name> — valid` /
 `✗ <name> — invalid` with `error:`/`warn:` lines, and `--json` prints the
 `[{change|spec, errors, valid, warnings}]` array. `--json --format openspec`
-prints OpenSpec 1.13.2's own report instead (`items`, `summary.totals.failed`,
+prints OpenSpec 2.0.0's own report instead (`items`, `summary.totals.failed`,
 `byType`, `root`, `--report findings`), field for field. See
 [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md).
 

@@ -1,9 +1,9 @@
 # OpenSpec-compatible `spectra validate`
 
 OpenSpectra's validator rules are not reverse-engineered from the closed
-Spectra binary: their authority is `@fission-ai/openspec` 1.13.2 (owner ruling
-D1, below). Its **output** has two shapes (ruling D3, W9a): the oracle 3.0.0
-shape, the default, and OpenSpec 1.13.2's own `--json` report under
+Spectra binary: their authority is `@fission-ai/openspec` 2.0.0 (owner ruling
+D1, below; 1.13.2 until #265). Its **output** has two shapes (ruling D3, W9a): the oracle 3.0.0
+shape, the default, and OpenSpec 2.0.0's own `--json` report under
 `--format openspec`. How OpenSpec's findings are shown in the oracle shape is
 owner ruling D12 (see "Output formats").
 
@@ -40,8 +40,8 @@ not interactive; D12-5).
 
 A name shared by a change and a spec (owner ruling W9a-1, 2026-09-29): the
 oracle 3.0.0 validates the change (p09: `validate only` printed the change's
-result), OpenSpec 1.13.2 refuses it as ambiguous (pinned by the `only`
-envelope in `golden/validate-openspec-1.13.2.json`, human output likewise in
+result), OpenSpec refuses it as ambiguous (1.13.2 and 2.0.0 alike; pinned by the `only`
+envelope in `golden/validate-openspec-2.0.0.json`, human output likewise in
 p10). Each format follows its own authority: the default oracle format (human
 and `--json`) takes the change, so the embedded skills' `spectra validate
 "<name>"` never fails on a collision; `--json --format openspec` prints
@@ -52,24 +52,56 @@ and ignore ITEM — not followed).
 ## Rule authority (owner ruling D1)
 
 Which findings exist, their level, the per-item verdict, and the message
-wording follow OpenSpec **1.13.2** (`@fission-ai/openspec`,
+wording follow OpenSpec **2.0.0** (`@fission-ai/openspec`,
 `dist/core/validation/validator.js`), ported rule for rule in
 `crates/spectra-core/src/validate.rs` with its Markdown reading in
-`crates/spectra-core/src/openspec_md.rs`. What OpenSpec runs:
+`crates/spectra-core/src/openspec_md.rs`. Until #265 (2026-11-16) the
+authority was 1.13.2; the owner chose to follow every rule change through 2.0.0
+at once (option B of #265) rather than rule by rule. What OpenSpec runs:
 
 - a change: only `Validator.validateChangeDeltaSpecs(changeDir, {mainSpecsDir,
   projectRoot})`; `proposal.md` is never read;
 - a main spec: `Validator.validateSpec(file)`.
 
 The expected output of every rule is pinned by running OpenSpec itself, not by
-reading its source: `scripts/capture-validate-openspec.py` runs OpenSpec 1.13.2
+reading its source: `scripts/capture-validate-openspec.py` runs OpenSpec 2.0.0
 on the fixture project `crates/spectra-cli/tests/fixtures/validate_openspec`
 (one `dNN-*` change or `sNN-*` spec per rule; `d01`–`d30`/`s01`–`s20` are the
-W9 probe p08, `d31`–`d45`/`s21`–`s30` were added for the remaining rules) and
-writes `golden/validate-openspec-1.13.2.json`;
+W9 probe p08, `d31`–`d46`/`s21`–`s30` were added for the remaining 1.13.2
+rules, `d47`–`d56`/`s31`–`s35` for the rules 1.14.0–2.0.0 added) and
+writes `golden/validate-openspec-2.0.0.json`;
 `crates/spectra-cli/tests/validate_openspec_integration.rs` replays it against
 `spectra validate --changes|--specs --json [--strict]`, comparing `valid` and
 every issue field (`level`, `path`, `line`, `message`, in order).
+
+### Deliberate divergences from OpenSpec 2.0.0 (owner ruling, #265)
+
+Each is applied to the golden copy in the replay test, which first asserts the
+golden still holds the difference, so a future OpenSpec that changes the
+behavior fails the test until the entry is removed.
+
+- **spectra's own `.openspec.yaml` keys are known.** OpenSpec 2.0.0 warns about
+  every top-level key outside `schema`, `created`, `goal`, `affected_areas`,
+  `initiative`, `skip_specs`, `retire_capabilities` and `x-*`. `spectra new
+  change` always writes `created_by` (and `created_with` with `--agent`), and
+  `archive` writes `archived_by`/`archived_at`, so following OpenSpec would make
+  `--strict` fail on every change spectra creates. OpenSpectra treats those four
+  as known (`SPECTRA_METADATA_KEYS` in `validate.rs`); the message's "Known keys"
+  list still matches OpenSpec. Fixture `d56-spectra-metadata`.
+- **A broken `openspec/config.yaml` stops validation only under `--json --format
+  openspec`.** OpenSpec 2.0.0 (1.16.0, #1892) exits 1 with an
+  `unreadable_config`/`unparseable_config` status before checking anything. The
+  oracle 3.0.0 ignores the file and validates normally (probed 2026-11-16, exit
+  0 for `validate`, `validate c1`, `validate --all --json`), so the default
+  oracle format keeps doing that (pinned by
+  `a_broken_config_is_ignored_by_the_oracle_format`). Under `--format openspec`
+  the parenthesised parser message cannot match: OpenSpec quotes the JS `yaml`
+  package's error and OpenSpectra quotes `serde_yaml`'s, so the replay masks the
+  text inside the parentheses for `validate_openspec_badconfig`. Read errors
+  mimic Node's wording for `EISDIR` and `EACCES`.
+
+2.0.0's task-paragraph change (a wrapped task joins its continuation lines,
+#2227) does not reach `validate`: the archived-task check only counts tasks.
 
 The Markdown reader is deliberately **not** shared with `archive`
 (`crate::markdown`, oracle behavior): OpenSpec reads stray `###` headers,
@@ -98,6 +130,14 @@ block runs to the next `### Requirement:` or `## ` header, so a stray `###`
 inside it stays part of the block. REMOVED also accepts a bullet carrying the
 header (`-`, `*`, `+`). RENAMED pairs a `FROM:` with the next `TO:`.
 
+Since 2.0.0: a section title drops an ATX closing run of `#`s preceded by a
+space or tab (`## ADDED Requirements ##` is the ADDED section; `C#` keeps its
+`#`); a backtick fence opener whose info string contains a backtick (a line
+starting ```` ```npm test``` ````) is inline code and opens no fence; and HTML
+comments outside fences are blanked before looking for orphaned requirements
+and unapplied text (an unterminated `<!--` runs to the end of the file), while a
+`## ` line inside a comment still splits sections.
+
 Findings, in OpenSpec's order:
 
 | # | trigger | level | message (abridged) |
@@ -106,11 +146,14 @@ Findings, in OpenSpec's order:
 | C4 | a non-`Requirement:` `###` inside ADDED/MODIFIED | INFO + line | `Header "### Notes" in ADDED Requirements is not a "### Requirement:" header and is ignored by validation. …` |
 | C8 | `### Requirement:` with no name | INFO + line | `Header "### Requirement:" in ADDED Requirements is missing a requirement name …` |
 | C8 | `FROM:` without `TO:` (or `TO:` without `FROM:`) | ERROR + line | `RENAMED FROM: "Alpha" has no matching TO: line. …` |
-| C10 | a requirement outside the delta sections | WARNING + line | `Requirement "Alpha" is under "## Notes", which is not a delta section, so it is ignored. …` |
+| C10 | a requirement outside the delta sections | WARNING + line; **ERROR** when the section title ends in `Requirement`/`Requirements` but is none of the four (`## DEPRECATED Requirements`, `## Requirements`, `## Add Requirement`; 2.0.0, #2195) | `Requirement "Alpha" is under "## Notes", which is not a delta section, so it is ignored. …` |
+| C21 | text archive would not carry into the main spec (2.0.0): non-blank text above the first `## ` (an `# ` title excepted), before the first requirement of ADDED/MODIFIED (a stray `### ` line excepted), or anywhere in a section that is not one of the four delta sections (a `## Purpose` outside a comment excepted); REMOVED/RENAMED bodies and comment-only text never count | WARNING + line (the section's header line for a whole section) | `Text above the first "## " section …`, `Text before the first requirement in "## ADDED Requirements" …`, `Section "## Notes" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md.` |
 | C6 | a name twice in one section | ERROR | `Duplicate requirement in ADDED: "Alpha"` (also MODIFIED/REMOVED, `Duplicate FROM/TO in RENAMED`) |
 | C16 | ADDED/MODIFIED without body text | ERROR | `ADDED "Alpha" is missing requirement text`, or, when SHALL/MUST is only in the header, `… must contain SHALL or MUST in the requirement body, not only in the header. …` |
 | C16 | body without SHALL/MUST | WARNING | `ADDED "Alpha" should contain SHALL or MUST (RFC 2119 best practice for English specs)` |
+| C23 | ADDED body text longer than 500 UTF-16 units (MODIFIED is not checked: its text is the existing requirement; 1.14.1, #1976) | WARNING | `ADDED "Alpha": Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, …` |
 | C5/C17 | no `#### ` child **with a body** (`#####` does not count) | ERROR | `ADDED "Alpha" must include at least one scenario` (+ a hint when an empty `####` exists) |
+| C22 | a `#### Scenario:` block with a body but no trigger step or no outcome step, ADDED and MODIFIED (2.0.0, #2078). A step is a bold keyword in any case (`**WHEN**`, `**Given:**`, `__then__`) or a bare uppercase one (`WHEN`, ASCII word boundary), outside fences and not on the header line; `AND` counts for neither; an unlabeled `#### Notes` child is not checked | WARNING | `ADDED "Alpha": scenario "a1" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, …` |
 | C3 | MODIFIED omits a scenario the main spec has (after rename mapping) | ERROR | `MODIFIED "Alpha" omits scenario(s) the current spec still has: "a2". The modified block has 1 scenario; the current spec has 2 scenarios. It adds none. Copy the omitted scenarios …` — once per requirement, and never repeated by the archive check (#183: pinned by `validate_rejects_a_modified_requirement_that_drops_a_current_scenario`, the rename-chain test, and mutation cases `183-*`) |
 | C3 | the main spec exists but cannot be read (EACCES/EISDIR) | ERROR | `Could not read <abs path> to check the MODIFIED requirements against it (EACCES). …` |
 | C6 | conflicts across sections of one file | ERROR | `Requirement present in both MODIFIED and REMOVED: "Alpha"`, `… ADDED and REMOVED`, `MODIFIED references old name from RENAMED. …`, `RENAMED TO collides with ADDED …`, `Requirement present in both RENAMED and REMOVED …` — one per conflict; the rest of the file is still validated |
@@ -119,6 +162,7 @@ Findings, in OpenSpec's order:
 | C12 | a `.md` other than `spec.md` under `specs/` with a delta section | ERROR | `Delta spec found at specs/x.md. … Move its requirements into specs/x/spec.md.` |
 | C8 | delta sections present, no entries parsed | ERROR | `Delta sections ## ADDED Requirements were found, but no requirement entries parsed. …` |
 | C9 | a `spec.md` with no delta section | ERROR | `No delta sections found. Add headers such as "## ADDED Requirements" …` |
+| C24 | `.openspec.yaml` has a top-level key OpenSpec does not know and that is not an `x-<name>` extension (2.0.0; spectra's own four keys are known, see the divergences above) | WARNING `.openspec.yaml` | `Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): owner, skip_design. Known keys: …` (+ hints for `x-`-like keys and `skip_design`) |
 | C15 | `skip_specs: true` with any non-dot file under `specs/` | ERROR `file` | `skip_specs is set in .openspec.yaml but spec files exist under specs/. …` |
 | C14 | no delta at all (and no C11/C12 finding) | ERROR `file` | `Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory …` |
 | C15 | `skip_specs: true` and no delta | INFO `file` | `skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted` |
@@ -147,8 +191,14 @@ fixed-CLI, and oracle probes.
 
 Not ported: OpenSpec's invalid-`.openspec.yaml` marker error
 (`CHANGE_SKIP_SPECS_INVALID_METADATA`; OpenSpectra fails to load such a change
-instead), nested-change detection, and glob `apply.tracks` patterns (a literal
-tracked path is supported, which covers the built-in schemas).
+instead), nested-change detection, glob `apply.tracks` patterns (a literal
+tracked path is supported, which covers the built-in schemas), and OpenSpec's
+symlink containment for spec files: 1.13.2 refused a `spec.md` that resolves
+outside both the specs tree and its own capability directory, 2.0.0 also
+accepts a link that stays inside the project and refuses one that leaves it
+(`utils/spec-path-containment.js`); OpenSpectra's validate follows such links
+without a boundary check, as it did under 1.13.2. OpenSpec documents symlinked
+layouts as unsupported.
 
 ## Main spec rules
 
@@ -159,7 +209,10 @@ Portal` included), and a requirement's scenarios are its child headings with a
 non-empty body (a `#####` counts when no `####` sits between; an empty `####`
 does not). A missing or empty Purpose, then a missing Requirements, is the
 only finding reported for that spec (path `file`, message plus the
-"Missing required sections" guide).
+"Missing required sections" guide). Since 2.0.0 every heading title drops an
+ATX closing run (`## Purpose ##` is Purpose), and so do the `## Requirements`
+header the structure check and the SHALL/MUST check look for, the delta
+headers S2 reports, and the Purpose header the placeholder check locates.
 
 Otherwise, in order:
 
@@ -168,12 +221,13 @@ Otherwise, in order:
 | S8 | Requirements has no child heading | ERROR `requirements` | `Spec must have at least one requirement` |
 | S5 | a requirement without a scenario | ERROR `requirements.<i>.scenarios` **and** WARNING `requirements[<i>].scenarios` | `Requirement must have at least one scenario` / `… Scenarios must use level-4 headers. …` |
 | S2 | `## ADDED/MODIFIED/REMOVED/RENAMED Requirements` in a main spec | ERROR `file` + line | `Main spec contains delta header "## MODIFIED Requirements". …` |
-| S3 | `### Requirement:` outside the first `## Requirements` | ERROR `file` + line | `Requirement header "### Requirement: Beta" appears outside the main ## Requirements section. …` |
+| S3 | `### Requirement:` (since 2.0.0 also `###Requirement:`, no space) outside the first `## Requirements` | ERROR `file` + line | `Requirement header "### Requirement: Beta" appears outside the main ## Requirements section. …` |
 | S4 | the same requirement header twice | ERROR `file` + line | `Requirement header "### Requirement: Alpha" duplicates the requirement declared on line 9. …` |
 | S10 | Purpose is a placeholder (leading `TBD`/`TODO` shouted, or in any case followed by punctuation/EOL; or archive's generated sentence) | WARNING `overview` (+ line) | `Purpose section is still a placeholder rather than a Purpose anyone wrote …` |
 | S9 | otherwise, Purpose shorter than 50 UTF-16 units | WARNING `overview` | `Purpose section is too brief (less than 50 characters)` |
-| S11 | requirement text longer than 500 UTF-16 units | INFO `requirements[<i>]` | `Requirement text is very long (>500 characters). Consider breaking it down.` |
+| S11 | requirement text longer than 500 UTF-16 units | WARNING `requirements[<i>]` (INFO until 1.14.1) | `Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.` |
 | S12 | a `### Requirement:` block (first Requirements section) without body text / without SHALL or MUST | ERROR / WARNING `requirements[<i>]` | `Requirement "Alpha" must contain SHALL or MUST` / `… should contain SHALL or MUST (RFC 2119 best practice for English specs)` |
+| S14 | the same block's `#### Scenario:` children, checked as C22 (2.0.0) | WARNING `requirements[<i>].scenarios` | `Requirement "Alpha": scenario "a1" is missing a THEN step. …` |
 
 S13: a nameless `### Requirement:` is simply a requirement titled
 `Requirement:` and produces no finding of its own.
@@ -196,10 +250,38 @@ same five minus the two already strict-invalid (F019, F022), plus
 longer gets the false "missing scenario" (C4). This pulls OpenSpectra further
 from the oracle 3.0.0, which flags none of these specs; D1 accepts that.
 
+**2.0.0 (#265, measured 2026-11-16).** The same three repos at their current
+heads (copies of `.spectra.yaml` and the spec dir), validated by OpenSpectra
+`main` (`9e54e05`, the 1.13.2 rules) and by this change, both with `--json
+--format openspec`:
+
+| repo | scope | items | invalid, normal (before → after) | invalid, `--strict` (before → after) |
+|---|---|---|---|---|
+| yibi-mvp | changes | 40 | 3 → 3 | 3 → 28 |
+| yibi-mvp | specs | 140 | 15 → 15 | 56 → 119 |
+| nextrek-cli | changes | 1 | 1 → 1 | 1 → 1 |
+| nextrek-cli | specs | 2 | 0 → 0 | 2 → 2 |
+| yibi-stack | changes | 14 | 0 → 0 | 0 → 8 |
+| yibi-stack | specs | 22 | 0 → 0 | 17 → 21 |
+
+No item became valid, and plain `validate` did not change anywhere: the only
+new ERROR (C10 under an unrecognized `## ... Requirements` section) has no
+corpus hit. All 100 new `--strict` failures involve the 500-character limit
+(C23 on ADDED, S11 promoted from INFO), and 99 of them have no other new
+finding; one change also hits C21. Counting every finding, not only the new
+failures: 602 for the 500-character limit, 7 for the scenario step check
+(C22/S14, all in yibi-mvp main specs that `--strict` already failed), 2 for
+C21 (yibi-stack), none for the C10 ERROR. Against OpenSpec 2.0.0 itself, every remaining difference on these
+repos is one of the two ruled divergences: D13's scenario identity (13 issues)
+and spectra's own `.openspec.yaml` keys (29 issues; without that ruling 8 more
+changes, 5 in yibi-mvp and 3 in yibi-stack, would fail `--strict` on keys
+`spectra new`/`archive` wrote).
+
 ## Archived changes
 
 `--archived` fails when an archived change's top-level `tasks.md` still has
-pending tasks. The validator uses OpenSpec 1.13.2's `parseTaskLines` grammar,
+pending tasks. The validator uses OpenSpec's `parseTaskLines` grammar (1.13.2;
+2.0.0 only adds continuation lines to a task's text, which counting ignores),
 not the shared oracle task parser: `-`/`*`/`+` and ordered `1.`/`1)` list
 markers (one to nine digits), a padded checkbox holding at most one
 non-whitespace UTF-16 code unit, and even a blank description. Only `x`/`X`
@@ -289,11 +371,14 @@ exists only in the OpenSpec shape.
 
 ### OpenSpec shape (`--json --format openspec`)
 
-Field for field OpenSpec 1.13.2 (`commands/validate.js`), pinned by the
-`envelopes` and `all_order` sections of `golden/validate-openspec-1.13.2.json`
+Field for field OpenSpec 2.0.0 (`commands/validate.js`), pinned by the
+`envelopes` and `all_order` sections of `golden/validate-openspec-2.0.0.json`
 (fixtures `validate_openspec_envelope`, `validate_openspec_empty`,
-`validate_openspec_archived`, `validate_openspec_unicode`, and the rule
-fixture) and replayed by `validate_openspec_integration.rs`:
+`validate_openspec_archived`, `validate_openspec_unicode`,
+`validate_openspec_badconfig`, `validate_openspec_unreadableconfig`, and the
+rule fixture) and replayed by `validate_openspec_integration.rs`. The
+envelope shape itself did not change between 1.13.2 and 2.0.0; only the
+findings inside it did:
 
 ```json
 {
@@ -345,16 +430,23 @@ fixture) and replayed by `validate_openspec_integration.rs`:
   the `root.path` field. Malformed typed names return `invalid_item` before
   lookup; OpenSpectra retains its existing refusal of colons/drive prefixes.
   Default oracle-format missing-item diagnostics remain unchanged.
+- An unreadable or unparseable `openspec/config.yaml` (or `config.yml`) prints
+  `{"status": [{"severity": "error", "code": "unreadable_config" |
+  "unparseable_config", "message": "Could not read|parse <path> (<detail>).",
+  "fix": …}]}` to stdout and exits 1 before any item is validated (2.0.0;
+  see the divergences under "Rule authority" for the default format and the
+  `<detail>` text).
 - Deliberately not followed (rulings): a bare `validate` validates every
   change instead of printing OpenSpec's hint (D12-5); `ITEM --all` validates
   ITEM instead of the bulk scope (W9a-3). `durationMs` is OpenSpectra's own
   timing.
 - **#227 verification boundary:** the three listed W9a-4 gaps are covered by
-  31 captured envelopes, including missing/wrong-kind typed items, unsafe
+  31 captured envelopes (34 since #265 added the config cases), including missing/wrong-kind typed items, unsafe
   typed names, archived findings and Unicode full/findings reports. The
   capture is run twice before accepting regenerated output; no golden data
   is edited by hand. Capture: `python3 scripts/capture-validate-openspec.py
-  --write` with OpenSpec 1.13.2. Replay:
+  --write` with OpenSpec 2.0.0 (Node.js 22.12 or newer, the floor since
+  OpenSpec 1.16.0). Replay:
   `cargo test -p spectra-cli --test validate_openspec_integration`.
   This is evidence for those fixtures, not a new claim of exhaustive parity
   for every schema, I/O condition, locale or Unicode-data version.

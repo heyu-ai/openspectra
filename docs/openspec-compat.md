@@ -44,7 +44,7 @@ has one).
 
 ## Deliberate divergence: MODIFIED scenario identity (D13)
 
-OpenSpec 1.13.2 identifies a scenario by its full heading text, so a MODIFIED
+OpenSpec (1.13.2 and 2.0.0 alike) identifies a scenario by its full heading text, so a MODIFIED
 block that retitles a scenario, or adds a slug to it, reports the scenario as
 dropped. OpenSpec also has no way to drop a scenario on purpose. OpenSpectra
 diverges here on purpose (D13 in `migration-plan.md`, ADR-0002):
@@ -57,8 +57,9 @@ diverges here on purpose (D13 in `migration-plan.md`, ADR-0002):
 - `<!-- removed-scenario: <slug or full name> -->` in the MODIFIED block
   excuses the one scenario it names.
 
-The golden replay against OpenSpec 1.13.2 is unchanged: none of its fixtures
-contain these shapes. The oracle `spectra` 3.0.0 archive keeps the marker line
+The golden replay against OpenSpec is unchanged by this: none of its fixtures
+contain these shapes (true of the 1.13.2 golden and of the 2.0.0 one that
+replaced it in #265). The oracle `spectra` 3.0.0 archive keeps the marker line
 in the main spec, where it has no effect; the OSS archive removes it.
 
 ## Difference matrix
