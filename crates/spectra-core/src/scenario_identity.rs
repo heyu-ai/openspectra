@@ -1,4 +1,4 @@
-//! MODIFIED requirement 的 scenario 身分比對（決策 D13，刻意與 OpenSpec 1.13.2 分歧）。
+//! MODIFIED requirement 的 scenario 身分比對（決策 D13，刻意與 OpenSpec 分歧：1.13.2 與 2.0.0 都以完整標題比對）。
 //!
 //! OpenSpec 以 scenario 標頭整行（`#### Scenario:` 之後的文字）當身分，所以
 //! `slug -- 舊標題` 改成 `slug -- 新標題` 會被當成「刪掉一個、新增一個」，而 MODIFIED
@@ -64,10 +64,17 @@ fn slug_counts(names: &[String]) -> HashMap<&str, usize> {
     counts
 }
 
+/// 標記判斷 code fence 用的 mask。刻意停在 2.0.0 之前的 fence 規則，與 archive 的
+/// scenario 解析（[`crate::markdown`]）一致；理由見
+/// [`crate::openspec_md::pre_2_0_0_fence_mask`]。
+fn marker_fence_mask(lines: &[&str]) -> Vec<bool> {
+    crate::openspec_md::pre_2_0_0_fence_mask(lines)
+}
+
 /// MODIFIED 區塊內的 `removed-scenario` 標記值（略過 code fence 內的行）。
 pub(crate) fn removed_markers(raw: &str) -> Vec<String> {
     let lines: Vec<&str> = raw.split('\n').collect();
-    let mask = crate::openspec_md::fence_mask(&lines);
+    let mask = marker_fence_mask(&lines);
     lines
         .iter()
         .enumerate()
@@ -81,7 +88,7 @@ pub(crate) fn removed_markers(raw: &str) -> Vec<String> {
 /// 拿掉 code fence 外的 `removed-scenario` 標記行，給 archive 寫回 main spec 用。
 pub(crate) fn strip_removed_markers(raw: &str) -> String {
     let lines: Vec<&str> = raw.split('\n').collect();
-    let mask = crate::openspec_md::fence_mask(&lines);
+    let mask = marker_fence_mask(&lines);
     lines
         .iter()
         .enumerate()

@@ -3120,3 +3120,478 @@ replace = '''        if slug_of(name).is_some() || true {
 package = "spectra-cli"
 target = ["--test", "scenario_identity_integration"]
 test = "adding_a_slug_with_the_same_title_is_valid_and_archives"
+
+# ---- D1 升到 OpenSpec 2.0.0（#265）：每條新規則還原成 1.13.2 的形狀 ----
+
+[[case]]
+id = "d1v2-section-closing-sequence"
+issue = "#265 / OpenSpec 1.16.1（`## ADDED Requirements ##`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "            headers.push((strip_closing_sequence(&captures[2]), index));"
+replace = "            headers.push((captures[2].trim().to_string(), index));"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-orphan-section-closing-sequence"
+issue = "#265 / OpenSpec 1.16.1（orphan 的 section 標題去掉結尾 `#`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "            section = Some(strip_closing_sequence(&captures[2]));"
+replace = "            section = Some(captures[2].trim().to_string());"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-spec-title-closing-sequence"
+issue = "#265 / OpenSpec 1.16.1（`## Purpose ##`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "        let title = strip_closing_sequence(&captures[2]);"
+replace = "        let title = captures[2].trim().to_string();"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-requirements-header-closing"
+issue = "#265 / OpenSpec 1.16.1（`## Requirements ##`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''Regex::new(r"(?i)^##\s+Requirements(?:[ \t]+#+)?\s*$")'''
+replace = '''Regex::new(r"(?i)^##\s+Requirements\s*$")'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-structure-delta-header-closing"
+issue = "#265 / OpenSpec 1.16.1（main spec 裡的 `## ADDED Requirements ##`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements(?:[ \t]+#+)?\s*$")'''
+replace = '''(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\s*$")'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-structure-unspaced-requirement"
+issue = "#265 / OpenSpec 1.16.0（`###Requirement:`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''    Lazy::new(|| Regex::new(r"(?i)^###\s*Requirement:\s*(.+)\s*$").unwrap());
+
+// purpose-placeholder.js'''
+replace = '''    Lazy::new(|| Regex::new(r"(?i)^###\s+Requirement:\s*(.+)\s*$").unwrap());
+
+// purpose-placeholder.js'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-purpose-header-closing"
+issue = "#265 / OpenSpec 1.16.1（placeholder 定位 `## Purpose ##`）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''Regex::new(r"(?i)^ {0,3}##[ \t]+Purpose(?:[ \t]+#+)?[ \t]*$")'''
+replace = '''Regex::new(r"(?i)^ {0,3}##[ \t]+Purpose[ \t]*$")'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unrecognized-delta-section"
+issue = "#265 / OpenSpec 1.16.1（#2195，`## DEPRECATED Requirements` 是 ERROR）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "        REQUIREMENTS_SUFFIX.is_match(title)"
+replace = "        false && REQUIREMENTS_SUFFIX.is_match(title)"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-orphan-ignores-html-comments"
+issue = "#265 / OpenSpec 2.0.0（註解掉的 requirement 不是 orphan）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "        if let Some(captures) = REQUIREMENT_HEADER.captures(&masked[index]) {"
+replace = "        if let Some(captures) = REQUIREMENT_HEADER.captures(line) {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-content-off"
+issue = "#265 / OpenSpec 1.14.2（archive 不會帶走的文字）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "        unapplied_content: find_unapplied_content(&lines, &mask),"
+replace = "        unapplied_content: Vec::new(),"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-h1-counts"
+issue = "#265 / OpenSpec 1.14.2（`# ` 標題不算被丟掉的文字）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "    if let Some(index) = first_text(0, preamble_end, Some(&H1)) {"
+replace = "    if let Some(index) = first_text(0, preamble_end, None) {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-stray-h3-counts"
+issue = "#265 / OpenSpec 1.14.2（第一個 requirement 前的 stray `###` 已是 INFO）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "            if let Some(index) = first_text(start, start + block, Some(&H3)) {"
+replace = "            if let Some(index) = first_text(start, start + block, None) {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-purpose-counts"
+issue = "#265 / OpenSpec 1.14.2（delta 的 Purpose 另有規則）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''            if folded == "purpose" && !masked[start - 1].trim().is_empty() {'''
+replace = '''            if false && !masked[start - 1].trim().is_empty() {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-inline-backtick-opens-fence"
+issue = "#265 / OpenSpec 1.16.0（行首 ```npm test``` 是 inline code）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "    if marker == '`' && info.contains('`') {"
+replace = "    if false && marker == '`' && info.contains('`') {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-step-check-delta-off"
+issue = "#265 / OpenSpec 1.16.0（#2078，delta scenario 步驟檢查）"
+file = "crates/spectra-core/src/validate.rs"
+find = '''            for message in openspec_md::scenario_step_messages(&block.raw, &label) {
+                issues.push(Issue::warning(entry_path.to_string(), message));
+            }'''
+replace = '''            for message in openspec_md::scenario_step_messages(&block.raw, &label) {
+                let _ = message;
+            }'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-step-check-spec-off"
+issue = "#265 / OpenSpec 1.16.0（main spec scenario 步驟檢查）"
+file = "crates/spectra-core/src/validate.rs"
+find = '''            issues.push(Issue::warning(
+                format!("requirements[{index}].scenarios"),
+                message,
+            ));'''
+replace = '''            let _ = message;'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-step-bare-keyword-any-case"
+issue = "#265 / OpenSpec 1.16.0（裸字 when 是散文，不是步驟）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''Regex::new(r"(?-u:\b)(?:WHEN|GIVEN)(?-u:\b)")'''
+replace = '''Regex::new(r"(?i)(?-u:\b)(?:WHEN|GIVEN)(?-u:\b)")'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-step-title-counts"
+issue = "#265 / OpenSpec 1.16.0（scenario 標題裡的關鍵字不是步驟）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "    for (index, line) in lines.iter().enumerate().skip(1) {"
+replace = "    for (index, line) in lines.iter().enumerate().skip(0) {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-step-fenced-counts"
+issue = "#265 / OpenSpec 1.16.0（fence 內的關鍵字是文件，不是步驟）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''        if mask[index] {
+            continue;
+        }
+        trigger |='''
+replace = '''        trigger |='''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-step-unlabeled-checked"
+issue = "#265 / OpenSpec 1.16.0（`#### Notes` 不是 scenario）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''        if !SCENARIO_PREFIX.is_match(&SCENARIO_HEADER.replace(header, "")) {'''
+replace = '''        if false && !SCENARIO_PREFIX.is_match(&SCENARIO_HEADER.replace(header, "")) {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unknown-metadata-off"
+issue = "#265 / OpenSpec 1.14.0（`.openspec.yaml` 未知 key）"
+file = "crates/spectra-core/src/validate.rs"
+find = "    let unknown_keys = unknown_change_metadata_keys(&change_dir);"
+replace = "    let unknown_keys: Vec<String> = Vec::new();"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-spectra-metadata-unknown"
+issue = "#265 裁決（spectra 自己寫的 key 視為已知）"
+file = "crates/spectra-core/src/validate.rs"
+find = "                && !SPECTRA_METADATA_KEYS.contains(&key.as_str())"
+replace = "                && !SPECTRA_METADATA_KEYS.is_empty()"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-extension-key-unknown"
+issue = "#265 / OpenSpec 1.14.2（`x-` 擴充 key 不是未知 key）"
+file = "crates/spectra-core/src/validate.rs"
+find = "                && !EXTENSION_KEY.is_match(key)"
+replace = "                && !EXTENSION_KEY.is_match(\"\")"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-config-error-every-format"
+issue = "#265 裁決（壞 config 只在 `--format openspec` exit 1）"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    if openspec_json {
+        if let Some(error) = validate::config_parse_error(cfg) {'''
+replace = '''    if true {
+        if let Some(error) = validate::config_parse_error(cfg) {'''
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "a_broken_config_is_ignored_by_the_oracle_format"
+
+[[case]]
+id = "d1v2-config-error-off"
+issue = "#265 / OpenSpec 1.16.0（#1892，`--format openspec` 遇到壞 config exit 1）"
+file = "crates/spectra-cli/src/main.rs"
+find = '''    if openspec_json {
+        if let Some(error) = validate::config_parse_error(cfg) {'''
+replace = '''    if false {
+        if let Some(error) = validate::config_parse_error(cfg) {'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "d1v2-config-path-ignores-spec-dir"
+issue = "#265（壞 config 的檢查讀 `<spec_dir>/config.yaml`）"
+file = "crates/spectra-core/src/validate.rs"
+find = "    let dir = cfg.root.join(&cfg.spec_dir);"
+replace = '    let dir = cfg.root.join("openspec");'
+package = "spectra-cli"
+target = ["--test", "validate_format_integration"]
+test = "format_openspec_reads_the_config_under_spec_dir"
+
+[[case]]
+id = "d1v2-sanitize-no-truncation"
+issue = "#265 / OpenSpec 2.0.0（`sanitizeInline` 截在 100 個 UTF-16 code unit）"
+file = "crates/spectra-core/src/validate.rs"
+find = "    const MAX: usize = 100;"
+replace = "    const MAX: usize = 1000;"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-sanitize-keeps-control-chars"
+issue = "#265 / OpenSpec 2.0.0（`sanitizeInline` 把控制字元換成空白）"
+file = "crates/spectra-core/src/validate.rs"
+find = '    let flattened = UNSAFE.replace_all(value, " ");'
+replace = '    let flattened = UNSAFE.replace_all(value, "$0");'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-long-text-added-reported"
+issue = "#265 裁決（500 字上限：ADDED 不報）"
+file = "crates/spectra-core/src/validate.rs"
+find = """            // OpenSpec 2.0.0（1.14.1，#1976）對超過 500 字的 ADDED requirement 報 WARNING；
+            // owner 在 #265 裁決不跟（見 `REQUIREMENT_TOO_LONG`），這裡刻意不檢查。"""
+replace = """            if operation == "ADDED"
+                && !text.is_empty()
+                && openspec_md::js_len(&text) > MAX_REQUIREMENT_TEXT_LENGTH
+            {
+                issues.push(Issue::warning(
+                    entry_path.to_string(),
+                    format!("{label}: {REQUIREMENT_TOO_LONG}"),
+                ));
+            }"""
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-long-text-spec-warning"
+issue = "#265 裁決（500 字上限：main spec 維持 INFO）"
+file = "crates/spectra-core/src/validate.rs"
+find = """            issues.push(Issue::info(
+                format!("requirements[{index}]"),
+                REQUIREMENT_TOO_LONG.to_string(),
+            ));"""
+replace = """            issues.push(Issue::warning(
+                format!("requirements[{index}]"),
+                REQUIREMENT_TOO_LONG.to_string(),
+            ));"""
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-long-text-new-message"
+issue = "#265 裁決（500 字上限：訊息維持 1.13.2）"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    "Requirement text is very long (>500 characters). Consider breaking it down.";'''
+replace = '''    "Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.";'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "d1v2-d13-markers-follow-2-0-0-fences"
+issue = "#267 review CR-1（validate 的 2.0.0 fence 規則漏進 archive 的 removed-scenario 標記）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = "    crate::openspec_md::pre_2_0_0_fence_mask(lines)"
+replace = "    crate::openspec_md::fence_mask(lines)"
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_marker_after_an_inline_backtick_fence_line_stays_fenced_for_archive"
+
+[[case]]
+id = "d1v2-d13-markers-follow-2-0-0-fences-drop"
+issue = "#267 review CR-1（fence 內的標記讓 archive 刪掉 main spec 的 scenario）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = "    crate::openspec_md::pre_2_0_0_fence_mask(lines)"
+replace = "    crate::openspec_md::fence_mask(lines)"
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_fenced_marker_does_not_let_archive_drop_a_scenario"
+
+[[case]]
+id = "d1v2-unknown-key-null-literal"
+issue = "#267 review CR-4（null key 在 OpenSpec 2.0.0 是空字串，不是 `null`）"
+file = "crates/spectra-core/src/validate.rs"
+find = "            serde_yaml::Value::Null => String::new(),"
+replace = '            serde_yaml::Value::Null => "null".to_string(),'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unknown-key-no-dedupe"
+issue = "#267 review CR-4（`1:` 與 `\"1\":` 在 JS 物件是同一個 key）"
+file = "crates/spectra-core/src/validate.rs"
+find = "        .filter(|key| seen.insert(key.clone()))"
+replace = "        .filter(|key| seen.insert(key.clone()) || true)"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unknown-key-float-display"
+issue = "#267 review CR-4（`1.0`、`.inf` 要照 JS `String(number)`）"
+file = "crates/spectra-core/src/validate.rs"
+find = "            serde_yaml::Value::Number(value) => js_number_key(value),"
+replace = "            serde_yaml::Value::Number(value) => value.to_string(),"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-modified-leading-text"
+issue = "#267 review AC-4（MODIFIED 第一個 requirement 前的文字，d57）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '        if folded == "added requirements" || folded == "modified requirements" {'
+replace = '        if folded == "added requirements" {'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-commented-purpose-skipped"
+issue = "#267 review AC-4（註解裡的 `## Purpose` 不是 archive 搬的那個，d58）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '            if folded == "purpose" && !masked[start - 1].trim().is_empty() {'
+replace = '            if folded == "purpose" {'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-comment-bang-terminator"
+issue = "#267 review AC-4（`--!>` 也結束 HTML 註解，d59）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '            body.find("--!>").map(|at| at + 4),'
+replace = '            None,'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-tilde-fence-info-backtick"
+issue = "#267 review AC-4（info string 含 backtick 只讓 backtick fence 失效，`~~~` 仍是 fence，d60）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "    if marker == '`' && info.contains('`') {"
+replace = "    if info.contains('`') {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-requirements-suffix-word-boundary"
+issue = "#267 review AC-4（`## Prerequirements` 不是 `## ... Requirements`，維持 WARNING，d61）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''        Lazy::new(|| Regex::new(r"(?i)(?-u:\b)requirements?$").unwrap());'''
+replace = '''        Lazy::new(|| Regex::new(r"(?i)requirements?$").unwrap());'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-fence-info-stops-at-line-separator"
+issue = "#267 review AC-4（JS `(.*)` 停在 U+2028，info string 之後的 backtick 不算，d62）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "        .find(['\\r', '\\u{2028}', '\\u{2029}'])"
+replace = "        .find(['\\r', '\\u{2029}'])"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-config-yml-fallback"
+issue = "#267 review AC-4（只有 `config.yml` 時改讀它，validate_openspec_ymlconfig）"
+file = "crates/spectra-core/src/validate.rs"
+find = '    let path = [dir.join("config.yaml"), dir.join("config.yml")]'
+replace = '    let path = [dir.join("config.yaml")]'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "d1v2-config-eacces-wording"
+issue = "#267 review AC-4（權限不足時仿 Node 的 EACCES 措辭）"
+file = "crates/spectra-core/src/validate.rs"
+find = '''                    format!("EACCES: permission denied, open '{shown}'")'''
+replace = '''                    first_line(error.to_string())'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "an_unreadable_config_matches_the_openspec_eacces_envelope"

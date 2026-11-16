@@ -222,3 +222,82 @@ fn an_unused_marker_is_info_only_and_strict_stays_valid() {
         messages(&report)
     );
 }
+
+/// #267 review CR-1：validate 的 2.0.0 fence 規則（```` ```npm test``` ```` 是 inline code）
+/// 不能漏進 archive。`removed-scenario` 標記仍用 2.0.0 之前的規則判斷 fence，與 archive
+/// 自己的 scenario 解析一致，所以 ```` ```npm test``` ```` 之後的行都在 fence 裡。
+/// 期望值是 main（9e54e05）的 binary 對同一份 fixture 的實際輸出（2026-11-16 實測）。
+const CAP_MAIN_FOO_BAR: &str = "# cap\n\n## Purpose\n\nA capability used to probe archive marker handling across fence semantics.\n\n\
+## Requirements\n\n### Requirement: Alpha\n\nThe system SHALL alpha.\n\n\
+#### Scenario: foo\n\n- **WHEN** x\n- **THEN** y\n\n#### Scenario: bar\n\n- **WHEN** x\n- **THEN** y\n";
+
+const CAP_MAIN_A_B: &str = "# cap\n\n## Purpose\n\nA capability used to probe archive marker handling across fence semantics.\n\n\
+## Requirements\n\n### Requirement: Alpha\n\nThe system SHALL alpha.\n\n\
+#### Scenario: a\n\n- **WHEN** x\n- **THEN** y\n\n#### Scenario: b\n\n- **WHEN** x\n- **THEN** y\n";
+
+fn setup_cap(label: &str, main: &str, delta: &str) -> TempDir {
+    let tmp = TempDir::new(label);
+    init_project_with_change(&tmp, "c1");
+    let change = tmp.join("openspec/changes/c1");
+    std::fs::write(change.join("proposal.md"), "## Why\n\nx\n").unwrap();
+    std::fs::write(change.join("tasks.md"), "- [x] 1.1 done\n").unwrap();
+    let main_path = tmp.join("openspec/specs/cap/spec.md");
+    std::fs::create_dir_all(main_path.parent().unwrap()).unwrap();
+    std::fs::write(main_path, main).unwrap();
+    std::fs::create_dir_all(change.join("specs/cap")).unwrap();
+    std::fs::write(change.join("specs/cap/spec.md"), delta).unwrap();
+    tmp
+}
+
+fn archive_c1(tmp: &TempDir) -> std::process::Output {
+    spectra()
+        .args(["archive", "c1", "--yes", "--no-color"])
+        .current_dir(&**tmp)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn a_marker_after_an_inline_backtick_fence_line_stays_fenced_for_archive() {
+    let tmp = setup_cap(
+        "cr1-fenced-marker",
+        CAP_MAIN_FOO_BAR,
+        "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nThe system SHALL alpha.\n\n\
+         ```npm test```\n\n#### Scenario: bar\n\n- **WHEN** x\n- **THEN** y\n\n\
+         <!-- removed-scenario: foo -->\n",
+    );
+    let run = archive_c1(&tmp);
+    assert_eq!(run.status.code(), Some(1), "{run:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr).trim_end(),
+        "Error: capability 'cap': MODIFIED requirement 'Alpha' omits scenario(s) the current \
+         spec still has: \"foo\", \"bar\"",
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.join("openspec/specs/cap/spec.md")).unwrap(),
+        CAP_MAIN_FOO_BAR
+    );
+}
+
+#[test]
+fn a_fenced_marker_does_not_let_archive_drop_a_scenario() {
+    let tmp = setup_cap(
+        "cr1-fenced-drop",
+        CAP_MAIN_A_B,
+        "## MODIFIED Requirements\n\n### Requirement: Alpha\n\nThe system SHALL alpha.\n\n\
+         #### Scenario: a\n\n- **WHEN** x\n- **THEN** y\n\n```npm test```\n\n\
+         <!-- removed-scenario: b -->\n",
+    );
+    let run = archive_c1(&tmp);
+    assert_eq!(run.status.code(), Some(1), "{run:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stderr).trim_end(),
+        "Error: capability 'cap': MODIFIED requirement 'Alpha' omits scenario(s) the current \
+         spec still has: \"b\"",
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.join("openspec/specs/cap/spec.md")).unwrap(),
+        CAP_MAIN_A_B
+    );
+}

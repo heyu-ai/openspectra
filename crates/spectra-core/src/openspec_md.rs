@@ -1,9 +1,9 @@
-//! OpenSpec 1.13.2 `validate` 讀 Markdown 的方式，逐函式移植自
+//! OpenSpec 2.0.0 `validate` 讀 Markdown 的方式，逐函式移植自
 //! `@fission-ai/openspec` 的 `dist/core/parsers/`（`code-fence.js`、
 //! `requirement-blocks.js`、`requirement-text.js`、`markdown-parser.js`、
 //! `spec-structure.js`）與 `dist/core/validation/purpose-placeholder.js`。
 //!
-//! 決策 D1：`spectra validate` 的規則以 OpenSpec 1.13.2 為準。這裡刻意不共用
+//! 決策 D1：`spectra validate` 的規則以 OpenSpec 2.0.0 為準（#265 前是 1.13.2）。這裡刻意不共用
 //! [`crate::markdown`]：那是 archive 的解析器（oracle 行為），兩者對 stray
 //! `###`、重複的 `## ADDED Requirements`、`#####` scenario 等的解讀不同，而
 //! archive 的拒絕條件不能因為 validate 改規則而跟著變。
@@ -32,8 +32,9 @@ static RENAMED_FROM: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*[-*+]?\s*FROM:\s*`?###\s*Requirement:\s*(.+?)`?\s*$").unwrap());
 static RENAMED_TO: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^\s*[-*+]?\s*TO:\s*`?###\s*Requirement:\s*(.+?)`?\s*$").unwrap());
+/// `REQUIREMENTS_SECTION_HEADER_REGEX`：結尾可帶 `#` 串（`## Requirements ##`）。
 static REQUIREMENTS_HEADER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)^##\s+Requirements\s*$").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)^##\s+Requirements(?:[ \t]+#+)?\s*$").unwrap());
 static CLOSING_HASHES: Lazy<Regex> = Lazy::new(|| Regex::new(r"[ \t]+#+[ \t]*$").unwrap());
 static WHITESPACE_RUN: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s+").unwrap());
 
@@ -48,23 +49,24 @@ static SHALL_OR_MUST: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?-u:\b)(SHALL|MUST)(?-u:\b)").unwrap());
 
 // code-fence.js
-static FENCE_OPEN: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*(`{3,}|~{3,})").unwrap());
+static FENCE_OPEN: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*(`{3,}|~{3,})(.*)").unwrap());
 static FENCE_CLOSE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\s*(`{3,}|~{3,})\s*$").unwrap());
 
 // markdown-parser.js
 static SPEC_HEADER: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#{1,6})\s+(.+)$").unwrap());
 static SPEC_HEADER_LEVEL: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(#{1,6})\s+").unwrap());
 
-// spec-structure.js（requirement header 這裡要求 `###` 後有空白）
+// spec-structure.js（2.0.0 起 delta header 可帶結尾 `#` 串、`###` 後的空白可省略）
 static STRUCTURE_DELTA_HEADER: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements\s*$").unwrap()
+    Regex::new(r"(?i)^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\s+Requirements(?:[ \t]+#+)?\s*$")
+        .unwrap()
 });
 static STRUCTURE_REQUIREMENT_HEADER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)^###\s+Requirement:\s*(.+)\s*$").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)^###\s*Requirement:\s*(.+)\s*$").unwrap());
 
 // purpose-placeholder.js
 static PURPOSE_HEADER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)^ {0,3}##[ \t]+Purpose[ \t]*$").unwrap());
+    Lazy::new(|| Regex::new(r"(?i)^ {0,3}##[ \t]+Purpose(?:[ \t]+#+)?[ \t]*$").unwrap());
 /// `^ {0,3}#{1,2}(?!#)[ \t]+`：`[ \t]` 本身不是 `#`，所以負向前瞻可省略。
 static PURPOSE_END_HEADER: Lazy<Regex> = Lazy::new(|| Regex::new(r"^ {0,3}#{1,2}[ \t]+").unwrap());
 static WORD_CHAR: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[\p{L}\p{N}\p{M}_]").unwrap());
@@ -83,17 +85,54 @@ pub(crate) fn js_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
 
+/// `getFenceMarker`：開 fence 的符號與長度。2.0.0 起依 CommonMark，backtick fence
+/// 的 info string 不能含 backtick，所以 ```` ```npm test``` ```` 是 inline code、不是
+/// fence。JS 的 `(.*)` 停在第一個行終止字元（`.` 不吃 `\r`、U+2028、U+2029），
+/// Rust 的 `.` 只排除 `\n`，這裡手動截斷。
+fn fence_opener(line: &str) -> Option<(char, usize)> {
+    let captures = FENCE_OPEN.captures(line)?;
+    let run = &captures[1];
+    let marker = run.chars().next().unwrap();
+    let rest = &captures[2];
+    let info = rest
+        .find(['\r', '\u{2028}', '\u{2029}'])
+        .map_or(rest, |end| &rest[..end]);
+    if marker == '`' && info.contains('`') {
+        return None;
+    }
+    Some((marker, run.len()))
+}
+
+/// 1.13.2 的 `getFenceMarker`：只看開頭的 backtick／tilde 串，不檢查 info string。
+fn pre_2_0_0_fence_opener(line: &str) -> Option<(char, usize)> {
+    let captures = FENCE_OPEN.captures(line)?;
+    let run = &captures[1];
+    Some((run.chars().next().unwrap(), run.len()))
+}
+
 /// `buildCodeFenceMask`：`true` 表示該行在 fenced code block 內（含開關 fence 行）。
 /// 開 fence 不限縮排（`^\s*`），與 [`crate::markdown`] 的「最多三格」不同。
 pub(crate) fn fence_mask(lines: &[&str]) -> Vec<bool> {
+    fence_mask_with(lines, fence_opener)
+}
+
+/// 2.0.0 之前（#265 前）的 fence 規則：backtick 開 fence 的 info string 含 backtick 也算
+/// fence，所以 ```` ```npm test``` ```` 會開一個 fence。只給 D13 的 `removed-scenario`
+/// 標記（[`crate::scenario_identity`]）用：archive 的 scenario 清單由 [`crate::markdown`]
+/// 解析，那邊把這種行當成開 fence；標記若改用 2.0.0 的規則，archive 會豁免或拿掉一個它
+/// 自己認為在 code 裡的標記，validate 換規則就會改變 archive 的拒絕條件（#267 review CR-1）。
+pub(crate) fn pre_2_0_0_fence_mask(lines: &[&str]) -> Vec<bool> {
+    fence_mask_with(lines, pre_2_0_0_fence_opener)
+}
+
+fn fence_mask_with(lines: &[&str], opener: fn(&str) -> Option<(char, usize)>) -> Vec<bool> {
     let mut mask = vec![false; lines.len()];
     let mut active: Option<(char, usize)> = None;
     for (index, line) in lines.iter().enumerate() {
         match active {
             None => {
-                if let Some(captures) = FENCE_OPEN.captures(line) {
-                    let run = &captures[1];
-                    active = Some((run.chars().next().unwrap(), run.len()));
+                if let Some(opener) = opener(line) {
+                    active = Some(opener);
                     mask[index] = true;
                 }
             }
@@ -111,9 +150,15 @@ pub(crate) fn fence_mask(lines: &[&str]) -> Vec<bool> {
     mask
 }
 
-/// `normalizeRequirementName`：去掉 ATX 結尾的 `#` 串再 trim。
+/// `stripClosingSequence`：去掉 ATX 標題結尾的 `#` 串再 trim（`## Purpose ##` 就是
+/// `Purpose`）。只有前面是空白或 tab 的 `#` 串才算結尾，所以 `C#` 保留 `#`。
+pub(crate) fn strip_closing_sequence(title: &str) -> String {
+    CLOSING_HASHES.replace(title, "").trim().to_string()
+}
+
+/// `normalizeRequirementName`：`### Requirement: Foo ###` 的名稱是 `Foo`。
 pub(crate) fn normalize_requirement_name(name: &str) -> String {
-    CLOSING_HASHES.replace(name, "").trim().to_string()
+    strip_closing_sequence(name)
 }
 
 /// `foldRequirementName`：只用來抓大小寫／空白不同的近似名稱。
@@ -154,6 +199,14 @@ pub(crate) struct OrphanedRequirement {
     pub line: usize,
 }
 
+/// `findUnappliedContent` 的一筆：archive 不會帶進 main spec 的文字從哪裡開始。
+/// `section` 為 `None` 表示在第一個 `## ` 之前；`line` 是 1-based。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnappliedContent {
+    pub section: Option<String>,
+    pub line: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Rename {
     pub from: String,
@@ -169,6 +222,7 @@ pub(crate) struct DeltaPlan {
     pub renamed: Vec<Rename>,
     pub unpaired_renames: Vec<UnpairedRename>,
     pub orphaned_requirements: Vec<OrphanedRequirement>,
+    pub unapplied_content: Vec<UnappliedContent>,
     pub skipped_headers: Vec<SkippedHeader>,
     pub added_present: bool,
     pub modified_present: bool,
@@ -205,7 +259,8 @@ fn split_top_level_sections<'a>(lines: &'a [&'a str], mask: &'a [bool]) -> Vec<S
             continue;
         }
         if let Some(captures) = TOP_LEVEL_SECTION.captures(line) {
-            headers.push((captures[2].trim().to_string(), index));
+            // `## ADDED Requirements ##` 與 `## ADDED Requirements` 是同一個 section。
+            headers.push((strip_closing_sequence(&captures[2]), index));
         }
     }
     headers
@@ -370,8 +425,67 @@ const DELTA_SECTION_TITLES: [&str; 4] = [
     "renamed requirements",
 ];
 
+/// `isUnrecognizedDeltaSection`：orphan 所在的 `## ... Requirements` 標題不是四個
+/// delta section 之一（`## DEPRECATED Requirements`、`## Add Requirement`、
+/// `## Requirements`）。這種標題讀起來像 delta 操作，2.0.0 起報 ERROR（#2195）；
+/// `## Notes` 之類的散文 section 或第一個 `## ` 之前仍是 WARNING。`\b` 是 ASCII 字界
+/// （JS 不帶 `u` 旗標）。
+pub(crate) fn is_unrecognized_delta_section(section: Option<&str>) -> bool {
+    static REQUIREMENTS_SUFFIX: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)(?-u:\b)requirements?$").unwrap());
+    section.is_some_and(|title| {
+        REQUIREMENTS_SUFFIX.is_match(title)
+            && !DELTA_SECTION_TITLES.contains(&title.to_lowercase().as_str())
+    })
+}
+
+/// `maskHtmlComments`：fence 以外的 HTML 註解換成空白、行數不變；沒有結尾的註解
+/// 一路延伸到檔尾（regex 沒有 `m` 旗標，`$` 只在字串結尾）。fence 內的行保留原文，
+/// 所以 code sample 裡的 `<!--` 不會蓋掉 fence 之後的內容。
+fn mask_html_comments(lines: &[&str], mask: &[bool]) -> Vec<String> {
+    let joined = lines
+        .iter()
+        .enumerate()
+        .map(|(index, line)| if mask[index] { "" } else { *line })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut out = String::with_capacity(joined.len());
+    let mut rest = joined.as_str();
+    while let Some(open) = rest.find("<!--") {
+        out.push_str(&rest[..open]);
+        let body = &rest[open + 4..];
+        let close = [
+            body.find("-->").map(|at| at + 3),
+            body.find("--!>").map(|at| at + 4),
+        ]
+        .into_iter()
+        .flatten()
+        .min_by_key(|end| *end)
+        .map_or(rest.len(), |end| open + 4 + end);
+        out.extend(
+            rest[open..close]
+                .chars()
+                .map(|ch| if ch == '\n' { '\n' } else { ' ' }),
+        );
+        rest = &rest[close..];
+    }
+    out.push_str(rest);
+    out.split('\n')
+        .enumerate()
+        .map(|(index, masked)| {
+            if mask[index] {
+                lines[index].to_string()
+            } else {
+                masked.to_string()
+            }
+        })
+        .collect()
+}
+
 /// `findOrphanedRequirements`：不在任何 delta section 裡的 `### Requirement:`（C10）。
+/// HTML 註解裡的 requirement 不算（2.0.0），但註解裡的 `## ` 仍是 section 邊界。
 fn find_orphaned_requirements(lines: &[&str], mask: &[bool]) -> Vec<OrphanedRequirement> {
+    let masked = mask_html_comments(lines, mask);
     let mut orphans = Vec::new();
     let mut section: Option<String> = None;
     for (index, line) in lines.iter().enumerate() {
@@ -379,7 +493,7 @@ fn find_orphaned_requirements(lines: &[&str], mask: &[bool]) -> Vec<OrphanedRequ
             continue;
         }
         if let Some(captures) = TOP_LEVEL_SECTION.captures(line) {
-            section = Some(captures[2].trim().to_string());
+            section = Some(strip_closing_sequence(&captures[2]));
             continue;
         }
         if section
@@ -388,7 +502,7 @@ fn find_orphaned_requirements(lines: &[&str], mask: &[bool]) -> Vec<OrphanedRequ
         {
             continue;
         }
-        if let Some(captures) = REQUIREMENT_HEADER.captures(line) {
+        if let Some(captures) = REQUIREMENT_HEADER.captures(&masked[index]) {
             orphans.push(OrphanedRequirement {
                 name: normalize_requirement_name(&captures[1]),
                 section: section.clone(),
@@ -397,6 +511,82 @@ fn find_orphaned_requirements(lines: &[&str], mask: &[bool]) -> Vec<OrphanedRequ
         }
     }
     orphans
+}
+
+/// `describeUnappliedContent`：finding 訊息裡描述那段文字的片語。
+pub(crate) fn describe_unapplied_content(
+    content: &UnappliedContent,
+    sentence_start: bool,
+) -> String {
+    let text = match &content.section {
+        None => "text above the first \"## \" section".to_string(),
+        Some(section) if DELTA_SECTION_TITLES.contains(&section.to_lowercase().as_str()) => {
+            format!("text before the first requirement in \"## {section}\"")
+        }
+        Some(section) => format!("section \"## {section}\""),
+    };
+    if !sentence_start {
+        return text;
+    }
+    let mut chars = text.chars();
+    let first = chars.next().unwrap();
+    format!("{}{}", first.to_uppercase(), chars.as_str())
+}
+
+/// `findUnappliedContent`（1.14.2）：archive 只搬 requirement block，其他地方的文字
+/// 會在 archive 時消失。不報的有：HTML 註解、`# ` 標題、delta 裡的 Purpose（另有
+/// 規則）、REMOVED／RENAMED 的內文、第一個 requirement 之前的 stray `###`（已是 INFO）。
+/// section 邊界照 merge 的讀法（註解裡的 `## ` 也算），註解只決定一行有沒有文字。
+fn find_unapplied_content(lines: &[&str], mask: &[bool]) -> Vec<UnappliedContent> {
+    static H1: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#\s").unwrap());
+    static H3: Lazy<Regex> = Lazy::new(|| Regex::new(r"^###\s").unwrap());
+    let masked = mask_html_comments(lines, mask);
+    let sections = split_top_level_sections(lines, mask);
+    let first_text = |from: usize, to: usize, skip: Option<&Regex>| {
+        (from..to).find(|&index| {
+            !masked[index].trim().is_empty() && !skip.is_some_and(|re| re.is_match(&masked[index]))
+        })
+    };
+    let mut found = Vec::new();
+    let preamble_end = sections
+        .first()
+        .map_or(lines.len(), |section| section.body.body_start_line - 2);
+    if let Some(index) = first_text(0, preamble_end, Some(&H1)) {
+        found.push(UnappliedContent {
+            section: None,
+            line: index + 1,
+        });
+    }
+    for section in &sections {
+        let folded = section.title.to_lowercase();
+        let body = &section.body;
+        // body 第一行的 0-based index，也就是標題那行的 1-based 行號。
+        let start = body.body_start_line - 1;
+        if folded == "added requirements" || folded == "modified requirements" {
+            let block = (0..body.lines.len())
+                .find(|&index| is_requirement_header(body, index))
+                .unwrap_or(body.lines.len());
+            if let Some(index) = first_text(start, start + block, Some(&H3)) {
+                found.push(UnappliedContent {
+                    section: Some(section.title.clone()),
+                    line: index + 1,
+                });
+            }
+        } else if !DELTA_SECTION_TITLES.contains(&folded.as_str()) {
+            // archive 搬 Purpose 時會跳過註解掉的標題，所以只有註解外的 `## Purpose`
+            // 才是 archive 處理的那個。
+            if folded == "purpose" && !masked[start - 1].trim().is_empty() {
+                continue;
+            }
+            if first_text(start, start + body.lines.len(), None).is_some() {
+                found.push(UnappliedContent {
+                    section: Some(section.title.clone()),
+                    line: start,
+                });
+            }
+        }
+    }
+    found
 }
 
 /// `parseDeltaSpec`。
@@ -441,6 +631,7 @@ pub(crate) fn parse_delta_spec(content: &str) -> DeltaPlan {
         renamed,
         unpaired_renames: unpaired,
         orphaned_requirements: find_orphaned_requirements(&lines, &mask),
+        unapplied_content: find_unapplied_content(&lines, &mask),
         skipped_headers: skipped,
         added_present,
         modified_present,
@@ -541,6 +732,101 @@ pub(crate) fn block_empty_scenario_count(raw: &str) -> usize {
         .iter()
         .filter(|body| body.trim().is_empty())
         .count()
+}
+
+/// `parseScenarioBlocks`（2.0.0 起匯出）：requirement block 裡每個 `#### ` 子標題，
+/// `raw` 含標題行，延伸到下一個 `#### `。fence 內的 `####` 不算。
+fn scenario_blocks(requirement_raw: &str) -> Vec<(String, String)> {
+    let normalized = normalize_line_endings_only(requirement_raw);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let mask = fence_mask(&lines);
+    let is_header = |index: usize| !mask[index] && SCENARIO_HEADER.is_match(lines[index]);
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if !is_header(index) {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        let name = scenario_name_at(lines[index]);
+        index += 1;
+        while index < lines.len() && !is_header(index) {
+            index += 1;
+        }
+        blocks.push((name, lines[start..index].join("\n").trim_end().to_string()));
+    }
+    blocks
+}
+
+/// `scenarioNameAt`：去掉 `#### `、結尾 `#` 串與 `Scenario:` 前綴。
+fn scenario_name_at(line: &str) -> String {
+    let text = SCENARIO_HEADER.replace(line, "");
+    let text = CLOSING_HASHES.replace(&text, "");
+    SCENARIO_PREFIX.replace(&text, "").trim().to_string()
+}
+
+/// `scenarioStepCoverage`：scenario（`raw` 第一行是它自己的標題，不算）在 fence 外
+/// 有沒有 trigger（WHEN／GIVEN）與 outcome（THEN）步驟。粗體不分大小寫、冒號可在
+/// 粗體內（`**Given:**`、`__then__`）；裸字必須全大寫，`\b` 是 ASCII 字界。`AND`
+/// 只是延續既有步驟，不算任何一半。
+fn scenario_step_coverage(scenario_raw: &str) -> (bool, bool) {
+    static BOLD_TRIGGER: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)(?:\*\*|__)(?:WHEN|GIVEN):?(?:\*\*|__)").unwrap());
+    static BARE_TRIGGER: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?-u:\b)(?:WHEN|GIVEN)(?-u:\b)").unwrap());
+    static BOLD_OUTCOME: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)(?:\*\*|__)THEN:?(?:\*\*|__)").unwrap());
+    static BARE_OUTCOME: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?-u:\b)THEN(?-u:\b)").unwrap());
+    let normalized = normalize_line_endings_only(scenario_raw);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let mask = fence_mask(&lines);
+    let mut trigger = false;
+    let mut outcome = false;
+    for (index, line) in lines.iter().enumerate().skip(1) {
+        if mask[index] {
+            continue;
+        }
+        trigger |= BOLD_TRIGGER.is_match(line) || BARE_TRIGGER.is_match(line);
+        outcome |= BOLD_OUTCOME.is_match(line) || BARE_OUTCOME.is_match(line);
+    }
+    (trigger, outcome)
+}
+
+/// `findScenarioStepIssues`（2.0.0，#2078）：有內文、且標題是 `Scenario:` 的 scenario
+/// 缺 trigger 或 outcome 時的訊息（呼叫端包成 WARNING）。沒有內文的標題已經另有
+/// ERROR；沒有 `Scenario:` 標籤的 `#### Notes` 是刻意的散文，不報。
+pub(crate) fn scenario_step_messages(block_raw: &str, label: &str) -> Vec<String> {
+    let mut messages = Vec::new();
+    for (name, raw) in scenario_blocks(block_raw) {
+        let mut lines = raw.split('\n');
+        let header = lines.next().unwrap_or_default();
+        let body = lines.collect::<Vec<_>>().join("\n");
+        if body.trim().is_empty() {
+            continue;
+        }
+        if !SCENARIO_PREFIX.is_match(&SCENARIO_HEADER.replace(header, "")) {
+            continue;
+        }
+        let (trigger, outcome) = scenario_step_coverage(&raw);
+        if trigger && outcome {
+            continue;
+        }
+        let missing = [
+            (!trigger).then_some("a WHEN/GIVEN step"),
+            (!outcome).then_some("a THEN step"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" and ");
+        messages.push(format!(
+            "{label}: scenario \"{name}\" is missing {missing}. A scenario needs a trigger and an \
+             outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is \
+             issued\"."
+        ));
+    }
+    messages
 }
 
 /// `parseScenarioBlocks` 的名稱：`#### ` 後的文字去掉結尾 `#` 串與 `Scenario:` 前綴。
@@ -658,7 +944,8 @@ pub(crate) fn parse_spec(content: &str) -> Result<ParsedSpec, &'static str> {
             continue;
         };
         let level = captures[1].len();
-        let title = captures[2].trim().to_string();
+        // `## Purpose ##` 與 `## Purpose` 是同一個標題（2.0.0）。
+        let title = strip_closing_sequence(&captures[2]);
         let mut content_lines = Vec::new();
         for next in index + 1..lines.len() {
             let is_boundary = !mask[next]

@@ -6,7 +6,7 @@
 //! `--json` 是 `{change|spec, errors, valid, warnings}` 陣列。內容依 D12：
 //! OpenSpec 的 ERROR／WARNING 照搬，INFO 只有「Archive would refuse this delta」進
 //! warnings，delta 檔的訊息前綴 `specs/<cap>/spec.md: `。訊息本身來自 OpenSpec
-//! 1.13.2（見 `validate-openspec-1.13.2.json`），這裡一律寫字面值。
+//! 2.0.0（見 `validate-openspec-2.0.0.json`），這裡一律寫字面值。
 //!
 //! 內建 skill 以 `spectra validate "<name>"` 呼叫、只看 human 輸出與 exit code，
 //! 所以單一 item 的 human 路徑逐字固定。
@@ -53,7 +53,7 @@ fn envelope() -> TempDir {
 
 /// owner 裁決 W9a-1：oracle 格式遇到同名的 change 與 spec 時跟 oracle 3.0.0 取 change
 /// （p09 實測 `validate only` 印 change 的結果），要驗 spec 用 `--type spec`。
-/// openspec 格式照 OpenSpec 1.13.2 回 ambiguous（golden envelope 固定）。
+/// openspec 格式照 OpenSpec 2.0.0 回 ambiguous（golden envelope 固定）。
 #[test]
 fn a_name_shared_by_a_change_and_a_spec_is_the_change_in_the_oracle_shape() {
     let root = envelope();
@@ -319,22 +319,22 @@ fn scopes_follow_openspec_and_a_bare_validate_takes_every_change() {
     let root = rules();
     let all = run(&root, &["--all", "--json"]);
     let names = json_names(&all.1);
-    assert_eq!(names.len(), 46 + 33);
+    assert_eq!(names.len(), 62 + 38);
     let changes = names.iter().filter(|n| n.starts_with("change/")).count();
-    assert_eq!(changes, 46);
+    assert_eq!(changes, 62);
     // changes 全部在前，specs 在後（oracle 格式不混排）。
-    assert!(names[..46].iter().all(|n| n.starts_with("change/")));
-    assert_eq!(names[46], "spec/base");
-    assert_eq!(names[78], "spec/s30-generated-placeholder");
+    assert!(names[..62].iter().all(|n| n.starts_with("change/")));
+    assert_eq!(names[62], "spec/base");
+    assert_eq!(names[99], "spec/s35-closed-purpose-placeholder");
     assert_eq!(run(&root, &["--changes", "--specs", "--json"]), all);
     assert_eq!(run(&root, &["--all", "--changes", "--json"]), all);
 
     let changes_only = run(&root, &["--changes", "--json"]);
-    assert_eq!(json_names(&changes_only.1).len(), 46);
+    assert_eq!(json_names(&changes_only.1).len(), 62);
     assert_eq!(run(&root, &["--json"]), changes_only);
     assert_eq!(run(&root, &[]), run(&root, &["--changes"]));
     let specs_only = run(&root, &["--specs", "--json"]);
-    assert_eq!(json_names(&specs_only.1), names[46..].to_vec());
+    assert_eq!(json_names(&specs_only.1), names[62..].to_vec());
 }
 
 fn write(path: &Path, text: &str) {
@@ -556,4 +556,74 @@ fn human_colors_only_the_glyph_and_the_label_on_a_terminal() {
     let plain = on_terminal(&root, &["d01-good", "--no-color"]);
     assert!(plain.contains("✓ d01-good — valid\r\n"), "{plain:?}");
     assert!(!plain.contains('\x1b'), "{plain:?}");
+}
+
+/// #265 裁決：config.yaml 壞掉時直接 exit 1 只在 `--format openspec` 照搬。預設的
+/// oracle 格式跟 oracle 3.0.0 走：實測 oracle 對讀不到或不合法的 `openspec/config.yaml`
+/// 照常驗證、exit 0（2026-11-16 probe，`validate --all --json` 與 human 都一樣）。
+#[test]
+fn format_openspec_reads_the_config_under_spec_dir() {
+    // OpenSpec 寫死 `<root>/openspec/config.yaml`；spectra 的 config 在
+    // `<spec_dir>/config.yaml`（D9 新專案預設 `docs/openspec`），壞 config 的檢查跟著
+    // spec_dir 走。根目錄另一個 `openspec/config.yaml` 與這個專案無關，不能擋下驗證。
+    let root = TempDir::new("validate-format-spec-dir-config");
+    write(&root.join(".spectra.yaml"), "spec_dir: docs/openspec\n");
+    write(
+        &root.join("docs/openspec/changes/c1/specs/x/spec.md"),
+        "## ADDED Requirements\n\n### Requirement: C\n\nThe system SHALL c.\n\n\
+         #### Scenario: ok\n\n- **WHEN** x\n- **THEN** y\n",
+    );
+    write(&root.join("openspec/config.yaml"), "schema: [unclosed\n");
+    let args = ["--all", "--json", "--format", "openspec"];
+    let (rc, stdout, stderr) = run(&root, &args);
+    assert_eq!((rc, stderr.as_str()), (Some(0), ""), "{stdout}");
+    assert!(stdout.contains("\"id\": \"c1\""), "{stdout}");
+
+    write(
+        &root.join("docs/openspec/config.yaml"),
+        "schema: [unclosed\n",
+    );
+    let (rc, stdout, stderr) = run(&root, &args);
+    assert_eq!((rc, stderr.as_str()), (Some(1), ""), "{stdout}");
+    assert!(
+        stdout.contains("\"code\": \"unparseable_config\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("/docs/openspec/config.yaml ("),
+        "message names the spec_dir config: {stdout}"
+    );
+    assert!(!stdout.contains("\"items\""), "{stdout}");
+}
+
+#[test]
+fn a_broken_config_is_ignored_by_the_oracle_format() {
+    for fixture in [
+        "validate_openspec_badconfig",
+        "validate_openspec_unreadableconfig",
+    ] {
+        let root = TempDir::new("validate-format-config");
+        copy_tree(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture),
+            &root,
+        );
+        assert_eq!(
+            run(&root, &["--all", "--json"]),
+            (
+                Some(0),
+                "[\n  {\n    \"change\": \"c1\",\n    \"errors\": [],\n    \"valid\": true,\n    \
+                 \"warnings\": []\n  }\n]\n"
+                    .to_string(),
+                String::new()
+            ),
+            "{fixture}"
+        );
+        assert_eq!(
+            run(&root, &["--no-color"]),
+            (Some(0), "✓ c1 — valid\n".to_string(), String::new()),
+            "{fixture}"
+        );
+    }
 }

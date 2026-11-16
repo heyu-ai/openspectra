@@ -1499,7 +1499,7 @@ fn validation_bulk_scopes_emit_versioned_additive_reports() {
     std::fs::create_dir_all(spec.parent().unwrap()).unwrap();
     std::fs::write(
         spec,
-        // Purpose 要 ≥ 50 字：OpenSpec 1.13.2 對較短的 Purpose 報 WARNING（S9），
+        // Purpose 要 ≥ 50 字：OpenSpec（1.13.2 起）對較短的 Purpose 報 WARNING（S9），
         // 這個 spec 必須沒有任何 finding。
         "# auth Specification\n\n## Purpose\n\nAuthentication behavior for every family account and device.\n\n\
          ## Requirements\n\n### Requirement: Login\nThe system SHALL authenticate.\n\n\
@@ -2109,7 +2109,7 @@ fn show_diff_reports_renamed_requirements() {
     assert!(diff.contains("+### Requirement: NewName"));
 }
 
-/// C1：OpenSpec 1.13.2 對「archive 會拒絕」只報 INFO、不影響判定（p08 d10 實測；
+/// C1：OpenSpec（1.13.2 起）對「archive 會拒絕」只報 INFO、不影響判定（p08 d10 實測；
 /// archive 本身仍會拒絕，見 archive.rs 的 `archive_errors_on_a_modified_delta_for_a_nonexistent_requirement`）。
 #[test]
 fn validate_reports_a_modified_requirement_missing_from_the_canonical_spec_as_info() {
@@ -2193,7 +2193,7 @@ fn validate_follows_a_transitive_rename_chain_when_checking_scenario_loss() {
     assert_single_scenario_loss(&report, "Final login");
 }
 
-/// #183：scenario loss 只回報一則，由 validate 自己的檢查產生（OpenSpec 1.13.2 的形狀：
+/// #183：scenario loss 只回報一則，由 validate 自己的檢查產生（OpenSpec 1.13.2 起的形狀：
 /// path 相對於 change 的 `specs/`、ERROR），archive 相容性檢查不得再以
 /// `capability '…'` 或 `Archive would refuse` 的措辭重報一次。
 fn assert_single_scenario_loss(report: &serde_json::Value, requirement: &str) {
@@ -2558,7 +2558,8 @@ fn show_diff_and_validation_propagate_unreadable_canonical_spec_errors() {
     assert!(stderr.contains("reading"), "{stderr}");
     assert!(stderr.contains("openspec/specs/auth/spec.md"), "{stderr}");
 
-    // validate 依 OpenSpec 1.13.2（validator.js:586-602，實測相同）把它報成 finding。
+    // validate 依 OpenSpec 的 `findScenarioLossIssues` 把它報成 finding（1.13.2 實測相同；
+    // 2.0.0 讀檔失敗的這段未改）。
     assert_eq!(validation.status.code(), Some(1), "{validation:?}");
     let stdout = String::from_utf8(validation.stdout).unwrap();
     assert!(

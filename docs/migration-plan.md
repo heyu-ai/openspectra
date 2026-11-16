@@ -32,7 +32,7 @@
   exit code 與 JSON 輸出和 oracle 語意一致（validate 例外，見 A4）。會寫檔的指令
   （`new`、`task`、`archive`、`update`、`park`）在 sandbox 產生的檔案與 oracle 一致。
   量測方式：`scripts/parity-probe.py` exit 0。刻意分歧必須登錄在 probe 的允許清單並寫進 CHANGELOG。
-- **A4 OpenSpec 相容**：`validate` 的判定與 `@fission-ai/openspec` 1.13.2 逐項一致；
+- **A4 OpenSpec 相容**：`validate` 的判定與 `@fission-ai/openspec` 2.0.0 逐項一致（#265 前是 1.13.2；刻意分歧見 `validate.md`）；
   `--format openspec` 的 JSON 與 OpenSpec 逐欄位一致；預設的 oracle 格式在欄位上與 oracle 一致。
   #227 owner 裁決（howie，2026-10-11）：排序比對基準固定為 Node/OpenSpec 的 en-US
   collation，使用 ICU4X 2.1.1／CLDR 48；不跟隨宿主 `LANG`／`LC_ALL`，此邊界記為刻意分歧。
@@ -257,7 +257,7 @@ yibi-stack）exit 0：31 條分歧全部已知。逐條歸屬是在 parity-probe
 | A1 指令完整 | surface 差集只剩 `feedback`（W12-1 明文例外） | #216 merge 後即達成 |
 | A2 skill 能用 | `every_template_invocation_parses` 通過，`KNOWN_GAPS` 為空 | 無 |
 | A3 輸出正確 | 已知分歧 31 條：`analyze` 12（W10 的名稱排序刻意分歧，2 個 change）、`list` 6（yibi-mvp 同秒 mtime 以名稱斷尾，`list-show.md` 已登錄）、`drift` 1（`unresolved_anchors`，#83）、`status` 3（OpenSpectra 多輸出 `artifacts[].requires`、`isPlanningComplete`，`artifact-workflow.md` 記為相容性擴充）、`validate` 8（A3 明文排除，歸 A4）、surface 1（A1 例外） | ① `status` 的兩個額外欄位已在允許清單，但**未寫進 CHANGELOG**，A3 要求兩者都要（已依 W13-A3 裁決補上，本 PR）；② parity-probe 只比唯讀指令，會寫檔的指令（`new`、`task`、`archive`、`update`、`park`）目前由各自的 golden 重播覆蓋（task-done、archive preview、update templates），不是 parity-probe 量的 |
-| A4 OpenSpec 相容 | 判定規則由 `validate_openspec_integration` 對 OpenSpec 1.13.2 golden 逐欄重播 | `--format openspec`／`oracle` 尚不存在（W9a，依 D12 實作） |
+| A4 OpenSpec 相容 | 判定規則由 `validate_openspec_integration` 對 OpenSpec 1.13.2 golden 逐欄重播（#265 起改為 2.0.0 golden） | `--format openspec`／`oracle` 尚不存在（W9a，依 D12 實作） |
 | A5 Linux | #215、#216、#218、#220 的 ubuntu job 全綠；v0.13.0 有 x86_64 與 aarch64 musl 產物 | 無 |
 
 **每一項的標準流程**：
@@ -518,6 +518,7 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | W12-4 | `demo` 是否寫 `.started` | **跟 oracle 不寫** | W12（#216） |
 | W12-5 | `created_by` 是否遵守 `GIT_CONFIG_GLOBAL`（既有分歧） | **維持遵守**，記為刻意分歧 | — |
 | D13 | MODIFIED 區塊的 scenario 身分與刻意移除（yibi-mvp 的 baseline 雜訊：改 scenario 標題、補 slug、刻意刪 scenario 全被判成遺失） | **刻意與 OpenSpec 1.13.2 分歧**（howie 2026-11-14 裁決；正式紀錄見 [ADR-0002](adr/0002-modified-scenario-identity.md)）：1 身分：整行相同之外，**兩邊各自唯一的 slug** 也算同一個 scenario，current 沒有 slug 而 incoming 補上 slug 且標題相同也算；2 刻意移除：MODIFIED 區塊內 `<!-- removed-scenario: <slug 或整行> -->` 只豁免它點名的那一個；3 沒用到的標記報 INFO；4 OSS archive 寫回 main spec 前拿掉標記行。validate 兩處與 archive 共用 `scenario_identity.rs` | W9b、ADR-0002 |
+| D1-2.0 | OpenSpec 發布 2.0.0，D1 的權威版本要不要跟著升（#265） | **選項 B：一次全部跟進到 2.0.0**（howie 2026-11-16 裁決）。子裁決同日：(a) spectra 自己寫的 `created_by`、`created_with`、`archived_by`、`archived_at` 視為已知 key，不照 OpenSpec 報未知 key；(b) 壞掉的 config.yaml 直接 exit 1 只在 `--json --format openspec` 照搬，預設格式跟 oracle 3.0.0（實測照常驗證）。(c) 量到語料庫影響（`--strict` 下 100 個 item 新判 invalid，全部涉及 500 字上限）後，howie 同日裁決 **500 字上限列為 divergence**：維持 1.13.2（main spec 報 INFO、ADDED 不報）。之後 `--strict` 只多 1 個失敗（見 `validate.md`「Corpus impact」） | W9b、`validate.md` |
 
 **D8（2026-09-28 howie 裁決：(b) 維持 git CLI）：`scope` 的 git 存取方式。** 下列 7 種邊角情況記為刻意分歧。原始說明： oracle 內含 libgit2，`scope`
 輸出的 patch 是 libgit2 的格式。RE 實測（`scope` 規格）與 `git diff` 相比有 7 種位元組差異：

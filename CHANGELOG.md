@@ -10,6 +10,42 @@ changes.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-16
+### Changed
+
+- **`validate` follows OpenSpec 2.0.0 (owner ruling D1, #265).** The rule
+  authority moves from OpenSpec 1.13.2 to 2.0.0, following the rule changes
+  1.14.0–2.0.0 added except the deliberate divergences below and the items
+  `docs/reverse-engineering/validate.md` lists as not ported. `validate` and
+  `validate --format openspec` both get the new findings:
+  - a requirement under an unrecognized `## ... Requirements` section
+    (`## DEPRECATED Requirements`, `## Requirements`) is an ERROR, not a
+    WARNING; a requirement inside an HTML comment is no longer reported as
+    misplaced;
+  - new WARNINGs: text in a delta that archive would not carry into the main
+    spec; a `#### Scenario:` with no WHEN/GIVEN step or no THEN step (delta and
+    main spec); an unknown top-level key in `.openspec.yaml`;
+  - headings with an ATX closing run (`## Purpose ##`, `## ADDED Requirements ##`)
+    read as their plain form, a line starting ```` ```npm test``` ```` no longer
+    opens a code fence, and `###Requirement:` without a space is checked by
+    the main-spec structure rules.
+
+  Measured on three real projects, plain `validate` verdicts did not change
+  and one more change fails `--strict` (see
+  `docs/reverse-engineering/validate.md`, "Corpus impact").
+- `validate --json --format openspec` exits 1 with an `unreadable_config` or
+  `unparseable_config` status, without validating anything, when
+  `<spec_dir>/config.yaml` cannot be read or is not valid YAML (OpenSpec 2.0.0,
+  which reads `openspec/config.yaml`).
+- **Deliberate divergences from OpenSpec 2.0.0 (#265):** `created_by`,
+  `created_with`, `archived_by` and `archived_at`, which `spectra new change`
+  and `archive` write, are not reported as unknown `.openspec.yaml` keys; and
+  the default (oracle) format keeps validating when the config is broken, as
+  the oracle 3.0.0 does; and the 500-character requirement limit keeps its
+  1.13.2 behavior (INFO on main specs, nothing on ADDED), because with every
+  OpenSpec 2.0.0 rule applied `--strict` failed 100 more items on three real
+  projects, all of them involving that WARNING and 99 only because of it.
+
 ## [0.15.0] - 2026-11-14
 ### Changed
 

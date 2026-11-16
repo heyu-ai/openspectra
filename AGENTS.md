@@ -63,17 +63,24 @@ this file is agent-facing operational context.
   using a sentinel `spec_dir` to recover the `{{SPEC_DIR}}` placeholder. Any
   drift exits non-zero keeping the sandbox; `--write` regenerates and
   re-verifies. Never hand-edit the assets.
-- `scripts/capture-validate-openspec.py` — needs Node.js and OpenSpec 1.13.2
-  (`--openspec-js`/`OPENSPEC_JS`; the version is checked), not the oracle.
-  Owner ruling D1 makes OpenSpec 1.13.2 the authority for `validate`'s rules,
+- `scripts/capture-validate-openspec.py` — needs Node.js 22.12+ and OpenSpec
+  2.0.0 (`--openspec-js`/`OPENSPEC_JS`; the version is checked), not the
+  oracle. Owner ruling D1 makes OpenSpec 2.0.0 the authority for `validate`'s
+  rules (1.13.2 until #265),
   so it runs OpenSpec on the rule fixture
   `crates/spectra-cli/tests/fixtures/validate_openspec` (`--changes`/`--specs`,
   normal and `--strict`) and compares with
-  `docs/reverse-engineering/golden/validate-openspec-1.13.2.json`, which
-  `validate_openspec_integration.rs` replays field for field. It also pins the
+  `docs/reverse-engineering/golden/validate-openspec-2.0.0.json`, which
+  `validate_openspec_integration.rs` replays field for field, except the
+  #265 divergences that test applies and ratchets (spectra's own
+  `.openspec.yaml` keys; the 500-character requirement limit kept at
+  1.13.2; the YAML parser's wording in the bad-config envelope). It also pins the
   whole `validate --json --format openspec` envelope (W9a, ruling D3):
-  `ENVELOPES` runs a list of invocations on the `validate_openspec_envelope`
-  and `validate_openspec_empty` fixtures and keeps each stdout as text (key
+  `ENVELOPES` runs a list of invocations on the `validate_openspec_envelope`,
+  `validate_openspec_empty`, `validate_openspec_archived`,
+  `validate_openspec_unicode`, `validate_openspec_badconfig`,
+  `validate_openspec_unreadableconfig` and `validate_openspec_ymlconfig`
+  fixtures (plus one rule-fixture case) and keeps each stdout as text (key
   order matters), normalizing `durationMs` to 0, the sandbox path to `<ROOT>`,
   and a same-id change/spec tie to change-first (OpenSpec orders it by async
   completion). Drift exits non-zero keeping the sandbox; `--write` regenerates

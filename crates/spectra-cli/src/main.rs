@@ -161,7 +161,7 @@ enum Command {
         #[arg(long = "type", value_name = "TYPE")]
         proposal_type: Option<String>,
     },
-    /// Validate changes and specs against the OpenSpec 1.13.2 rules. Unlike
+    /// Validate changes and specs against the OpenSpec 2.0.0 rules. Unlike
     /// `drift`, this is a pass/fail gate: it exits non-zero when any item is
     /// invalid. With no item or scope it validates every active change.
     Validate {
@@ -198,7 +198,7 @@ enum Command {
         #[arg(long)]
         json: bool,
         /// JSON shape: `oracle` (the Spectra 3.0.0 array, the default) or
-        /// `openspec` (the OpenSpec 1.13.2 report).
+        /// `openspec` (the OpenSpec 2.0.0 report).
         #[arg(long, value_name = "FORMAT", requires = "json")]
         format: Option<ValidateFormat>,
     },
@@ -768,7 +768,7 @@ struct ValidateOptions<'a> {
     format: Option<ValidateFormat>,
 }
 
-/// OpenSpec 1.13.2 在 `--json` 時把 item 解析錯誤印成 stdout 的 `status` envelope
+/// OpenSpec 2.0.0 在 `--json` 時把 item 解析錯誤印成 stdout 的 `status` envelope
 /// （`commands/validate.js` `validateDirectItem`）。
 fn print_openspec_status(code: &str, message: String, fix: Option<&str>) -> Result<i32> {
     // 用 struct 而非 `json!`：後者會把 key 排成字母序，OpenSpec 的順序是
@@ -819,6 +819,14 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
         anyhow::bail!("--report requires --changes, --specs, --all, or --archived");
     }
     let openspec_json = as_json && format == Some(ValidateFormat::Openspec);
+    // OpenSpec 2.0.0（1.16.0，#1892）：config.yaml 讀不到或不是合法 YAML 時不跑任何
+    // 檢查、直接 exit 1。owner 在 #265 裁決只有 `--format openspec` 照搬；預設的
+    // oracle 格式跟 oracle 3.0.0 走。
+    if openspec_json {
+        if let Some(error) = validate::config_parse_error(cfg) {
+            return print_openspec_status(error.code, error.message, Some(&error.fix));
+        }
+    }
 
     let (items, requested_types) = if archived {
         (validate::validate_archived(cfg)?, vec!["change"])
@@ -847,7 +855,7 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
             Some(ValidationItemType::Spec) if typed_openspec || is_spec => false,
             Some(ValidationItemType::Change) => anyhow::bail!("Change '{item}' not found."),
             Some(ValidationItemType::Spec) => anyhow::bail!("Spec '{item}' not found."),
-            // 同名時 OpenSpec 1.13.2 回 ambiguous（golden envelope 實測）；oracle 3.0.0
+            // 同名時 OpenSpec 2.0.0 回 ambiguous（golden envelope 實測）；oracle 3.0.0
             // 直接取 change（p09），oracle 格式照 oracle（owner 裁決 W9a-1：skill 的
             // `spectra validate "<name>"` 不能因撞名而失敗）。
             None if is_change && is_spec && openspec_json => {

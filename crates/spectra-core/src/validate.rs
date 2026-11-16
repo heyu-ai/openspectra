@@ -1,8 +1,8 @@
-//! `spectra validate` — validation gate whose rules follow OpenSpec 1.13.2.
+//! `spectra validate` — validation gate whose rules follow OpenSpec 2.0.0.
 //!
 //! Unlike `drift`, this command is not reverse-engineered from the closed
 //! Spectra binary. Owner ruling D1: which findings exist, their level, the
-//! per-item verdict, and the message wording follow OpenSpec 1.13.2
+//! per-item verdict, and the message wording follow OpenSpec 2.0.0
 //! (`@fission-ai/openspec`, `dist/core/validation/validator.js`); the Markdown
 //! reading it relies on is ported in [`crate::openspec_md`]. See
 //! `docs/reverse-engineering/validate.md`.
@@ -12,7 +12,7 @@
 //! fail only under `--strict`, and informational findings never fail.
 //!
 //! Two output shapes exist (ruling D3, W9a): the oracle 3.0.0 shape
-//! ([`oracle_item`], the default) and the OpenSpec 1.13.2 `--json` report
+//! ([`oracle_item`], the default) and the OpenSpec 2.0.0 `--json` report
 //! ([`openspec_report`], `--format openspec`). Both are built from the same
 //! [`ChangeValidation`] list; only the presentation differs.
 
@@ -83,7 +83,7 @@ pub struct ChangeValidation {
     pub duration_ms: u64,
 }
 
-/// OpenSpec 1.13.2's `{items, passed, failed}` counters, in that key order.
+/// OpenSpec 2.0.0's `{items, passed, failed}` counters, in that key order.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Totals {
     pub items: usize,
@@ -110,7 +110,7 @@ pub struct RootInfo {
     pub source: String,
 }
 
-/// The OpenSpec 1.13.2 `validate --json` report (`--format openspec`).
+/// The OpenSpec 2.0.0 `validate --json` report (`--format openspec`).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ValidateReport {
     pub items: Vec<ChangeValidation>,
@@ -181,7 +181,7 @@ pub enum ItemOrder {
     Utf16,
 }
 
-/// Builds the OpenSpec 1.13.2 report. `requested_types` are the scopes asked
+/// Builds the OpenSpec 2.0.0 report. `requested_types` are the scopes asked
 /// for (`change`, `spec`): each gets a `byType` entry even when empty. Items
 /// use the requested order: active items use fixed en-US [`locale_compare`],
 /// archived items use JavaScript's UTF-16 string order. Sorting is stable;
@@ -395,9 +395,9 @@ pub fn nearest_matches(input: &str, candidates: &[String], max: usize) -> Vec<St
         .collect()
 }
 
-/// 驗證一個 change：逐條移植 OpenSpec 1.13.2 的
+/// 驗證一個 change：逐條移植 OpenSpec 2.0.0 的
 /// `Validator.validateChangeDeltaSpecs`（`dist/core/validation/validator.js`
-/// 123-455），連 issue 的順序、path、line 都照搬（決策 D1）。OpenSpec 沒有的
+/// 126-491），連 issue 的順序、path、line 都照搬（決策 D1）。OpenSpec 沒有的
 /// 規則不報，唯一例外是 OpenSpectra 獨有的 archive 拒絕理由（trace footer、
 /// trace sidecar、capability retirement），依 owner 裁決 D12-6 仍是 ERROR（C20）。
 pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
@@ -416,7 +416,7 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 
     let mut issues = Vec::new();
     let discovered = discover_spec_files(&specs_dir)?;
-    // 只有「檔案」才算：名為 spec.md 的目錄是一般的 capability 目錄（validator.js:142-150）。
+    // 只有「檔案」才算：名為 spec.md 的目錄是一般的 capability 目錄（validator.js:140-153）。
     let has_root_level_spec = std::fs::metadata(specs_dir.join("spec.md"))
         .map(|metadata| metadata.is_file())
         .unwrap_or(false);
@@ -453,8 +453,8 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
         plans.push((id.clone(), entry_path, plan));
     }
 
-    // 已經有 ERROR 的 delta 檔不再以 archive 的措辭重報一次（validator.js:366-377、
-    // 825-829）；其餘 archive 會拒絕的情況只是 INFO，不影響判定（C1、C3、C13）。
+    // 已經有 ERROR 的 delta 檔不再以 archive 的措辭重報一次（validator.js:392-405、
+    // 872-876）；其餘 archive 會拒絕的情況只是 INFO，不影響判定（C1、C3、C13）。
     let already_reported: std::collections::HashSet<String> = issues
         .iter()
         .filter(|issue| issue.level == "ERROR")
@@ -521,8 +521,15 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
                 .to_string(),
         ));
     }
+    let unknown_keys = unknown_change_metadata_keys(&change_dir);
+    if !unknown_keys.is_empty() {
+        issues.push(Issue::warning(
+            ".openspec.yaml".to_string(),
+            unknown_change_metadata_keys_message(&unknown_keys),
+        ));
+    }
     // 宣告 skip_specs 時，specs/ 底下任何非 dot 檔都與宣告矛盾；讀不到 specs/
-    // 視同有檔案（fail closed，validator.js:427-436）。
+    // 視同有檔案（fail closed，validator.js:455-472）。
     let specs_dir_has_files = skip_specs && has_any_file_under(&specs_dir).unwrap_or(true);
     if specs_dir_has_files {
         issues.push(Issue::error(
@@ -567,7 +574,7 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
     })
 }
 
-/// 驗證一份 main spec：移植 `Validator.validateSpec`（validator.js:24-47）。
+/// 驗證一份 main spec：移植 `Validator.validateSpec`（validator.js:25-48）。
 /// `MarkdownParser.parseSpec` 找不到 Purpose／Requirements 時只報那一個 ERROR，
 /// 其他規則都不跑（S7、S8）；否則先報 Zod schema 的 ERROR，再跑 `applySpecRules`。
 pub fn validate_spec(cfg: &Config, id: &str, strict: bool) -> Result<ChangeValidation> {
@@ -640,7 +647,7 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
             ));
         }
     }
-    // applySpecRules（validator.js:672-743）
+    // applySpecRules（validator.js:716-790）
     for structural in openspec_md::main_spec_structure_issues(content) {
         issues.push(Issue::error("file".to_string(), structural.message).at_line(structural.line));
     }
@@ -658,13 +665,11 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
         ));
     }
     for (index, requirement) in spec.requirements.iter().enumerate() {
+        // 刻意維持 1.13.2 的 INFO（#265 裁決，見 `REQUIREMENT_TOO_LONG`）。
         if openspec_md::js_len(&requirement.text) > MAX_REQUIREMENT_TEXT_LENGTH {
             issues.push(Issue::info(
                 format!("requirements[{index}]"),
-                format!(
-                    "Requirement text is very long (>{MAX_REQUIREMENT_TEXT_LENGTH} characters). \
-                     Consider breaking it down."
-                ),
+                REQUIREMENT_TOO_LONG.to_string(),
             ));
         }
         if requirement.scenarios == 0 {
@@ -692,12 +697,25 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
                 missing_shall_or_must_message(&label, &block.name, true),
             ));
         }
+        // delta 路徑同一個步驟檢查，跑在同一批 block 上（2.0.0）。
+        for message in openspec_md::scenario_step_messages(&block.raw, &label) {
+            issues.push(Issue::warning(
+                format!("requirements[{index}].scenarios"),
+                message,
+            ));
+        }
     }
     issues
 }
 
 const MIN_PURPOSE_LENGTH: usize = 50;
 const MAX_REQUIREMENT_TEXT_LENGTH: usize = 500;
+/// 刻意與 OpenSpec 2.0.0 分歧（owner 在 #265 裁決）：2.0.0（1.14.1，#1976）把超過 500 字的
+/// requirement 從 INFO 升成 WARNING、ADDED 也開始報，`--strict` 因此失敗；在三個真實專案上
+/// 套用 2.0.0 全部規則時 `--strict` 多出 100 個失敗，全部涉及這條上限，其中 99 個只因為它。
+/// OpenSpectra 維持 1.13.2：main spec 報 INFO（訊息照 1.13.2），ADDED 不報。
+const REQUIREMENT_TOO_LONG: &str =
+    "Requirement text is very long (>500 characters). Consider breaking it down.";
 const CHANGE_SKIP_SPECS_CONFLICT: &str = "skip_specs is set in .openspec.yaml but spec files exist under specs/. Remove skip_specs or delete the delta spec files";
 const CHANGE_SKIP_SPECS_ACCEPTED: &str = "skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted";
 const GUIDE_NO_DELTAS: &str = "No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas.";
@@ -706,7 +724,211 @@ const GUIDE_SCENARIO_FORMAT: &str = "Scenarios must use level-4 headers. Convert
 const PURPOSE_IS_PLACEHOLDER: &str = "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one.";
 const TASKS_WITHOUT_CHECKBOXES: &str = "This change counts as 0 tasks: no line in its tracked task files is a checkbox, so \"openspec list\" and \"openspec status\" report no work and \"openspec archive\" has nothing to flag as incomplete. Write each task as \"- [ ] 1.1 Description\".";
 
-/// `buildMissingShallOrMustMessage`（validator.js:892-899）。
+/// `CHANGE_METADATA_KNOWN_KEYS`（`core/change-metadata/schema.js`）：訊息裡列出的已知 key。
+const CHANGE_METADATA_KNOWN_KEYS: [&str; 7] = [
+    "schema",
+    "created",
+    "goal",
+    "affected_areas",
+    "initiative",
+    "skip_specs",
+    "retire_capabilities",
+];
+/// spectra 自己寫進 `.openspec.yaml` 的 key（`new change`、`archive`）。OpenSpec 2.0.0
+/// 把它們當成未知 key；owner 在 #265 裁決視為已知，否則 spectra 建立的每個 change 在
+/// `--strict` 下都會失敗。這是刻意的 divergence，訊息的「Known keys」仍照 OpenSpec。
+const SPECTRA_METADATA_KEYS: [&str; 4] =
+    ["created_by", "created_with", "archived_by", "archived_at"];
+
+/// `readUnknownChangeMetadataKeys`：`.openspec.yaml` 的 top-level key 中不認得、也不是
+/// `x-` 擴充 key 的，依 JS `.sort()`（UTF-16 code unit）排序。檔案不存在、讀不到或
+/// 不是 YAML mapping 時回傳空清單（那些情況另有診斷）。
+fn unknown_change_metadata_keys(change_dir: &std::path::Path) -> Vec<String> {
+    static EXTENSION_KEY: Lazy<Regex> = Lazy::new(|| Regex::new(r"^x-\S+$").unwrap());
+    let Ok(bytes) = std::fs::read(change_dir.join(".openspec.yaml")) else {
+        return Vec::new();
+    };
+    let Ok(serde_yaml::Value::Mapping(mapping)) =
+        serde_yaml::from_str::<serde_yaml::Value>(&String::from_utf8_lossy(&bytes))
+    else {
+        return Vec::new();
+    };
+    // `yaml` 套件把 mapping 轉成 JS 物件時，key 經過 `String(key)`：null 是空字串，
+    // 數字照 `Number#toString`。轉完同名的 key（`1:` 與 `"1":`）在 JS 物件裡是同一個，
+    // 所以字串化之後、排序之前去重。
+    let mut seen = std::collections::HashSet::new();
+    let mut keys: Vec<String> = mapping
+        .keys()
+        .map(|key| match key {
+            serde_yaml::Value::String(text) => text.clone(),
+            serde_yaml::Value::Bool(value) => value.to_string(),
+            serde_yaml::Value::Number(value) => js_number_key(value),
+            serde_yaml::Value::Null => String::new(),
+            other => serde_yaml::to_string(other)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+        })
+        .filter(|key| seen.insert(key.clone()))
+        .filter(|key| {
+            !CHANGE_METADATA_KNOWN_KEYS.contains(&key.as_str())
+                && !SPECTRA_METADATA_KEYS.contains(&key.as_str())
+                && !EXTENSION_KEY.is_match(key)
+        })
+        .collect();
+    keys.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    keys
+}
+
+/// 數字 key 的 JS `String(number)`。整數照原樣（絕對值超過 2^53 的整數在 JS 會先失去精度，
+/// 這裡不處理）；浮點數涵蓋 `.inf`／`-.inf`／`.nan`
+/// （`Infinity`／`-Infinity`／`NaN`）、`-0`（`0`）、整數值不帶小數點（`1.0` 是 `1`），
+/// 以及 JS 改用指數表示的範圍（絕對值 ≥ 1e21 或 < 1e-6，`1e+21`、`1e-7`）。其餘浮點數
+/// 用 Rust 的最短表示，與 JS 相同。
+fn js_number_key(number: &serde_yaml::Number) -> String {
+    let Some(value) = number.as_f64().filter(|_| number.is_f64()) else {
+        return number.to_string();
+    };
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    let magnitude = value.abs();
+    if !(1e-6..1e21).contains(&magnitude) {
+        let text = format!("{value:e}");
+        return match text.split_once('e') {
+            Some((mantissa, exponent)) if !exponent.starts_with('-') => {
+                format!("{mantissa}e+{exponent}")
+            }
+            _ => text,
+        };
+    }
+    format!("{value}")
+}
+
+/// `sanitizeInline(value, 100)`（`core/references.js`）：控制字元與雙向控制字元的連續
+/// 串換成一個空白、trim，超過 100 個 UTF-16 code unit 時截斷加 `…`。
+fn sanitize_inline(value: &str) -> String {
+    static UNSAFE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"[\x{0}-\x{1f}\x{7f}-\x{9f}\x{61c}\x{200e}\x{200f}\x{2028}-\x{202e}\x{2066}-\x{206f}]+",
+        )
+        .unwrap()
+    });
+    const MAX: usize = 100;
+    let flattened = UNSAFE.replace_all(value, " ");
+    let flattened = flattened.trim();
+    if openspec_md::js_len(flattened) <= MAX {
+        return flattened.to_string();
+    }
+    let mut out = String::new();
+    let mut units = 0;
+    for ch in flattened.chars() {
+        units += ch.len_utf16();
+        if units > MAX {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('\u{2026}');
+    out
+}
+
+/// `formatUnknownChangeMetadataKeysMessage`。
+fn unknown_change_metadata_keys_message(keys: &[String]) -> String {
+    let listed = keys
+        .iter()
+        .map(|key| sanitize_inline(key))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut message = format!(
+        "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): {listed}. \
+         Known keys: {}. Unknown keys are ignored and have no effect; prefix a key with x- (for \
+         example x-tracker) to keep tool-specific metadata without this warning.",
+        CHANGE_METADATA_KNOWN_KEYS.join(", ")
+    );
+    if keys.iter().any(|key| {
+        key.get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("x-"))
+    }) {
+        message.push_str(
+            " An x- extension key needs a lowercase x- prefix and a name after it with no \
+             whitespace: x-tracker and x-jiraKey are extensions, while x-, \"x- tracker\" and \
+             X-Tracker are not.",
+        );
+    }
+    if keys.iter().any(|key| key == "skip_design") {
+        message.push_str(
+            " skip_design is not a supported key; only skip_specs exists, and it only skips \
+             artifacts whose generates path lives under specs/.",
+        );
+    }
+    message
+}
+
+/// `<spec_dir>/config.yaml`（或 `config.yml`）讀不到或不是合法 YAML（`readConfigParseError`，
+/// 1.16.0，#1892）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigParseError {
+    pub code: &'static str,
+    pub message: String,
+    pub fix: String,
+}
+
+/// OpenSpec 2.0.0 的 `validate` 在這種情況下不跑任何檢查、直接 exit 1。owner 在 #265
+/// 裁決只有 `--format openspec` 照搬，所以由 CLI 決定要不要呼叫。OpenSpec 讀的是寫死的
+/// `<root>/openspec/config.yaml`；spectra 的對應位置是 `<spec_dir>/config.yaml`（`init` 建在
+/// 那裡），與 changes／specs 改讀 `spec_dir` 的方式相同。`spec_dir` 是預設的 `openspec`
+/// 時兩者是同一個檔案。
+///
+/// 讀檔錯誤的說明仿 Node 的措辭（`EISDIR: ...`）；YAML 解析錯誤的說明來自不同的
+/// 解析器，不可能與 JS `yaml` 套件逐字相同（golden 重播只比括號外），兩個解析器對
+/// 邊界情況（YAML 1.1／1.2 的差異等）是否算解析失敗也可能不同。
+pub fn config_parse_error(cfg: &Config) -> Option<ConfigParseError> {
+    let dir = cfg.root.join(&cfg.spec_dir);
+    let path = [dir.join("config.yaml"), dir.join("config.yml")]
+        .into_iter()
+        .find(|path| path.exists())?;
+    let shown = path.display().to_string();
+    let first_line = |text: String| text.lines().next().unwrap_or_default().to_string();
+    match std::fs::read(&path) {
+        Err(error) => {
+            let detail = match error.kind() {
+                std::io::ErrorKind::IsADirectory => {
+                    "EISDIR: illegal operation on a directory, read".to_string()
+                }
+                std::io::ErrorKind::PermissionDenied => {
+                    format!("EACCES: permission denied, open '{shown}'")
+                }
+                _ => first_line(error.to_string()),
+            };
+            Some(ConfigParseError {
+                code: "unreadable_config",
+                message: format!("Could not read {shown} ({detail})."),
+                fix: format!("Make {shown} a readable file, or remove it."),
+            })
+        }
+        Ok(bytes) => {
+            let error = serde_yaml::from_str::<serde_yaml::Value>(&String::from_utf8_lossy(&bytes))
+                .err()?;
+            Some(ConfigParseError {
+                code: "unparseable_config",
+                message: format!(
+                    "Could not parse {shown} ({}).",
+                    first_line(error.to_string())
+                ),
+                fix: format!("Fix the YAML syntax in {shown}."),
+            })
+        }
+    }
+}
+
+/// `buildMissingShallOrMustMessage`（validator.js:939-946）。
 fn missing_shall_or_must_message(prefix: &str, name: &str, guidance_only: bool) -> String {
     let base = format!(
         "{prefix} {} contain SHALL or MUST",
@@ -766,7 +988,7 @@ impl OrderedNames {
     }
 }
 
-/// 一個 delta 檔的逐檔規則（validator.js:161-362），依 OpenSpec 的順序寫入 `issues`。
+/// 一個 delta 檔的逐檔規則（validator.js:154-391），依 OpenSpec 的順序寫入 `issues`。
 fn check_delta_file(
     cfg: &Config,
     id: &str,
@@ -821,17 +1043,32 @@ fn check_delta_file(
             Some(section) => format!("under \"## {section}\""),
             None => "above the first \"## \" section".to_string(),
         };
+        let message = format!(
+            "Requirement \"{}\" is {location}, which is not a delta section, so it is \
+             ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED \
+             Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\".",
+            orphan.name
+        );
+        // 未認得的 `## ... Requirements` 標題讀起來像 delta 操作，2.0.0 起是 ERROR（#2195）。
+        let issue = if openspec_md::is_unrecognized_delta_section(orphan.section.as_deref()) {
+            Issue::error(entry_path.to_string(), message)
+        } else {
+            Issue::warning(entry_path.to_string(), message)
+        };
+        issues.push(issue.at_line(orphan.line));
+    }
+    // archive 只搬 requirement block，其他文字會消失（1.14.2）。
+    for lost in &plan.unapplied_content {
         issues.push(
             Issue::warning(
                 entry_path.to_string(),
                 format!(
-                    "Requirement \"{}\" is {location}, which is not a delta section, so it is \
-                     ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED \
-                     Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\".",
-                    orphan.name
+                    "{} is not carried into the main spec by archive. Move it into a \
+                     requirement, or into proposal.md or design.md.",
+                    openspec_md::describe_unapplied_content(lost, true)
                 ),
             )
-            .at_line(orphan.line),
+            .at_line(lost.line),
         );
     }
 
@@ -868,6 +1105,8 @@ fn check_delta_file(
                     missing_shall_or_must_message(&label, &block.name, true),
                 ));
             }
+            // OpenSpec 2.0.0（1.14.1，#1976）對超過 500 字的 ADDED requirement 報 WARNING；
+            // owner 在 #265 裁決不跟（見 `REQUIREMENT_TOO_LONG`），這裡刻意不檢查。
             // 沒有內文的 `#### ` 不算 scenario（C5）。
             if openspec_md::block_scenario_count(&block.raw) < 1 {
                 let hint = if openspec_md::block_empty_scenario_count(&block.raw) > 0 {
@@ -880,6 +1119,9 @@ fn check_delta_file(
                     entry_path.to_string(),
                     format!("{label} must include at least one scenario{hint}"),
                 ));
+            }
+            for message in openspec_md::scenario_step_messages(&block.raw, &label) {
+                issues.push(Issue::warning(entry_path.to_string(), message));
             }
         }
     }
@@ -971,7 +1213,7 @@ fn check_delta_file(
     Ok(())
 }
 
-/// `findScenarioLossIssues`（validator.js:578-655）：MODIFIED 漏掉 main spec 仍有的
+/// `findScenarioLossIssues`（validator.js:614-691）：MODIFIED 漏掉 main spec 仍有的
 /// scenario 時每個 requirement 一個 ERROR（C3）。main spec 不存在、或找不到該
 /// requirement 時不報（archive 的判斷交給下面的 INFO）。
 fn scenario_loss_issues(
@@ -1459,7 +1701,7 @@ fn has_any_file_under(dir: &std::path::Path) -> std::io::Result<bool> {
     Ok(false)
 }
 
-/// `collectTaskFileIssues`（validator.js:470-498）：tracked task 檔都沒有
+/// `collectTaskFileIssues`（validator.js:506-534）：tracked task 檔都沒有
 /// checkbox 時的 WARNING（C19），以及只在內建 `spec-driven` schema 才跑的 task
 /// 編號 WARNING（C18）。schema 解析失敗時兩者都不報。
 ///
@@ -1840,6 +2082,40 @@ mod tests {
         - **WHEN** a user submits valid credentials\n\
         - **THEN** they are logged in\n";
 
+    /// 期望值是 Node 22 的 `String(n)`（2026-11-16 實測）。
+    #[test]
+    fn number_keys_stringify_like_js() {
+        let key = |yaml: &str| {
+            let serde_yaml::Value::Number(number) = serde_yaml::from_str(yaml).unwrap() else {
+                panic!("{yaml} 不是數字");
+            };
+            js_number_key(&number)
+        };
+        assert_eq!(key("123"), "123");
+        assert_eq!(key("-7"), "-7");
+        assert_eq!(key("1.0"), "1");
+        assert_eq!(key("1.5"), "1.5");
+        assert_eq!(key("-0.0"), "0");
+        assert_eq!(key(".inf"), "Infinity");
+        assert_eq!(key("-.inf"), "-Infinity");
+        assert_eq!(key(".nan"), "NaN");
+        assert_eq!(key("1e21"), "1e+21");
+        assert_eq!(key("1.5e21"), "1.5e+21");
+        assert_eq!(key("1e20"), "100000000000000000000");
+        assert_eq!(key("1e-7"), "1e-7");
+        assert_eq!(key("0.000001"), "0.000001");
+    }
+
+    /// #267 CR-3，接受的殘餘風險（howie，2026-11-16）：astral 字元跨在第 100 個 UTF-16
+    /// code unit 時，OpenSpec 2.0.0 留下孤立的 high surrogate（JSON 裡是 `\ud83d…`），
+    /// Rust 的 `String` 存不了孤立的 surrogate，這裡在那個字元之前就截斷。改變這個輸出
+    /// 必須是刻意的（見 validate.md 的 Deliberate divergences）。
+    #[test]
+    fn sanitize_inline_drops_an_astral_char_straddling_unit_100() {
+        let key = format!("{}\u{1F600}tail", "x".repeat(99));
+        assert_eq!(sanitize_inline(&key), format!("{}\u{2026}", "x".repeat(99)));
+    }
+
     struct TempDir(PathBuf);
 
     impl TempDir {
@@ -2198,7 +2474,7 @@ mod tests {
             .any(|issue| issue.message.contains("duplicated") && issue.line == Some(3)));
     }
 
-    /// C18：OpenSpec 1.13.2 只對「內建」的 spec-driven schema 檢查 task 編號；專案
+    /// C18：OpenSpec（1.13.2 與 2.0.0）只對「內建」的 spec-driven schema 檢查 task 編號；專案
     /// 自己放一份同名的 `schemas/spec-driven/` 時不檢查（probe_c18b.sh 實測兩邊都
     /// 沒有 finding；改名為 custom-driven 的專案 schema 亦同，probe_c18.sh）。
     #[test]
@@ -2266,7 +2542,7 @@ mod tests {
     }
 
     /// archive 先套 RENAMED 再套 MODIFIED：MODIFIED 用串接 rename 後的新名字時，
-    /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:611-628）。
+    /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:644-664）。
     #[test]
     fn scenario_loss_follows_a_chain_of_renames_back_to_the_main_spec() {
         let tmp = TempDir::new();
