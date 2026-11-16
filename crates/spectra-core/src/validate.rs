@@ -454,7 +454,7 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
     }
 
     // 已經有 ERROR 的 delta 檔不再以 archive 的措辭重報一次（validator.js:392-405、
-    // 873-876）；其餘 archive 會拒絕的情況只是 INFO，不影響判定（C1、C3、C13）。
+    // 872-876）；其餘 archive 會拒絕的情況只是 INFO，不影響判定（C1、C3、C13）。
     let already_reported: std::collections::HashSet<String> = issues
         .iter()
         .filter(|issue| issue.level == "ERROR")
@@ -780,7 +780,8 @@ fn unknown_change_metadata_keys(change_dir: &std::path::Path) -> Vec<String> {
     keys
 }
 
-/// 數字 key 的 JS `String(number)`。整數照原樣；浮點數涵蓋 `.inf`／`-.inf`／`.nan`
+/// 數字 key 的 JS `String(number)`。整數照原樣（絕對值超過 2^53 的整數在 JS 會先失去精度，
+/// 這裡不處理）；浮點數涵蓋 `.inf`／`-.inf`／`.nan`
 /// （`Infinity`／`-Infinity`／`NaN`）、`-0`（`0`）、整數值不帶小數點（`1.0` 是 `1`），
 /// 以及 JS 改用指數表示的範圍（絕對值 ≥ 1e21 或 < 1e-6，`1e+21`、`1e-7`）。其餘浮點數
 /// 用 Rust 的最短表示，與 JS 相同。
@@ -2541,7 +2542,7 @@ mod tests {
     }
 
     /// archive 先套 RENAMED 再套 MODIFIED：MODIFIED 用串接 rename 後的新名字時，
-    /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:644-668）。
+    /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:644-664）。
     #[test]
     fn scenario_loss_follows_a_chain_of_renames_back_to_the_main_spec() {
         let tmp = TempDir::new();
