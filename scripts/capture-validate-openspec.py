@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Verify or recapture OpenSpec 1.13.2 `validate` output on the rule fixture.
+"""Verify or recapture OpenSpec 2.0.0 `validate` output on the rule fixture.
 
 This is a verification contract, not a printer (see AGENTS.md). Owner ruling
-D1 makes OpenSpec 1.13.2 the authority for `spectra validate`'s rules, so the
+D1 makes OpenSpec 2.0.0 the authority for `spectra validate`'s rules, so the
 expected findings for every rule case come from OpenSpec itself, never from
 reading its source. The fixture project
 ``crates/spectra-cli/tests/fixtures/validate_openspec`` holds one change or
@@ -14,7 +14,7 @@ sandbox, runs
 
 for both scopes and both strictness modes, drops the non-deterministic
 ``durationMs``, and compares the result with
-``docs/reverse-engineering/golden/validate-openspec-1.13.2.json``, which
+``docs/reverse-engineering/golden/validate-openspec-2.0.0.json``, which
 ``crates/spectra-cli/tests/validate_openspec_integration.rs`` replays against
 ``spectra validate``. Any difference exits 1 and keeps the sandbox;
 ``--write`` regenerates the golden file and then verifies it again.
@@ -31,7 +31,7 @@ text (key order matters), with the host locale pinned to en-US and these normali
 inside diagnostic strings, and a change and spec with the same id are put
 change-first (OpenSpec orders such a tie by async completion).
 
-Requires Node.js and the OpenSpec 1.13.2 package. ``--openspec-js`` overrides
+Requires Node.js and the OpenSpec 2.0.0 package. ``--openspec-js`` overrides
 ``OPENSPEC_JS``, which overrides the npx cache path this was captured with.
 The package version is checked before anything runs.
 """
@@ -49,12 +49,12 @@ import tempfile
 from pathlib import Path
 from typing import NoReturn
 
-EXPECTED_VERSION = "1.13.2"
-DEFAULT_JS = "/Users/howie/.npm/_npx/0aaef5be8686a8bb/node_modules/@fission-ai/openspec/bin/openspec.js"
+EXPECTED_VERSION = "2.0.0"
+DEFAULT_JS = "/Users/howie/.npm/_npx/5914905422e702ee/node_modules/@fission-ai/openspec/bin/openspec.js"
 REPO = Path(__file__).resolve().parent.parent
 FIXTURES = REPO / "crates/spectra-cli/tests/fixtures"
 FIXTURE = FIXTURES / "validate_openspec"
-GOLDEN = REPO / "docs/reverse-engineering/golden/validate-openspec-1.13.2.json"
+GOLDEN = REPO / "docs/reverse-engineering/golden/validate-openspec-2.0.0.json"
 ENV = {
     **{k: v for k, v in os.environ.items() if k != "FORCE_COLOR"},
     "CI": "1",
@@ -100,6 +100,11 @@ ENVELOPES = [
     ("validate_openspec_empty", ["--changes"]),
     ("validate_openspec_empty", ["--specs"]),
     ("validate_openspec_empty", ["--all", "--report", "findings"]),
+    # 2.0.0（1.16.0 起）：config.yaml 讀不到或不是合法 YAML 時，validate 不跑任何
+    # 檢查、直接 exit 1（#265 裁決：只有 `--format openspec` 照搬）。
+    ("validate_openspec_badconfig", ["--all"]),
+    ("validate_openspec_badconfig", ["c1"]),
+    ("validate_openspec_unreadableconfig", ["--all"]),
 ]
 DURATION = re.compile(r'"durationMs": \d+')
 

@@ -1,8 +1,8 @@
-//! `spectra validate` 對 OpenSpec 1.13.2 golden 的重播比對（決策 D1、W9b）。
+//! `spectra validate` 對 OpenSpec 2.0.0 golden 的重播比對（決策 D1、W9b）。
 //!
-//! `docs/reverse-engineering/golden/validate-openspec-1.13.2.json` 由
+//! `docs/reverse-engineering/golden/validate-openspec-2.0.0.json` 由
 //! `scripts/capture-validate-openspec.py` 在 `tests/fixtures/validate_openspec`
-//! 上實際執行 OpenSpec 1.13.2 產生：每個 `dNN-*` change／`sNN-*` spec 對應一條
+//! 上實際執行 OpenSpec 2.0.0 產生：每個 `dNN-*` change／`sNN-*` spec 對應一條
 //! 規則（清單見 `docs/reverse-engineering/validate.md`）。期望值全部來自
 //! OpenSpec 的真實輸出，不是讀原始碼推得的。
 //!
@@ -24,12 +24,12 @@ use serde_json::Value;
 use common::{spectra, TempDir};
 
 /// (item 數, 兩種模式合計的 issue 數)
-const CHANGE_COUNTS: (usize, usize) = (46, 116);
-const SPEC_COUNTS: (usize, usize) = (33, 50);
+const CHANGE_COUNTS: (usize, usize) = (56, 176);
+const SPEC_COUNTS: (usize, usize) = (38, 64);
 
 fn golden() -> Value {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/reverse-engineering/golden/validate-openspec-1.13.2.json");
+        .join("../../docs/reverse-engineering/golden/validate-openspec-2.0.0.json");
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("讀取 {path:?}：{e}"));
     serde_json::from_str(&raw).unwrap()
 }
@@ -95,21 +95,65 @@ fn items_of(root: &Path, scope: &str, strict: bool) -> Vec<Value> {
     items
 }
 
+/// 刻意與 OpenSpec 2.0.0 不同的 item（owner 在 #265 裁決）。每一筆都先斷言 golden
+/// 裡真的有這個差異，OpenSpec 改了行為就失敗，提醒把這筆刪掉。
+///
+/// `d56-spectra-metadata`：`.openspec.yaml` 只有 spectra 自己寫的 key
+/// （`created_by`、`created_with`、`archived_by`、`archived_at`）。OpenSpec 2.0.0 把它們
+/// 報成未知 key 的 WARNING，`--strict` 因此失敗；OpenSpectra 視為已知 key，不報。
+const SPECTRA_METADATA_ITEM: &str = "d56-spectra-metadata";
+const UNKNOWN_METADATA_PREFIX: &str = "Unrecognized key name(s) in .openspec.yaml";
+
+fn apply_divergences(scope: &str, mode: &str, expected: &mut [Value]) {
+    if scope != "changes" {
+        return;
+    }
+    let item = expected
+        .iter_mut()
+        .find(|item| item["id"] == SPECTRA_METADATA_ITEM)
+        .unwrap_or_else(|| panic!("golden {scope}/{mode} 缺少 {SPECTRA_METADATA_ITEM}"));
+    let issues = item["issues"].as_array_mut().unwrap();
+    let before = issues.len();
+    issues.retain(|issue| {
+        !issue["message"]
+            .as_str()
+            .unwrap()
+            .starts_with(UNKNOWN_METADATA_PREFIX)
+    });
+    assert_eq!(
+        before - issues.len(),
+        1,
+        "golden {scope}/{mode} {SPECTRA_METADATA_ITEM} 不再有 spectra key 的未知 key \
+         WARNING：OpenSpec 行為變了，刪掉這筆 divergence"
+    );
+    if mode == "strict" {
+        assert_eq!(item["valid"], false);
+        item["valid"] = Value::Bool(true);
+    }
+}
+
 fn assert_scope_matches(scope: &str, (expected_items, expected_issues): (usize, usize)) {
     let golden = golden();
-    assert_eq!(golden["openspec"], "1.13.2");
+    assert_eq!(golden["openspec"], "2.0.0");
     let root = fixture();
     let mut mismatches = Vec::new();
     let mut compared_issues = 0usize;
     for mode in ["normal", "strict"] {
-        let expected = golden["scopes"][scope][mode]
+        let mut expected = golden["scopes"][scope][mode]
             .as_array()
-            .unwrap_or_else(|| panic!("golden 缺少 {scope}/{mode}"));
+            .unwrap_or_else(|| panic!("golden 缺少 {scope}/{mode}"))
+            .clone();
         assert_eq!(
             expected.len(),
             expected_items,
             "golden {scope}/{mode} 的 item 數"
         );
+        compared_issues += expected
+            .iter()
+            .map(|item| item["issues"].as_array().unwrap().len())
+            .sum::<usize>();
+        apply_divergences(scope, mode, &mut expected);
+        let expected = &expected;
         let actual = items_of(&root, scope, mode == "strict");
         let ids = |items: &[Value]| {
             items
@@ -119,10 +163,9 @@ fn assert_scope_matches(scope: &str, (expected_items, expected_issues): (usize, 
         };
         assert_eq!(ids(&actual), ids(expected), "{scope}/{mode} 的 item 清單");
         for (want, got) in expected.iter().zip(&actual) {
-            compared_issues += want["issues"].as_array().unwrap().len();
             if want != got {
                 mismatches.push(format!(
-                    "{scope}/{mode} {}:\n  OpenSpec 1.13.2: {want}\n  OpenSpectra:     {got}",
+                    "{scope}/{mode} {}:\n  OpenSpec 2.0.0: {want}\n  OpenSpectra:     {got}",
                     want["id"]
                 ));
             }
@@ -130,7 +173,7 @@ fn assert_scope_matches(scope: &str, (expected_items, expected_issues): (usize, 
     }
     assert!(
         mismatches.is_empty(),
-        "{} 個 item 與 OpenSpec 1.13.2 不同：\n{}",
+        "{} 個 item 與 OpenSpec 2.0.0 不同：\n{}",
         mismatches.len(),
         mismatches.join("\n")
     );
@@ -142,7 +185,7 @@ fn assert_scope_matches(scope: &str, (expected_items, expected_issues): (usize, 
 
 /// golden `envelopes` 的筆數；少了就是 golden 被截短（`capture-validate-openspec.py`
 /// 的 `ENVELOPES`）。
-const ENVELOPE_COUNT: usize = 31;
+const ENVELOPE_COUNT: usize = 34;
 
 fn copy_fixture(name: &str) -> TempDir {
     let dir = TempDir::new(&format!("validate-envelope-{name}"));
@@ -173,8 +216,27 @@ fn normalize_envelope(stdout: &str, root: &Path) -> String {
     out.replace(&quoted[1..quoted.len() - 1], "<ROOT>")
 }
 
+/// 把 `Could not parse <ROOT>/openspec/config.yaml (<解析器說明>).` 的括號內容換成
+/// 固定字串；回傳是否真的換到。
+fn mask_yaml_error(stdout: &str) -> (String, bool) {
+    const HEAD: &str = "Could not parse <ROOT>/openspec/config.yaml (";
+    const TAIL: &str = ").\"";
+    let Some(start) = stdout.find(HEAD).map(|at| at + HEAD.len()) else {
+        return (stdout.to_string(), false);
+    };
+    let Some(len) = stdout[start..].find(TAIL) else {
+        return (stdout.to_string(), false);
+    };
+    let masked = format!(
+        "{}<yaml parser message>{}",
+        &stdout[..start],
+        &stdout[start + len..]
+    );
+    (masked, true)
+}
+
 /// `--format openspec --json` 的整份輸出（含 key 順序、summary、byType、root、
-/// 錯誤 envelope、findings report）逐字等於 OpenSpec 1.13.2（決策 D3，W9a）。
+/// 錯誤 envelope、findings report）逐字等於 OpenSpec 2.0.0（決策 D3，W9a）。
 #[test]
 fn validate_format_openspec_matches_the_openspec_envelopes() {
     let golden = golden();
@@ -215,9 +277,24 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
             envelope["stdout"].as_str().unwrap().to_string(),
             envelope["stderr"].as_str().unwrap().to_string(),
         );
+        // 刻意的 divergence：YAML 解析錯誤括號內的說明是 JS `yaml` 套件的措辭，
+        // Rust 端換不同的解析器不可能逐字相同；兩邊都只比括號外的部分。
+        let (want, got) = if fixture == "validate_openspec_badconfig" {
+            let (want_stdout, replaced) = mask_yaml_error(&want.1);
+            assert!(
+                replaced,
+                "golden {fixture} {args:?} 沒有 YAML 解析錯誤訊息，刪掉這筆 divergence"
+            );
+            (
+                (want.0, want_stdout, want.2),
+                (got.0, mask_yaml_error(&got.1).0, got.2),
+            )
+        } else {
+            (want, got)
+        };
         if got != want {
             mismatches.push(format!(
-                "{fixture} validate {args:?}:\n--- OpenSpec 1.13.2 (rc {:?}, stderr {:?})\n{}\n\
+                "{fixture} validate {args:?}:\n--- OpenSpec 2.0.0 (rc {:?}, stderr {:?})\n{}\n\
                  --- OpenSpectra (rc {:?}, stderr {:?})\n{}",
                 want.0, want.2, want.1, got.0, got.2, got.1
             ));
@@ -225,7 +302,7 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
     }
     assert!(
         mismatches.is_empty(),
-        "{} 個 envelope 與 OpenSpec 1.13.2 不同：\n{}",
+        "{} 個 envelope 與 OpenSpec 2.0.0 不同：\n{}",
         mismatches.len(),
         mismatches.join("\n")
     );
@@ -236,7 +313,7 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
 fn validate_all_format_openspec_orders_items_like_openspec() {
     let golden = golden();
     let expected = &golden["all_order"];
-    assert_eq!(expected["order"].as_array().unwrap().len(), 79);
+    assert_eq!(expected["order"].as_array().unwrap().len(), 94);
     let root = fixture();
     let output = spectra()
         .args(["validate", "--all", "--json", "--format", "openspec"])

@@ -1,5 +1,5 @@
 {
-  "openspec": "1.13.2",
+  "openspec": "2.0.0",
   "scopes": {
     "changes": {
       "normal": [
@@ -23,6 +23,12 @@
           "id": "d03-noops",
           "valid": false,
           "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Text above the first \"## \" section is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
             {
               "level": "ERROR",
               "path": "x/spec.md",
@@ -157,6 +163,12 @@
               "message": "Header \"### Requirement:\" in ADDED Requirements is missing a requirement name and is ignored by validation. Add a name, e.g. \"### Requirement: <name>\"."
             },
             {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 5,
+              "message": "Text before the first requirement in \"## ADDED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
               "level": "ERROR",
               "path": "x/spec.md",
               "message": "Delta sections ## ADDED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
@@ -199,6 +211,12 @@
           "id": "d17-emptyadded",
           "valid": false,
           "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Text before the first requirement in \"## ADDED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
             {
               "level": "ERROR",
               "path": "x/spec.md",
@@ -312,6 +330,12 @@
               "path": "x/spec.md",
               "line": 3,
               "message": "Requirement \"Alpha\" is under \"## Notes\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 1,
+              "message": "Section \"## Notes\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
             },
             {
               "level": "ERROR",
@@ -474,6 +498,12 @@
               "path": "x/spec.md",
               "line": 1,
               "message": "Requirement \"Early\" is above the first \"## \" section, which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 1,
+              "message": "Text above the first \"## \" section is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
             }
           ]
         },
@@ -534,7 +564,13 @@
         {
           "id": "d42-fenced",
           "valid": true,
-          "issues": []
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\": scenario \"real\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            }
+          ]
         },
         {
           "id": "d43-addscenarios",
@@ -565,6 +601,194 @@
               "level": "ERROR",
               "path": "x/spec.md",
               "message": "ADDED \"Two\" must include at least one scenario"
+            }
+          ]
+        },
+        {
+          "id": "d47-unrecognized-section",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "line": 14,
+              "message": "Requirement \"Old\" is under \"## DEPRECATED Requirements\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "line": 25,
+              "message": "Requirement \"Bare\" is under \"## Requirements\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "line": 36,
+              "message": "Requirement \"Singular\" is under \"## Add Requirement\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 47,
+              "message": "Requirement \"Prose\" is under \"## Behavior\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 12,
+              "message": "Section \"## DEPRECATED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 23,
+              "message": "Section \"## Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 34,
+              "message": "Section \"## Add Requirement\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 45,
+              "message": "Section \"## Behavior\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d48-closed-headings",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d49-scenario-steps",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"then only\" is missing a WHEN/GIVEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"neither\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"bare lower\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"keyword in title WHEN THEN\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"fenced only\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"and only\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"closed\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            }
+          ]
+        },
+        {
+          "id": "d50-modified-steps",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "MODIFIED \"Alpha\": scenario \"a1\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "message": "Archive would refuse this delta: x: target spec does not exist; only ADDED requirements are allowed for new specs. MODIFIED and RENAMED operations require an existing spec."
+            }
+          ]
+        },
+        {
+          "id": "d51-inline-fence",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d52-html-comment",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d53-added-long",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Long\": Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior."
+            }
+          ]
+        },
+        {
+          "id": "d54-unapplied",
+          "valid": true,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "line": 15,
+              "message": "Header \"### Stray before first\" in ADDED Requirements is not a \"### Requirement:\" header and is ignored by validation. Use \"### Requirement: Stray before first\" if it should be validated as a requirement."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 7,
+              "message": "Section \"## Why\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 13,
+              "message": "Text before the first requirement in \"## ADDED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "message": "Archive would refuse this delta: x: target spec does not exist; only ADDED requirements are allowed for new specs. MODIFIED and RENAMED operations require an existing spec."
+            }
+          ]
+        },
+        {
+          "id": "d55-unknown-metadata",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": ".openspec.yaml",
+              "message": "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): X-Bad, owner, skip_design, x- spaced. Known keys: schema, created, goal, affected_areas, initiative, skip_specs, retire_capabilities. Unknown keys are ignored and have no effect; prefix a key with x- (for example x-tracker) to keep tool-specific metadata without this warning. An x- extension key needs a lowercase x- prefix and a name after it with no whitespace: x-tracker and x-jiraKey are extensions, while x-, \"x- tracker\" and X-Tracker are not. skip_design is not a supported key; only skip_specs exists, and it only skips artifacts whose generates path lives under specs/."
+            }
+          ]
+        },
+        {
+          "id": "d56-spectra-metadata",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": ".openspec.yaml",
+              "message": "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): archived_at, archived_by, created_by, created_with. Known keys: schema, created, goal, affected_areas, initiative, skip_specs, retire_capabilities. Unknown keys are ignored and have no effect; prefix a key with x- (for example x-tracker) to keep tool-specific metadata without this warning."
             }
           ]
         }
@@ -591,6 +815,12 @@
           "valid": false,
           "issues": [
             {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Text above the first \"## \" section is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
               "level": "ERROR",
               "path": "x/spec.md",
               "message": "No delta sections found. Add headers such as \"## ADDED Requirements\" or move non-delta notes outside specs/."
@@ -724,6 +954,12 @@
               "message": "Header \"### Requirement:\" in ADDED Requirements is missing a requirement name and is ignored by validation. Add a name, e.g. \"### Requirement: <name>\"."
             },
             {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 5,
+              "message": "Text before the first requirement in \"## ADDED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
               "level": "ERROR",
               "path": "x/spec.md",
               "message": "Delta sections ## ADDED Requirements were found, but no requirement entries parsed. Ensure each section includes at least one \"### Requirement:\" block (REMOVED may use bullet list syntax)."
@@ -766,6 +1002,12 @@
           "id": "d17-emptyadded",
           "valid": false,
           "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 3,
+              "message": "Text before the first requirement in \"## ADDED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
             {
               "level": "ERROR",
               "path": "x/spec.md",
@@ -879,6 +1121,12 @@
               "path": "x/spec.md",
               "line": 3,
               "message": "Requirement \"Alpha\" is under \"## Notes\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 1,
+              "message": "Section \"## Notes\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
             },
             {
               "level": "ERROR",
@@ -1041,6 +1289,12 @@
               "path": "x/spec.md",
               "line": 1,
               "message": "Requirement \"Early\" is above the first \"## \" section, which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 1,
+              "message": "Text above the first \"## \" section is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
             }
           ]
         },
@@ -1100,8 +1354,14 @@
         },
         {
           "id": "d42-fenced",
-          "valid": true,
-          "issues": []
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Alpha\": scenario \"real\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            }
+          ]
         },
         {
           "id": "d43-addscenarios",
@@ -1132,6 +1392,194 @@
               "level": "ERROR",
               "path": "x/spec.md",
               "message": "ADDED \"Two\" must include at least one scenario"
+            }
+          ]
+        },
+        {
+          "id": "d47-unrecognized-section",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "line": 14,
+              "message": "Requirement \"Old\" is under \"## DEPRECATED Requirements\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "line": 25,
+              "message": "Requirement \"Bare\" is under \"## Requirements\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "ERROR",
+              "path": "x/spec.md",
+              "line": 36,
+              "message": "Requirement \"Singular\" is under \"## Add Requirement\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 47,
+              "message": "Requirement \"Prose\" is under \"## Behavior\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 12,
+              "message": "Section \"## DEPRECATED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 23,
+              "message": "Section \"## Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 34,
+              "message": "Section \"## Add Requirement\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 45,
+              "message": "Section \"## Behavior\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d48-closed-headings",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d49-scenario-steps",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"then only\" is missing a WHEN/GIVEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"neither\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"bare lower\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"keyword in title WHEN THEN\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"fenced only\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"and only\" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Steps\": scenario \"closed\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            }
+          ]
+        },
+        {
+          "id": "d50-modified-steps",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "MODIFIED \"Alpha\": scenario \"a1\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "message": "Archive would refuse this delta: x: target spec does not exist; only ADDED requirements are allowed for new specs. MODIFIED and RENAMED operations require an existing spec."
+            }
+          ]
+        },
+        {
+          "id": "d51-inline-fence",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d52-html-comment",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d53-added-long",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "message": "ADDED \"Long\": Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior."
+            }
+          ]
+        },
+        {
+          "id": "d54-unapplied",
+          "valid": false,
+          "issues": [
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "line": 15,
+              "message": "Header \"### Stray before first\" in ADDED Requirements is not a \"### Requirement:\" header and is ignored by validation. Use \"### Requirement: Stray before first\" if it should be validated as a requirement."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 7,
+              "message": "Section \"## Why\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 13,
+              "message": "Text before the first requirement in \"## ADDED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            },
+            {
+              "level": "INFO",
+              "path": "x/spec.md",
+              "message": "Archive would refuse this delta: x: target spec does not exist; only ADDED requirements are allowed for new specs. MODIFIED and RENAMED operations require an existing spec."
+            }
+          ]
+        },
+        {
+          "id": "d55-unknown-metadata",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": ".openspec.yaml",
+              "message": "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): X-Bad, owner, skip_design, x- spaced. Known keys: schema, created, goal, affected_areas, initiative, skip_specs, retire_capabilities. Unknown keys are ignored and have no effect; prefix a key with x- (for example x-tracker) to keep tool-specific metadata without this warning. An x- extension key needs a lowercase x- prefix and a name after it with no whitespace: x-tracker and x-jiraKey are extensions, while x-, \"x- tracker\" and X-Tracker are not. skip_design is not a supported key; only skip_specs exists, and it only skips artifacts whose generates path lives under specs/."
+            }
+          ]
+        },
+        {
+          "id": "d56-spectra-metadata",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": ".openspec.yaml",
+              "message": "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): archived_at, archived_by, created_by, created_with. Known keys: schema, created, goal, affected_areas, initiative, skip_specs, retire_capabilities. Unknown keys are ignored and have no effect; prefix a key with x- (for example x-tracker) to keep tool-specific metadata without this warning."
             }
           ]
         }
@@ -1334,9 +1782,9 @@
           "valid": true,
           "issues": [
             {
-              "level": "INFO",
+              "level": "WARNING",
               "path": "requirements[0]",
-              "message": "Requirement text is very long (>500 characters). Consider breaking it down."
+              "message": "Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior."
             }
           ]
         },
@@ -1457,6 +1905,75 @@
               "level": "WARNING",
               "path": "overview",
               "line": 6,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
+        },
+        {
+          "id": "s31-closed-headings",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s32-scenario-steps",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement \"Steps\": scenario \"then only\" is missing a WHEN/GIVEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement \"Steps\": scenario \"when only\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            }
+          ]
+        },
+        {
+          "id": "s33-unspaced-requirement",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 7,
+              "message": "Requirement header \"###Requirement: Outside\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 22,
+              "message": "Requirement header \"###Requirement: Twice\" duplicates the requirement declared on line 13. Requirement names must be unique so spec updates cannot discard one block while updating another."
+            }
+          ]
+        },
+        {
+          "id": "s34-closed-delta-header",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Main spec contains delta header \"## ADDED Requirements ##\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Two\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "s35-closed-purpose-placeholder",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
               "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
             }
           ]
@@ -1655,12 +2172,12 @@
         },
         {
           "id": "s16-longtext",
-          "valid": true,
+          "valid": false,
           "issues": [
             {
-              "level": "INFO",
+              "level": "WARNING",
               "path": "requirements[0]",
-              "message": "Requirement text is very long (>500 characters). Consider breaking it down."
+              "message": "Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior."
             }
           ]
         },
@@ -1784,6 +2301,75 @@
               "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
             }
           ]
+        },
+        {
+          "id": "s31-closed-headings",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "s32-scenario-steps",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement \"Steps\": scenario \"then only\" is missing a WHEN/GIVEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "requirements[0].scenarios",
+              "message": "Requirement \"Steps\": scenario \"when only\" is missing a THEN step. A scenario needs a trigger and an outcome, e.g. \"- **WHEN** an invoice is voided\" and \"- **THEN** a credit note is issued\"."
+            }
+          ]
+        },
+        {
+          "id": "s33-unspaced-requirement",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 7,
+              "message": "Requirement header \"###Requirement: Outside\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 22,
+              "message": "Requirement header \"###Requirement: Twice\" duplicates the requirement declared on line 13. Requirement names must be unique so spec updates cannot discard one block while updating another."
+            }
+          ]
+        },
+        {
+          "id": "s34-closed-delta-header",
+          "valid": false,
+          "issues": [
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 18,
+              "message": "Main spec contains delta header \"## ADDED Requirements ##\". Delta headers are only valid inside openspec/changes/<name>/specs/<capability-path>/spec.md and truncate the parsed ## Requirements section."
+            },
+            {
+              "level": "ERROR",
+              "path": "file",
+              "line": 20,
+              "message": "Requirement header \"### Requirement: Two\" appears outside the main ## Requirements section. Main specs only parse requirements inside that section, so this requirement is currently invisible to validate, list, and archive."
+            }
+          ]
+        },
+        {
+          "id": "s35-closed-purpose-placeholder",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "overview",
+              "line": 5,
+              "message": "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one."
+            }
+          ]
         }
       ]
     }
@@ -1838,6 +2424,16 @@
       "change/d44-mixed-case-sections",
       "change/d45-metadata-only",
       "change/d46-second-copy-checked",
+      "change/d47-unrecognized-section",
+      "change/d48-closed-headings",
+      "change/d49-scenario-steps",
+      "change/d50-modified-steps",
+      "change/d51-inline-fence",
+      "change/d52-html-comment",
+      "change/d53-added-long",
+      "change/d54-unapplied",
+      "change/d55-unknown-metadata",
+      "change/d56-spectra-metadata",
       "spec/pair",
       "spec/s01-good",
       "spec/s02-nopurpose",
@@ -1868,24 +2464,29 @@
       "spec/s27-requirements-h3",
       "spec/s28-header-shall",
       "spec/s29-closed-heading-dup",
-      "spec/s30-generated-placeholder"
+      "spec/s30-generated-placeholder",
+      "spec/s31-closed-headings",
+      "spec/s32-scenario-steps",
+      "spec/s33-unspaced-requirement",
+      "spec/s34-closed-delta-header",
+      "spec/s35-closed-purpose-placeholder"
     ],
     "summary": {
       "totals": {
-        "items": 79,
-        "passed": 43,
-        "failed": 36
+        "items": 94,
+        "passed": 55,
+        "failed": 39
       },
       "byType": {
         "change": {
-          "items": 46,
-          "passed": 23,
-          "failed": 23
+          "items": 56,
+          "passed": 32,
+          "failed": 24
         },
         "spec": {
-          "items": 33,
-          "passed": 20,
-          "failed": 13
+          "items": 38,
+          "passed": 23,
+          "failed": 15
         }
       }
     }
@@ -1897,7 +2498,7 @@
         "--all"
       ],
       "rc": 1,
-      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -1915,7 +2516,7 @@
         "--specs"
       ],
       "rc": 0,
-      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 7,\n      \"passed\": 7,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 7,\n      \"passed\": 7,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -1925,7 +2526,7 @@
         "--specs"
       ],
       "rc": 1,
-      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Upper_Case\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -1936,7 +2537,7 @@
         "findings"
       ],
       "rc": 1,
-      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 3,\n    \"totalItems\": 11\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 3,\n    \"totalItems\": 11\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -1948,7 +2549,7 @@
         "findings"
       ],
       "rc": 1,
-      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 3,\n    \"totalItems\": 11\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 3,\n    \"totalItems\": 11\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"change\",\n      \"valid\": false,\n      \"issues\": [\n        {\n          \"level\": \"ERROR\",\n          \"path\": \"file\",\n          \"message\": \"Change must have at least one delta. No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \\\"#### Scenario:\\\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \\\"skip_specs: true\\\" in the change's .openspec.yaml instead. Tip: run \\\"openspec change show <change-id> --json --deltas-only\\\" to inspect parsed deltas.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"cap-zeta/spec.md\",\n          \"message\": \"ADDED \\\"Req zeta\\\" should contain SHALL or MUST (RFC 2119 best practice for English specs)\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 11,\n      \"passed\": 10,\n      \"failed\": 1\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 4,\n        \"passed\": 3,\n        \"failed\": 1\n      },\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -1970,7 +2571,7 @@
         "full"
       ],
       "rc": 0,
-      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 7,\n      \"passed\": 7,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"a-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a.b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"a/b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"aa\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"B-upper\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"only\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"parentless/child\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 7,\n      \"passed\": 7,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 7,\n        \"passed\": 7,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -2130,7 +2731,7 @@
         "--all"
       ],
       "rc": 0,
-      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"😀-emoji\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ångström\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"äther\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Beta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"eclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"file\",\n          \"message\": \"skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ss-a\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ß-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Ωmega\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Жук\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"中文\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"日本語\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 15,\n      \"passed\": 15,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 14,\n        \"passed\": 14,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"😀-emoji\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ångström\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"äther\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Beta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"eclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"file\",\n          \"message\": \"skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ss-a\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ß-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Ωmega\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Жук\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"中文\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"日本語\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 15,\n      \"passed\": 15,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 14,\n        \"passed\": 14,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -2139,7 +2740,7 @@
         "--specs"
       ],
       "rc": 0,
-      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"😀-emoji\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ångström\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"äther\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Beta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"eclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ss-a\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ß-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Ωmega\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Жук\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"中文\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"日本語\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 14,\n      \"passed\": 14,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 14,\n        \"passed\": 14,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"items\": [\n    {\n      \"id\": \"😀-emoji\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ångström\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"äther\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Beta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"eclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ss-a\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ß-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Ωmega\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Жук\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"中文\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"日本語\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 14,\n      \"passed\": 14,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"spec\": {\n        \"items\": 14,\n        \"passed\": 14,\n        \"failed\": 0\n      }\n    }\n  },\n  \"version\": \"1.0\",\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -2150,7 +2751,7 @@
         "findings"
       ],
       "rc": 0,
-      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 15,\n    \"totalItems\": 15\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"😀-emoji\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ångström\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"äther\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Beta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"eclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"file\",\n          \"message\": \"skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ss-a\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ß-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Ωmega\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Жук\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"中文\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"日本語\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Consider breaking it down.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 15,\n      \"passed\": 15,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 14,\n        \"passed\": 14,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 15,\n    \"totalItems\": 15\n  },\n  \"itemFindings\": [\n    {\n      \"id\": \"😀-emoji\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"alpha\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ångström\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"äther\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Beta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"eclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"change\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"INFO\",\n          \"path\": \"file\",\n          \"message\": \"skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"éclair\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ss-a\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"ß-b\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"zeta\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Ωmega\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"Жук\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"中文\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    },\n    {\n      \"id\": \"日本語\",\n      \"type\": \"spec\",\n      \"valid\": true,\n      \"issues\": [\n        {\n          \"level\": \"WARNING\",\n          \"path\": \"requirements[0]\",\n          \"message\": \"Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.\"\n        }\n      ],\n      \"durationMs\": 0\n    }\n  ],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 15,\n      \"passed\": 15,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 1,\n        \"passed\": 1,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 14,\n        \"passed\": 14,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
       "stderr": ""
     },
     {
@@ -2198,6 +2799,33 @@
       ],
       "rc": 0,
       "stdout": "{\n  \"report\": {\n    \"kind\": \"validation-findings\",\n    \"version\": \"1.0\",\n    \"scope\": \"all\",\n    \"returnedItems\": 0,\n    \"totalItems\": 0\n  },\n  \"itemFindings\": [],\n  \"summary\": {\n    \"totals\": {\n      \"items\": 0,\n      \"passed\": 0,\n      \"failed\": 0\n    },\n    \"byType\": {\n      \"change\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      },\n      \"spec\": {\n        \"items\": 0,\n        \"passed\": 0,\n        \"failed\": 0\n      }\n    }\n  },\n  \"root\": {\n    \"path\": \"<ROOT>\",\n    \"source\": \"nearest\"\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_badconfig",
+      "args": [
+        "--all"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"unparseable_config\",\n      \"message\": \"Could not parse <ROOT>/openspec/config.yaml (Flow sequence in block collection must be sufficiently indented and end with a ] at line 2, column 1:).\",\n      \"fix\": \"Fix the YAML syntax in <ROOT>/openspec/config.yaml.\"\n    }\n  ]\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_badconfig",
+      "args": [
+        "c1"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"unparseable_config\",\n      \"message\": \"Could not parse <ROOT>/openspec/config.yaml (Flow sequence in block collection must be sufficiently indented and end with a ] at line 2, column 1:).\",\n      \"fix\": \"Fix the YAML syntax in <ROOT>/openspec/config.yaml.\"\n    }\n  ]\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_unreadableconfig",
+      "args": [
+        "--all"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"unreadable_config\",\n      \"message\": \"Could not read <ROOT>/openspec/config.yaml (EISDIR: illegal operation on a directory, read).\",\n      \"fix\": \"Make <ROOT>/openspec/config.yaml a readable file, or remove it.\"\n    }\n  ]\n}\n",
       "stderr": ""
     }
   ]

@@ -521,6 +521,13 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
                 .to_string(),
         ));
     }
+    let unknown_keys = unknown_change_metadata_keys(&change_dir);
+    if !unknown_keys.is_empty() {
+        issues.push(Issue::warning(
+            ".openspec.yaml".to_string(),
+            unknown_change_metadata_keys_message(&unknown_keys),
+        ));
+    }
     // 宣告 skip_specs 時，specs/ 底下任何非 dot 檔都與宣告矛盾；讀不到 specs/
     // 視同有檔案（fail closed，validator.js:427-436）。
     let specs_dir_has_files = skip_specs && has_any_file_under(&specs_dir).unwrap_or(true);
@@ -658,13 +665,11 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
         ));
     }
     for (index, requirement) in spec.requirements.iter().enumerate() {
+        // 1.14.1 起是 WARNING，`--strict` 會失敗。
         if openspec_md::js_len(&requirement.text) > MAX_REQUIREMENT_TEXT_LENGTH {
-            issues.push(Issue::info(
+            issues.push(Issue::warning(
                 format!("requirements[{index}]"),
-                format!(
-                    "Requirement text is very long (>{MAX_REQUIREMENT_TEXT_LENGTH} characters). \
-                     Consider breaking it down."
-                ),
+                REQUIREMENT_TOO_LONG.to_string(),
             ));
         }
         if requirement.scenarios == 0 {
@@ -692,12 +697,20 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
                 missing_shall_or_must_message(&label, &block.name, true),
             ));
         }
+        // delta 路徑同一個步驟檢查，跑在同一批 block 上（2.0.0）。
+        for message in openspec_md::scenario_step_messages(&block.raw, &label) {
+            issues.push(Issue::warning(
+                format!("requirements[{index}].scenarios"),
+                message,
+            ));
+        }
     }
     issues
 }
 
 const MIN_PURPOSE_LENGTH: usize = 50;
 const MAX_REQUIREMENT_TEXT_LENGTH: usize = 500;
+const REQUIREMENT_TOO_LONG: &str = "Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.";
 const CHANGE_SKIP_SPECS_CONFLICT: &str = "skip_specs is set in .openspec.yaml but spec files exist under specs/. Remove skip_specs or delete the delta spec files";
 const CHANGE_SKIP_SPECS_ACCEPTED: &str = "skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted";
 const GUIDE_NO_DELTAS: &str = "No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas.";
@@ -705,6 +718,171 @@ const GUIDE_MISSING_SPEC_SECTIONS: &str = "Missing required sections. Expected h
 const GUIDE_SCENARIO_FORMAT: &str = "Scenarios must use level-4 headers. Convert bullet lists into:\n#### Scenario: Short name\n- **WHEN** ...\n- **THEN** ...\n- **AND** ...";
 const PURPOSE_IS_PLACEHOLDER: &str = "Purpose section is still a placeholder rather than a Purpose anyone wrote (the sentence `openspec archive` writes for a new capability, or a `TBD`/`TODO` marker left in its place). Replace it with what this capability is for, editing the main spec directly: a `## Purpose` in a delta is read only when the capability is created, so it cannot replace this one.";
 const TASKS_WITHOUT_CHECKBOXES: &str = "This change counts as 0 tasks: no line in its tracked task files is a checkbox, so \"openspec list\" and \"openspec status\" report no work and \"openspec archive\" has nothing to flag as incomplete. Write each task as \"- [ ] 1.1 Description\".";
+
+/// `CHANGE_METADATA_KNOWN_KEYS`（`core/change-metadata/schema.js`）：訊息裡列出的已知 key。
+const CHANGE_METADATA_KNOWN_KEYS: [&str; 7] = [
+    "schema",
+    "created",
+    "goal",
+    "affected_areas",
+    "initiative",
+    "skip_specs",
+    "retire_capabilities",
+];
+/// spectra 自己寫進 `.openspec.yaml` 的 key（`new change`、`archive`）。OpenSpec 2.0.0
+/// 把它們當成未知 key；owner 在 #265 裁決視為已知，否則 spectra 建立的每個 change 在
+/// `--strict` 下都會失敗。這是刻意的 divergence，訊息的「Known keys」仍照 OpenSpec。
+const SPECTRA_METADATA_KEYS: [&str; 4] =
+    ["created_by", "created_with", "archived_by", "archived_at"];
+
+/// `readUnknownChangeMetadataKeys`：`.openspec.yaml` 的 top-level key 中不認得、也不是
+/// `x-` 擴充 key 的，依 JS `.sort()`（UTF-16 code unit）排序。檔案不存在、讀不到或
+/// 不是 YAML mapping 時回傳空清單（那些情況另有診斷）。
+fn unknown_change_metadata_keys(change_dir: &std::path::Path) -> Vec<String> {
+    static EXTENSION_KEY: Lazy<Regex> = Lazy::new(|| Regex::new(r"^x-\S+$").unwrap());
+    let Ok(bytes) = std::fs::read(change_dir.join(".openspec.yaml")) else {
+        return Vec::new();
+    };
+    let Ok(serde_yaml::Value::Mapping(mapping)) =
+        serde_yaml::from_str::<serde_yaml::Value>(&String::from_utf8_lossy(&bytes))
+    else {
+        return Vec::new();
+    };
+    let mut keys: Vec<String> = mapping
+        .keys()
+        .map(|key| match key {
+            serde_yaml::Value::String(text) => text.clone(),
+            serde_yaml::Value::Bool(value) => value.to_string(),
+            serde_yaml::Value::Number(value) => value.to_string(),
+            serde_yaml::Value::Null => "null".to_string(),
+            other => serde_yaml::to_string(other)
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+        })
+        .filter(|key| {
+            !CHANGE_METADATA_KNOWN_KEYS.contains(&key.as_str())
+                && !SPECTRA_METADATA_KEYS.contains(&key.as_str())
+                && !EXTENSION_KEY.is_match(key)
+        })
+        .collect();
+    keys.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
+    keys
+}
+
+/// `sanitizeInline(value, 100)`（`core/references.js`）：控制字元與雙向控制字元的連續
+/// 串換成一個空白、trim，超過 100 個 UTF-16 code unit 時截斷加 `…`。
+fn sanitize_inline(value: &str) -> String {
+    static UNSAFE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"[\x{0}-\x{1f}\x{7f}-\x{9f}\x{61c}\x{200e}\x{200f}\x{2028}-\x{202e}\x{2066}-\x{206f}]+",
+        )
+        .unwrap()
+    });
+    const MAX: usize = 100;
+    let flattened = UNSAFE.replace_all(value, " ");
+    let flattened = flattened.trim();
+    if openspec_md::js_len(flattened) <= MAX {
+        return flattened.to_string();
+    }
+    let mut out = String::new();
+    let mut units = 0;
+    for ch in flattened.chars() {
+        units += ch.len_utf16();
+        if units > MAX {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('\u{2026}');
+    out
+}
+
+/// `formatUnknownChangeMetadataKeysMessage`。
+fn unknown_change_metadata_keys_message(keys: &[String]) -> String {
+    let listed = keys
+        .iter()
+        .map(|key| sanitize_inline(key))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut message = format!(
+        "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): {listed}. \
+         Known keys: {}. Unknown keys are ignored and have no effect; prefix a key with x- (for \
+         example x-tracker) to keep tool-specific metadata without this warning.",
+        CHANGE_METADATA_KNOWN_KEYS.join(", ")
+    );
+    if keys.iter().any(|key| {
+        key.get(..2)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("x-"))
+    }) {
+        message.push_str(
+            " An x- extension key needs a lowercase x- prefix and a name after it with no \
+             whitespace: x-tracker and x-jiraKey are extensions, while x-, \"x- tracker\" and \
+             X-Tracker are not.",
+        );
+    }
+    if keys.iter().any(|key| key == "skip_design") {
+        message.push_str(
+            " skip_design is not a supported key; only skip_specs exists, and it only skips \
+             artifacts whose generates path lives under specs/.",
+        );
+    }
+    message
+}
+
+/// `openspec/config.yaml`（或 `config.yml`）讀不到或不是合法 YAML（`readConfigParseError`，
+/// 1.16.0，#1892）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigParseError {
+    pub code: &'static str,
+    pub message: String,
+    pub fix: String,
+}
+
+/// OpenSpec 2.0.0 的 `validate` 在這種情況下不跑任何檢查、直接 exit 1。owner 在 #265
+/// 裁決只有 `--format openspec` 照搬，所以由 CLI 決定要不要呼叫。路徑與 OpenSpec 相同，
+/// 固定是專案根目錄下的 `openspec/`，不是 `.spectra.yaml` 的 `spec_dir`。
+///
+/// 讀檔錯誤的說明仿 Node 的措辭（`EISDIR: ...`）；YAML 解析錯誤的說明來自不同的
+/// 解析器，不可能與 JS `yaml` 套件逐字相同（golden 重播只比括號外）。
+pub fn config_parse_error(cfg: &Config) -> Option<ConfigParseError> {
+    let dir = cfg.root.join("openspec");
+    let path = [dir.join("config.yaml"), dir.join("config.yml")]
+        .into_iter()
+        .find(|path| path.exists())?;
+    let shown = path.display().to_string();
+    let first_line = |text: String| text.lines().next().unwrap_or_default().to_string();
+    match std::fs::read(&path) {
+        Err(error) => {
+            let detail = match error.kind() {
+                std::io::ErrorKind::IsADirectory => {
+                    "EISDIR: illegal operation on a directory, read".to_string()
+                }
+                std::io::ErrorKind::PermissionDenied => {
+                    format!("EACCES: permission denied, open '{shown}'")
+                }
+                _ => first_line(error.to_string()),
+            };
+            Some(ConfigParseError {
+                code: "unreadable_config",
+                message: format!("Could not read {shown} ({detail})."),
+                fix: format!("Make {shown} a readable file, or remove it."),
+            })
+        }
+        Ok(bytes) => {
+            let error = serde_yaml::from_str::<serde_yaml::Value>(&String::from_utf8_lossy(&bytes))
+                .err()?;
+            Some(ConfigParseError {
+                code: "unparseable_config",
+                message: format!(
+                    "Could not parse {shown} ({}).",
+                    first_line(error.to_string())
+                ),
+                fix: format!("Fix the YAML syntax in {shown}."),
+            })
+        }
+    }
+}
 
 /// `buildMissingShallOrMustMessage`（validator.js:892-899）。
 fn missing_shall_or_must_message(prefix: &str, name: &str, guidance_only: bool) -> String {
@@ -821,17 +999,32 @@ fn check_delta_file(
             Some(section) => format!("under \"## {section}\""),
             None => "above the first \"## \" section".to_string(),
         };
+        let message = format!(
+            "Requirement \"{}\" is {location}, which is not a delta section, so it is \
+             ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED \
+             Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\".",
+            orphan.name
+        );
+        // 未認得的 `## ... Requirements` 標題讀起來像 delta 操作，2.0.0 起是 ERROR（#2195）。
+        let issue = if openspec_md::is_unrecognized_delta_section(orphan.section.as_deref()) {
+            Issue::error(entry_path.to_string(), message)
+        } else {
+            Issue::warning(entry_path.to_string(), message)
+        };
+        issues.push(issue.at_line(orphan.line));
+    }
+    // archive 只搬 requirement block，其他文字會消失（1.14.2）。
+    for lost in &plan.unapplied_content {
         issues.push(
             Issue::warning(
                 entry_path.to_string(),
                 format!(
-                    "Requirement \"{}\" is {location}, which is not a delta section, so it is \
-                     ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED \
-                     Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\".",
-                    orphan.name
+                    "{} is not carried into the main spec by archive. Move it into a \
+                     requirement, or into proposal.md or design.md.",
+                    openspec_md::describe_unapplied_content(lost, true)
                 ),
             )
-            .at_line(orphan.line),
+            .at_line(lost.line),
         );
     }
 
@@ -868,6 +1061,18 @@ fn check_delta_file(
                     missing_shall_or_must_message(&label, &block.name, true),
                 ));
             }
+            // 與 main spec 同一個上限（#1976），`validate <change> --strict` 在新的超長
+            // requirement 進 main spec 前就擋下。MODIFIED 不檢查：它的內文是既有的
+            // requirement，specs 指引要求整段保留。
+            if operation == "ADDED"
+                && !text.is_empty()
+                && openspec_md::js_len(&text) > MAX_REQUIREMENT_TEXT_LENGTH
+            {
+                issues.push(Issue::warning(
+                    entry_path.to_string(),
+                    format!("{label}: {REQUIREMENT_TOO_LONG}"),
+                ));
+            }
             // 沒有內文的 `#### ` 不算 scenario（C5）。
             if openspec_md::block_scenario_count(&block.raw) < 1 {
                 let hint = if openspec_md::block_empty_scenario_count(&block.raw) > 0 {
@@ -880,6 +1085,9 @@ fn check_delta_file(
                     entry_path.to_string(),
                     format!("{label} must include at least one scenario{hint}"),
                 ));
+            }
+            for message in openspec_md::scenario_step_messages(&block.raw, &label) {
+                issues.push(Issue::warning(entry_path.to_string(), message));
             }
         }
     }

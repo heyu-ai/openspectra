@@ -1,0 +1,7 @@
+schema: spec-driven
+created: 2026-09-01
+skip_design: true
+owner: me
+x-tracker: ABC-1
+X-Bad: 1
+"x- spaced": 2

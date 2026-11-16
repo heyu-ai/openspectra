@@ -819,6 +819,14 @@ fn cmd_validate(cfg: &Config, options: ValidateOptions<'_>, use_color: bool) -> 
         anyhow::bail!("--report requires --changes, --specs, --all, or --archived");
     }
     let openspec_json = as_json && format == Some(ValidateFormat::Openspec);
+    // OpenSpec 2.0.0（1.16.0，#1892）：config.yaml 讀不到或不是合法 YAML 時不跑任何
+    // 檢查、直接 exit 1。owner 在 #265 裁決只有 `--format openspec` 照搬；預設的
+    // oracle 格式跟 oracle 3.0.0 走。
+    if openspec_json {
+        if let Some(error) = validate::config_parse_error(cfg) {
+            return print_openspec_status(error.code, error.message, Some(&error.fix));
+        }
+    }
 
     let (items, requested_types) = if archived {
         (validate::validate_archived(cfg)?, vec!["change"])
