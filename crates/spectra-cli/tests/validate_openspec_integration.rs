@@ -104,7 +104,55 @@ fn items_of(root: &Path, scope: &str, strict: bool) -> Vec<Value> {
 const SPECTRA_METADATA_ITEM: &str = "d56-spectra-metadata";
 const UNKNOWN_METADATA_PREFIX: &str = "Unrecognized key name(s) in .openspec.yaml";
 
+/// 500 字上限（#265 裁決）：OpenSpec 2.0.0 對 ADDED 報 WARNING、main spec 從 INFO 升成
+/// WARNING，新訊息如下；OpenSpectra 維持 1.13.2：ADDED 不報，main spec 報 INFO、舊訊息。
+const LONG_TEXT_2_0: &str = "Requirement text is very long (>500 characters). Move examples and \
+                             edge cases into scenarios, or split it into separate requirements \
+                             that each state one behavior.";
+const LONG_TEXT_1_13: &str =
+    "Requirement text is very long (>500 characters). Consider breaking it down.";
+
+/// 把一個 item 的 500 字 finding 改回 1.13.2 的形狀；回傳 (拿掉的 ADDED 數, 降級的 main spec 數)。
+/// 有改到時依剩下的 issue 重算判定：ERROR 一律 invalid，`--strict` 下 WARNING 也是。
+fn revert_long_text(item: &mut Value, strict: bool) -> (usize, usize) {
+    let issues = item["issues"].as_array_mut().unwrap();
+    let before = issues.len();
+    let added_suffix = format!(": {LONG_TEXT_2_0}");
+    issues.retain(|issue| {
+        let message = issue["message"].as_str().unwrap();
+        !(message.starts_with("ADDED \"") && message.ends_with(&added_suffix))
+    });
+    let dropped = before - issues.len();
+    let mut demoted = 0;
+    for issue in issues.iter_mut() {
+        if issue["message"] == LONG_TEXT_2_0 {
+            assert_eq!(issue["level"], "WARNING");
+            issue["level"] = Value::from("INFO");
+            issue["message"] = Value::from(LONG_TEXT_1_13);
+            demoted += 1;
+        }
+    }
+    if dropped + demoted > 0 {
+        let fails = issues
+            .iter()
+            .any(|issue| issue["level"] == "ERROR" || (strict && issue["level"] == "WARNING"));
+        item["valid"] = Value::Bool(!fails);
+    }
+    (dropped, demoted)
+}
+
 fn apply_divergences(scope: &str, mode: &str, expected: &mut [Value]) {
+    let (dropped, demoted) = expected
+        .iter_mut()
+        .map(|item| revert_long_text(item, mode == "strict"))
+        .fold((0, 0), |acc, n| (acc.0 + n.0, acc.1 + n.1));
+    let (want_dropped, want_demoted) = if scope == "changes" { (1, 0) } else { (0, 1) };
+    assert_eq!(
+        (dropped, demoted),
+        (want_dropped, want_demoted),
+        "golden {scope}/{mode} 的 500 字 finding 數（d53-added-long／s16-longtext）變了：\
+         OpenSpec 行為改了就更新或刪掉這筆 divergence"
+    );
     if scope != "changes" {
         return;
     }
@@ -246,6 +294,7 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
     assert_eq!(envelopes.len(), ENVELOPE_COUNT, "golden envelopes 的筆數");
     let mut copies: std::collections::HashMap<String, TempDir> = Default::default();
     let mut mismatches = Vec::new();
+    let mut long_text_envelopes = 0usize;
     for envelope in envelopes {
         let fixture = envelope["fixture"].as_str().unwrap().to_string();
         let args: Vec<&str> = envelope["args"]
@@ -292,6 +341,13 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
         } else {
             (want, got)
         };
+        // 500 字上限的 divergence（#265）：這幾個 envelope 都不帶 `--strict`，降級不影響
+        // valid 與 summary，只改 level 與訊息。
+        let (want_stdout, demoted) = demote_long_text(&want.1);
+        if demoted > 0 {
+            long_text_envelopes += 1;
+        }
+        let want = (want.0, want_stdout, want.2);
         if got != want {
             mismatches.push(format!(
                 "{fixture} validate {args:?}:\n--- OpenSpec 2.0.0 (rc {:?}, stderr {:?})\n{}\n\
@@ -306,6 +362,33 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
         mismatches.len(),
         mismatches.join("\n")
     );
+    assert_eq!(
+        long_text_envelopes, 9,
+        "golden 裡帶 500 字 WARNING 的 envelope 數變了：OpenSpec 行為改了就更新或刪掉這筆 divergence"
+    );
+}
+
+/// envelope 文字裡 OpenSpec 2.0.0 的 500 字 WARNING 改回 1.13.2 的 INFO 與訊息；回傳改了幾處。
+/// key 順序是 level, path, message，所以 level 在 message 前兩行。ADDED 的 500 字 finding
+/// 不該出現在 envelope fixture 裡（出現就要擴充這裡），直接失敗。
+fn demote_long_text(stdout: &str) -> (String, usize) {
+    assert!(
+        !stdout.contains(&format!(": {LONG_TEXT_2_0}\"")),
+        "envelope 出現 ADDED 的 500 字 finding，divergence 的文字替換沒有處理這種情況"
+    );
+    let mut lines: Vec<String> = stdout.split('\n').map(str::to_string).collect();
+    let needle = format!("\"message\": \"{LONG_TEXT_2_0}\"");
+    let mut demoted = 0;
+    for index in 0..lines.len() {
+        if lines[index].trim() != needle {
+            continue;
+        }
+        assert!(index >= 2 && lines[index - 2].trim() == "\"level\": \"WARNING\",");
+        lines[index - 2] = lines[index - 2].replace("\"WARNING\"", "\"INFO\"");
+        lines[index] = lines[index].replace(LONG_TEXT_2_0, LONG_TEXT_1_13);
+        demoted += 1;
+    }
+    (lines.join("\n"), demoted)
 }
 
 /// 規則 fixture 上 `--all --format openspec` 的 item 順序（`localeCompare`）與 summary。

@@ -73,8 +73,8 @@ this file is agent-facing operational context.
   `docs/reverse-engineering/golden/validate-openspec-2.0.0.json`, which
   `validate_openspec_integration.rs` replays field for field, except the
   #265 divergences that test applies and ratchets (spectra's own
-  `.openspec.yaml` keys; the YAML parser's wording in the bad-config
-  envelope). It also pins the
+  `.openspec.yaml` keys; the 500-character requirement limit kept at
+  1.13.2; the YAML parser's wording in the bad-config envelope). It also pins the
   whole `validate --json --format openspec` envelope (W9a, ruling D3):
   `ENVELOPES` runs a list of invocations on the `validate_openspec_envelope`
   and `validate_openspec_empty` fixtures and keeps each stdout as text (key

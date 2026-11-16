@@ -88,6 +88,14 @@ behavior fails the test until the entry is removed.
   `--strict` fail on every change spectra creates. OpenSpectra treats those four
   as known (`SPECTRA_METADATA_KEYS` in `validate.rs`); the message's "Known keys"
   list still matches OpenSpec. Fixture `d56-spectra-metadata`.
+- **The 500-character requirement limit stays at 1.13.2.** OpenSpec 2.0.0
+  (1.14.1, #1976) promoted it from INFO to WARNING on main specs (with a new
+  message) and added a WARNING for ADDED requirements, so `--strict` fails on
+  it. Measured on three real projects that alone made `--strict` fail 100 more
+  items, and yibi-mvp's CI gates on `validate --all --strict`, so the owner
+  ruled it out: main specs get 1.13.2's INFO and message, ADDED is not checked
+  (`REQUIREMENT_TOO_LONG` in `validate.rs`). Fixtures `d53-added-long`,
+  `s16-longtext` and nine envelopes.
 - **A broken `openspec/config.yaml` stops validation only under `--json --format
   openspec`.** OpenSpec 2.0.0 (1.16.0, #1892) exits 1 with an
   `unreadable_config`/`unparseable_config` status before checking anything; it
@@ -157,7 +165,7 @@ Findings, in OpenSpec's order:
 | C6 | a name twice in one section | ERROR | `Duplicate requirement in ADDED: "Alpha"` (also MODIFIED/REMOVED, `Duplicate FROM/TO in RENAMED`) |
 | C16 | ADDED/MODIFIED without body text | ERROR | `ADDED "Alpha" is missing requirement text`, or, when SHALL/MUST is only in the header, `… must contain SHALL or MUST in the requirement body, not only in the header. …` |
 | C16 | body without SHALL/MUST | WARNING | `ADDED "Alpha" should contain SHALL or MUST (RFC 2119 best practice for English specs)` |
-| C23 | ADDED body text longer than 500 UTF-16 units (MODIFIED is not checked: its text is the existing requirement; 1.14.1, #1976) | WARNING | `ADDED "Alpha": Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, …` |
+| C23 | ADDED body text longer than 500 UTF-16 units | — | nothing: OpenSpec 2.0.0 (1.14.1, #1976) warns `ADDED "Alpha": Requirement text is very long …`; not followed (#265 divergence) |
 | C5/C17 | no `#### ` child **with a body** (`#####` does not count) | ERROR | `ADDED "Alpha" must include at least one scenario` (+ a hint when an empty `####` exists) |
 | C22 | a `#### Scenario:` block with a body but no trigger step or no outcome step, ADDED and MODIFIED (2.0.0, #2078). A step is a bold keyword in any case (`**WHEN**`, `**Given:**`, `__then__`) or a bare uppercase one (`WHEN`, ASCII word boundary), outside fences and not on the header line; `AND` counts for neither; an unlabeled `#### Notes` child is not checked | WARNING | `ADDED "Alpha": scenario "a1" is missing a WHEN/GIVEN step and a THEN step. A scenario needs a trigger and an outcome, …` |
 | C3 | MODIFIED omits a scenario the main spec has (after rename mapping) | ERROR | `MODIFIED "Alpha" omits scenario(s) the current spec still has: "a2". The modified block has 1 scenario; the current spec has 2 scenarios. It adds none. Copy the omitted scenarios …` — once per requirement, and never repeated by the archive check (#183: pinned by `validate_rejects_a_modified_requirement_that_drops_a_current_scenario`, the rename-chain test, and mutation cases `183-*`) |
@@ -231,7 +239,7 @@ Otherwise, in order:
 | S4 | the same requirement header twice | ERROR `file` + line | `Requirement header "### Requirement: Alpha" duplicates the requirement declared on line 9. …` |
 | S10 | Purpose is a placeholder (leading `TBD`/`TODO` shouted, or in any case followed by punctuation/EOL; or archive's generated sentence) | WARNING `overview` (+ line) | `Purpose section is still a placeholder rather than a Purpose anyone wrote …` |
 | S9 | otherwise, Purpose shorter than 50 UTF-16 units | WARNING `overview` | `Purpose section is too brief (less than 50 characters)` |
-| S11 | requirement text longer than 500 UTF-16 units | WARNING `requirements[<i>]` (INFO until 1.14.1) | `Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.` |
+| S11 | requirement text longer than 500 UTF-16 units | INFO `requirements[<i>]` (OpenSpec 2.0.0: WARNING; kept at 1.13.2's INFO by the #265 divergence) | `Requirement text is very long (>500 characters). Consider breaking it down.` |
 | S12 | a `### Requirement:` block (first Requirements section) without body text / without SHALL or MUST | ERROR / WARNING `requirements[<i>]` | `Requirement "Alpha" must contain SHALL or MUST` / `… should contain SHALL or MUST (RFC 2119 best practice for English specs)` |
 | S14 | the same block's `#### Scenario:` children, checked as C22 (2.0.0) | WARNING `requirements[<i>].scenarios` | `Requirement "Alpha": scenario "a1" is missing a THEN step. …` |
 
@@ -259,29 +267,31 @@ from the oracle 3.0.0, which flags none of these specs; D1 accepts that.
 **2.0.0 (#265, measured 2026-11-16).** The same three repos at their current
 heads (copies of `.spectra.yaml` and the spec dir), validated by OpenSpectra
 `main` (`9e54e05`, the 1.13.2 rules) and by this change, both with `--json
---format openspec`:
+--format openspec`. With every 2.0.0 rule, `--strict` failed 100 more items
+(yibi-mvp changes 3 → 28, specs 56 → 119; yibi-stack changes 0 → 8, specs
+17 → 21), all of them involving the 500-character limit and 99 only because
+of it. The owner then ruled that limit a divergence (see "Rule authority").
+With it, the only verdict that changes on the three repos is one yibi-stack
+change failing `--strict` on C21:
 
 | repo | scope | items | invalid, normal (before → after) | invalid, `--strict` (before → after) |
 |---|---|---|---|---|
-| yibi-mvp | changes | 40 | 3 → 3 | 3 → 28 |
-| yibi-mvp | specs | 140 | 15 → 15 | 56 → 119 |
+| yibi-mvp | changes | 40 | 3 → 3 | 3 → 3 |
+| yibi-mvp | specs | 140 | 15 → 15 | 56 → 56 |
 | nextrek-cli | changes | 1 | 1 → 1 | 1 → 1 |
 | nextrek-cli | specs | 2 | 0 → 0 | 2 → 2 |
-| yibi-stack | changes | 14 | 0 → 0 | 0 → 8 |
-| yibi-stack | specs | 22 | 0 → 0 | 17 → 21 |
+| yibi-stack | changes | 14 | 0 → 0 | 0 → 1 |
+| yibi-stack | specs | 22 | 0 → 0 | 17 → 17 |
 
-No item became valid, and plain `validate` did not change anywhere: the only
-new ERROR (C10 under an unrecognized `## ... Requirements` section) has no
-corpus hit. All 100 new `--strict` failures involve the 500-character limit
-(C23 on ADDED, S11 promoted from INFO), and 99 of them have no other new
-finding; one change also hits C21. Counting every finding, not only the new
-failures: 602 for the 500-character limit, 7 for the scenario step check
-(C22/S14, all in yibi-mvp main specs that `--strict` already failed), 2 for
-C21 (yibi-stack), none for the C10 ERROR. Against OpenSpec 2.0.0 itself, every remaining difference on these
-repos is one of the two ruled divergences: D13's scenario identity (13 issues)
-and spectra's own `.openspec.yaml` keys (29 issues; without that ruling 8 more
-changes, 5 in yibi-mvp and 3 in yibi-stack, would fail `--strict` on keys
-`spectra new`/`archive` wrote).
+No item became valid. Counting every new-rule finding: 7 for the scenario step
+check (C22/S14, all in yibi-mvp main specs `--strict` already failed), 2 for
+C21 (the one yibi-stack change), none for the C10 ERROR; the 500-character
+limit still yields 484 INFO findings on main specs, as under 1.13.2. Against
+OpenSpec 2.0.0 itself, every difference on these repos is one of the ruled
+divergences: D13's scenario identity, spectra's own `.openspec.yaml` keys
+(without that ruling 8 more changes, 5 in yibi-mvp and 3 in yibi-stack, would
+fail `--strict` on keys `spectra new`/`archive` wrote), and the
+500-character limit.
 
 ## Archived changes
 

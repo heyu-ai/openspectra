@@ -665,9 +665,9 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
         ));
     }
     for (index, requirement) in spec.requirements.iter().enumerate() {
-        // 1.14.1 起是 WARNING，`--strict` 會失敗。
+        // 刻意維持 1.13.2 的 INFO（#265 裁決，見 `REQUIREMENT_TOO_LONG`）。
         if openspec_md::js_len(&requirement.text) > MAX_REQUIREMENT_TEXT_LENGTH {
-            issues.push(Issue::warning(
+            issues.push(Issue::info(
                 format!("requirements[{index}]"),
                 REQUIREMENT_TOO_LONG.to_string(),
             ));
@@ -710,7 +710,12 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
 
 const MIN_PURPOSE_LENGTH: usize = 50;
 const MAX_REQUIREMENT_TEXT_LENGTH: usize = 500;
-const REQUIREMENT_TOO_LONG: &str = "Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.";
+/// 刻意與 OpenSpec 2.0.0 分歧（owner 在 #265 裁決）：2.0.0（1.14.1，#1976）把超過 500 字的
+/// requirement 從 INFO 升成 WARNING、ADDED 也開始報，`--strict` 因此失敗；在三個真實專案上
+/// 這條讓 `--strict` 多出 100 個失敗。OpenSpectra 維持 1.13.2：main spec 報 INFO（訊息照
+/// 1.13.2），ADDED 不報。
+const REQUIREMENT_TOO_LONG: &str =
+    "Requirement text is very long (>500 characters). Consider breaking it down.";
 const CHANGE_SKIP_SPECS_CONFLICT: &str = "skip_specs is set in .openspec.yaml but spec files exist under specs/. Remove skip_specs or delete the delta spec files";
 const CHANGE_SKIP_SPECS_ACCEPTED: &str = "skip_specs is set in .openspec.yaml: change declares no spec-level behavior changes, zero deltas accepted";
 const GUIDE_NO_DELTAS: &str = "No deltas found. Ensure your change has a specs/ directory with capability folders (e.g. specs/http-server/spec.md) containing .md files that use delta headers (## ADDED/MODIFIED/REMOVED/RENAMED Requirements) and that each requirement includes at least one \"#### Scenario:\" block. If this change intentionally modifies no specs (pure refactor, tooling, docs), set \"skip_specs: true\" in the change's .openspec.yaml instead. Tip: run \"openspec change show <change-id> --json --deltas-only\" to inspect parsed deltas.";
@@ -1064,18 +1069,8 @@ fn check_delta_file(
                     missing_shall_or_must_message(&label, &block.name, true),
                 ));
             }
-            // 與 main spec 同一個上限（#1976），`validate <change> --strict` 在新的超長
-            // requirement 進 main spec 前就擋下。MODIFIED 不檢查：它的內文是既有的
-            // requirement，specs 指引要求整段保留。
-            if operation == "ADDED"
-                && !text.is_empty()
-                && openspec_md::js_len(&text) > MAX_REQUIREMENT_TEXT_LENGTH
-            {
-                issues.push(Issue::warning(
-                    entry_path.to_string(),
-                    format!("{label}: {REQUIREMENT_TOO_LONG}"),
-                ));
-            }
+            // OpenSpec 2.0.0（1.14.1，#1976）對超過 500 字的 ADDED requirement 報 WARNING；
+            // owner 在 #265 裁決不跟（見 `REQUIREMENT_TOO_LONG`），這裡刻意不檢查。
             // 沒有內文的 `#### ` 不算 scenario（C5）。
             if openspec_md::block_scenario_count(&block.raw) < 1 {
                 let hint = if openspec_md::block_empty_scenario_count(&block.raw) > 0 {

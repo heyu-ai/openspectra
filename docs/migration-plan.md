@@ -518,7 +518,7 @@ release 與已關閉 issue，有變動就開一個 digest issue。它只回答�
 | W12-4 | `demo` 是否寫 `.started` | **跟 oracle 不寫** | W12（#216） |
 | W12-5 | `created_by` 是否遵守 `GIT_CONFIG_GLOBAL`（既有分歧） | **維持遵守**，記為刻意分歧 | — |
 | D13 | MODIFIED 區塊的 scenario 身分與刻意移除（yibi-mvp 的 baseline 雜訊：改 scenario 標題、補 slug、刻意刪 scenario 全被判成遺失） | **刻意與 OpenSpec 1.13.2 分歧**（howie 2026-11-14 裁決；正式紀錄見 [ADR-0002](adr/0002-modified-scenario-identity.md)）：1 身分：整行相同之外，**兩邊各自唯一的 slug** 也算同一個 scenario，current 沒有 slug 而 incoming 補上 slug 且標題相同也算；2 刻意移除：MODIFIED 區塊內 `<!-- removed-scenario: <slug 或整行> -->` 只豁免它點名的那一個；3 沒用到的標記報 INFO；4 OSS archive 寫回 main spec 前拿掉標記行。validate 兩處與 archive 共用 `scenario_identity.rs` | W9b、ADR-0002 |
-| D1-2.0 | OpenSpec 發布 2.0.0，D1 的權威版本要不要跟著升（#265） | **選項 B：一次全部跟進到 2.0.0**（howie 2026-11-16 裁決）。子裁決同日：(a) spectra 自己寫的 `created_by`、`created_with`、`archived_by`、`archived_at` 視為已知 key，不照 OpenSpec 報未知 key；(b) 壞掉的 config.yaml 直接 exit 1 只在 `--json --format openspec` 照搬，預設格式跟 oracle 3.0.0（實測照常驗證）。裁決時尚未量到語料庫影響：`--strict` 下 100 個 item 新判 invalid，全部涉及 500 字上限（見 `validate.md`「Corpus impact」） | W9b、`validate.md` |
+| D1-2.0 | OpenSpec 發布 2.0.0，D1 的權威版本要不要跟著升（#265） | **選項 B：一次全部跟進到 2.0.0**（howie 2026-11-16 裁決）。子裁決同日：(a) spectra 自己寫的 `created_by`、`created_with`、`archived_by`、`archived_at` 視為已知 key，不照 OpenSpec 報未知 key；(b) 壞掉的 config.yaml 直接 exit 1 只在 `--json --format openspec` 照搬，預設格式跟 oracle 3.0.0（實測照常驗證）。(c) 量到語料庫影響（`--strict` 下 100 個 item 新判 invalid，全部涉及 500 字上限）後，howie 同日裁決 **500 字上限列為 divergence**：維持 1.13.2（main spec 報 INFO、ADDED 不報）。之後 `--strict` 只多 1 個失敗（見 `validate.md`「Corpus impact」） | W9b、`validate.md` |
 
 **D8（2026-09-28 howie 裁決：(b) 維持 git CLI）：`scope` 的 git 存取方式。** 下列 7 種邊角情況記為刻意分歧。原始說明： oracle 內含 libgit2，`scope`
 輸出的 patch 是 libgit2 的格式。RE 實測（`scope` 規格）與 `git diff` 相比有 7 種位元組差異：

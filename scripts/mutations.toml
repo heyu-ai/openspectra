@@ -3338,32 +3338,6 @@ target = ["--test", "validate_openspec_integration"]
 test = "validate_changes_matches_the_openspec_golden"
 
 [[case]]
-id = "d1v2-added-long-off"
-issue = "#265 / OpenSpec 1.14.1（#1976，ADDED 超過 500 字）"
-file = "crates/spectra-core/src/validate.rs"
-find = '''            if operation == "ADDED"'''
-replace = '''            if operation == "NONE"'''
-package = "spectra-cli"
-target = ["--test", "validate_openspec_integration"]
-test = "validate_changes_matches_the_openspec_golden"
-
-[[case]]
-id = "d1v2-spec-long-info"
-issue = "#265 / OpenSpec 1.14.1（main spec 超長從 INFO 升 WARNING）"
-file = "crates/spectra-core/src/validate.rs"
-find = '''            issues.push(Issue::warning(
-                format!("requirements[{index}]"),
-                REQUIREMENT_TOO_LONG.to_string(),
-            ));'''
-replace = '''            issues.push(Issue::info(
-                format!("requirements[{index}]"),
-                REQUIREMENT_TOO_LONG.to_string(),
-            ));'''
-package = "spectra-cli"
-target = ["--test", "validate_openspec_integration"]
-test = "validate_specs_matches_the_openspec_golden"
-
-[[case]]
 id = "d1v2-unknown-metadata-off"
 issue = "#265 / OpenSpec 1.14.0（`.openspec.yaml` 未知 key）"
 file = "crates/spectra-core/src/validate.rs"
@@ -3446,3 +3420,48 @@ replace = '    let flattened = UNSAFE.replace_all(value, "$0");'
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-long-text-added-reported"
+issue = "#265 裁決（500 字上限：ADDED 不報）"
+file = "crates/spectra-core/src/validate.rs"
+find = """            // OpenSpec 2.0.0（1.14.1，#1976）對超過 500 字的 ADDED requirement 報 WARNING；
+            // owner 在 #265 裁決不跟（見 `REQUIREMENT_TOO_LONG`），這裡刻意不檢查。"""
+replace = """            if operation == "ADDED"
+                && !text.is_empty()
+                && openspec_md::js_len(&text) > MAX_REQUIREMENT_TEXT_LENGTH
+            {
+                issues.push(Issue::warning(
+                    entry_path.to_string(),
+                    format!("{label}: {REQUIREMENT_TOO_LONG}"),
+                ));
+            }"""
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-long-text-spec-warning"
+issue = "#265 裁決（500 字上限：main spec 維持 INFO）"
+file = "crates/spectra-core/src/validate.rs"
+find = """            issues.push(Issue::info(
+                format!("requirements[{index}]"),
+                REQUIREMENT_TOO_LONG.to_string(),
+            ));"""
+replace = """            issues.push(Issue::warning(
+                format!("requirements[{index}]"),
+                REQUIREMENT_TOO_LONG.to_string(),
+            ));"""
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_specs_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-long-text-new-message"
+issue = "#265 裁決（500 字上限：訊息維持 1.13.2）"
+file = "crates/spectra-core/src/validate.rs"
+find = '''    "Requirement text is very long (>500 characters). Consider breaking it down.";'''
+replace = '''    "Requirement text is very long (>500 characters). Move examples and edge cases into scenarios, or split it into separate requirements that each state one behavior.";'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
