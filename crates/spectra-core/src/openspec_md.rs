@@ -103,15 +103,35 @@ fn fence_opener(line: &str) -> Option<(char, usize)> {
     Some((marker, run.len()))
 }
 
+/// 1.13.2 的 `getFenceMarker`：只看開頭的 backtick／tilde 串，不檢查 info string。
+fn pre_2_0_0_fence_opener(line: &str) -> Option<(char, usize)> {
+    let captures = FENCE_OPEN.captures(line)?;
+    let run = &captures[1];
+    Some((run.chars().next().unwrap(), run.len()))
+}
+
 /// `buildCodeFenceMask`：`true` 表示該行在 fenced code block 內（含開關 fence 行）。
 /// 開 fence 不限縮排（`^\s*`），與 [`crate::markdown`] 的「最多三格」不同。
 pub(crate) fn fence_mask(lines: &[&str]) -> Vec<bool> {
+    fence_mask_with(lines, fence_opener)
+}
+
+/// 2.0.0 之前（#265 前）的 fence 規則：backtick 開 fence 的 info string 含 backtick 也算
+/// fence，所以 ```` ```npm test``` ```` 會開一個 fence。只給 D13 的 `removed-scenario`
+/// 標記（[`crate::scenario_identity`]）用：archive 的 scenario 清單由 [`crate::markdown`]
+/// 解析，那邊把這種行當成開 fence；標記若改用 2.0.0 的規則，archive 會豁免或拿掉一個它
+/// 自己認為在 code 裡的標記，validate 換規則就會改變 archive 的拒絕條件（#267 review CR-1）。
+pub(crate) fn pre_2_0_0_fence_mask(lines: &[&str]) -> Vec<bool> {
+    fence_mask_with(lines, pre_2_0_0_fence_opener)
+}
+
+fn fence_mask_with(lines: &[&str], opener: fn(&str) -> Option<(char, usize)>) -> Vec<bool> {
     let mut mask = vec![false; lines.len()];
     let mut active: Option<(char, usize)> = None;
     for (index, line) in lines.iter().enumerate() {
         match active {
             None => {
-                if let Some(opener) = fence_opener(line) {
+                if let Some(opener) = opener(line) {
                     active = Some(opener);
                     mask[index] = true;
                 }

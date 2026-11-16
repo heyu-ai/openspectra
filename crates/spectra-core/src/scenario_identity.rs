@@ -64,10 +64,17 @@ fn slug_counts(names: &[String]) -> HashMap<&str, usize> {
     counts
 }
 
+/// 標記判斷 code fence 用的 mask。刻意停在 2.0.0 之前的 fence 規則，與 archive 的
+/// scenario 解析（[`crate::markdown`]）一致；理由見
+/// [`crate::openspec_md::pre_2_0_0_fence_mask`]。
+fn marker_fence_mask(lines: &[&str]) -> Vec<bool> {
+    crate::openspec_md::pre_2_0_0_fence_mask(lines)
+}
+
 /// MODIFIED 區塊內的 `removed-scenario` 標記值（略過 code fence 內的行）。
 pub(crate) fn removed_markers(raw: &str) -> Vec<String> {
     let lines: Vec<&str> = raw.split('\n').collect();
-    let mask = crate::openspec_md::fence_mask(&lines);
+    let mask = marker_fence_mask(&lines);
     lines
         .iter()
         .enumerate()
@@ -81,7 +88,7 @@ pub(crate) fn removed_markers(raw: &str) -> Vec<String> {
 /// 拿掉 code fence 外的 `removed-scenario` 標記行，給 archive 寫回 main spec 用。
 pub(crate) fn strip_removed_markers(raw: &str) -> String {
     let lines: Vec<&str> = raw.split('\n').collect();
-    let mask = crate::openspec_md::fence_mask(&lines);
+    let mask = marker_fence_mask(&lines);
     lines
         .iter()
         .enumerate()

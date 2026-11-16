@@ -3465,3 +3465,23 @@ replace = '''    "Requirement text is very long (>500 characters). Move examples
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "d1v2-d13-markers-follow-2-0-0-fences"
+issue = "#267 review CR-1（validate 的 2.0.0 fence 規則漏進 archive 的 removed-scenario 標記）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = "    crate::openspec_md::pre_2_0_0_fence_mask(lines)"
+replace = "    crate::openspec_md::fence_mask(lines)"
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_marker_after_an_inline_backtick_fence_line_stays_fenced_for_archive"
+
+[[case]]
+id = "d1v2-d13-markers-follow-2-0-0-fences-drop"
+issue = "#267 review CR-1（fence 內的標記讓 archive 刪掉 main spec 的 scenario）"
+file = "crates/spectra-core/src/scenario_identity.rs"
+find = "    crate::openspec_md::pre_2_0_0_fence_mask(lines)"
+replace = "    crate::openspec_md::fence_mask(lines)"
+package = "spectra-cli"
+target = ["--test", "scenario_identity_integration"]
+test = "a_fenced_marker_does_not_let_archive_drop_a_scenario"
