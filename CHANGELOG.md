@@ -9,6 +9,8 @@ divergences from the v2.3.1 oracle are tracked here alongside user-visible
 changes.
 
 ## [Unreleased]
+
+## [0.16.0] - 2026-11-16
 ### Changed
 
 - **`validate` follows OpenSpec 2.0.0 (owner ruling D1, #265).** The rule
