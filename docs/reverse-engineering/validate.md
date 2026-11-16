@@ -96,7 +96,7 @@ behavior fails the test until the entry is removed.
   ruled it out: main specs get 1.13.2's INFO and message, ADDED is not checked
   (`REQUIREMENT_TOO_LONG` in `validate.rs`). Fixtures `d53-added-long`,
   `s16-longtext` and nine envelopes.
-- **A broken `openspec/config.yaml` stops validation only under `--json --format
+- **A broken `<spec_dir>/config.yaml` stops validation only under `--json --format
   openspec`.** OpenSpec 2.0.0 (1.16.0, #1892) exits 1 with an
   `unreadable_config`/`unparseable_config` status before checking anything; it
   reads the hard-wired `<root>/openspec/config.yaml`, and OpenSpectra reads
@@ -446,7 +446,7 @@ findings inside it did:
   the `root.path` field. Malformed typed names return `invalid_item` before
   lookup; OpenSpectra retains its existing refusal of colons/drive prefixes.
   Default oracle-format missing-item diagnostics remain unchanged.
-- An unreadable or unparseable `openspec/config.yaml` (or `config.yml`) prints
+- An unreadable or unparseable `<spec_dir>/config.yaml` (or `config.yml`) prints
   `{"status": [{"severity": "error", "code": "unreadable_config" |
   "unparseable_config", "message": "Could not read|parse <path> (<detail>).",
   "fix": …}]}` to stdout and exits 1 before any item is validated (2.0.0;
