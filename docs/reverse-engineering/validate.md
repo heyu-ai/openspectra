@@ -132,7 +132,7 @@ below by a unit test, since no golden fixture holds it.
   serializes as `\ud83d` before the `…`; a Rust `String` cannot hold a lone
   surrogate, so OpenSpectra stops before that character (99 `x` and an emoji
   give 99 `x` and `…`). Reach: only an unknown `.openspec.yaml` key longer than 100
-  UTF-16 units long with an astral character exactly at units 100–101, and
+  UTF-16 units with an astral character exactly at units 100–101, and
   only that key's text in the WARNING differs; the level, the verdict and every
   other key are unchanged. Pinned by
   `sanitize_inline_drops_an_astral_char_straddling_unit_100` in `validate.rs`.

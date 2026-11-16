@@ -12,9 +12,10 @@ changes.
 ### Changed
 
 - **`validate` follows OpenSpec 2.0.0 (owner ruling D1, #265).** The rule
-  authority moves from OpenSpec 1.13.2 to 2.0.0, following every rule change
-  1.14.0–2.0.0 added. `validate` and `validate --format openspec` both get
-  the new findings:
+  authority moves from OpenSpec 1.13.2 to 2.0.0, following the rule changes
+  1.14.0–2.0.0 added except the deliberate divergences below and the items
+  `docs/reverse-engineering/validate.md` lists as not ported. `validate` and
+  `validate --format openspec` both get the new findings:
   - a requirement under an unrecognized `## ... Requirements` section
     (`## DEPRECATED Requirements`, `## Requirements`) is an ERROR, not a
     WARNING; a requirement inside an HTML comment is no longer reported as
