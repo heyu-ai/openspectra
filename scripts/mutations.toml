@@ -3485,3 +3485,33 @@ replace = "    crate::openspec_md::fence_mask(lines)"
 package = "spectra-cli"
 target = ["--test", "scenario_identity_integration"]
 test = "a_fenced_marker_does_not_let_archive_drop_a_scenario"
+
+[[case]]
+id = "d1v2-unknown-key-null-literal"
+issue = "#267 review CR-4（null key 在 OpenSpec 2.0.0 是空字串，不是 `null`）"
+file = "crates/spectra-core/src/validate.rs"
+find = "            serde_yaml::Value::Null => String::new(),"
+replace = '            serde_yaml::Value::Null => "null".to_string(),'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unknown-key-no-dedupe"
+issue = "#267 review CR-4（`1:` 與 `\"1\":` 在 JS 物件是同一個 key）"
+file = "crates/spectra-core/src/validate.rs"
+find = "        .filter(|key| seen.insert(key.clone()))"
+replace = "        .filter(|key| seen.insert(key.clone()) || true)"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unknown-key-float-display"
+issue = "#267 review CR-4（`1.0`、`.inf` 要照 JS `String(number)`）"
+file = "crates/spectra-core/src/validate.rs"
+find = "            serde_yaml::Value::Number(value) => js_number_key(value),"
+replace = "            serde_yaml::Value::Number(value) => value.to_string(),"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"

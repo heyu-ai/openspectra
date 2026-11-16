@@ -9,3 +9,7 @@ X-Bad: 1
 this-key-is-deliberately-much-longer-than-one-hundred-utf16-code-units-so-sanitize-inline-must-truncate-it-here: 4
 123: 5
 true: 6
+~: 7
+1.0: 8
+.inf: 9
+"1": 10

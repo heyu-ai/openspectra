@@ -753,18 +753,23 @@ fn unknown_change_metadata_keys(change_dir: &std::path::Path) -> Vec<String> {
     else {
         return Vec::new();
     };
+    // `yaml` 套件把 mapping 轉成 JS 物件時，key 經過 `String(key)`：null 是空字串，
+    // 數字照 `Number#toString`。轉完同名的 key（`1:` 與 `"1":`）在 JS 物件裡是同一個，
+    // 所以字串化之後、排序之前去重。
+    let mut seen = std::collections::HashSet::new();
     let mut keys: Vec<String> = mapping
         .keys()
         .map(|key| match key {
             serde_yaml::Value::String(text) => text.clone(),
             serde_yaml::Value::Bool(value) => value.to_string(),
-            serde_yaml::Value::Number(value) => value.to_string(),
-            serde_yaml::Value::Null => "null".to_string(),
+            serde_yaml::Value::Number(value) => js_number_key(value),
+            serde_yaml::Value::Null => String::new(),
             other => serde_yaml::to_string(other)
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
         })
+        .filter(|key| seen.insert(key.clone()))
         .filter(|key| {
             !CHANGE_METADATA_KNOWN_KEYS.contains(&key.as_str())
                 && !SPECTRA_METADATA_KEYS.contains(&key.as_str())
@@ -773,6 +778,36 @@ fn unknown_change_metadata_keys(change_dir: &std::path::Path) -> Vec<String> {
         .collect();
     keys.sort_by(|left, right| left.encode_utf16().cmp(right.encode_utf16()));
     keys
+}
+
+/// 數字 key 的 JS `String(number)`。整數照原樣；浮點數涵蓋 `.inf`／`-.inf`／`.nan`
+/// （`Infinity`／`-Infinity`／`NaN`）、`-0`（`0`）、整數值不帶小數點（`1.0` 是 `1`），
+/// 以及 JS 改用指數表示的範圍（絕對值 ≥ 1e21 或 < 1e-6，`1e+21`、`1e-7`）。其餘浮點數
+/// 用 Rust 的最短表示，與 JS 相同。
+fn js_number_key(number: &serde_yaml::Number) -> String {
+    let Some(value) = number.as_f64().filter(|_| number.is_f64()) else {
+        return number.to_string();
+    };
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    if value.is_infinite() {
+        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
+    }
+    if value == 0.0 {
+        return "0".to_string();
+    }
+    let magnitude = value.abs();
+    if !(1e-6..1e21).contains(&magnitude) {
+        let text = format!("{value:e}");
+        return match text.split_once('e') {
+            Some((mantissa, exponent)) if !exponent.starts_with('-') => {
+                format!("{mantissa}e+{exponent}")
+            }
+            _ => text,
+        };
+    }
+    format!("{value}")
 }
 
 /// `sanitizeInline(value, 100)`（`core/references.js`）：控制字元與雙向控制字元的連續
@@ -2045,6 +2080,30 @@ mod tests {
         #### Scenario: Valid credentials\n\n\
         - **WHEN** a user submits valid credentials\n\
         - **THEN** they are logged in\n";
+
+    /// 期望值是 Node 22 的 `String(n)`（2026-11-16 實測）。
+    #[test]
+    fn number_keys_stringify_like_js() {
+        let key = |yaml: &str| {
+            let serde_yaml::Value::Number(number) = serde_yaml::from_str(yaml).unwrap() else {
+                panic!("{yaml} 不是數字");
+            };
+            js_number_key(&number)
+        };
+        assert_eq!(key("123"), "123");
+        assert_eq!(key("-7"), "-7");
+        assert_eq!(key("1.0"), "1");
+        assert_eq!(key("1.5"), "1.5");
+        assert_eq!(key("-0.0"), "0");
+        assert_eq!(key(".inf"), "Infinity");
+        assert_eq!(key("-.inf"), "-Infinity");
+        assert_eq!(key(".nan"), "NaN");
+        assert_eq!(key("1e21"), "1e+21");
+        assert_eq!(key("1.5e21"), "1.5e+21");
+        assert_eq!(key("1e20"), "100000000000000000000");
+        assert_eq!(key("1e-7"), "1e-7");
+        assert_eq!(key("0.000001"), "0.000001");
+    }
 
     struct TempDir(PathBuf);
 
