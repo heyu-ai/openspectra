@@ -397,7 +397,7 @@ pub fn nearest_matches(input: &str, candidates: &[String], max: usize) -> Vec<St
 
 /// 驗證一個 change：逐條移植 OpenSpec 2.0.0 的
 /// `Validator.validateChangeDeltaSpecs`（`dist/core/validation/validator.js`
-/// 123-455），連 issue 的順序、path、line 都照搬（決策 D1）。OpenSpec 沒有的
+/// 126-491），連 issue 的順序、path、line 都照搬（決策 D1）。OpenSpec 沒有的
 /// 規則不報，唯一例外是 OpenSpectra 獨有的 archive 拒絕理由（trace footer、
 /// trace sidecar、capability retirement），依 owner 裁決 D12-6 仍是 ERROR（C20）。
 pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeValidation> {
@@ -416,7 +416,7 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
 
     let mut issues = Vec::new();
     let discovered = discover_spec_files(&specs_dir)?;
-    // 只有「檔案」才算：名為 spec.md 的目錄是一般的 capability 目錄（validator.js:142-150）。
+    // 只有「檔案」才算：名為 spec.md 的目錄是一般的 capability 目錄（validator.js:140-153）。
     let has_root_level_spec = std::fs::metadata(specs_dir.join("spec.md"))
         .map(|metadata| metadata.is_file())
         .unwrap_or(false);
@@ -453,8 +453,8 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
         plans.push((id.clone(), entry_path, plan));
     }
 
-    // 已經有 ERROR 的 delta 檔不再以 archive 的措辭重報一次（validator.js:366-377、
-    // 825-829）；其餘 archive 會拒絕的情況只是 INFO，不影響判定（C1、C3、C13）。
+    // 已經有 ERROR 的 delta 檔不再以 archive 的措辭重報一次（validator.js:392-405、
+    // 873-876）；其餘 archive 會拒絕的情況只是 INFO，不影響判定（C1、C3、C13）。
     let already_reported: std::collections::HashSet<String> = issues
         .iter()
         .filter(|issue| issue.level == "ERROR")
@@ -529,7 +529,7 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
         ));
     }
     // 宣告 skip_specs 時，specs/ 底下任何非 dot 檔都與宣告矛盾；讀不到 specs/
-    // 視同有檔案（fail closed，validator.js:427-436）。
+    // 視同有檔案（fail closed，validator.js:455-472）。
     let specs_dir_has_files = skip_specs && has_any_file_under(&specs_dir).unwrap_or(true);
     if specs_dir_has_files {
         issues.push(Issue::error(
@@ -574,7 +574,7 @@ pub fn validate_change(cfg: &Config, name: &str, strict: bool) -> Result<ChangeV
     })
 }
 
-/// 驗證一份 main spec：移植 `Validator.validateSpec`（validator.js:24-47）。
+/// 驗證一份 main spec：移植 `Validator.validateSpec`（validator.js:25-48）。
 /// `MarkdownParser.parseSpec` 找不到 Purpose／Requirements 時只報那一個 ERROR，
 /// 其他規則都不跑（S7、S8）；否則先報 Zod schema 的 ERROR，再跑 `applySpecRules`。
 pub fn validate_spec(cfg: &Config, id: &str, strict: bool) -> Result<ChangeValidation> {
@@ -647,7 +647,7 @@ fn spec_issues(spec: &openspec_md::ParsedSpec, content: &str) -> Vec<Issue> {
             ));
         }
     }
-    // applySpecRules（validator.js:672-743）
+    // applySpecRules（validator.js:716-790）
     for structural in openspec_md::main_spec_structure_issues(content) {
         issues.push(Issue::error("file".to_string(), structural.message).at_line(structural.line));
     }
@@ -712,8 +712,8 @@ const MIN_PURPOSE_LENGTH: usize = 50;
 const MAX_REQUIREMENT_TEXT_LENGTH: usize = 500;
 /// 刻意與 OpenSpec 2.0.0 分歧（owner 在 #265 裁決）：2.0.0（1.14.1，#1976）把超過 500 字的
 /// requirement 從 INFO 升成 WARNING、ADDED 也開始報，`--strict` 因此失敗；在三個真實專案上
-/// 這條讓 `--strict` 多出 100 個失敗。OpenSpectra 維持 1.13.2：main spec 報 INFO（訊息照
-/// 1.13.2），ADDED 不報。
+/// 套用 2.0.0 全部規則時 `--strict` 多出 100 個失敗，全部涉及這條上限，其中 99 個只因為它。
+/// OpenSpectra 維持 1.13.2：main spec 報 INFO（訊息照 1.13.2），ADDED 不報。
 const REQUIREMENT_TOO_LONG: &str =
     "Requirement text is very long (>500 characters). Consider breaking it down.";
 const CHANGE_SKIP_SPECS_CONFLICT: &str = "skip_specs is set in .openspec.yaml but spec files exist under specs/. Remove skip_specs or delete the delta spec files";
@@ -870,7 +870,7 @@ fn unknown_change_metadata_keys_message(keys: &[String]) -> String {
     message
 }
 
-/// `openspec/config.yaml`（或 `config.yml`）讀不到或不是合法 YAML（`readConfigParseError`，
+/// `<spec_dir>/config.yaml`（或 `config.yml`）讀不到或不是合法 YAML（`readConfigParseError`，
 /// 1.16.0，#1892）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConfigParseError {
@@ -927,7 +927,7 @@ pub fn config_parse_error(cfg: &Config) -> Option<ConfigParseError> {
     }
 }
 
-/// `buildMissingShallOrMustMessage`（validator.js:892-899）。
+/// `buildMissingShallOrMustMessage`（validator.js:939-946）。
 fn missing_shall_or_must_message(prefix: &str, name: &str, guidance_only: bool) -> String {
     let base = format!(
         "{prefix} {} contain SHALL or MUST",
@@ -987,7 +987,7 @@ impl OrderedNames {
     }
 }
 
-/// 一個 delta 檔的逐檔規則（validator.js:161-362），依 OpenSpec 的順序寫入 `issues`。
+/// 一個 delta 檔的逐檔規則（validator.js:154-391），依 OpenSpec 的順序寫入 `issues`。
 fn check_delta_file(
     cfg: &Config,
     id: &str,
@@ -1212,7 +1212,7 @@ fn check_delta_file(
     Ok(())
 }
 
-/// `findScenarioLossIssues`（validator.js:578-655）：MODIFIED 漏掉 main spec 仍有的
+/// `findScenarioLossIssues`（validator.js:614-691）：MODIFIED 漏掉 main spec 仍有的
 /// scenario 時每個 requirement 一個 ERROR（C3）。main spec 不存在、或找不到該
 /// requirement 時不報（archive 的判斷交給下面的 INFO）。
 fn scenario_loss_issues(
@@ -1700,7 +1700,7 @@ fn has_any_file_under(dir: &std::path::Path) -> std::io::Result<bool> {
     Ok(false)
 }
 
-/// `collectTaskFileIssues`（validator.js:470-498）：tracked task 檔都沒有
+/// `collectTaskFileIssues`（validator.js:506-534）：tracked task 檔都沒有
 /// checkbox 時的 WARNING（C19），以及只在內建 `spec-driven` schema 才跑的 task
 /// 編號 WARNING（C18）。schema 解析失敗時兩者都不報。
 ///
@@ -2103,6 +2103,16 @@ mod tests {
         assert_eq!(key("1e20"), "100000000000000000000");
         assert_eq!(key("1e-7"), "1e-7");
         assert_eq!(key("0.000001"), "0.000001");
+    }
+
+    /// #267 CR-3，接受的殘餘風險（howie，2026-11-16）：astral 字元跨在第 100 個 UTF-16
+    /// code unit 時，OpenSpec 2.0.0 留下孤立的 high surrogate（JSON 裡是 `\ud83d…`），
+    /// Rust 的 `String` 存不了孤立的 surrogate，這裡在那個字元之前就截斷。改變這個輸出
+    /// 必須是刻意的（見 validate.md 的 Deliberate divergences）。
+    #[test]
+    fn sanitize_inline_drops_an_astral_char_straddling_unit_100() {
+        let key = format!("{}\u{1F600}tail", "x".repeat(99));
+        assert_eq!(sanitize_inline(&key), format!("{}\u{2026}", "x".repeat(99)));
     }
 
     struct TempDir(PathBuf);
@@ -2531,7 +2541,7 @@ mod tests {
     }
 
     /// archive 先套 RENAMED 再套 MODIFIED：MODIFIED 用串接 rename 後的新名字時，
-    /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:611-628）。
+    /// 仍要對到 main spec 裡舊名字的 block 檢查 scenario 遺失（validator.js:644-668）。
     #[test]
     fn scenario_loss_follows_a_chain_of_renames_back_to_the_main_spec() {
         let tmp = TempDir::new();

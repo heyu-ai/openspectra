@@ -77,9 +77,13 @@ every issue field (`level`, `path`, `line`, `message`, in order).
 
 ### Deliberate divergences from OpenSpec 2.0.0 (owner ruling, #265)
 
-Each is applied to the golden copy in the replay test, which first asserts the
-golden still holds the difference, so a future OpenSpec that changes the
-behavior fails the test until the entry is removed.
+The `.openspec.yaml` keys, the 500-character limit and the broken config's
+parser message are applied to the golden copy in the replay test, which first
+asserts the golden still holds the difference, so a future OpenSpec that
+changes the behavior fails the test until the entry is removed. The broken
+config under the default format is pinned separately by
+`a_broken_config_is_ignored_by_the_oracle_format`, and the lone-surrogate edge
+below by a unit test, since no golden fixture holds it.
 
 - **spectra's own `.openspec.yaml` keys are known.** OpenSpec 2.0.0 warns about
   every top-level key outside `schema`, `created`, `goal`, `affected_areas`,
@@ -92,8 +96,9 @@ behavior fails the test until the entry is removed.
 - **The 500-character requirement limit stays at 1.13.2.** OpenSpec 2.0.0
   (1.14.1, #1976) promoted it from INFO to WARNING on main specs (with a new
   message) and added a WARNING for ADDED requirements, so `--strict` fails on
-  it. Measured on three real projects that alone made `--strict` fail 100 more
-  items, and yibi-mvp's CI gates on `validate --all --strict`, so the owner
+  it. Measured on three real projects with every 2.0.0 rule applied, `--strict`
+  failed 100 more items, all of them involving this limit and 99 only because
+  of it; yibi-mvp's CI gates on `validate --all --strict`, so the owner
   ruled it out: main specs get 1.13.2's INFO and message, ADDED is not checked
   (`REQUIREMENT_TOO_LONG` in `validate.rs`). Fixtures `d53-added-long`,
   `s16-longtext` and nine envelopes.
@@ -119,6 +124,18 @@ behavior fails the test until the entry is removed.
   a mode-000 file, so the `EACCES` envelope is a literal probed by hand on
   OpenSpec 2.0.0 (2026-11-16) and pinned by
   `an_unreadable_config_matches_the_openspec_eacces_envelope`.
+- **An astral character straddling the 100-unit cut is dropped (accepted
+  residual risk, ruled by howie on 2026-11-16, #267 CR-3).** The unknown-key
+  message truncates each key with `sanitizeInline(value, 100)`, which slices at
+  UTF-16 unit 100. When a character outside the BMP (an emoji) occupies units
+  100 and 101, OpenSpec 2.0.0 keeps its lone high surrogate, which `--json`
+  serializes as `\ud83d` before the `…`; a Rust `String` cannot hold a lone
+  surrogate, so OpenSpectra stops before that character (99 `x` and an emoji
+  give 99 `x` and `…`). Reach: only an unknown `.openspec.yaml` key longer than 100
+  UTF-16 units long with an astral character exactly at units 100–101, and
+  only that key's text in the WARNING differs; the level, the verdict and every
+  other key are unchanged. Pinned by
+  `sanitize_inline_drops_an_astral_char_straddling_unit_100` in `validate.rs`.
 
 2.0.0's task-paragraph change (a wrapped task joins its continuation lines,
 #2227) does not reach `validate`: the archived-task check only counts tasks.

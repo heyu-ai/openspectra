@@ -39,9 +39,9 @@ changes.
   and `archive` write, are not reported as unknown `.openspec.yaml` keys; and
   the default (oracle) format keeps validating when the config is broken, as
   the oracle 3.0.0 does; and the 500-character requirement limit keeps its
-  1.13.2 behavior (INFO on main specs, nothing on ADDED), because OpenSpec
-  2.0.0's WARNING alone made `--strict` fail 100 more items on three real
-  projects.
+  1.13.2 behavior (INFO on main specs, nothing on ADDED), because with every
+  OpenSpec 2.0.0 rule applied `--strict` failed 100 more items on three real
+  projects, all of them involving that WARNING and 99 only because of it.
 
 ## [0.15.0] - 2026-11-14
 ### Changed

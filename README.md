@@ -116,7 +116,8 @@ its output follows the reference binary by default — `✓ <name> — valid` /
 `✗ <name> — invalid` with `error:`/`warn:` lines, and `--json` prints the
 `[{change|spec, errors, valid, warnings}]` array. `--json --format openspec`
 prints OpenSpec 2.0.0's own report instead (`items`, `summary.totals.failed`,
-`byType`, `root`, `--report findings`), field for field. See
+`byType`, `root`, `--report findings`), field for field except the deliberate
+divergences listed in `validate.md`. See
 [`docs/reverse-engineering/validate.md`](docs/reverse-engineering/validate.md).
 
 `spectra drift`'s human-readable conclusion line is colored by severity

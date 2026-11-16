@@ -76,8 +76,11 @@ this file is agent-facing operational context.
   `.openspec.yaml` keys; the 500-character requirement limit kept at
   1.13.2; the YAML parser's wording in the bad-config envelope). It also pins the
   whole `validate --json --format openspec` envelope (W9a, ruling D3):
-  `ENVELOPES` runs a list of invocations on the `validate_openspec_envelope`
-  and `validate_openspec_empty` fixtures and keeps each stdout as text (key
+  `ENVELOPES` runs a list of invocations on the `validate_openspec_envelope`,
+  `validate_openspec_empty`, `validate_openspec_archived`,
+  `validate_openspec_unicode`, `validate_openspec_badconfig`,
+  `validate_openspec_unreadableconfig` and `validate_openspec_ymlconfig`
+  fixtures (plus one rule-fixture case) and keeps each stdout as text (key
   order matters), normalizing `durationMs` to 0, the sandbox path to `<ROOT>`,
   and a same-id change/spec tie to change-first (OpenSpec orders it by async
   completion). Drift exits non-zero keeping the sandbox; `--write` regenerates

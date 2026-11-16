@@ -24,14 +24,18 @@ ruling D3): ``ENVELOPES`` runs a list of invocations on
 ``tests/fixtures/validate_openspec_envelope`` (mixed-case, punctuated and
 nested ids, a change and a spec sharing a name) and
 ``tests/fixtures/validate_openspec_empty`` (nothing to validate), plus the
-archived-task and Unicode-id fixtures added for #227. On the rule fixture,
-only the ``--all`` item order and summary are captured. Each stdout is kept as
+archived-task and Unicode-id fixtures added for #227 and the broken-config
+fixtures added for #265 (``validate_openspec_badconfig``: invalid YAML in
+``config.yaml``; ``validate_openspec_unreadableconfig``: ``config.yaml`` is a
+directory; ``validate_openspec_ymlconfig``: only an invalid ``config.yml``).
+On the rule fixture, only the ``--all`` item order and summary are captured. Each stdout is kept as
 text (key order matters), with the host locale pinned to en-US and these normalizations:
 ``durationMs`` values become 0, the sandbox path becomes ``<ROOT>`` even
 inside diagnostic strings, and a change and spec with the same id are put
 change-first (OpenSpec orders such a tie by async completion).
 
-Requires Node.js and the OpenSpec 2.0.0 package. ``--openspec-js`` overrides
+Requires Node.js 22.12+ (the floor OpenSpec 2.0.0's ``engines`` declares) and
+the OpenSpec 2.0.0 package. ``--openspec-js`` overrides
 ``OPENSPEC_JS``, which overrides the npx cache path this was captured with.
 The package version is checked before anything runs.
 """

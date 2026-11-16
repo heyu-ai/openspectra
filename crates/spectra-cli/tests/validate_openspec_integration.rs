@@ -113,8 +113,9 @@ const LONG_TEXT_1_13: &str =
     "Requirement text is very long (>500 characters). Consider breaking it down.";
 
 /// 把一個 item 的 500 字 finding 改回 1.13.2 的形狀；回傳 (拿掉的 ADDED 數, 降級的 main spec 數)。
-/// 有改到時依剩下的 issue 重算判定：ERROR 一律 invalid，`--strict` 下 WARNING 也是。
-fn revert_long_text(item: &mut Value, strict: bool) -> (usize, usize) {
+/// 有改到時判定改成寫死的期望值：d53-added-long 與 s16-longtext 在 OpenSpectra 的實際輸出
+/// （兩種模式）都是 valid。其他 item 碰到這條 divergence 就失敗，要先在這裡補上它的判定。
+fn revert_long_text(item: &mut Value) -> (usize, usize) {
     let issues = item["issues"].as_array_mut().unwrap();
     let before = issues.len();
     let added_suffix = format!(": {LONG_TEXT_2_0}");
@@ -133,10 +134,13 @@ fn revert_long_text(item: &mut Value, strict: bool) -> (usize, usize) {
         }
     }
     if dropped + demoted > 0 {
-        let fails = issues
-            .iter()
-            .any(|issue| issue["level"] == "ERROR" || (strict && issue["level"] == "WARNING"));
-        item["valid"] = Value::Bool(!fails);
+        let valid = match item["id"].as_str().unwrap() {
+            "d53-added-long" | "s16-longtext" => true,
+            other => {
+                panic!("{other} 的 500 字 divergence 沒有寫死的判定，請在 revert_long_text 補上")
+            }
+        };
+        item["valid"] = Value::Bool(valid);
     }
     (dropped, demoted)
 }
@@ -144,7 +148,7 @@ fn revert_long_text(item: &mut Value, strict: bool) -> (usize, usize) {
 fn apply_divergences(scope: &str, mode: &str, expected: &mut [Value]) {
     let (dropped, demoted) = expected
         .iter_mut()
-        .map(|item| revert_long_text(item, mode == "strict"))
+        .map(revert_long_text)
         .fold((0, 0), |acc, n| (acc.0 + n.0, acc.1 + n.1));
     let (want_dropped, want_demoted) = if scope == "changes" { (1, 0) } else { (0, 1) };
     assert_eq!(
