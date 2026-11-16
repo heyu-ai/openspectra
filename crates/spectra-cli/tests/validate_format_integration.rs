@@ -319,22 +319,22 @@ fn scopes_follow_openspec_and_a_bare_validate_takes_every_change() {
     let root = rules();
     let all = run(&root, &["--all", "--json"]);
     let names = json_names(&all.1);
-    assert_eq!(names.len(), 56 + 38);
+    assert_eq!(names.len(), 62 + 38);
     let changes = names.iter().filter(|n| n.starts_with("change/")).count();
-    assert_eq!(changes, 56);
+    assert_eq!(changes, 62);
     // changes 全部在前，specs 在後（oracle 格式不混排）。
-    assert!(names[..56].iter().all(|n| n.starts_with("change/")));
-    assert_eq!(names[56], "spec/base");
-    assert_eq!(names[93], "spec/s35-closed-purpose-placeholder");
+    assert!(names[..62].iter().all(|n| n.starts_with("change/")));
+    assert_eq!(names[62], "spec/base");
+    assert_eq!(names[99], "spec/s35-closed-purpose-placeholder");
     assert_eq!(run(&root, &["--changes", "--specs", "--json"]), all);
     assert_eq!(run(&root, &["--all", "--changes", "--json"]), all);
 
     let changes_only = run(&root, &["--changes", "--json"]);
-    assert_eq!(json_names(&changes_only.1).len(), 56);
+    assert_eq!(json_names(&changes_only.1).len(), 62);
     assert_eq!(run(&root, &["--json"]), changes_only);
     assert_eq!(run(&root, &[]), run(&root, &["--changes"]));
     let specs_only = run(&root, &["--specs", "--json"]);
-    assert_eq!(json_names(&specs_only.1), names[56..].to_vec());
+    assert_eq!(json_names(&specs_only.1), names[62..].to_vec());
 }
 
 fn write(path: &Path, text: &str) {

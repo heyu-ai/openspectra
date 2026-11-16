@@ -3515,3 +3515,83 @@ replace = "            serde_yaml::Value::Number(value) => value.to_string(),"
 package = "spectra-cli"
 target = ["--test", "validate_openspec_integration"]
 test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-modified-leading-text"
+issue = "#267 review AC-4（MODIFIED 第一個 requirement 前的文字，d57）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '        if folded == "added requirements" || folded == "modified requirements" {'
+replace = '        if folded == "added requirements" {'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-unapplied-commented-purpose-skipped"
+issue = "#267 review AC-4（註解裡的 `## Purpose` 不是 archive 搬的那個，d58）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '            if folded == "purpose" && !masked[start - 1].trim().is_empty() {'
+replace = '            if folded == "purpose" {'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-comment-bang-terminator"
+issue = "#267 review AC-4（`--!>` 也結束 HTML 註解，d59）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '            body.find("--!>").map(|at| at + 4),'
+replace = '            None,'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-tilde-fence-info-backtick"
+issue = "#267 review AC-4（info string 含 backtick 只讓 backtick fence 失效，`~~~` 仍是 fence，d60）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "    if marker == '`' && info.contains('`') {"
+replace = "    if info.contains('`') {"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-requirements-suffix-word-boundary"
+issue = "#267 review AC-4（`## Prerequirements` 不是 `## ... Requirements`，維持 WARNING，d61）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = '''        Lazy::new(|| Regex::new(r"(?i)(?-u:\b)requirements?$").unwrap());'''
+replace = '''        Lazy::new(|| Regex::new(r"(?i)requirements?$").unwrap());'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-fence-info-stops-at-line-separator"
+issue = "#267 review AC-4（JS `(.*)` 停在 U+2028，info string 之後的 backtick 不算，d62）"
+file = "crates/spectra-core/src/openspec_md.rs"
+find = "        .find(['\\r', '\\u{2028}', '\\u{2029}'])"
+replace = "        .find(['\\r', '\\u{2029}'])"
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_changes_matches_the_openspec_golden"
+
+[[case]]
+id = "d1v2-config-yml-fallback"
+issue = "#267 review AC-4（只有 `config.yml` 時改讀它，validate_openspec_ymlconfig）"
+file = "crates/spectra-core/src/validate.rs"
+find = '    let path = [dir.join("config.yaml"), dir.join("config.yml")]'
+replace = '    let path = [dir.join("config.yaml")]'
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "validate_format_openspec_matches_the_openspec_envelopes"
+
+[[case]]
+id = "d1v2-config-eacces-wording"
+issue = "#267 review AC-4（權限不足時仿 Node 的 EACCES 措辭）"
+file = "crates/spectra-core/src/validate.rs"
+find = '''                    format!("EACCES: permission denied, open '{shown}'")'''
+replace = '''                    first_line(error.to_string())'''
+package = "spectra-cli"
+target = ["--test", "validate_openspec_integration"]
+test = "an_unreadable_config_matches_the_openspec_eacces_envelope"

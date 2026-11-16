@@ -24,7 +24,7 @@ use serde_json::Value;
 use common::{spectra, TempDir};
 
 /// (item 數, 兩種模式合計的 issue 數)
-const CHANGE_COUNTS: (usize, usize) = (56, 176);
+const CHANGE_COUNTS: (usize, usize) = (62, 188);
 const SPEC_COUNTS: (usize, usize) = (38, 64);
 
 fn golden() -> Value {
@@ -233,7 +233,7 @@ fn assert_scope_matches(scope: &str, (expected_items, expected_issues): (usize, 
 
 /// golden `envelopes` 的筆數；少了就是 golden 被截短（`capture-validate-openspec.py`
 /// 的 `ENVELOPES`）。
-const ENVELOPE_COUNT: usize = 34;
+const ENVELOPE_COUNT: usize = 35;
 
 fn copy_fixture(name: &str) -> TempDir {
     let dir = TempDir::new(&format!("validate-envelope-{name}"));
@@ -264,12 +264,18 @@ fn normalize_envelope(stdout: &str, root: &Path) -> String {
     out.replace(&quoted[1..quoted.len() - 1], "<ROOT>")
 }
 
-/// 把 `Could not parse <ROOT>/openspec/config.yaml (<解析器說明>).` 的括號內容換成
-/// 固定字串；回傳是否真的換到。
+/// 把 `Could not parse <ROOT>/openspec/config.yaml (<解析器說明>).`（或 `config.yml`）的
+/// 括號內容換成固定字串；回傳是否真的換到。
 fn mask_yaml_error(stdout: &str) -> (String, bool) {
-    const HEAD: &str = "Could not parse <ROOT>/openspec/config.yaml (";
+    const HEADS: [&str; 2] = [
+        "Could not parse <ROOT>/openspec/config.yaml (",
+        "Could not parse <ROOT>/openspec/config.yml (",
+    ];
     const TAIL: &str = ").\"";
-    let Some(start) = stdout.find(HEAD).map(|at| at + HEAD.len()) else {
+    let Some(start) = HEADS
+        .iter()
+        .find_map(|head| stdout.find(head).map(|at| at + head.len()))
+    else {
         return (stdout.to_string(), false);
     };
     let Some(len) = stdout[start..].find(TAIL) else {
@@ -328,7 +334,9 @@ fn validate_format_openspec_matches_the_openspec_envelopes() {
         );
         // 刻意的 divergence：YAML 解析錯誤括號內的說明是 JS `yaml` 套件的措辭，
         // Rust 端換不同的解析器不可能逐字相同；兩邊都只比括號外的部分。
-        let (want, got) = if fixture == "validate_openspec_badconfig" {
+        let (want, got) = if ["validate_openspec_badconfig", "validate_openspec_ymlconfig"]
+            .contains(&fixture.as_str())
+        {
             let (want_stdout, replaced) = mask_yaml_error(&want.1);
             assert!(
                 replaced,
@@ -396,7 +404,7 @@ fn demote_long_text(stdout: &str) -> (String, usize) {
 fn validate_all_format_openspec_orders_items_like_openspec() {
     let golden = golden();
     let expected = &golden["all_order"];
-    assert_eq!(expected["order"].as_array().unwrap().len(), 94);
+    assert_eq!(expected["order"].as_array().unwrap().len(), 100);
     let root = fixture();
     let output = spectra()
         .args(["validate", "--all", "--json", "--format", "openspec"])
@@ -434,4 +442,49 @@ fn validate_changes_matches_the_openspec_golden() {
 #[test]
 fn validate_specs_matches_the_openspec_golden() {
     assert_scope_matches("specs", SPEC_COUNTS);
+}
+
+/// 讀不到的 config（權限 000）的 envelope。git 存不了 mode 000，所以不進 capture；期望值
+/// 是 2026-11-16 在 macOS 上對 OpenSpec 2.0.0 手動實測（`chmod 000 openspec/config.yaml`
+/// 後 `openspec validate --all --json --no-interactive`，rc 1、stderr 空）的輸出，專案路徑
+/// 換成 `<ROOT>`。以 root 執行時讀得到 000 的檔案，這種環境就跳過。
+#[cfg(unix)]
+#[test]
+fn an_unreadable_config_matches_the_openspec_eacces_envelope() {
+    use std::os::unix::fs::PermissionsExt;
+    const EXPECTED: &str = r#"{
+  "status": [
+    {
+      "severity": "error",
+      "code": "unreadable_config",
+      "message": "Could not read <ROOT>/openspec/config.yaml (EACCES: permission denied, open '<ROOT>/openspec/config.yaml').",
+      "fix": "Make <ROOT>/openspec/config.yaml a readable file, or remove it."
+    }
+  ]
+}
+"#;
+    let root = copy_fixture("validate_openspec_badconfig");
+    let config = root.join("openspec/config.yaml");
+    std::fs::write(&config, "schema: spec-driven\n").unwrap();
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read(&config).is_ok() {
+        eprintln!("skipped: 以 root 執行，權限 000 的檔案仍讀得到");
+        return;
+    }
+    let output = spectra()
+        .args(["validate", "--all", "--json", "--format", "openspec"])
+        .current_dir(&*root)
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&config, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let stdout = normalize_envelope(&String::from_utf8_lossy(&output.stdout), &root);
+    let stdout = normalize_envelope(&stdout, &root.canonicalize().unwrap());
+    assert_eq!(
+        (
+            output.status.code(),
+            stdout.as_str(),
+            output.stderr.as_slice()
+        ),
+        (Some(1), EXPECTED, &b""[..])
+    );
 }

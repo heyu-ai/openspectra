@@ -68,7 +68,8 @@ reading its source: `scripts/capture-validate-openspec.py` runs OpenSpec 2.0.0
 on the fixture project `crates/spectra-cli/tests/fixtures/validate_openspec`
 (one `dNN-*` change or `sNN-*` spec per rule; `d01`–`d30`/`s01`–`s20` are the
 W9 probe p08, `d31`–`d46`/`s21`–`s30` were added for the remaining 1.13.2
-rules, `d47`–`d56`/`s31`–`s35` for the rules 1.14.0–2.0.0 added) and
+rules, `d47`–`d62`/`s31`–`s35` for the rules 1.14.0–2.0.0 added; `d57`–`d62`
+pin branches of those rules that #267's review found unguarded) and
 writes `golden/validate-openspec-2.0.0.json`;
 `crates/spectra-cli/tests/validate_openspec_integration.rs` replays it against
 `spectra validate --changes|--specs --json [--strict]`, comparing `valid` and
@@ -109,10 +110,15 @@ behavior fails the test until the entry is removed.
   `a_broken_config_is_ignored_by_the_oracle_format`). Under `--format openspec`
   the parenthesised parser message cannot match: OpenSpec quotes the JS `yaml`
   package's error and OpenSpectra quotes `serde_yaml`'s, so the replay masks the
-  text inside the parentheses for `validate_openspec_badconfig`. The two
+  text inside the parentheses for `validate_openspec_badconfig` and
+  `validate_openspec_ymlconfig` (only a `config.yml`, which OpenSpec reads when
+  there is no `config.yaml`). The two
   parsers can also disagree on whether an edge-case file parses at all (YAML
   1.1 versus 1.2 details); only the fixture's plainly broken file is pinned.
-  Read errors mimic Node's wording for `EISDIR` and `EACCES`.
+  Read errors mimic Node's wording for `EISDIR` and `EACCES`; git cannot store
+  a mode-000 file, so the `EACCES` envelope is a literal probed by hand on
+  OpenSpec 2.0.0 (2026-11-16) and pinned by
+  `an_unreadable_config_matches_the_openspec_eacces_envelope`.
 
 2.0.0's task-paragraph change (a wrapped task joins its continuation lines,
 #2227) does not reach `validate`: the archived-task check only counts tasks.
@@ -121,7 +127,10 @@ The Markdown reader is deliberately **not** shared with `archive`
 (`crate::markdown`, oracle behavior): OpenSpec reads stray `###` headers,
 repeated sections, and `#####` scenarios differently, and archive's refusal
 rules must not move when validate's rules do. Archive still refuses everything
-it refused before.
+it refused before. For the same reason D13's `removed-scenario` markers keep
+the pre-2.0.0 fence rule (`pre_2_0_0_fence_mask`): archive's own scenario list
+treats a ```` ```npm test``` ```` line as an opening fence, so the markers must
+too.
 
 JavaScript semantics kept by the port: lengths are UTF-16 code units (JS
 `.length`), so a CJK Purpose is measured as OpenSpec measures it; `\b(SHALL|MUST)\b`
@@ -391,7 +400,8 @@ Field for field OpenSpec 2.0.0 (`commands/validate.js`), pinned by the
 `envelopes` and `all_order` sections of `golden/validate-openspec-2.0.0.json`
 (fixtures `validate_openspec_envelope`, `validate_openspec_empty`,
 `validate_openspec_archived`, `validate_openspec_unicode`,
-`validate_openspec_badconfig`, `validate_openspec_unreadableconfig`, and the
+`validate_openspec_badconfig`, `validate_openspec_unreadableconfig`,
+`validate_openspec_ymlconfig`, and the
 rule fixture) and replayed by `validate_openspec_integration.rs`. The
 envelope shape itself did not change between 1.13.2 and 2.0.0; only the
 findings inside it did:

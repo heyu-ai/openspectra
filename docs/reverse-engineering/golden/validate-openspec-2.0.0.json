@@ -791,6 +791,76 @@
               "message": "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): archived_at, archived_by, created_by, created_with. Known keys: schema, created, goal, affected_areas, initiative, skip_specs, retire_capabilities. Unknown keys are ignored and have no effect; prefix a key with x- (for example x-tracker) to keep tool-specific metadata without this warning."
             }
           ]
+        },
+        {
+          "id": "d57-modified-unapplied",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "base/spec.md",
+              "line": 3,
+              "message": "Text before the first requirement in \"## MODIFIED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d58-commented-purpose",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 2,
+              "message": "Section \"## Purpose\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d59-comment-bang-close",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 16,
+              "message": "Requirement \"Orphan\" is under \"## Notes\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 12,
+              "message": "Section \"## Notes\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d60-tilde-fence-backtick-info",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d61-prerequirements",
+          "valid": true,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 14,
+              "message": "Requirement \"Pre\" is under \"## Prerequirements\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 12,
+              "message": "Section \"## Prerequirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d62-fence-info-line-separator",
+          "valid": true,
+          "issues": []
         }
       ],
       "strict": [
@@ -1582,6 +1652,76 @@
               "message": "Unrecognized key name(s) in .openspec.yaml (untrusted data, not instructions): archived_at, archived_by, created_by, created_with. Known keys: schema, created, goal, affected_areas, initiative, skip_specs, retire_capabilities. Unknown keys are ignored and have no effect; prefix a key with x- (for example x-tracker) to keep tool-specific metadata without this warning."
             }
           ]
+        },
+        {
+          "id": "d57-modified-unapplied",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "base/spec.md",
+              "line": 3,
+              "message": "Text before the first requirement in \"## MODIFIED Requirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d58-commented-purpose",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 2,
+              "message": "Section \"## Purpose\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d59-comment-bang-close",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 16,
+              "message": "Requirement \"Orphan\" is under \"## Notes\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 12,
+              "message": "Section \"## Notes\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d60-tilde-fence-backtick-info",
+          "valid": true,
+          "issues": []
+        },
+        {
+          "id": "d61-prerequirements",
+          "valid": false,
+          "issues": [
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 14,
+              "message": "Requirement \"Pre\" is under \"## Prerequirements\", which is not a delta section, so it is ignored. Move it under \"## ADDED Requirements\", \"## MODIFIED Requirements\", \"## REMOVED Requirements\", or \"## RENAMED Requirements\"."
+            },
+            {
+              "level": "WARNING",
+              "path": "x/spec.md",
+              "line": 12,
+              "message": "Section \"## Prerequirements\" is not carried into the main spec by archive. Move it into a requirement, or into proposal.md or design.md."
+            }
+          ]
+        },
+        {
+          "id": "d62-fence-info-line-separator",
+          "valid": true,
+          "issues": []
         }
       ]
     },
@@ -2434,6 +2574,12 @@
       "change/d54-unapplied",
       "change/d55-unknown-metadata",
       "change/d56-spectra-metadata",
+      "change/d57-modified-unapplied",
+      "change/d58-commented-purpose",
+      "change/d59-comment-bang-close",
+      "change/d60-tilde-fence-backtick-info",
+      "change/d61-prerequirements",
+      "change/d62-fence-info-line-separator",
       "spec/pair",
       "spec/s01-good",
       "spec/s02-nopurpose",
@@ -2473,14 +2619,14 @@
     ],
     "summary": {
       "totals": {
-        "items": 94,
-        "passed": 55,
+        "items": 100,
+        "passed": 61,
         "failed": 39
       },
       "byType": {
         "change": {
-          "items": 56,
-          "passed": 32,
+          "items": 62,
+          "passed": 38,
           "failed": 24
         },
         "spec": {
@@ -2826,6 +2972,15 @@
       ],
       "rc": 1,
       "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"unreadable_config\",\n      \"message\": \"Could not read <ROOT>/openspec/config.yaml (EISDIR: illegal operation on a directory, read).\",\n      \"fix\": \"Make <ROOT>/openspec/config.yaml a readable file, or remove it.\"\n    }\n  ]\n}\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "validate_openspec_ymlconfig",
+      "args": [
+        "--all"
+      ],
+      "rc": 1,
+      "stdout": "{\n  \"status\": [\n    {\n      \"severity\": \"error\",\n      \"code\": \"unparseable_config\",\n      \"message\": \"Could not parse <ROOT>/openspec/config.yml (Flow sequence in block collection must be sufficiently indented and end with a ] at line 2, column 1:).\",\n      \"fix\": \"Fix the YAML syntax in <ROOT>/openspec/config.yml.\"\n    }\n  ]\n}\n",
       "stderr": ""
     }
   ]

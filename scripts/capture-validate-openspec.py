@@ -105,6 +105,8 @@ ENVELOPES = [
     ("validate_openspec_badconfig", ["--all"]),
     ("validate_openspec_badconfig", ["c1"]),
     ("validate_openspec_unreadableconfig", ["--all"]),
+    # 只有 `config.yml`（沒有 `config.yaml`）時改讀它。
+    ("validate_openspec_ymlconfig", ["--all"]),
 ]
 DURATION = re.compile(r'"durationMs": \d+')
 
